@@ -1,0 +1,17 @@
+{
+  "name": "@aoc/client",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Ingest client used by hooks, MCP server, sidecar and CLI (retry + local spool)",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@aoc/contracts": "workspace:*"
+  }
+}

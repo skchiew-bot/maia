@@ -1,0 +1,14 @@
+node_modules/
+dist/
+coverage/
+*.log
+.aoc/
+.data/
+*.db
+*.db-wal
+*.db-shm
+.env
+.env.*
+!.env.example
+.DS_Store
+*.tsbuildinfo

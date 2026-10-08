@@ -1,0 +1,21 @@
+{
+  "name": "@aoc/mod-learning",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Error learning: root-cause classes, repeat offences, lessons registry, model dimension",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@aoc/contracts": "workspace:*",
+    "@aoc/kernel": "workspace:*",
+    "@aoc/llm": "workspace:*",
+    "hono": "4.13.13",
+    "zod": "3.25.76"
+  }
+}

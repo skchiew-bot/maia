@@ -1,0 +1,17 @@
+{
+  "name": "@aoc/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Shared contracts: event envelope, event catalog, DTOs, service interfaces, pure domain functions",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "zod": "3.25.76"
+  }
+}

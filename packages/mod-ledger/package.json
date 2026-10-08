@@ -1,0 +1,20 @@
+{
+  "name": "@aoc/mod-ledger",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Build ledger: projects, threads, plan manifests, tasks, evidence, phases, drift, timelines, rollover briefs",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@aoc/contracts": "workspace:*",
+    "@aoc/kernel": "workspace:*",
+    "hono": "4.13.13",
+    "zod": "3.25.76"
+  }
+}

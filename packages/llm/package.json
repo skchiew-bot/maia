@@ -1,0 +1,19 @@
+{
+  "name": "@aoc/llm",
+  "version": "0.1.0",
+  "private": true,
+  "description": "LLM adapters (Claude CLI, Anthropic SDK, fake) for structured extraction",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@aoc/contracts": "workspace:*",
+    "@anthropic-ai/sdk": "0.132.1",
+    "zod": "3.25.76"
+  }
+}

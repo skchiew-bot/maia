@@ -1,0 +1,36 @@
+{
+  "name": "@aoc/daemon",
+  "version": "0.1.0",
+  "private": true,
+  "description": "aocd: the sole writer \u2014 ingest, API, SSE, scheduler, static UI",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@aoc/contracts": "workspace:*",
+    "@aoc/kernel": "workspace:*",
+    "@aoc/llm": "workspace:*",
+    "@aoc/supervisor": "workspace:*",
+    "@aoc/mod-ledger": "workspace:*",
+    "@aoc/mod-sessions": "workspace:*",
+    "@aoc/mod-decisions": "workspace:*",
+    "@aoc/mod-change": "workspace:*",
+    "@aoc/mod-identity": "workspace:*",
+    "@aoc/mod-metering": "workspace:*",
+    "@aoc/mod-fx": "workspace:*",
+    "@aoc/mod-credits": "workspace:*",
+    "@aoc/mod-learning": "workspace:*",
+    "@aoc/mod-registry": "workspace:*",
+    "@aoc/mod-audit": "workspace:*",
+    "@aoc/mod-evidence": "workspace:*",
+    "@aoc/mod-intake": "workspace:*",
+    "hono": "4.13.13",
+    "@hono/node-server": "1.19.17",
+    "zod": "3.25.76"
+  }
+}

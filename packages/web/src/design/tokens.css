@@ -1,0 +1,169 @@
+/*
+ * AOC design tokens — one token set, light + dark, following the OS setting (no manual toggle in v1, §12).
+ * Brand: Daythree purple is the interactive accent. Brand red is reserved for the wordmark only — red in an
+ * ops console means "Dead / error", so it is never used as a brand fill on operational surfaces.
+ * Liveness colours are semantic and always paired with an icon and a word (never colour alone).
+ */
+:root {
+  color-scheme: light dark;
+
+  /* surfaces */
+  --bg: #f5f6f8;
+  --surface: #ffffff;
+  --surface-2: #f0f2f5;
+  --surface-3: #e6e9ee;
+  --border: #dde1e7;
+  --border-strong: #c3c9d2;
+
+  /* text (AA on --surface) */
+  --text: #1b1f24;
+  --text-2: #48515e;
+  --text-3: #66707d;
+  --text-inverse: #ffffff;
+
+  /* brand */
+  --accent: #5d3fd3;
+  --accent-hover: #4c31b8;
+  --accent-contrast: #ffffff;
+  --accent-soft: #ece8fb;
+  --brand-red: #c8102e;
+  --brand-grey: #58595b;
+
+  /* liveness (precedence: waiting > throttled > dead > stalled > thinking > working) */
+  --live-working: #17804a;
+  --live-working-soft: #e3f4ea;
+  --live-thinking: #5b6675;
+  --live-thinking-soft: #eceff3;
+  --live-stalled: #9a5800;
+  --live-stalled-soft: #fdf0dc;
+  --live-dead: #b42318;
+  --live-dead-soft: #fde7e5;
+  --live-throttled: #1f5fbf;
+  --live-throttled-soft: #e3edfb;
+  --live-waiting: #5d3fd3;
+  --live-waiting-soft: #ece8fb;
+
+  /* marks */
+  --mark-drift: #d97706;
+  --mark-decision: #5d3fd3;
+  --mark-tool: #8a94a3;
+  --mark-rollback: #b42318;
+  --mark-enhancement: #0e7c86;
+
+  /* status */
+  --ok: #17804a;
+  --warn: #9a5800;
+  --danger: #b42318;
+  --info: #1f5fbf;
+
+  /* categorical series (paired: discovery = series-1, execution = series-2) */
+  --series-1: #5d3fd3;
+  --series-2: #0e7c86;
+  --series-3: #c2410c;
+  --series-4: #2563eb;
+  --series-5: #a21caf;
+  --series-6: #4d7c0f;
+  --grid: #e3e6eb;
+
+  /* type */
+  --font-sans: 'Source Sans 3', 'Source Sans Pro', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+  --fs-xs: 12px;
+  --fs-sm: 13px;
+  --fs-md: 14px;
+  --fs-lg: 16px;
+  --fs-xl: 20px;
+  --fs-2xl: 24px;
+  --fs-3xl: 32px;
+  --lh-tight: 1.2;
+  --lh: 1.45;
+
+  /* space / shape */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+  --radius-sm: 4px;
+  --radius: 8px;
+  --radius-lg: 12px;
+  --row-h: 32px;
+  --shadow: 0 1px 2px rgb(16 24 40 / 6%), 0 1px 3px rgb(16 24 40 / 8%);
+  --focus: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent);
+
+  /* motion (collapsed to 0 under reduced motion) */
+  --dur-fast: 120ms;
+  --dur: 200ms;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0e1014;
+    --surface: #161920;
+    --surface-2: #1d2129;
+    --surface-3: #262b35;
+    --border: #2b313c;
+    --border-strong: #3b4350;
+
+    --text: #e8ebef;
+    --text-2: #b5bdc9;
+    --text-3: #8d97a5;
+    --text-inverse: #0e1014;
+
+    --accent: #a593f2;
+    --accent-hover: #b8a9f6;
+    --accent-contrast: #0e1014;
+    --accent-soft: #2a2350;
+    --brand-grey: #a7a9ac;
+
+    --live-working: #3fcf8a;
+    --live-working-soft: #12301f;
+    --live-thinking: #a3adbb;
+    --live-thinking-soft: #232833;
+    --live-stalled: #f5b443;
+    --live-stalled-soft: #3a2a0c;
+    --live-dead: #ff7a6e;
+    --live-dead-soft: #3d1714;
+    --live-throttled: #72aaff;
+    --live-throttled-soft: #142a4a;
+    --live-waiting: #b7a8ff;
+    --live-waiting-soft: #2a2350;
+
+    --mark-drift: #f59e0b;
+    --mark-decision: #b7a8ff;
+    --mark-tool: #6f7988;
+    --mark-rollback: #ff7a6e;
+    --mark-enhancement: #2bb3bf;
+
+    --ok: #3fcf8a;
+    --warn: #f5b443;
+    --danger: #ff7a6e;
+    --info: #72aaff;
+
+    --series-1: #a593f2;
+    --series-2: #2bb3bf;
+    --series-3: #f08a4b;
+    --series-4: #72aaff;
+    --series-5: #e07ae6;
+    --series-6: #9bc53d;
+    --grid: #262b35;
+
+    --shadow: 0 1px 2px rgb(0 0 0 / 40%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-fast: 0ms;
+    --dur: 0ms;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0ms !important;
+  }
+}

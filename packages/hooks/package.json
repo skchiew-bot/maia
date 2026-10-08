@@ -1,0 +1,18 @@
+{
+  "name": "@aoc/hooks",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Claude Code hook commands (managed enforce + observed read-only with local buffer)",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@aoc/contracts": "workspace:*",
+    "@aoc/client": "workspace:*"
+  }
+}

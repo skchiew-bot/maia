@@ -1,0 +1,19 @@
+{
+  "name": "@aoc/cli",
+  "version": "0.1.0",
+  "private": true,
+  "description": "aoc CLI",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@aoc/contracts": "workspace:*",
+    "@aoc/client": "workspace:*",
+    "commander": "13.1.0"
+  }
+}

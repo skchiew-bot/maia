@@ -1,0 +1,28 @@
+{
+  "name": "maia",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AOC — Agent Ops Console (AOC-SPEC-003): multi-user project lifecycle platform for Claude Code",
+  "type": "module",
+  "packageManager": "pnpm@10.28.0",
+  "engines": { "node": ">=22.13" },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "pnpm -r --workspace-concurrency=3 typecheck",
+    "build": "node scripts/build.mjs",
+    "dev": "tsx packages/daemon/src/main.ts",
+    "format": "prettier --write \"packages/*/src/**/*.{ts,tsx}\" \"packages/*/test/**/*.{ts,tsx}\"",
+    "format:check": "prettier --check \"packages/*/src/**/*.{ts,tsx}\" \"packages/*/test/**/*.{ts,tsx}\""
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "esbuild": "0.28.2",
+    "prettier": "3.9.9",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3",
+    "vitest": "3.2.7"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"]
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "name": "@aoc/mod-change",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Change control, rollback, break-glass, provenance guarantee, promotion",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@aoc/contracts": "workspace:*",
+    "@aoc/kernel": "workspace:*",
+    "@aoc/llm": "workspace:*",
+    "hono": "4.13.13",
+    "zod": "3.25.76"
+  }
+}

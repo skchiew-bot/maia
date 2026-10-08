@@ -1,0 +1,21 @@
+{
+  "name": "@aoc/mod-fx",
+  "version": "0.1.0",
+  "private": true,
+  "description": "FX: daily BNM USD/MYR via Haiku->Sonnet, validation, carry-forward, discrepancy tickets",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@aoc/contracts": "workspace:*",
+    "@aoc/kernel": "workspace:*",
+    "@aoc/llm": "workspace:*",
+    "hono": "4.13.13",
+    "zod": "3.25.76"
+  }
+}
