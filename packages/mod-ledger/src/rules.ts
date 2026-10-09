@@ -14,6 +14,12 @@ export const DEFAULT_DRIFT_DEDUP_MS = 30 * 60_000;
 /** Net amendment growth over the declared baseline weight that counts as scope growth. */
 export const DEFAULT_SCOPE_GROWTH_THRESHOLD = 0.3;
 export const DEFAULT_ROLLOVER_CONTEXT_PCT = 70;
+/**
+ * Per git call. A handler runs at most three sequential stages of calls (the filter-driver config read, then the
+ * status and diff beside the evidence read, then the phase pin), so even three stalled stages end inside the MCP
+ * server's 15 s daemon timeout.
+ */
+export const DEFAULT_GIT_TIMEOUT_MS = 4_000;
 /** Unknown models get a small window so rollover errs early rather than late. */
 const UNKNOWN_MODEL_WINDOW = 200_000;
 

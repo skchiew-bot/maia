@@ -1,8 +1,9 @@
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
+import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { GitCommit, GitService } from '@aoc/contracts';
+import type { GitAsyncResult, GitCommit, GitService } from '@aoc/contracts';
 import { childEnv } from './child-env';
 
 export interface GitRunResult {
@@ -10,6 +11,8 @@ export interface GitRunResult {
   stdout: string;
   stderr: string;
 }
+
+const MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
 
 /** Transports git knows natively. Each is denied by name: a repository's own `protocol.<name>.allow` outranks `protocol.allow`. */
 const TRANSPORTS = ['file', 'git', 'ssh', 'http', 'https', 'ftp', 'ftps', 'ext'] as const;
@@ -76,7 +79,7 @@ const spawnGit = (dir: string, args: string[], env: Record<string, string>, time
     encoding: 'utf8',
     env,
     timeout: timeoutMs,
-    maxBuffer: 64 * 1024 * 1024,
+    maxBuffer: MAX_OUTPUT_BYTES,
   });
   return { code: r.status ?? 1, stdout: r.stdout ?? '', stderr: r.stderr ?? (r.error ? String(r.error) : '') };
 };
@@ -90,16 +93,28 @@ export function runServiceGit(
   return spawnGit(dir, args, serviceGitEnv(opts.env), opts.timeoutMs);
 }
 
+type GitOwner = { uid: number; gid: number };
+const ownerFrom = (st: GitOwner): GitOwner | null => (st.uid === 0 ? null : { uid: st.uid, gid: st.gid });
+
 /**
  * Who git runs as in `dir`. With session isolation (G-01) aocd is root and the agents' repositories belong to the
  * session user: git there runs as that owner, so root never parses a repository an agent can write (threat model
  * T-2), and git's ownership check passes without `safe.directory`. Null: as aocd itself.
  */
-export function gitOwnerOf(dir: string): { uid: number; gid: number } | null {
+export function gitOwnerOf(dir: string): GitOwner | null {
   if (process.geteuid?.() !== 0) return null;
   try {
-    const st = statSync(dir);
-    return st.uid === 0 ? null : { uid: st.uid, gid: st.gid };
+    return ownerFrom(statSync(dir));
+  } catch {
+    return null;
+  }
+}
+
+/** `gitOwnerOf` for the async runner: a stalled file system must not hold aocd's thread in the stat either. */
+async function gitOwnerOfAsync(dir: string): Promise<GitOwner | null> {
+  if (process.geteuid?.() !== 0) return null;
+  try {
+    return ownerFrom(await stat(dir));
   } catch {
     return null;
   }
@@ -131,20 +146,107 @@ export function uploadPackFor(repo: string): string | null {
 }
 
 /**
- * git sees an allowlisted environment (no AOC_*, keys or tokens, and no inherited GIT_DIR / GIT_WORK_TREE that
- * would redirect it) plus what the caller passes explicitly, and runs as the directory's owner (gitOwnerOf).
+ * How every git process in `dir` starts, sync or async: GIT_SAFETY_ARGS first; an allowlisted environment (no AOC_*,
+ * keys or tokens, and no inherited GIT_DIR / GIT_WORK_TREE that would redirect it) plus what the caller passes
+ * explicitly; and the directory's owner's identity, if it is not aocd's (gitOwnerOf).
  */
+function invocation(args: string[], extra: Record<string, string> | undefined, owner: GitOwner | null) {
+  return {
+    argv: [...GIT_SAFETY_ARGS, ...args],
+    env: childEnv(process.env, { GIT_TERMINAL_PROMPT: '0', ...(owner ? OWNER_ENV : {}), ...extra }),
+    ids: owner ? { uid: owner.uid, gid: owner.gid } : {},
+  };
+}
+
 function git(dir: string, args: string[], opts: { env?: Record<string, string>; timeoutMs?: number } = {}) {
-  const owner = gitOwnerOf(dir);
-  const r = spawnSync('git', [...GIT_SAFETY_ARGS, ...args], {
+  const { argv, env, ids } = invocation(args, opts.env, gitOwnerOf(dir));
+  const r = spawnSync('git', argv, {
     cwd: dir,
     encoding: 'utf8',
-    env: childEnv(process.env, { GIT_TERMINAL_PROMPT: '0', ...(owner ? OWNER_ENV : {}), ...opts.env }),
+    env,
     timeout: opts.timeoutMs ?? 60_000,
-    maxBuffer: 64 * 1024 * 1024,
-    ...(owner ? { uid: owner.uid, gid: owner.gid } : {}),
+    maxBuffer: MAX_OUTPUT_BYTES,
+    ...ids,
   });
   return { code: r.status ?? 1, stdout: r.stdout ?? '', stderr: r.stderr ?? (r.error ? String(r.error) : '') };
+}
+
+/**
+ * `git()` for callers on aocd's single thread: the event loop keeps serving while git runs, and a timeout kills git
+ * together with whatever it started (a filter, ssh, a hook) instead of waiting for them. Never rejects: a spawn
+ * failure is code 1; a timeout is code 124 with `timedOut` and no stdout, because half an answer must not pass for one.
+ */
+async function gitAsync(
+  dir: string,
+  args: string[],
+  opts: { env?: Record<string, string>; timeoutMs?: number } = {},
+): Promise<GitAsyncResult> {
+  const timeoutMs = opts.timeoutMs ?? 60_000;
+  const verb = args.find((a) => !a.startsWith('-') && !a.includes('=')) ?? 'git';
+  const { argv, env, ids } = invocation(args, opts.env, await gitOwnerOfAsync(dir));
+  return new Promise((resolve) => {
+    let child: ChildProcess;
+    try {
+      child = spawn('git', argv, {
+        cwd: dir,
+        env,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        // Its own process group: one signal then reaches everything git started.
+        detached: true,
+        ...ids,
+      });
+    } catch (err) {
+      resolve({ code: 1, stdout: '', stderr: String(err), timedOut: false });
+      return;
+    }
+    const out: string[] = [];
+    const err: string[] = [];
+    let bytes = 0;
+    let settled = false;
+    let timer: NodeJS.Timeout | undefined;
+    const killTree = () => {
+      try {
+        process.kill(-child.pid!, 'SIGKILL');
+      } catch {
+        child.kill('SIGKILL');
+      }
+    };
+    const settle = (r: GitAsyncResult) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      // A grandchild can hold the pipes open after git is gone: do not wait for it.
+      child.stdout?.destroy();
+      child.stderr?.destroy();
+      resolve(r);
+    };
+    const fail = (stderr: string, more: Partial<GitAsyncResult> = {}) =>
+      settle({ code: 1, stdout: '', stderr, timedOut: false, ...more });
+    timer = setTimeout(() => {
+      killTree();
+      fail(`git ${verb} timed out after ${timeoutMs} ms`, { code: 124, timedOut: true });
+    }, timeoutMs);
+    for (const [stream, into] of [
+      [child.stdout!, out],
+      [child.stderr!, err],
+    ] as const) {
+      stream.setEncoding('utf8');
+      stream.on('error', () => undefined);
+      stream.on('data', (chunk: string) => {
+        bytes += chunk.length;
+        if (bytes <= MAX_OUTPUT_BYTES) {
+          into.push(chunk);
+          return;
+        }
+        killTree();
+        fail(`git ${verb} wrote more than ${MAX_OUTPUT_BYTES} bytes`);
+      });
+    }
+    child.once('error', (e) => fail(String(e)));
+    child.once('close', (code) =>
+      settle({ code: code ?? 1, stdout: out.join(''), stderr: err.join(''), timedOut: false }),
+    );
+  });
 }
 
 /**
@@ -152,9 +254,9 @@ function git(dir: string, args: string[], opts: { env?: Record<string, string>; 
  * `git status` and `git diff`, as whoever runs them. They go in GIT_CONFIG_KEY_n / VALUE_n because a driver name
  * may contain "=", which `-c` cannot express; they outrank the repository's config like `-c` does.
  */
-export function filterDriverOverrides(dir: string): Record<string, string> {
+function filterOverridesFrom(configOutput: string): Record<string, string> {
   const names = new Set<string>();
-  for (const rec of git(dir, ['config', '-z', '--get-regexp', '^filter\\.']).stdout.split('\0')) {
+  for (const rec of configOutput.split('\0')) {
     const m = /^filter\.(.+)\.[a-z]+$/s.exec(rec.split('\n', 1)[0] ?? '');
     if (m) names.add(m[1]!);
   }
@@ -170,6 +272,75 @@ export function filterDriverOverrides(dir: string): Record<string, string> {
     env[`GIT_CONFIG_VALUE_${i}`] = v!;
   });
   return env;
+}
+
+const FILTER_CONFIG = ['config', '-z', '--get-regexp', '^filter\\.'];
+export function filterDriverOverrides(dir: string): Record<string, string> {
+  return filterOverridesFrom(git(dir, FILTER_CONFIG).stdout);
+}
+
+/** The commands of the fingerprint: read-only, no index write, no filter, diff driver or submodule worktree runs. */
+const STATUS_ARGS = [
+  '--no-optional-locks',
+  'status',
+  '--porcelain=v1',
+  '--untracked-files=all',
+  '--ignore-submodules=dirty',
+];
+const DIFF_ARGS = [
+  '--no-optional-locks',
+  'diff',
+  'HEAD',
+  '--no-color',
+  '--no-ext-diff',
+  '--no-textconv',
+  '--ignore-submodules=dirty',
+];
+const HEAD_ARGS = ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'];
+
+/**
+ * The working-tree fingerprint: changes when HEAD, the status or the diff against HEAD changes. One definition for
+ * the sync and async readers, and for the baselines already in the log.
+ */
+export function workingTreeFingerprintOf(parts: {
+  head: string | null;
+  status: string;
+  diff: string;
+}): string {
+  return createHash('sha256')
+    .update(parts.head ?? 'no-head')
+    .update('\0')
+    .update(parts.status)
+    .update('\0')
+    .update(parts.diff)
+    .digest('hex');
+}
+
+/** `workingTreeFingerprint` for aocd's thread: null when git cannot describe the tree, `timedOut` when it did not answer. */
+async function fingerprintAsync(
+  dir: string,
+  timeoutMs?: number,
+): Promise<{ fingerprint: string | null; timedOut: boolean }> {
+  const config = await gitAsync(dir, FILTER_CONFIG, { timeoutMs });
+  if (config.timedOut) return { fingerprint: null, timedOut: true };
+  const env = filterOverridesFrom(config.stdout);
+  const [head, status, diff] = await Promise.all([
+    gitAsync(dir, HEAD_ARGS, { timeoutMs }),
+    gitAsync(dir, STATUS_ARGS, { env, timeoutMs }),
+    gitAsync(dir, DIFF_ARGS, { env, timeoutMs }),
+  ]);
+  if (head.timedOut || status.timedOut || diff.timedOut) return { fingerprint: null, timedOut: true };
+  // Not a repository, or one git will not read: no fingerprint, never one made of an empty answer.
+  if (status.code !== 0) return { fingerprint: null, timedOut: false };
+  const sha = head.code === 0 ? head.stdout.trim() : null;
+  // Without a commit there is nothing to diff against.
+  if (sha !== null && diff.code !== 0) return { fingerprint: null, timedOut: false };
+  const fingerprint = workingTreeFingerprintOf({
+    head: sha,
+    status: status.stdout,
+    diff: sha === null ? '' : diff.stdout,
+  });
+  return { fingerprint, timedOut: false };
 }
 
 /** Thin wrapper over the git CLI (argument arrays only — never a shell; GIT_SAFETY_ARGS on every call). */
@@ -188,13 +359,12 @@ export function createGitService(): GitService {
     },
     workingTreeFingerprint: (dir) => {
       if (!svc.isRepo(dir)) return null;
-      // A read-only look at an agent's tree: no index write, no filter, diff driver or submodule worktree runs.
       const env = filterDriverOverrides(dir);
-      const status = git(dir, ['--no-optional-locks', 'status', '--porcelain=v1', '--untracked-files=all', '--ignore-submodules=dirty'], { env }).stdout;
-      const diff = git(dir, ['--no-optional-locks', 'diff', 'HEAD', '--no-color', '--no-ext-diff', '--no-textconv', '--ignore-submodules=dirty'], { env }).stdout;
-      const head = svc.head(dir) ?? 'no-head';
-      return createHash('sha256').update(head).update('\0').update(status).update('\0').update(diff).digest('hex');
+      const status = git(dir, STATUS_ARGS, { env }).stdout;
+      const diff = git(dir, DIFF_ARGS, { env }).stdout;
+      return workingTreeFingerprintOf({ head: svc.head(dir), status, diff });
     },
+    workingTreeFingerprintAsync: (dir, opts) => fingerprintAsync(dir, opts?.timeoutMs),
     tag: (dir, name, sha, message) => {
       const r = git(dir, ['tag', '-a', name, sha, '-m', message]);
       if (r.code !== 0) throw new Error(`git tag failed: ${r.stderr.trim()}`);
@@ -217,6 +387,7 @@ export function createGitService(): GitService {
         });
     },
     run: (dir, args, opts) => git(dir, args, opts),
+    runAsync: (dir, args, opts) => gitAsync(dir, args, opts),
   };
   return svc;
 }
