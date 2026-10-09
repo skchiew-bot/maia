@@ -252,8 +252,20 @@ describe('turn end: crash, auto-continue, completion, credit cap', () => {
     await h.waitLifecycle(id, 'ended');
     expect(h.events('session.ended', id)[0]!.meta).toEqual({ sessionId: id, outcome: 'completed' });
     expect(h.ledger.writerCalls).toContain(`release ${id} ended`);
-    expect(h.t.identity!.verifyIngestToken(h.callsFor(id)[0]!.env.AOC_INGEST_TOKEN!)).toBeNull();
+    await h.waitRevoked(h.callsFor(id)[0]!.env.AOC_INGEST_TOKEN!);
     expect(h.callsFor(id).length).toBe(1);
+  });
+
+  it("keeps an ended session's ingest token valid until its sidecar has made the final usage flush", async () => {
+    h = await createHarness({ supervisor: { autoContinueLimit: 1 }, module: { sidecarGraceMs: 1_000 }, env: { FAKE_SIDECAR_LINGER: '1' } });
+    h.ledger.defaultPct = 100;
+    const id = await h.launch('Finish');
+    await h.waitLifecycle(id, 'ended');
+    const token = h.callsFor(id)[0]!.env.AOC_INGEST_TOKEN!;
+    // The sidecar reports the last turn's usage only after claude has exited: refusing it would lose that usage.
+    expect(h.t.identity!.verifyIngestToken(token)).not.toBeNull();
+    await h.waitFor(() => h!.sidecarCalls().some((c) => 'sigterm' in c), 'the sidecar to be sent SIGTERM after the grace');
+    await h.waitRevoked(token);
   });
 
   it('blocks when the credit cap is reached during a turn and resumes on a top-up', async () => {
@@ -355,7 +367,7 @@ describe('operator controls (§2.3: nudge = end turn, resume with operator text)
     expect(h.events('session.turn_ended', id)[0]!.meta.outcome).toBe('stop_requested');
     expect(h.events('session.ended', id)[0]!.meta.outcome).toBe('abandoned');
     expect(h.ledger.writerCalls).toContain(`release ${id} stopped`);
-    expect(h.t.identity!.verifyIngestToken(token)).toBeNull();
+    await h.waitRevoked(token);
     expect(h.callsFor(id).length).toBe(1);
     expect(h.sup.stopRequested(id)).toBe(false);
   });
