@@ -22,15 +22,19 @@ flowchart LR
   text (ticket descriptions, session titles, decision text). Treat `aoc.db` backups as personal data.
 - **Load order** (kernel `loadOrCreateMasterKey`): the `AOC_MASTER_KEY` environment variable, then the file at
   `keys.masterKeyFile`, and otherwise a **newly generated** key written to that path, or to `dataDir/master.key`
-  when no path is set (mode 0600, parent directory 0700). **With `"mode": "production"`** aocd refuses to start
-  unless the KEK comes from an existing `keys.masterKeyFile` outside `dataDir`, mode 0400 or 0600, owned by aocd's
-  user — or a systemd credential in `$CREDENTIALS_DIRECTORY` (option 2 below). It refuses `AOC_MASTER_KEY` and never
-  generates a key.
+  when no path is set (mode 0600, parent directory 0700) — but **only for a data directory that holds no data**.
+  If `aoc.db` has events or `bodies.db` has wrapped data keys (or either file cannot be read), aocd stops at
+  startup with "refusing to generate a new KEK" and a pointer to this runbook, because a new key cannot unwrap the
+  data keys that exist. **With `"mode": "production"`** aocd refuses to start unless the KEK comes from an existing
+  `keys.masterKeyFile` outside `dataDir`, mode 0400 or 0600, owned by aocd's user — or a systemd credential in
+  `$CREDENTIALS_DIRECTORY` (option 2 below). It refuses `AOC_MASTER_KEY` and never generates a key.
 
 > **The generated key is a development convenience. It is never acceptable in production.** It sits next to the
-> data it protects, so any copy of the data directory carries its own key. And if a configured path is mistyped,
-> aocd silently generates a new KEK there, after which every append with a body fails, because the existing DEKs
-> can no longer be unwrapped. The pre-start check in §3 prevents both.
+> data it protects, so any copy of the data directory carries its own key. A mistyped key path, a lost key file or
+> a restore without its KEK used to make aocd silently generate a new KEK there, after which every append with a
+> body failed, because the existing DEKs could no longer be unwrapped. aocd now refuses instead (development) or
+> never generates (production). Starting over on purpose means moving the data directory aside. The pre-start
+> check in §3 makes a missing production credential fail before aocd starts.
 
 ## 2. Generate the KEK
 
@@ -199,7 +203,7 @@ performs the checks of step 4 before it installs anything. For a backup set take
 
 | Event | What happens | Response |
 | --- | --- | --- |
-| **KEK lost**, escrow intact | aocd cannot unwrap DEKs; every append with a body fails | Restore the KEK from escrow; investigate why the file vanished |
+| **KEK lost**, escrow intact | aocd does not start: production names the missing KEK file, development says "refusing to generate a new KEK". (With a *wrong* KEK in place, aocd starts but every append with a body fails: the existing DEKs cannot be unwrapped) | Restore the KEK from escrow; investigate why the file vanished |
 | **KEK lost, no escrow** | Every body is permanently unreadable, which is the same as shredding everything. The chain still verifies | Incident. Do **not** rebuild projections: the read models still hold decrypted copies, and a rebuild would replace them with `[erased]`. Decide with the CEO what to export from the read models |
 | **KEK suspected compromised** | Combined with `bodies.db`, all unerased bodies are exposed | Incident, plus a PDPA breach assessment. Rotate (§5), restrict host access, review who could read the KEK and `bodies.db` |
 | **`aoc.db` lost or corrupted** | No chain, no read models | Restore the newest backup; compare with the off-host anchors. The anchors prove which events existed after the backup, so record the gap as an incident |

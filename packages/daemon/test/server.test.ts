@@ -1,4 +1,6 @@
 import { randomBytes } from 'node:crypto';
+import { existsSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { silentLogger, type AocModule } from '@aoc/kernel';
 import { createIntakeModule } from '@aoc/mod-intake';
@@ -289,5 +291,27 @@ describe('aocd HTTP surface', () => {
       await aoc.close();
       await aoc.close();
     }
+  });
+
+  it('does not start in development with a lost KEK beside existing data, and generates nothing', async () => {
+    const dir = tempDir();
+    const config = testConfig(dir);
+    const open = () => createAocServer(config, { log: silentLogger, webDir: null, modules: [] });
+    const first = await open(); // a fresh data dir: the development KEK is generated into <dataDir>/master.key
+    first.runtime.store.append({
+      type: 'session.nudged',
+      actor: { kind: 'human', id: 'usr_1' },
+      scope: { sessionId: 'ses_1' },
+      meta: { sessionId: 'ses_1' },
+      payload: { text: 'sealed under the first KEK' },
+      source: 'api',
+    });
+    await first.close();
+    const keyFile = join(config.dataDir, 'master.key');
+    expect(existsSync(keyFile)).toBe(true);
+
+    rmSync(keyFile); // the key file is lost (or the data was restored without it)
+    await expect(open()).rejects.toThrow(/refusing to generate a new KEK.*docs\/runbooks\/key-custody\.md/s);
+    expect(existsSync(keyFile)).toBe(false);
   });
 });

@@ -33,7 +33,7 @@ export const AocConfigSchema = z.object({
   timezone: z.string().default('Asia/Kuala_Lumpur'),
   keys: z
     .object({
-      /** 32-byte KEK (hex or base64) wrapping per-scope body keys. Generated (0600) in dataDir when absent — see docs/runbooks/key-custody.md. */
+      /** 32-byte KEK (hex or base64) wrapping per-scope body keys. Generated (0600) in dataDir when absent, but only while dataDir holds no data — see docs/runbooks/key-custody.md. */
       masterKeyFile: z.string().optional(),
     })
     .default({}),

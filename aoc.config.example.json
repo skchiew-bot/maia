@@ -11,7 +11,7 @@
   "timezone": "Asia/Kuala_Lumpur",
 
   "keys": {
-    "//": "Key-encryption key for the per-scope body keys (crypto-shred, §13). Development order: AOC_MASTER_KEY env, then masterKeyFile, else <dataDir>/master.key is generated (0600). Production mode accepts only an existing masterKeyFile outside the data dir, per docs/runbooks/key-custody.md (R6).",
+    "//": "Key-encryption key for the per-scope body keys (crypto-shred, §13). Development order: AOC_MASTER_KEY env, then masterKeyFile, else <dataDir>/master.key is generated (0600) - only while the data dir holds no data; beside existing data aocd refuses to start instead. Production mode accepts only an existing masterKeyFile outside the data dir, per docs/runbooks/key-custody.md (R6).",
     "//masterKeyFile": "/etc/aoc/master.key"
   },
 
