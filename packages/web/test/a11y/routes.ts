@@ -67,7 +67,10 @@ export function readRoutes(routesFile: string): RouteEntry[] {
   const rolesIn = (node: ts.Node): readonly string[] | null => {
     let found: readonly string[] | null = null;
     const walk = (n: ts.Node) => {
-      if ((ts.isJsxOpeningElement(n) || ts.isJsxSelfClosingElement(n)) && n.tagName.getText(source) === 'RequireRole') {
+      if (
+        (ts.isJsxOpeningElement(n) || ts.isJsxSelfClosingElement(n)) &&
+        n.tagName.getText(source) === 'RequireRole'
+      ) {
         const init = attr(n, 'roles')?.initializer;
         const expr = init && ts.isJsxExpression(init) ? init.expression : undefined;
         if (expr && ts.isArrayLiteralExpression(expr))
@@ -84,7 +87,11 @@ export function readRoutes(routesFile: string): RouteEntry[] {
     node: ts.Node,
     ctx: { path: string; surface: Surface; roles: readonly string[] | null },
   ) => {
-    const opening = ts.isJsxElement(node) ? node.openingElement : ts.isJsxSelfClosingElement(node) ? node : null;
+    const opening = ts.isJsxElement(node)
+      ? node.openingElement
+      : ts.isJsxSelfClosingElement(node)
+        ? node
+        : null;
     if (!opening || opening.tagName.getText(source) !== 'Route') {
       ts.forEachChild(node, (child) => visitRoutes(child, ctx));
       return;
@@ -95,7 +102,8 @@ export function readRoutes(routesFile: string): RouteEntry[] {
     const element = attr(opening, 'element')?.initializer;
     const ids = element ? identifiersIn(element) : [];
 
-    const path = ownPath === null ? ctx.path : ownPath.startsWith('/') ? ownPath : posix.join(ctx.path, ownPath);
+    const path =
+      ownPath === null ? ctx.path : ownPath.startsWith('/') ? ownPath : posix.join(ctx.path, ownPath);
     const surface: Surface = ids.includes('OperatorLayout')
       ? 'operator'
       : ids.includes('PortalLayout')

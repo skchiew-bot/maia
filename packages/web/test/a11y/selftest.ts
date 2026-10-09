@@ -34,11 +34,13 @@ export async function probeSelfTest(browser: Browser, probeSource: string): Prom
       misses.push('scroll: a 900px block at 360px was not reported');
 
     const anim = await page.evaluate<Animations>('__aocProbe.animations()');
-    if (!anim.infinite.some((a) => a.selector.includes('spin'))) misses.push('motion: an infinite spin was not reported');
+    if (!anim.infinite.some((a) => a.selector.includes('spin')))
+      misses.push('motion: an infinite spin was not reported');
 
     const charts = await page.evaluate<ChartInfo[]>('__aocProbe.charts()');
     if (!charts[0]?.problem) misses.push('charts: an svg with no role, name or numbers passed');
-    if (charts[1]?.problem) misses.push(`charts: a named chart with a printed number failed (${charts[1].problem})`);
+    if (charts[1]?.problem)
+      misses.push(`charts: a named chart with a printed number failed (${charts[1].problem})`);
     if (!charts[1]?.lowContrastMarks.some((m) => m.token === '--mark-drift'))
       misses.push('charts: drift marks at 2.95:1 on the page background were not reported');
 
@@ -50,7 +52,8 @@ export async function probeSelfTest(browser: Browser, probeSource: string): Prom
       misses.push('keyboard: the pixel check missed a visible focus ring');
     await page.keyboard.press('Tab');
     const bare = await page.evaluate<FocusInfo | null>('__aocProbe.focusInfo()');
-    if (bare?.label !== 'Bare') misses.push('keyboard: Tab did not continue after the pixel check blurred focus');
+    if (bare?.label !== 'Bare')
+      misses.push('keyboard: Tab did not continue after the pixel check blurred focus');
     else if (bare.indicator !== null) misses.push('keyboard: a control with no focus style looked focused');
     else if (await focusChangesPixels(page, bare.rect, viewport))
       misses.push('keyboard: the pixel check saw a focus change on a control with no focus style');

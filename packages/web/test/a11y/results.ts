@@ -140,13 +140,31 @@ export function issuesOf(p: PageResult): Issue[] {
   }
 
   for (const a of p.animations?.infinite ?? [])
-    add('motion', 'fail', `infinite:${a.selector}:${a.name}`, `infinite animation ${code(a.name)} on ${code(a.selector)} (no idle animation, §12)`, a.owner);
+    add(
+      'motion',
+      'fail',
+      `infinite:${a.selector}:${a.name}`,
+      `infinite animation ${code(a.name)} on ${code(a.selector)} (no idle animation, §12)`,
+      a.owner,
+    );
   for (const a of p.animations?.running ?? [])
-    add('motion', 'warn', `running:${a.selector}:${a.name}`, `still animating at rest: ${code(a.name)} on ${code(a.selector)}`, a.owner);
+    add(
+      'motion',
+      'warn',
+      `running:${a.selector}:${a.name}`,
+      `still animating at rest: ${code(a.name)} on ${code(a.selector)}`,
+      a.owner,
+    );
 
   for (const c of p.charts) {
     if (c.problem)
-      add('charts', 'fail', `chart:${c.selector}`, `chart ${code(c.selector)} (${c.size}) has no text equivalent: ${c.problem}`, c.owner);
+      add(
+        'charts',
+        'fail',
+        `chart:${c.selector}`,
+        `chart ${code(c.selector)} (${c.size}) has no text equivalent: ${c.problem}`,
+        c.owner,
+      );
     for (const m of c.lowContrastMarks)
       add(
         'charts',
@@ -161,16 +179,36 @@ export function issuesOf(p: PageResult): Issue[] {
   if (k) {
     if (k.primary.kind !== 'none' && !k.reached) {
       const what = k.primary.kind === 'primary' ? 'primary action' : 'first control in main';
-      add('keyboard', 'fail', 'unreached', `Tab never reached the ${what} ${code(k.primary.label || k.primary.selector || '')} (${k.ended ?? 'stopped'} after ${k.tabs} stops)`);
+      add(
+        'keyboard',
+        'fail',
+        'unreached',
+        `Tab never reached the ${what} ${code(k.primary.label || k.primary.selector || '')} (${k.ended ?? 'stopped'} after ${k.tabs} stops)`,
+      );
     }
     for (const s of k.invisible)
-      add('keyboard', 'fail', `invisible:${s.selector}`, `no visible focus indicator on ${code(s.selector)}`, s.owner);
+      add(
+        'keyboard',
+        'fail',
+        `invisible:${s.selector}`,
+        `no visible focus indicator on ${code(s.selector)}`,
+        s.owner,
+      );
     for (const s of k.offscreen)
-      add('keyboard', 'warn', `offscreen:${s.selector}`, `focused element is off screen: ${code(s.selector)}`, s.owner);
-    if (k.skipLinkWorks === false) add('keyboard', 'fail', 'skip', 'following the skip link does not put focus in its target', 'shell');
+      add(
+        'keyboard',
+        'warn',
+        `offscreen:${s.selector}`,
+        `focused element is off screen: ${code(s.selector)}`,
+        s.owner,
+      );
+    if (k.skipLinkWorks === false)
+      add('keyboard', 'fail', 'skip', 'following the skip link does not put focus in its target', 'shell');
   }
 
-  for (const e of new Set(p.consoleErrors)) add('console', 'fail', `console:${e.slice(0, 80)}`, `console error: ${code(e.slice(0, 300))}`);
-  for (const r of new Set(p.failedRequests)) add('requests', 'fail', `request:${r}`, `failed request: ${code(r)}`);
+  for (const e of new Set(p.consoleErrors))
+    add('console', 'fail', `console:${e.slice(0, 80)}`, `console error: ${code(e.slice(0, 300))}`);
+  for (const r of new Set(p.failedRequests))
+    add('requests', 'fail', `request:${r}`, `failed request: ${code(r)}`);
   return out;
 }

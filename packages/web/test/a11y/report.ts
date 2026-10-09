@@ -22,7 +22,14 @@ function groups(pages: readonly PageResult[]): Group[] {
     const key = `${p.route}\u0000${p.role}`;
     let g = map.get(key);
     if (!g) {
-      g = { route: p.route, role: p.role, file: p.file, url: p.url, placeholder: p.placeholder, byVariant: new Map() };
+      g = {
+        route: p.route,
+        role: p.role,
+        file: p.file,
+        url: p.url,
+        placeholder: p.placeholder,
+        byVariant: new Map(),
+      };
       map.set(key, g);
     }
     g.byVariant.set(p.variant, p);
@@ -46,7 +53,11 @@ function findings(g: Group): Finding[] {
 }
 
 const variantsLabel = (vs: ReadonlySet<string>) =>
-  vs.size === VARIANTS.length ? 'all variants' : VARIANTS.filter((v) => vs.has(v.id)).map((v) => v.id).join(', ');
+  vs.size === VARIANTS.length
+    ? 'all variants'
+    : VARIANTS.filter((v) => vs.has(v.id))
+        .map((v) => v.id)
+        .join(', ');
 
 function cell(p: PageResult | undefined): string {
   if (!p) return '–';
@@ -103,21 +114,29 @@ export function renderReport(run: RunResult): string {
   lines.push('');
   lines.push('Gates (FAIL unless noted):');
   lines.push('');
-  lines.push('- **axe** — axe-core rules tagged wcag2a/aa, wcag21a/aa, wcag22aa and best-practice; serious and critical fail, moderate and minor warn.');
+  lines.push(
+    '- **axe** — axe-core rules tagged wcag2a/aa, wcag21a/aa, wcag22aa and best-practice; serious and critical fail, moderate and minor warn.',
+  );
   lines.push('- **scroll** — no horizontal page scroll at 360 px.');
-  lines.push('- **motion** — no infinite CSS or SMIL animation (§12: a mark moves only when an event moved it); anything still running at rest warns.');
+  lines.push(
+    '- **motion** — no infinite CSS or SMIL animation (§12: a mark moves only when an event moved it); anything still running at rest warns.',
+  );
   lines.push(
     '- **charts** — every chart-sized SVG prints its numbers as visible text (beside it or as SVG text, for phones) and gives them to screen readers (a `role="img"` name that states them, or the printed text beside it); an exposed svg needs `role="img"` and a name, or `aria-hidden`. Data colours under 3:1 against the surface behind the chart warn.',
   );
   lines.push(
     "- **keyboard** — from page load, Tab reaches the primary action (first `[data-primary-action]`, else `.aoc-btn--primary` in main, else main's first control); the whole tab order is walked and every stop must show a focus indicator; following the skip link puts focus in main.",
   );
-  lines.push('- **console / requests** — no console errors or uncaught exceptions, no failed or ≥ 400 requests (except the 404 of a deliberately missing id, and the anonymous `/api/auth/me` probe).');
+  lines.push(
+    '- **console / requests** — no console errors or uncaught exceptions, no failed or ≥ 400 requests (except the 404 of a deliberately missing id, and the anonymous `/api/auth/me` probe).',
+  );
   lines.push('');
 
   lines.push('## Pages');
   lines.push('');
-  lines.push(`| Route | Role | Page file (src/pages/) | ${VARIANTS.map((v) => v.id).join(' | ')} | Tab stops to primary |`);
+  lines.push(
+    `| Route | Role | Page file (src/pages/) | ${VARIANTS.map((v) => v.id).join(' | ')} | Tab stops to primary |`,
+  );
   lines.push(`| --- | --- | --- | ${VARIANTS.map(() => '---').join(' | ')} | --- |`);
   for (const g of gs) {
     const route = g.placeholder ? `${g.route} (no seeded id)` : g.route;
@@ -133,7 +152,9 @@ export function renderReport(run: RunResult): string {
     lines.push('| Role | Opens | Expected | Landed | Result |');
     lines.push('| --- | --- | --- | --- | --- |');
     for (const r of run.routing)
-      lines.push(`| ${r.role} | \`${r.path}\` | \`${r.expected}\` | \`${r.actual}\` | ${r.ok ? 'pass' : '**FAIL**'} |`);
+      lines.push(
+        `| ${r.role} | \`${r.path}\` | \`${r.expected}\` | \`${r.actual}\` | ${r.ok ? 'pass' : '**FAIL**'} |`,
+      );
     lines.push('');
   }
 
@@ -175,7 +196,10 @@ export function renderReport(run: RunResult): string {
     const file = g.file ? ` — ${PAGE_ROOT}${g.file}` : '';
     lines.push(`### \`${g.route}\` as ${g.role}${file}`);
     lines.push('');
-    if (g.placeholder) lines.push(`Visited as \`${g.url}\`: the demo seed has no such record, so this is the not-found state.`);
+    if (g.placeholder)
+      lines.push(
+        `Visited as \`${g.url}\`: the demo seed has no such record, so this is the not-found state.`,
+      );
     for (const f of fs)
       lines.push(
         `- ${f.issue.severity === 'fail' ? '**FAIL**' : 'warn'} [${f.issue.gate}] ${f.issue.text} (${variantsLabel(f.variants)})`,

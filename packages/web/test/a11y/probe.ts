@@ -98,7 +98,9 @@ const CONTAINER =
 export function ownerOf(el: Element): Owner {
   if (!el.closest('main')) return 'shell';
   for (let n: Element | null = el; n && n.tagName.toLowerCase() !== 'main'; n = n.parentElement) {
-    const classes = [...n.classList].filter((c) => !c.startsWith('is-') && !c.startsWith('has-') && !UTILITY.test(c));
+    const classes = [...n.classList].filter(
+      (c) => !c.startsWith('is-') && !c.startsWith('has-') && !UTILITY.test(c),
+    );
     if (classes.length === 0) continue;
     if (classes.some((c) => CONTAINER.test(c)) || classes.some((c) => !c.startsWith('aoc-'))) return 'page';
     return classes[0]!.replace(/(__|--).*$/, '');
@@ -115,7 +117,9 @@ export function selectorOf(el: Element): string {
       parts.unshift(`${part}#${node.id}`);
       break;
     }
-    const classes = [...node.classList].filter((c) => !c.startsWith('is-') && !c.startsWith('has-')).slice(0, 2);
+    const classes = [...node.classList]
+      .filter((c) => !c.startsWith('is-') && !c.startsWith('has-'))
+      .slice(0, 2);
     if (classes.length) part += `.${classes.join('.')}`;
     parts.unshift(part);
     node = node.parentElement;
@@ -201,7 +205,10 @@ type Rgb = [number, number, number, number];
 function parseRgb(value: string): Rgb | null {
   const m = /rgba?\(([^)]+)\)/.exec(value);
   if (!m) return null;
-  const [r, g, b, a] = m[1]!.split(/[\s,/]+/).filter(Boolean).map(Number);
+  const [r, g, b, a] = m[1]!
+    .split(/[\s,/]+/)
+    .filter(Boolean)
+    .map(Number);
   return [r! / 255, g! / 255, b! / 255, a === undefined || Number.isNaN(a) ? 1 : a];
 }
 
@@ -236,7 +243,11 @@ function backgroundBehind(el: Element): Rgb {
 const hex = (c: Rgb) =>
   `#${c
     .slice(0, 3)
-    .map((v) => Math.round(v * 255).toString(16).padStart(2, '0'))
+    .map((v) =>
+      Math.round(v * 255)
+        .toString(16)
+        .padStart(2, '0'),
+    )
     .join('')}`;
 
 /** Computed `rgb()` string of each data-colour token, as the browser resolves it in the current theme. */
@@ -315,14 +326,16 @@ export function charts(): ChartInfo[] {
     const adjacentNumbers = hasAdjacentNumbers(svg);
     // §12: the number is rendered as text (phones) and reaches screen readers (the image's name, or the
     // printed text beside it).
-    const printed = adjacentNumbers || [...svg.querySelectorAll('text')].some((t) => hasVisibleDigits(t, null));
+    const printed =
+      adjacentNumbers || [...svg.querySelectorAll('text')].some((t) => hasVisibleDigits(t, null));
     const spoken = adjacentNumbers || (!hidden && nameHasNumber);
     let problem: string | null = null;
     if (!hidden && !role)
       problem =
         'the svg has no role: give it role="img" and an aria-label that states the numbers, or aria-hidden="true" when the numbers are printed beside it';
     else if (!hidden && !name) problem = `svg role="${role}" has no accessible name`;
-    else if (!printed) problem = 'no number is printed with it (it must also render its numbers as text, for phones)';
+    else if (!printed)
+      problem = 'no number is printed with it (it must also render its numbers as text, for phones)';
     else if (!spoken)
       problem = hidden
         ? 'it is hidden from assistive tech and its numbers are only drawn inside the svg'
@@ -370,7 +383,8 @@ export function charts(): ChartInfo[] {
  * enabled `.aoc-btn--primary` in main, else main's first focusable element.
  */
 export function markPrimaryAction(): PrimaryAction {
-  for (const old of document.querySelectorAll('[data-a11y-primary]')) old.removeAttribute('data-a11y-primary');
+  for (const old of document.querySelectorAll('[data-a11y-primary]'))
+    old.removeAttribute('data-a11y-primary');
   const main = document.querySelector('main') ?? document.body;
   const usable = (el: Element) =>
     isVisible(el) &&
@@ -407,7 +421,8 @@ export function focusInfo(): FocusInfo | null {
   const cs = getComputedStyle(el);
   const outline = parseRgb(cs.outlineColor);
   let indicator: FocusInfo['indicator'] = null;
-  if (cs.outlineStyle !== 'none' && parseFloat(cs.outlineWidth) > 0 && outline && outline[3] > 0) indicator = 'outline';
+  if (cs.outlineStyle !== 'none' && parseFloat(cs.outlineWidth) > 0 && outline && outline[3] > 0)
+    indicator = 'outline';
   else if (cs.boxShadow.includes(accentRgb)) indicator = 'ring';
   const r = el.getBoundingClientRect();
   return {

@@ -35,8 +35,12 @@ interface Pair {
 }
 
 const ink = (token: string) => `color-mix(in srgb, var(${token}) 75%, var(--text))`;
-const on = (fgs: readonly string[], bgs: readonly (string | readonly string[])[], min: number, use: string): Pair[] =>
-  fgs.flatMap((fg) => bgs.map((bg) => ({ fg, bg, min, use })));
+const on = (
+  fgs: readonly string[],
+  bgs: readonly (string | readonly string[])[],
+  min: number,
+  use: string,
+): Pair[] => fgs.flatMap((fg) => bgs.map((bg) => ({ fg, bg, min, use })));
 
 const NEUTRAL = ['--bg', '--surface', '--surface-2', '--surface-3'] as const;
 const LIVE = ['working', 'thinking', 'stalled', 'dead', 'throttled', 'waiting'] as const;
@@ -48,17 +52,41 @@ const HOVER_7 = ['--surface', 'color-mix(in srgb, var(--text) 7%, transparent)']
 
 const GROUPS: Record<string, Pair[]> = {
   'text on neutral surfaces': [
-    ...on(['--text', '--text-2', '--text-3'], NEUTRAL, TEXT, 'body / secondary / muted text on page, card, well and track'),
-    ...on(['--text', '--text-2'], [HOVER_10, HOVER_7], TEXT, 'text over hover washes (chip remove, chart hit targets)'),
+    ...on(
+      ['--text', '--text-2', '--text-3'],
+      NEUTRAL,
+      TEXT,
+      'body / secondary / muted text on page, card, well and track',
+    ),
+    ...on(
+      ['--text', '--text-2'],
+      [HOVER_10, HOVER_7],
+      TEXT,
+      'text over hover washes (chip remove, chart hit targets)',
+    ),
     { fg: '--surface', bg: '--text', min: TEXT, use: 'tooltip (.aoc-tooltip) and mock timeline tooltip' },
     { fg: '--text', bg: '--border-strong', min: TEXT, use: 'mock current phase band (.band--current)' },
   ],
 
   'text on tinted surfaces': [
-    ...on(['--text', '--text-2'], ['--accent-soft', ...LIVE.map((l) => `--live-${l}-soft`)], TEXT,
-      'nav/row/portal active state, recommendation box, liveness badges, alerts, mock verify box'),
-    ...on(['--text-3'], ['--accent-soft', '--warn-soft'], TEXT, 'muted text in an active row and in the funnel bottleneck stage'),
-    ...on(['--text', '--text-2'], ['color-mix(in srgb, var(--accent) 20%, var(--surface))'], TEXT, 'timeline active phase band label'),
+    ...on(
+      ['--text', '--text-2'],
+      ['--accent-soft', ...LIVE.map((l) => `--live-${l}-soft`)],
+      TEXT,
+      'nav/row/portal active state, recommendation box, liveness badges, alerts, mock verify box',
+    ),
+    ...on(
+      ['--text-3'],
+      ['--accent-soft', '--warn-soft'],
+      TEXT,
+      'muted text in an active row and in the funnel bottleneck stage',
+    ),
+    ...on(
+      ['--text', '--text-2'],
+      ['color-mix(in srgb, var(--accent) 20%, var(--surface))'],
+      TEXT,
+      'timeline active phase band label',
+    ),
   ],
 
   'liveness badges and marks': [
@@ -71,63 +99,178 @@ const GROUPS: Record<string, Pair[]> = {
     })),
     // Soft badges (Working, Thinking): coloured icon on the tint; word and detail in ink.
     ...SOFT.flatMap((l) => [
-      { fg: `--live-${l}`, bg: `--live-${l}-soft`, min: UI, use: `${l} soft badge icon (.aoc-liveness__icon)` },
+      {
+        fg: `--live-${l}`,
+        bg: `--live-${l}-soft`,
+        min: UI,
+        use: `${l} soft badge icon (.aoc-liveness__icon)`,
+      },
       { fg: '--text', bg: `--live-${l}-soft`, min: TEXT, use: `${l} soft badge word` },
       { fg: '--text-2', bg: `--live-${l}-soft`, min: TEXT, use: `${l} soft badge detail` },
     ]),
     ...LIVE.flatMap((l) => [
       { fg: `--live-${l}`, bg: '--surface', min: UI, use: `${l} icon / alive dot / mix legend on a card` },
       { fg: `--live-${l}`, bg: '--bg', min: UI, use: `${l} icon on the page background` },
-      { fg: '--text-inverse', bg: `--live-${l}`, min: TEXT, use: `${l} liveness-mix segment count (mock .mix__seg--${l})` },
+      {
+        fg: '--text-inverse',
+        bg: `--live-${l}`,
+        min: TEXT,
+        use: `${l} liveness-mix segment count (mock .mix__seg--${l})`,
+      },
     ]),
     { fg: '--text-3', bg: '--surface-2', min: UI, use: 'ended / retired badge icon (neutral tone)' },
     { fg: '--text', bg: '--surface-2', min: TEXT, use: 'ended / retired badge word' },
-    { fg: '--text-inverse', bg: '--live-waiting', min: TEXT, use: 'needs-you count on the Tower tab (mock .tab__count)' },
+    {
+      fg: '--text-inverse',
+      bg: '--live-waiting',
+      min: TEXT,
+      use: 'needs-you count on the Tower tab (mock .tab__count)',
+    },
   ],
 
   'status tones': [
     ...STATUS.flatMap((s) => [
-      { fg: ink(`--${s}`), bg: `--${s}-soft`, min: TEXT, use: `${s} soft badge / chip / recurrence stage text (--tone-ink)` },
+      {
+        fg: ink(`--${s}`),
+        bg: `--${s}-soft`,
+        min: TEXT,
+        use: `${s} soft badge / chip / recurrence stage text (--tone-ink)`,
+      },
       { fg: ink(`--${s}`), bg: '--surface', min: TEXT, use: `${s} outline badge text on a card` },
       { fg: `--${s}`, bg: `--${s}-soft`, min: UI, use: `${s} alert / badge icon and meter fill on its tint` },
       { fg: '--text-inverse', bg: `--${s}`, min: TEXT, use: `${s} solid badge text (--tone-solid-fg)` },
-      ...on([`--${s}`], ['--bg', '--surface', '--surface-2'], TEXT, `${s} as text: KPI / trend delta (.aoc-tone-text--${s}), also on a hovered table row`),
+      ...on(
+        [`--${s}`],
+        ['--bg', '--surface', '--surface-2'],
+        TEXT,
+        `${s} as text: KPI / trend delta (.aoc-tone-text--${s}), also on a hovered table row`,
+      ),
     ]),
     { fg: ink('--accent'), bg: '--accent-soft', min: TEXT, use: 'accent soft badge, selected toggle chip' },
     { fg: ink('--text-2'), bg: '--surface-2', min: TEXT, use: 'neutral soft badge / chip' },
     { fg: '--surface', bg: '--text-2', min: TEXT, use: 'neutral solid badge' },
     { fg: '--danger', bg: HOVER_10, min: TEXT, use: 'danger menu item on hover (.aoc-menu__item.is-danger)' },
-    ...on(['--danger', '--warn', '--info', '--text-3'], ['--surface', '--surface-2'], UI, 'attention-queue severity icon (RankedList SEVERITY_META)'),
-    ...on(['--ok', '--warn', '--danger'], ['--surface', '--warn-soft', '--danger-soft'], UI, 'connection status dot (.aoc-conn__dot)'),
+    ...on(
+      ['--danger', '--warn', '--info', '--text-3'],
+      ['--surface', '--surface-2'],
+      UI,
+      'attention-queue severity icon (RankedList SEVERITY_META)',
+    ),
+    ...on(
+      ['--ok', '--warn', '--danger'],
+      ['--surface', '--warn-soft', '--danger-soft'],
+      UI,
+      'connection status dot (.aoc-conn__dot)',
+    ),
   ],
 
   'interactive and brand': [
-    ...on(['--accent', '--accent-hover'], ['--bg', '--surface', '--surface-2'], TEXT, 'links, link buttons, toast action, active phase name'),
-    ...on(['--accent-contrast'], ['--accent', '--accent-hover'], TEXT, 'primary button, skip link, count badge, active phase index'),
-    ...on(['--text-inverse'], ['--danger', 'color-mix(in srgb, var(--danger) 86%, var(--text))'], TEXT, 'danger button and its hover'),
-    ...on(['--accent'], ['--accent-soft', '--surface'], UI, 'active nav icon and bar, selected chip icon, tab underline'),
-    { fg: '--brand-red-contrast', bg: '--brand-red', min: TEXT, use: 'wordmark tile letters (.aoc-mark__tile)' },
+    ...on(
+      ['--accent', '--accent-hover'],
+      ['--bg', '--surface', '--surface-2'],
+      TEXT,
+      'links, link buttons, toast action, active phase name',
+    ),
+    ...on(
+      ['--accent-contrast'],
+      ['--accent', '--accent-hover'],
+      TEXT,
+      'primary button, skip link, count badge, active phase index',
+    ),
+    ...on(
+      ['--text-inverse'],
+      ['--danger', 'color-mix(in srgb, var(--danger) 86%, var(--text))'],
+      TEXT,
+      'danger button and its hover',
+    ),
+    ...on(
+      ['--accent'],
+      ['--accent-soft', '--surface'],
+      UI,
+      'active nav icon and bar, selected chip icon, tab underline',
+    ),
+    {
+      fg: '--brand-red-contrast',
+      bg: '--brand-red',
+      min: TEXT,
+      use: 'wordmark tile letters (.aoc-mark__tile)',
+    },
   ],
 
   'focus and form boundaries': [
-    ...on(['--accent'], ['--surface', '--bg', '--surface-2', '--accent-soft'], UI, 'focus ring (--focus: 2px --surface then 2px --accent) against what it sits on'),
-    ...on(['color-mix(in srgb, var(--text-3) 80%, var(--surface))'], ['--surface', '--bg'], UI, 'text input / select / textarea boundary (.aoc-input)'),
-    ...on(['--text-2', '--accent', '--danger'], ['--surface'], UI, 'input boundary on hover / focus / invalid'),
+    ...on(
+      ['--accent'],
+      ['--surface', '--bg', '--surface-2', '--accent-soft'],
+      UI,
+      'focus ring (--focus: 2px --surface then 2px --accent) against what it sits on',
+    ),
+    ...on(
+      ['color-mix(in srgb, var(--text-3) 80%, var(--surface))'],
+      ['--surface', '--bg'],
+      UI,
+      'text input / select / textarea boundary (.aoc-input)',
+    ),
+    ...on(
+      ['--text-2', '--accent', '--danger'],
+      ['--surface'],
+      UI,
+      'input boundary on hover / focus / invalid',
+    ),
   ],
 
   'chart marks and series': [
-    ...on(['--series-1', '--series-2', '--series-3', '--series-4'], ['--surface'], UI, 'categorical series and sparkline line on a card (charts/shared.tsx SERIES)'),
-    ...on(['--mark-decision', '--mark-drift', '--mark-rollback', '--mark-enhancement', '--mark-tool'], ['--surface'], UI, 'timeline marks and tool-call ticks (drawn on --surface only)'),
-    ...on(['--live-stalled', '--text-3', '--text-2'], ['--surface'], UI, 'flat sparkline segment, muted sparkline, mock neutral bars'),
-    { fg: '--series-1', bg: 'color-mix(in srgb, var(--series-1) 16%, var(--surface))', min: UI, use: 'phase bar done vs its track' },
-    { fg: '--accent', bg: 'color-mix(in srgb, var(--accent) 16%, var(--surface-2))', min: UI, use: 'progress bar / cost-of-delay fill vs track' },
-    ...on(['--series-1', '--warn', '--text-2'], ['--surface-3'], UI, 'funnel fill / bottleneck fill / mock cost-of-delay bar on a --surface-3 track'),
-    { fg: '--live-throttled', bg: '--surface-2', min: UI, use: 'throttle span on the mock strip (.tstrip__span)' },
+    ...on(
+      ['--series-1', '--series-2', '--series-3', '--series-4'],
+      ['--surface'],
+      UI,
+      'categorical series and sparkline line on a card (charts/shared.tsx SERIES)',
+    ),
+    ...on(
+      ['--mark-decision', '--mark-drift', '--mark-rollback', '--mark-enhancement', '--mark-tool'],
+      ['--surface'],
+      UI,
+      'timeline marks and tool-call ticks (drawn on --surface only)',
+    ),
+    ...on(
+      ['--live-stalled', '--text-3', '--text-2'],
+      ['--surface'],
+      UI,
+      'flat sparkline segment, muted sparkline, mock neutral bars',
+    ),
+    {
+      fg: '--series-1',
+      bg: 'color-mix(in srgb, var(--series-1) 16%, var(--surface))',
+      min: UI,
+      use: 'phase bar done vs its track',
+    },
+    {
+      fg: '--accent',
+      bg: 'color-mix(in srgb, var(--accent) 16%, var(--surface-2))',
+      min: UI,
+      use: 'progress bar / cost-of-delay fill vs track',
+    },
+    ...on(
+      ['--series-1', '--warn', '--text-2'],
+      ['--surface-3'],
+      UI,
+      'funnel fill / bottleneck fill / mock cost-of-delay bar on a --surface-3 track',
+    ),
+    {
+      fg: '--live-throttled',
+      bg: '--surface-2',
+      min: UI,
+      use: 'throttle span on the mock strip (.tstrip__span)',
+    },
     { fg: '--text', bg: '--surface', min: UI, use: 'now line, baseline, hover dot outline' },
   ],
 
   'chart text': [
-    ...on(['--text-2', '--text-3'], ['--surface'], TEXT, 'values at bar tips, axis and legend labels on a card'),
+    ...on(
+      ['--text-2', '--text-3'],
+      ['--surface'],
+      TEXT,
+      'values at bar tips, axis and legend labels on a card',
+    ),
     { fg: '--text-2', bg: '--surface-3', min: TEXT, use: 'timeline band label, tab count, phase index' },
   ],
 };
@@ -138,9 +281,17 @@ const GROUPS: Record<string, Pair[]> = {
  */
 const EXCEPTIONS: ReadonlyArray<{ fg: string; bg: string; why: string }> = [
   { fg: '--border', bg: '--surface', why: 'decorative hairline; never the only boundary of a control' },
-  { fg: '--border-strong', bg: '--surface', why: 'decorative; buttons and chips are identified by their label' },
+  {
+    fg: '--border-strong',
+    bg: '--surface',
+    why: 'decorative; buttons and chips are identified by their label',
+  },
   { fg: '--grid', bg: '--surface', why: 'gridlines are recessive; every chart prints its values' },
-  { fg: '--mark-drift', bg: '--surface-2', why: 'light 2.84:1; drift marks are drawn on --surface only (mocks/README.md)' },
+  {
+    fg: '--mark-drift',
+    bg: '--surface-2',
+    why: 'light 2.84:1; drift marks are drawn on --surface only (mocks/README.md)',
+  },
   { fg: '--mark-tool', bg: '--bg', why: 'light 2.84:1; tool ticks sit inside chart cards (--surface)' },
   {
     fg: 'color-mix(in srgb, var(--series-1) 35%, var(--surface))',
@@ -249,7 +400,8 @@ describe('contrast pair coverage of the shared layer', () => {
       for (const m of css.matchAll(/(?:^|[\s;{])color:\s*([^;}]+)/g)) {
         const expr = m[1]!;
         if (!usesOnlyTokens(expr)) continue;
-        if (!COVERED_FG.has(normalise(expr))) missing.push(`${relative(WEB, file)}: color: ${normalise(expr)}`);
+        if (!COVERED_FG.has(normalise(expr)))
+          missing.push(`${relative(WEB, file)}: color: ${normalise(expr)}`);
       }
     }
     expect([...new Set(missing)]).toEqual([]);
@@ -268,7 +420,8 @@ describe('contrast pair coverage of the shared layer', () => {
     for (const file of tsxFiles) {
       for (const m of readFileSync(file, 'utf8').matchAll(/'var\((--[\w-]+)\)'/g)) {
         const token = m[1]!;
-        if (sheet.light.has(token) && !COVERED_ANY.has(token)) missing.push(`${relative(WEB, file)}: ${token}`);
+        if (sheet.light.has(token) && !COVERED_ANY.has(token))
+          missing.push(`${relative(WEB, file)}: ${token}`);
       }
     }
     expect([...new Set(missing)]).toEqual([]);

@@ -52,7 +52,10 @@ export interface ConsoleMessage {
 }
 
 export interface Page {
-  goto(url: string, options?: { waitUntil?: 'load' | 'domcontentloaded'; timeout?: number }): Promise<unknown>;
+  goto(
+    url: string,
+    options?: { waitUntil?: 'load' | 'domcontentloaded'; timeout?: number },
+  ): Promise<unknown>;
   url(): string;
   evaluate<T>(expression: string): Promise<T>;
   waitForTimeout(ms: number): Promise<void>;
@@ -74,8 +77,8 @@ const GLOBAL_INSTALL = '/opt/node22/lib/node_modules/playwright';
 
 export function loadChromium(): Chromium {
   const require = createRequire(import.meta.url);
-  const candidates = [process.env.AOC_PLAYWRIGHT, 'playwright', GLOBAL_INSTALL].filter(
-    (c): c is string => Boolean(c),
+  const candidates = [process.env.AOC_PLAYWRIGHT, 'playwright', GLOBAL_INSTALL].filter((c): c is string =>
+    Boolean(c),
   );
   for (const id of candidates) {
     try {

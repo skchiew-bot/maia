@@ -65,7 +65,11 @@ function parseArgs(argv: readonly string[]): Options {
     const i = args.indexOf(`--${name}`);
     return i >= 0 ? args[i + 1] : undefined;
   };
-  const list = (name: string) => value(name)?.split(',').map((s) => s.trim()).filter(Boolean) ?? null;
+  const list = (name: string) =>
+    value(name)
+      ?.split(',')
+      .map((s) => s.trim())
+      .filter(Boolean) ?? null;
   const roles = list('roles');
   const bad = roles?.filter((r) => !(ROLES as readonly string[]).includes(r));
   if (bad?.length) throw new Error(`unknown role(s): ${bad.join(', ')}`);
@@ -126,7 +130,9 @@ async function startDaemon(opts: Options): Promise<Daemon> {
   while (Date.now() < deadline) {
     if (child.exitCode !== null) throw new Error(`aocd exited with ${child.exitCode}; see ${log}`);
     try {
-      const res = await fetch(`http://127.0.0.1:${opts.port}/api/health`, { signal: AbortSignal.timeout(1000) });
+      const res = await fetch(`http://127.0.0.1:${opts.port}/api/health`, {
+        signal: AbortSignal.timeout(1000),
+      });
       if (res.ok) return daemon;
     } catch {
       // not listening yet
@@ -181,7 +187,9 @@ async function stopDaemon(d: Daemon): Promise<void> {
     await new Promise((r) => setTimeout(r, 100));
   if (d.child.exitCode === null && d.child.signalCode === null) d.child.kill('SIGKILL');
   for (const c of spawned) if (alive(c)) process.kill(c, 'SIGTERM');
-  console.log(`> aocd stopped (pid ${pid}${spawned.length ? `, plus ${spawned.length} process(es) it started` : ''})`);
+  console.log(
+    `> aocd stopped (pid ${pid}${spawned.length ? `, plus ${spawned.length} process(es) it started` : ''})`,
+  );
 }
 
 // ── data the visits need ─────────────────────────────────────────────────────
@@ -199,7 +207,9 @@ function firstId(json: unknown, keys: readonly string[]): string | null {
   const list = Array.isArray(json)
     ? json
     : json && typeof json === 'object'
-      ? Object.values(json).find((v): v is unknown[] => Array.isArray(v) && v.some((x) => x && typeof x === 'object'))
+      ? Object.values(json).find(
+          (v): v is unknown[] => Array.isArray(v) && v.some((x) => x && typeof x === 'object'),
+        )
       : undefined;
   for (const item of list ?? []) {
     if (!item || typeof item !== 'object') continue;
@@ -225,7 +235,9 @@ async function urlFor(
   let id = preferred ?? null;
   const token = bearer(demo, role);
   if (!id && token) {
-    const endpoint = prefix.startsWith('/portal/') ? `/portal/api${prefix.slice('/portal'.length)}` : `/api${prefix}`;
+    const endpoint = prefix.startsWith('/portal/')
+      ? `/portal/api${prefix.slice('/portal'.length)}`
+      : `/api${prefix}`;
     const singular = prefix.split('/').pop()!.replace(/s$/, '');
     try {
       const res = await fetch(base + endpoint, { headers: { authorization: `Bearer ${token}` } });
@@ -347,11 +359,15 @@ async function keyboardWalk(page: Page, viewport: Variant): Promise<Keyboard> {
       break;
     }
     if (i === 1) k.skipLinkFirst = info.isSkipLink;
-    const stop = { selector: info.label ? `${info.selector} "${info.label}"` : info.selector, owner: info.owner };
+    const stop = {
+      selector: info.label ? `${info.selector} "${info.label}"` : info.selector,
+      owner: info.owner,
+    };
     const r = info.rect;
     const onScreen = r.x + r.width > 0 && r.y + r.height > 0 && r.x < viewport.width && r.y < viewport.height;
     if (!onScreen) k.offscreen.push(stop);
-    else if (!info.indicator && !(await focusChangesPixels(page, info.rect, viewport))) k.invisible.push(stop);
+    else if (!info.indicator && !(await focusChangesPixels(page, info.rect, viewport)))
+      k.invisible.push(stop);
     if (info.isPrimary && !k.reached) {
       k.reached = true;
       k.tabs = i;
@@ -419,7 +435,8 @@ async function scan(s: Shared, visit: Visit, variant: Variant): Promise<PageResu
     const page = await ctx.newPage();
     const net = track(page, visit.role);
     page.on('console', (m) => {
-      if (m.type() === 'error' && !m.text().startsWith('Failed to load resource')) result.consoleErrors.push(m.text());
+      if (m.type() === 'error' && !m.text().startsWith('Failed to load resource'))
+        result.consoleErrors.push(m.text());
     });
     page.on('pageerror', (e) => result.consoleErrors.push(`uncaught: ${e.message}`));
     const t0 = Date.now();
@@ -463,7 +480,11 @@ async function routeCheck(s: Shared, role: Role, path: string, expected: string)
   }
 }
 
-async function pool<T, R>(items: readonly T[], concurrency: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+async function pool<T, R>(
+  items: readonly T[],
+  concurrency: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
   const out: R[] = new Array(items.length);
   let next = 0;
   let done = 0;
@@ -487,20 +508,35 @@ function git(args: string[]): string {
 async function main(): Promise<number> {
   const opts = parseArgs(process.argv.slice(2));
   const startedAt = new Date().toISOString();
-  if (opts.seed)
-    run('pnpm', ['--filter', '@aoc/demo', 'seed', '--', '--data-dir', opts.dataDir, '--reset'], REPO, 'seed demo data');
+  if (opts.seed) {
+    // The seeder's --reset deletes the directory: only ever reset an empty or previously seeded demo dir.
+    const isDemo =
+      !existsSync(opts.dataDir) ||
+      readdirSync(opts.dataDir).length === 0 ||
+      existsSync(join(opts.dataDir, 'demo-tokens.json'));
+    if (!isDemo)
+      throw new Error(`refusing to reset ${opts.dataDir}: it holds data that the demo seeder did not write`);
+    run(
+      'pnpm',
+      ['--filter', '@aoc/demo', 'seed', '--', '--data-dir', opts.dataDir, '--reset'],
+      REPO,
+      'seed demo data',
+    );
+  }
   if (!existsSync(join(opts.dataDir, 'demo-tokens.json')))
     throw new Error(`${opts.dataDir} has no demo-tokens.json; run without --no-seed`);
   if (opts.build) {
     const vite = join(dirname(require.resolve('vite/package.json')), 'bin', 'vite.js');
     run(process.execPath, [vite, 'build', '--logLevel', 'warn'], WEB, 'build the UI');
   }
-  if (!existsSync(join(WEB, 'dist', 'index.html'))) throw new Error('packages/web/dist is missing; run without --no-build');
+  if (!existsSync(join(WEB, 'dist', 'index.html')))
+    throw new Error('packages/web/dist is missing; run without --no-build');
 
   const demo = JSON.parse(readFileSync(join(opts.dataDir, 'demo-tokens.json'), 'utf8')) as DemoTokens;
   const axeSource = readFileSync(require.resolve('axe-core/axe.min.js'), 'utf8');
-  const axeVersion = (JSON.parse(readFileSync(require.resolve('axe-core/package.json'), 'utf8')) as { version: string })
-    .version;
+  const axeVersion = (
+    JSON.parse(readFileSync(require.resolve('axe-core/package.json'), 'utf8')) as { version: string }
+  ).version;
   const probeSource = await bundleProbe();
 
   const routes = readRoutes(join(WEB, 'src', 'routes.tsx')).filter(
@@ -525,14 +561,16 @@ async function main(): Promise<number> {
     const base = `http://localhost:${opts.port}`;
     browser = await loadChromium().launch({ headless: true });
     const misses = await probeSelfTest(browser, probeSource);
-    if (misses.length) throw new Error(`probe self-test failed, the gates cannot be trusted: ${misses.join('; ')}`);
+    if (misses.length)
+      throw new Error(`probe self-test failed, the gates cannot be trusted: ${misses.join('; ')}`);
     const storage: Shared['storage'] = {};
     for (const role of roles) {
       const token = bearer(demo, role);
       if (!token) continue;
       const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, colorScheme: 'light' });
       const res = await ctx.request.post(`${base}/api/auth/login`, { data: { token } });
-      if (res.status() !== 200) throw new Error(`sign-in as ${role} failed: HTTP ${res.status()} ${await res.text()}`);
+      if (res.status() !== 200)
+        throw new Error(`sign-in as ${role} failed: HTTP ${res.status()} ${await res.text()}`);
       storage[role] = await ctx.storageState();
       await ctx.close();
     }
@@ -543,7 +581,9 @@ async function main(): Promise<number> {
       for (const route of routes)
         if (visibleTo(route, role)) visits.push({ route, role, ...(await urlFor(base, route, role, demo)) });
     const jobs = visits.flatMap((v) => variants.map((variant) => ({ v, variant })));
-    console.log(`> ${visits.length} route/role pairs × ${variants.length} variants = ${jobs.length} page visits`);
+    console.log(
+      `> ${visits.length} route/role pairs × ${variants.length} variants = ${jobs.length} page visits`,
+    );
     const pages = await pool(jobs, opts.concurrency, ({ v, variant }) => scan(shared, v, variant));
 
     const routing: RoutingCheck[] = [];
@@ -556,9 +596,12 @@ async function main(): Promise<number> {
     for (const [role, path, expected] of checks)
       if (roles.includes(role)) routing.push(await routeCheck(shared, role, path, expected));
 
-    const notes: string[] = ['Probe self-test passed: every gate fired on its synthetic defect before the visits.'];
+    const notes: string[] = [
+      'Probe self-test passed: every gate fired on its synthetic defect before the visits.',
+    ];
     for (const r of readRoutes(join(WEB, 'src', 'routes.tsx')))
-      if (r.component === null) notes.push(`\`${r.path}\` renders no page (role landing redirect); covered by Role routing.`);
+      if (r.component === null)
+        notes.push(`\`${r.path}\` renders no page (role landing redirect); covered by Role routing.`);
     const placeholders = [...new Set(visits.filter((v) => v.placeholder).map((v) => v.route.path))];
     if (placeholders.length)
       notes.push(
@@ -582,7 +625,9 @@ async function main(): Promise<number> {
     writeFileSync(opts.out, renderReport(result));
     const failing = pages.filter((p) => issuesOf(p).some((i) => i.severity === 'fail')).length;
     const misrouted = routing.filter((r) => !r.ok).length;
-    console.log(`> ${failing} of ${pages.length} page visits fail a gate; ${misrouted} routing check(s) wrong`);
+    console.log(
+      `> ${failing} of ${pages.length} page visits fail a gate; ${misrouted} routing check(s) wrong`,
+    );
     console.log(`> report: ${opts.out}`);
     return failing || misrouted ? 1 : 0;
   } finally {

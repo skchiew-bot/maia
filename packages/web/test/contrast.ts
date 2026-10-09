@@ -110,7 +110,8 @@ function parseRgbFunction(args: string): Rgba {
   }
   const ch = channels.replace(/,/g, ' ').trim().split(/\s+/).map(Number);
   if (ch.length !== 3 || ch.some((v) => Number.isNaN(v))) throw new Error(`bad rgb(${args})`);
-  const a = alpha === undefined ? 1 : alpha.trim().endsWith('%') ? parseFloat(alpha) / 100 : parseFloat(alpha);
+  const a =
+    alpha === undefined ? 1 : alpha.trim().endsWith('%') ? parseFloat(alpha) / 100 : parseFloat(alpha);
   return { r: ch[0]! / 255, g: ch[1]! / 255, b: ch[2]! / 255, a };
 }
 

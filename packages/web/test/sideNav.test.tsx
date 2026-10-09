@@ -25,12 +25,16 @@ describe('SideNav structure (axe `list`)', () => {
     renderNav(false);
     const operate = screen.getByRole('list', { name: 'Operate' });
     expect(within(operate).getByRole('link', { name: 'Control Tower' })).toBeInTheDocument();
-    expect(within(screen.getByRole('list', { name: 'Govern' })).getByRole('link', { name: 'Audit' })).toBeInTheDocument();
+    expect(
+      within(screen.getByRole('list', { name: 'Govern' })).getByRole('link', { name: 'Audit' }),
+    ).toBeInTheDocument();
   });
 
   it('keeps the group names for assistive tech when the rail hides the labels', () => {
     renderNav(true);
     expect(screen.queryByText('Operate')).toBeNull();
-    expect(within(screen.getByRole('list', { name: 'Measure' })).getAllByRole('link').length).toBeGreaterThan(0);
+    expect(within(screen.getByRole('list', { name: 'Measure' })).getAllByRole('link').length).toBeGreaterThan(
+      0,
+    );
   });
 });

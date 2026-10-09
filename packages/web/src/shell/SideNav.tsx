@@ -81,7 +81,9 @@ export function SideNav({
                       ) : null}
                     </NavLink>
                   );
-                  return <li key={it.to}>{collapsed ? <Tooltip content={it.label}>{link}</Tooltip> : link}</li>;
+                  return (
+                    <li key={it.to}>{collapsed ? <Tooltip content={it.label}>{link}</Tooltip> : link}</li>
+                  );
                 })}
               </ul>
             </Fragment>
