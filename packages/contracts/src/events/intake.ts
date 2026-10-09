@@ -45,8 +45,8 @@ export const INTAKE_EVENTS = [
   defineEvent({
     type: 'ticket.escalated_to_human',
     owner: 'intake',
-    description: 'Low-confidence diagnosis, triage disagreement (R17) or exhausted budget → human decision.',
-    meta: meta({ ticketId: zId, reason: z.enum(['low_confidence', 'disagreement', 'budget_exhausted']), decisionId: zId }),
+    description: 'Low-confidence diagnosis, triage disagreement (R17), exhausted budget, or a finished build with no resolvable UAT ref → human decision.',
+    meta: meta({ ticketId: zId, reason: z.enum(['low_confidence', 'disagreement', 'budget_exhausted', 'uat_build_missing']), decisionId: zId }),
     payload: null,
   }),
   defineEvent({

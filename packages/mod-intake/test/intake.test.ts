@@ -1,6 +1,9 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { newId, type Actor, type ChangeService, type LaunchRequest, type LearningService, type PublicTicket, type InternalTicket, type SupervisorService } from '@aoc/contracts';
-import { createTestRuntime, type TestRuntime } from '@aoc/kernel';
+import { newId, type Actor, type ChangeService, type LaunchRequest, type LearningService, type LedgerService, type PublicTicket, type InternalTicket, type SupervisorService } from '@aoc/contracts';
+import { createGitService, createTestRuntime, initRepo, type TestRuntime } from '@aoc/kernel';
 import { createIntakeModule, builtinScanner } from '../src';
 
 const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from('fake-png-body')]);
@@ -8,7 +11,26 @@ const PDF = Buffer.from('%PDF-1.7\n1 0 obj << >> endobj\n');
 const EICAR = Buffer.concat([PNG, Buffer.from(['X5O!P%@AP[4\\PZX54(P^)7CC)7}$', 'EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*'].join(''))]);
 
 let t: TestRuntime;
-afterEach(async () => t?.close());
+const temps: string[] = [];
+afterEach(async () => {
+  await t?.close();
+  for (const d of temps.splice(0)) rmSync(d, { recursive: true, force: true });
+});
+
+const git = createGitService();
+/** The project repository the ledger reports; the build "pushes" uat/<ticket> by creating that branch. */
+function projectRepo(): { dir: string; pushUat(ticketId: string): string } {
+  const dir = mkdtempSync(join(tmpdir(), 'aoc-intake-repo-'));
+  temps.push(dir);
+  initRepo(dir);
+  return {
+    dir,
+    pushUat(ticketId) {
+      git.createBranch(dir, `uat/${ticketId}`, 'HEAD');
+      return git.revParse(dir, `uat/${ticketId}`)!;
+    },
+  };
+}
 
 function stubs() {
   const launches: (LaunchRequest & { sessionId: string })[] = [];
@@ -52,11 +74,12 @@ function stubs() {
   return { supervisor, learning, change, launches, stops, errors, promotions };
 }
 
-async function setup(config: Record<string, unknown> = {}) {
+async function setup(config: Record<string, unknown> = {}, repoDir: string | null = null) {
   const s = stubs();
+  const ledger: Partial<LedgerService> = { projectRepoPath: () => repoDir };
   t = await createTestRuntime({
     modules: [createIntakeModule({ scanner: (config.scanner as never) ?? builtinScanner })],
-    services: { supervisor: s.supervisor as SupervisorService, learning: s.learning as LearningService, change: s.change as ChangeService },
+    services: { supervisor: s.supervisor as SupervisorService, learning: s.learning as LearningService, change: s.change as ChangeService, ledger: ledger as LedgerService },
     config: { intake: { triageAgents: 2, maxImageBytes: 1024, ...(config.intake as object) } },
   });
   t.rt.store.append({ type: 'project.created', actor: { kind: 'system', id: 'test' }, scope: { projectId: 'prj_1' }, meta: { projectId: 'prj_1', slug: 'claims-bot' }, payload: { name: 'Claims Bot' }, source: 'system' });
@@ -77,6 +100,24 @@ const report = (sessionId: string, confidence: number, cls: string) =>
     headers: t.ingestHeaders(sessionId),
     body: { sessionId, input: { root_cause: `Null check missing in ${cls}`, confidence, fix_plan: 'Add a guard and a regression test', root_cause_class: cls } },
   });
+
+const endBuild = (sessionId: string) =>
+  t.rt.store.append({ type: 'session.ended', actor: { kind: 'system', id: 'supervisor' }, scope: { sessionId }, meta: { sessionId, outcome: 'completed' }, source: 'supervisor' });
+
+/** Submit a ticket, let both triage agents agree and approve the fix plan: the first build session is running. */
+async function toBuild(s: ReturnType<typeof stubs>, approver: { user: Parameters<NonNullable<TestRuntime['decisions']>['resolve']>[2] }) {
+  const req = t.user('requester', 'Nur');
+  const { ticketId } = (await (await submit(req.headers)).json()) as PublicTicket;
+  await t.drain();
+  const triage = s.launches.filter((l) => l.ticketId === ticketId);
+  await report(triage[0]!.sessionId, 0.9, 'upload-null-check');
+  await report(triage[1]!.sessionId, 0.9, 'upload-null-check');
+  await t.drain();
+  const fixPlan = t.decisions!.list({ subjectId: ticketId }).find((d) => d.kind === 'fix_plan')!;
+  await t.decisions!.resolve(fixPlan.id, { optionId: 'approve' }, approver.user);
+  await t.drain();
+  return { ticketId, req, build: s.launches.find((l) => l.ticketId === ticketId && l.processType === 'bug-fix')! };
+}
 
 describe('intake uploads (§7 binding mitigations)', () => {
   it('validates by magic bytes, size and scanner, encrypts media, and shows only abstracted status', async () => {
@@ -110,7 +151,8 @@ describe('intake uploads (§7 binding mitigations)', () => {
 
 describe('ticket lifecycle', () => {
   it('runs triage read-only with untrusted framing, gates the fix plan, loops on UAT failure and closes after go-live', async () => {
-    const s = await setup();
+    const repo = projectRepo();
+    const s = await setup({}, repo.dir);
     const req = t.user('requester', 'Nur');
     const other = t.user('requester', 'Someone else');
     const approver = t.user('approver', 'CEO');
@@ -135,10 +177,10 @@ describe('ticket lifecycle', () => {
     await t.drain();
     const build = s.launches.find((l) => l.processType === 'bug-fix')!;
     expect(build.prompt).toMatch(/APPROVED fix plan/);
-    const endBuild = (sessionId: string) =>
-      t.rt.store.append({ type: 'session.ended', actor: { kind: 'system', id: 'supervisor' }, scope: { sessionId }, meta: { sessionId, outcome: 'completed' }, source: 'supervisor' });
+    const uatSha = repo.pushUat(ticketId);
     endBuild(build.sessionId);
     await t.drain();
+    expect(t.rt.store.list({ types: ['ticket.uat_ready'] })[0]!.meta).toMatchObject({ uatRef: `uat/${ticketId}`, uatSha });
     const pub = await t.json<PublicTicket>('GET', `/portal/api/tickets/${ticketId}`, { headers: req.headers });
     expect(pub.statusLabel).toBe('Ready for your testing');
     expect(pub.canSignOffUat).toBe(true);
@@ -169,6 +211,60 @@ describe('ticket lifecycle', () => {
     expect(internal.resolution).toBe('fixed');
     expect(internal.diagnoses).toHaveLength(2);
     expect((await t.request('GET', `/api/tickets/${ticketId}`, { headers: req.headers })).status).toBe(403);
+  });
+
+  it('never asks the requester to test a build that does not exist: no repository → escalated, not ready (G-30)', async () => {
+    const s = await setup({}, null);
+    const approver = t.user('approver', 'CEO');
+    const { ticketId, req, build } = await toBuild(s, approver);
+    endBuild(build.sessionId);
+    await t.drain();
+    expect(t.rt.store.list({ types: ['ticket.uat_ready'] })).toHaveLength(0);
+    expect(t.rt.store.list({ types: ['ticket.escalated_to_human'] })[0]!.meta).toMatchObject({ ticketId, reason: 'uat_build_missing' });
+    expect(t.decisions!.list({ subjectId: ticketId, kind: ['uat_signoff'] })).toHaveLength(0);
+    const internal = await t.json<InternalTicket>('GET', `/api/tickets/${ticketId}`, { headers: approver.headers });
+    expect(internal).toMatchObject({ stage: 'awaiting_human', uatRef: null });
+    const pub = await t.json<PublicTicket>('GET', `/portal/api/tickets/${ticketId}`, { headers: req.headers });
+    expect(pub).toMatchObject({ statusLabel: 'Being worked on', canSignOffUat: false });
+
+    const card = t.decisions!.list({ subjectId: ticketId, status: ['open'] })[0]!;
+    expect(card).toMatchObject({ kind: 'fix_plan', requiredRole: 'approver' });
+    expect(card.question).toContain('no repository is configured');
+    expect(card.options.map((o) => o.id)).toEqual(['rebuild', 'recheck', 'close']);
+    await t.decisions!.resolve(card.id, { optionId: 'close' }, approver.user);
+    await t.drain();
+    expect((await t.json<InternalTicket>('GET', `/api/tickets/${ticketId}`, { headers: approver.headers })).resolution).toBe('wont_fix');
+  });
+
+  it('a build that never pushed uat/<ticket> is re-gated: rebuild, then re-check once the branch exists (G-30)', async () => {
+    const repo = projectRepo();
+    const s = await setup({}, repo.dir);
+    const approver = t.user('approver', 'CEO');
+    const { ticketId, build } = await toBuild(s, approver);
+    endBuild(build.sessionId);
+    await t.drain();
+    endBuild(build.sessionId); // a redelivered end of the same session escalates once
+    await t.drain();
+    expect(t.rt.store.list({ types: ['ticket.escalated_to_human'] })).toHaveLength(1);
+    const first = t.decisions!.list({ subjectId: ticketId, status: ['open'] })[0]!;
+    expect(first.question).toContain('the branch was never pushed there');
+
+    await t.decisions!.resolve(first.id, { optionId: 'rebuild' }, approver.user);
+    await t.drain();
+    const builds = s.launches.filter((l) => l.ticketId === ticketId && l.processType === 'bug-fix');
+    expect(builds).toHaveLength(2);
+    endBuild(builds[1]!.sessionId);
+    await t.drain();
+    const second = t.decisions!.list({ subjectId: ticketId, status: ['open'] })[0]!;
+    expect(t.rt.store.list({ types: ['ticket.uat_ready'] })).toHaveLength(0);
+
+    const uatSha = repo.pushUat(ticketId);
+    await t.decisions!.resolve(second.id, { optionId: 'recheck' }, approver.user);
+    await t.drain();
+    expect(t.rt.store.list({ types: ['ticket.uat_ready'] }).map((e) => e.meta)).toEqual([
+      expect.objectContaining({ ticketId, uatRef: `uat/${ticketId}`, uatSha }),
+    ]);
+    expect(t.decisions!.list({ subjectId: ticketId, kind: ['uat_signoff'], status: ['open'] })).toHaveLength(1);
   });
 
   it('bounces low confidence and disagreement to a human', async () => {

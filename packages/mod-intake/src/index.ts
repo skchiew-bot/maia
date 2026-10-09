@@ -125,7 +125,7 @@ export function createIntakeModule(opts: IntakeModuleOptions = {}): AocModule {
           if (e.type === 'session.ended' && link.role === 'build') {
             const t = flow.ticket(link.ticket_id);
             if (!t || t.build_session_id !== sessionId || t.stage !== 'building') return;
-            if (ctx.store.findByCausation(e.id, 'ticket.uat_ready').length) return;
+            if (ctx.store.findByCausation(e.id).length) return; // UAT ready or escalated already
             const outcome = (e.meta as { outcome: string }).outcome;
             if (outcome === 'completed') flow.readyForUat(t, e.id);
             else ctx.notify({ kind: 'session.attention', title: `Build for ${t.ticket_id} ended (${outcome}) before UAT`, audience: ['approver', 'builder'], severity: 'warn', refs: { ticketId: t.ticket_id, sessionId } });

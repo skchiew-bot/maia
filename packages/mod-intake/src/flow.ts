@@ -282,11 +282,13 @@ export class IntakeFlow {
     this.setPublicStatus(ticketId, 'being_worked_on', causationId);
   }
 
+  /** The requester is asked to test only a build that exists: `uat/<ticket>` must resolve in the project repository. */
   readyForUat(t: TicketRow, causationId?: string): void {
     const uatRef = `uat/${t.ticket_id}`;
-    const repo = t.project_id ? this.ctx.services.maybe('ledger')?.projectRepoPath(t.project_id) : null;
+    const repo = (t.project_id && this.ctx.services.maybe('ledger')?.projectRepoPath(t.project_id)) || null;
     const git = this.ctx.services.get('git');
-    const sha = (repo && (git.revParse(repo, uatRef) ?? git.head(repo))) || '0000000';
+    const sha = repo && git.isRepo(repo) ? git.revParse(repo, uatRef) : null;
+    if (!sha) return this.escalateMissingUatBuild(t, uatRef, repo !== null, causationId);
     const d = this.ctx.services.get('decisions').request(
       {
         kind: 'uat_signoff',
@@ -310,6 +312,43 @@ export class IntakeFlow {
       causationId,
     });
     this.setPublicStatus(t.ticket_id, 'ready_for_testing', causationId);
+  }
+
+  /** No UAT build to test: the requester hears nothing; a human re-gates the build (fix_plan) or closes the ticket. */
+  private escalateMissingUatBuild(t: TicketRow, uatRef: string, hasRepo: boolean, causationId?: string): void {
+    const d = this.ctx.services.get('decisions').request(
+      {
+        kind: 'fix_plan',
+        subjectType: 'ticket',
+        subjectId: t.ticket_id,
+        projectId: t.project_id,
+        requesterId: 'system:intake',
+        title: `No UAT build for ${t.ticket_id}: ${t.title.slice(0, 80)}`,
+        question: `The build session finished, but ${uatRef} does not resolve ${hasRepo ? 'in the project repository (the branch was never pushed there)' : '(no repository is configured for the project)'}. Nothing was sent to the requester. How should we proceed?`,
+        options: [
+          { id: 'rebuild', label: 'Re-run the build under the approved fix plan' },
+          { id: 'recheck', label: 'Check for the UAT build again' },
+          { id: 'close', label: "Close as won't fix" },
+        ],
+        context: `Approved fix plan:\n${t.fix_plan ?? ''}`,
+      },
+      INTAKE_ACTOR,
+    );
+    this.ctx.store.append({
+      type: 'ticket.escalated_to_human',
+      actor: INTAKE_ACTOR,
+      scope: { ticketId: t.ticket_id, projectId: t.project_id ?? undefined },
+      meta: { ticketId: t.ticket_id, reason: 'uat_build_missing', decisionId: d.id },
+      source: 'intake',
+      causationId,
+    });
+    this.ctx.notify({
+      kind: 'session.attention',
+      title: `No UAT build for ${t.ticket_id}: ${uatRef} does not resolve`,
+      audience: ['approver', 'builder'],
+      severity: 'warn',
+      refs: { ticketId: t.ticket_id, decisionId: d.id },
+    });
   }
 
   async requestGoLive(t: TicketRow, causationId?: string): Promise<void> {
@@ -368,7 +407,9 @@ export class IntakeFlow {
         return;
       }
       case 'fix_plan':
-        if (m.optionId === 'approve') return this.startBuild(t.ticket_id, null, e.id);
+        if (m.optionId === 'approve' || m.optionId === 'rebuild') return this.startBuild(t.ticket_id, null, e.id);
+        if (m.optionId === 'recheck') return this.readyForUat(t, e.id);
+        if (m.optionId === 'close') return this.close(t.ticket_id, 'wont_fix', { kind: 'human', id: card?.resolution?.resolvedBy ?? 'unknown' }, undefined, e.id);
         return this.startTriage(t.ticket_id, e.id);
       case 'uat_signoff': {
         const verdict = m.optionId === 'pass' ? 'pass' : 'fail';
