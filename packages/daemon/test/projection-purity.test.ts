@@ -133,4 +133,51 @@ describe('erasing a scope (§13)', () => {
     );
     expect(failures.join('\n\n')).toBe('');
   }, 900_000);
+
+  it('erasing scope after scope keeps every earlier one gone, the chain valid, and live equal to rebuilt', async () => {
+    const probe = await openHistory(copyHistory(seeded));
+    const scopes = Object.values(erasable(probe.rt.store)).flat();
+    await probe.close();
+    const failures: string[] = [];
+    await forSeeds(
+      'serial erasures',
+      async (rng, seed) => {
+        const h = copyHistory(seeded);
+        const o = await openHistory(h);
+        try {
+          const store = o.rt.store;
+          const problems: string[] = [];
+          const erased: string[] = [];
+          const needles: string[] = [];
+          for (const scope of rng.sample(scopes, 6)) {
+            needles.push(...plaintextOnlyIn(store, scope));
+            store.eraseScope(scope, { actor: { kind: 'human', id: 'usr_dpo' }, reason: 'pdpa_request' });
+            erased.push(scope);
+            const where = `after erasing ${erased.join(', ')}`;
+            for (const hit of scanTables(store.db, needles)) problems.push(`${where}: erased text survives in ${hit.where}: ${JSON.stringify(hit.needle.slice(0, 50))}`);
+            const orphans = ftsOrphanTerms(store.db);
+            if (orphans.length) problems.push(`${where}: the knowledge index still holds terms of no remaining document: ${orphans.slice(0, 8).join(', ')}`);
+            const files = scanFiles(h.aocData, needles);
+            if (files.length) problems.push(`${where}: ${files.length} erased string(s) are still in ${[...new Set(files.map((f) => f.where))].join(' and ')}, e.g. ${JSON.stringify(files[0]!.needle.slice(0, 50))}`);
+            if (problems.length) break;
+          }
+          if (!problems.length) {
+            const live = snapshotProjections(store.db, o.projectors);
+            store.rebuildProjections();
+            const diffs = diffSnapshots(live, snapshotProjections(store.db, o.projectors));
+            if (diffs.length) problems.push(`rebuilding after the erasures changes the projections:\n   ${describeDiffs(diffs)}`);
+            if (!store.verifyChain().ok) problems.push('the chain no longer verifies');
+            const left = erased.filter((s) => store.bodies.countScope(s) !== 0);
+            if (left.length) problems.push(`bodies remain in the erased scopes ${left.join(', ')}`);
+          }
+          if (problems.length) failures.push(`seed ${seed}, erasing ${erased.join(', ')}:\n - ${problems.join('\n - ')}`);
+        } finally {
+          await o.close();
+          await discardHistory(h);
+        }
+      },
+      { count: 3 },
+    );
+    expect(failures.join('\n\n')).toBe('');
+  }, 900_000);
 });
