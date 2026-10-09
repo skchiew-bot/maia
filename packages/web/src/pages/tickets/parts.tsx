@@ -38,10 +38,16 @@ export function GateTrail({ gates, compact }: { gates: Gates; compact?: boolean 
   return (
     <ul className={cx('tkt-gates', compact && 'tkt-gates--compact')} aria-label="Gates">
       {items.map(([label, state]) => (
-        <li key={label} className={cx('tkt-gate', `tkt-gate--${state}`)} title={`${label}: ${GATE_WORD[state]}`}>
+        <li
+          key={label}
+          className={cx('tkt-gate', `tkt-gate--${state}`)}
+          title={`${label}: ${GATE_WORD[state]}`}
+        >
           <Icon name={GATE_ICON[state]} size={12} />
           <span>{label}</span>
-          <span className={compact ? 'aoc-sr-only' : 'tkt-gate__word'}>{compact ? `: ${GATE_WORD[state]}` : GATE_WORD[state]}</span>
+          <span className={compact ? 'aoc-sr-only' : 'tkt-gate__word'}>
+            {compact ? `: ${GATE_WORD[state]}` : GATE_WORD[state]}
+          </span>
         </li>
       ))}
     </ul>

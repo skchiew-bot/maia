@@ -118,9 +118,27 @@ const AFTER_FIX_PLAN: ReadonlySet<TicketStage> = new Set(['building', 'uat', 'go
  */
 export function gatesOf(t: Pick<InternalTicket, 'stage' | 'openDecisionIds' | 'resolution'>): Gates {
   const closedEarly = t.stage === 'closed';
-  const fixPlan: GateState = AFTER_FIX_PLAN.has(t.stage) ? 'passed' : t.stage === 'fix_plan_gate' ? 'waiting' : closedEarly ? 'skipped' : 'not_reached';
-  let uat: GateState = t.stage === 'go_live_gate' || t.stage === 'completed' ? 'passed' : closedEarly ? 'skipped' : 'not_reached';
-  let goLive: GateState = t.stage === 'completed' ? 'passed' : t.stage === 'go_live_gate' ? 'waiting' : closedEarly ? 'skipped' : 'not_reached';
+  const fixPlan: GateState = AFTER_FIX_PLAN.has(t.stage)
+    ? 'passed'
+    : t.stage === 'fix_plan_gate'
+      ? 'waiting'
+      : closedEarly
+        ? 'skipped'
+        : 'not_reached';
+  let uat: GateState =
+    t.stage === 'go_live_gate' || t.stage === 'completed'
+      ? 'passed'
+      : closedEarly
+        ? 'skipped'
+        : 'not_reached';
+  let goLive: GateState =
+    t.stage === 'completed'
+      ? 'passed'
+      : t.stage === 'go_live_gate'
+        ? 'waiting'
+        : closedEarly
+          ? 'skipped'
+          : 'not_reached';
   if (t.stage === 'uat') {
     if (t.openDecisionIds.length) uat = 'waiting';
     else {
@@ -177,7 +195,12 @@ export function budgetsFrom(events: readonly AuditEventHeaderDTO[]): Map<string,
   const out = new Map<string, TriageBudget>();
   for (const e of events) {
     if (e.type !== 'ticket.triage_started') continue;
-    const m = e.meta as { ticketId?: string; budgetTokens?: number; budgetMinutes?: number; sessionIds?: string[] };
+    const m = e.meta as {
+      ticketId?: string;
+      budgetTokens?: number;
+      budgetMinutes?: number;
+      sessionIds?: string[];
+    };
     const ticketId = m.ticketId ?? e.scope.ticketId;
     if (!ticketId || typeof m.budgetTokens !== 'number') continue;
     const prev = out.get(ticketId);
