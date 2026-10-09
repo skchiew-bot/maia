@@ -413,8 +413,11 @@ describe('system prompt and injected text', () => {
       decisionAnswersText([
         card as never,
         { id: 'dec_2', status: 'withdrawn', options: [], resolution: null } as never,
+        { id: 'dec_3', status: 'expired', options: [], resolution: null } as never,
       ]),
-    ).toBe('Decision dec_1 answered: Approve. Ship it.\nDecision dec_2 was withdrawn; do not wait for it.');
+    ).toBe(
+      'Decision dec_1 answered: Approve. Ship it.\nDecision dec_2 was withdrawn; do not wait for it.\nDecision dec_3 expired unanswered; do not wait for it.',
+    );
   });
 });
 

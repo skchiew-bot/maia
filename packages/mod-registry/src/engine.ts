@@ -450,7 +450,8 @@ export class RegistryEngine {
     if (!row || row.status !== 'proposed') return;
     if (store.findByCausation(e.id).some((x) => x.type.startsWith('playbook.'))) return;
     const scope = { projectId: row.project_id ?? undefined, decisionId };
-    if (e.type === 'decision.withdrawn') {
+    // A withdrawn or expired approval card never binds the proposal.
+    if (e.type !== 'decision.resolved') {
       store.append({
         type: 'playbook.retired',
         actor: SYSTEM_ACTOR,

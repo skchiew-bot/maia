@@ -172,6 +172,7 @@ export function createKnowledgeProjector(): Projector {
       'decision.requested',
       'decision.resolved',
       'decision.withdrawn',
+      'decision.expired',
       'body.erased',
     ],
     apply({ db }, e, payload) {
@@ -410,9 +411,10 @@ function applyKnowledge(db: DatabaseSync, e: StoredEvent, payload: JsonValue | n
       });
       return;
     }
-    case 'decision.withdrawn': {
+    case 'decision.withdrawn':
+    case 'decision.expired': {
       db.prepare('DELETE FROM reg_kn_decisions WHERE decision_id = ?').run(
-        (e.meta as MetaOf<'decision.withdrawn'>).decisionId,
+        (e.meta as MetaOf<'decision.withdrawn' | 'decision.expired'>).decisionId,
       );
       return;
     }

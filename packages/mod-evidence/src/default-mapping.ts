@@ -352,7 +352,7 @@ export const BUILTIN_MAPPING: MappingFile = {
       clause: 'A.9.2',
       clauseTitle: 'Processes for responsible use of AI systems',
       evidence: [
-        'Decisions requested, resolved, withdrawn and escalated (gates.json)',
+        'Decisions requested, resolved, withdrawn, expired and escalated (gates.json)',
         'Tool calls denied by guards',
         'Blocked self-modification attempts',
       ],
@@ -360,6 +360,7 @@ export const BUILTIN_MAPPING: MappingFile = {
         'decision.requested',
         'decision.resolved',
         'decision.withdrawn',
+        'decision.expired',
         'decision.escalated',
         'tool.denied',
         'selfmod.blocked',

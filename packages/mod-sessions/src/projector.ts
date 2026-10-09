@@ -63,6 +63,7 @@ const HANDLES = [
   'decision.requested',
   'decision.resolved',
   'decision.withdrawn',
+  'decision.expired',
   'tool.used',
   'tool.denied',
   'usage.recorded',
@@ -212,6 +213,10 @@ function apply(db: DatabaseSync, e: StoredEvent, p: P, tz: string): void {
       break;
     case 'decision.withdrawn':
       db.prepare("UPDATE sess_decisions SET status = 'withdrawn' WHERE decision_id = ?").run(m.decisionId as string);
+      break;
+    case 'decision.expired':
+      // An expired card no longer keeps the session Waiting on you.
+      db.prepare("UPDATE sess_decisions SET status = 'expired' WHERE decision_id = ?").run(m.decisionId as string);
       break;
     case 'tool.used':
       bump(db, m.sessionId as string, e.ts);

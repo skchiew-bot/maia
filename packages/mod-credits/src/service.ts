@@ -329,16 +329,17 @@ export class CreditsEngine implements CreditService {
     });
   }
 
-  /** A withdrawn decision (e.g. its session ended) closes the request so the user can raise a new one. */
+  /** A withdrawn or expired decision (e.g. its session ended) closes the request so the user can raise a new one. */
   onDecisionWithdrawn(e: StoredEvent): void {
-    const m = metaOf(e, 'decision.withdrawn');
-    const req = this.repo.topupByDecision(m.decisionId);
+    const decisionId = String(e.meta.decisionId);
+    const reason = e.type === 'decision.expired' ? 'expired' : metaOf(e, 'decision.withdrawn').reason;
+    const req = this.repo.topupByDecision(decisionId);
     if (!req || req.status !== 'pending') return;
     this.ctx.store.append({
       type: 'credit.topup_withdrawn',
       actor: MODULE_ACTOR,
       scope: requestScope(req),
-      meta: { requestId: req.requestId, userId: req.userId, decisionId: req.decisionId, reason: m.reason },
+      meta: { requestId: req.requestId, userId: req.userId, decisionId: req.decisionId, reason },
       source: 'system',
       idempotencyKey: resolutionKey(req.requestId),
       causationId: e.id,

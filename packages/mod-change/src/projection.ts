@@ -148,6 +148,7 @@ const HANDLES = [
   'decision.requested',
   'decision.resolved',
   'decision.withdrawn',
+  'decision.expired',
   'session.launch_requested',
   'session.rollover_completed',
   'ticket.build_started',
@@ -664,6 +665,11 @@ function apply(db: DatabaseSync, e: StoredEvent, payload: JsonValue | null): voi
     case 'decision.withdrawn': {
       const m = metaOf(e, 'decision.withdrawn');
       run(db, `UPDATE chg_decisions SET status = 'withdrawn' WHERE decision_id = ?`, m.decisionId);
+      return;
+    }
+    case 'decision.expired': {
+      const m = metaOf(e, 'decision.expired');
+      run(db, `UPDATE chg_decisions SET status = 'expired' WHERE decision_id = ?`, m.decisionId);
       return;
     }
     case 'session.launch_requested': {

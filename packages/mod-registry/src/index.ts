@@ -33,7 +33,7 @@ export function createRegistryModule(opts: RegistryModuleOptions = {}): AocModul
     reactors: [
       {
         name: 'registry.playbook-decisions',
-        handles: ['decision.resolved', 'decision.withdrawn'],
+        handles: ['decision.resolved', 'decision.withdrawn', 'decision.expired'],
         react: (e) => ready().onDecision(e),
       },
     ],

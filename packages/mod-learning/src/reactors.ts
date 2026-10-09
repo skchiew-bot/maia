@@ -193,14 +193,15 @@ export function offenceReactor(engine: () => LearningEngine): Reactor {
   };
 }
 
-/** Lesson binding follows the human decision: bind → lesson.bound; reject or withdrawal → lesson.rejected. */
+/** Lesson binding follows the human decision: bind → lesson.bound; reject, withdrawal or expiry → lesson.rejected. */
 export function lessonDecisionReactor(engine: () => LearningEngine): Reactor {
   return {
     name: 'learning.lesson-decisions',
-    handles: ['decision.resolved', 'decision.withdrawn'],
+    handles: ['decision.resolved', 'decision.withdrawn', 'decision.expired'],
     react(e) {
       const eng = engine();
-      const m = e.meta as MetaOf<'decision.resolved'> | MetaOf<'decision.withdrawn'>;
+      const m = e.meta as
+        MetaOf<'decision.resolved'> | MetaOf<'decision.withdrawn'> | MetaOf<'decision.expired'>;
       if (e.type === 'decision.resolved' && (m as MetaOf<'decision.resolved'>).kind !== 'lesson_binding')
         return;
       const lesson = eng.one<{ lesson_id: string; status: string }>(

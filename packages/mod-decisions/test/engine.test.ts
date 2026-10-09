@@ -359,7 +359,7 @@ describe('policy resolution (§10, §11)', () => {
 });
 
 describe('withdraw and escalate', () => {
-  it('withdraws open cards with a label (free text becomes an encrypted note); expired is a closing label', async () => {
+  it('withdraws open cards with a label (free text becomes an encrypted note); the expired label expires the card', async () => {
     const { engine, approver, builderA, t } = (h = await harness());
     const raise = () =>
       engine.request(decisionInput({ kind: 'fix_plan', requesterId: builderA.user.id }), human(builderA));
@@ -375,9 +375,12 @@ describe('withdraw and escalate', () => {
       by: approver.user.id,
       note: 'Session ended by the operator',
     });
-    expect(engine.withdraw(raise().id, 'expired', { kind: 'system', id: 'scheduler' }).status).toBe(
-      'expired',
-    );
+    const lapsed = engine.withdraw(raise().id, 'expired', { kind: 'system', id: 'scheduler' });
+    expect(lapsed.status).toBe('expired');
+    expect(t.rt.store.list({ decisionId: lapsed.id, typePrefix: 'decision.' }).map((e) => e.type)).toEqual([
+      'decision.requested',
+      'decision.expired',
+    ]);
 
     const done = raise();
     await engine.resolve(done.id, { optionId: 'approve' }, approver.user);
@@ -386,6 +389,42 @@ describe('withdraw and escalate', () => {
       status: 409,
       code: 'not_open',
     });
+  });
+
+  it('expires an open card with the catalog event decision.expired {ageMs}; old withdrawn-as-expired logs still read as expired (G-33)', async () => {
+    const { engine, approver, builderA, t } = (h = await harness());
+    const card = engine.request(
+      decisionInput({ kind: 'fix_plan', requesterId: builderA.user.id }),
+      human(builderA),
+    );
+    t.clock.advance(90_000);
+    expect(engine.expire(card.id, { kind: 'system', id: 'scheduler' })).toMatchObject({ status: 'expired' });
+    const ev = t.rt.store.list({ types: ['decision.expired'], decisionId: card.id })[0]!;
+    expect(ev.meta).toEqual({ decisionId: card.id, ageMs: 90_000 });
+    expect(ev.scope).toMatchObject({ decisionId: card.id, sessionId: 'ses_1', projectId: 'prj_1' });
+    expect(engine.record(card.id)).toMatchObject({ closedAt: ev.ts, withdrawal: null });
+    expect(codeOf(() => engine.expire(card.id, { kind: 'system', id: 'scheduler' }))).toBe('not_open');
+    await expect(engine.resolve(card.id, { optionId: 'approve' }, approver.user)).rejects.toMatchObject({
+      code: 'not_open',
+    });
+    expect(engine.list({ status: ['open'] })).toEqual([]);
+
+    // A log written before this change: the withdrawal labelled `expired` keeps meaning expired after a rebuild.
+    const legacy = engine.request(
+      decisionInput({ kind: 'fix_plan', requesterId: builderA.user.id }),
+      human(builderA),
+    );
+    t.rt.store.append({
+      type: 'decision.withdrawn',
+      actor: { kind: 'system', id: 'scheduler' },
+      scope: { decisionId: legacy.id },
+      meta: { decisionId: legacy.id, reason: 'expired' },
+      payload: {},
+      source: 'system',
+    });
+    t.rt.store.rebuildProjections(['decisions']);
+    expect(engine.get(card.id)?.status).toBe('expired');
+    expect(engine.get(legacy.id)?.status).toBe('expired');
   });
 
   it('escalates Builder-level cards to the Approver only; the requester stays excluded', async () => {

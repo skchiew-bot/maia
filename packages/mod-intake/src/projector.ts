@@ -48,6 +48,7 @@ const HANDLES = [
   'decision.requested',
   'decision.resolved',
   'decision.withdrawn',
+  'decision.expired',
   'promotion.requested',
 ] as const;
 
@@ -165,6 +166,9 @@ export const intakeProjector: Projector = {
         break;
       case 'decision.withdrawn':
         db.prepare("UPDATE itk_decisions SET status = 'withdrawn' WHERE decision_id = ?").run(m.decisionId as string);
+        break;
+      case 'decision.expired':
+        db.prepare("UPDATE itk_decisions SET status = 'expired' WHERE decision_id = ?").run(m.decisionId as string);
         break;
       case 'promotion.requested':
         if (m.ticketId) db.prepare('INSERT OR IGNORE INTO itk_promotions (promotion_id, ticket_id) VALUES (?, ?)').run(m.promotionId as string, m.ticketId as string);
