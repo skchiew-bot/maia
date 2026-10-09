@@ -139,12 +139,16 @@ export function createIntakeModule(opts: IntakeModuleOptions = {}): AocModule {
       },
       {
         name: 'intake.promotion',
-        handles: ['promotion.completed', 'promotion.refused'],
+        handles: ['promotion.completed', 'promotion.refused', 'promotion.failed'],
         react(e, _p, ctx) {
-          const promotionId = (e.meta as { promotionId: string }).promotionId;
+          const { promotionId, reason } = e.meta as { promotionId: string; reason?: string };
           const row = ctx.db.prepare('SELECT ticket_id FROM itk_promotions WHERE promotion_id = ?').get(promotionId) as { ticket_id: string } | undefined;
           if (!row) return;
-          if (e.type === 'promotion.completed') flow.close(row.ticket_id, 'fixed', INTAKE_ACTOR, 'Promoted to main', e.id);
+          if (e.type === 'promotion.completed') return flow.close(row.ticket_id, 'fixed', INTAKE_ACTOR, 'Promoted to main', e.id);
+          // Approved but not executed (main moved on, push failed): the ticket must not sit at the gate with nothing open.
+          const t = flow.ticket(row.ticket_id);
+          if (!t || t.resolution || ctx.store.findByCausation(e.id).length) return;
+          flow.escalateGoLive(t, `promotion ${promotionId} ${e.type === 'promotion.refused' ? 'was refused' : 'failed'} at execution (${reason ?? 'unknown'})`, e.id);
         },
       },
     ],

@@ -324,13 +324,10 @@ export class IntakeFlow {
 
   /** No UAT build to test: the requester hears nothing; a human re-gates the build (fix_plan) or closes the ticket. */
   private escalateMissingUatBuild(t: TicketRow, uatRef: string, hasRepo: boolean, causationId?: string): void {
-    const d = this.ctx.services.get('decisions').request(
+    this.escalateBuild(
+      t,
+      'uat_build_missing',
       {
-        kind: 'fix_plan',
-        subjectType: 'ticket',
-        subjectId: t.ticket_id,
-        projectId: t.project_id,
-        requesterId: 'system:intake',
         title: `No UAT build for ${t.ticket_id}: ${t.title.slice(0, 80)}`,
         question: `The build session finished, but ${uatRef} does not resolve ${hasRepo ? 'in the project repository (the branch was never pushed there)' : '(no repository is configured for the project)'}. Nothing was sent to the requester. How should we proceed?`,
         options: [
@@ -338,6 +335,28 @@ export class IntakeFlow {
           { id: 'recheck', label: 'Check for the UAT build again' },
           { id: 'close', label: "Close as won't fix" },
         ],
+      },
+      `No UAT build for ${t.ticket_id}: ${uatRef} does not resolve`,
+      causationId,
+    );
+  }
+
+  /** A step the flow cannot take on its own: a fix_plan card (Approver) re-gates the build or closes; the ticket waits. */
+  private escalateBuild(
+    t: TicketRow,
+    reason: 'uat_build_missing' | 'golive_blocked',
+    card: { title: string; question: string; options: { id: string; label: string }[] },
+    notice: string,
+    causationId?: string,
+  ): void {
+    const d = this.ctx.services.get('decisions').request(
+      {
+        kind: 'fix_plan',
+        subjectType: 'ticket',
+        subjectId: t.ticket_id,
+        projectId: t.project_id,
+        requesterId: 'system:intake',
+        ...card,
         context: `Approved fix plan:\n${t.fix_plan ?? ''}`,
       },
       INTAKE_ACTOR,
@@ -346,37 +365,59 @@ export class IntakeFlow {
       type: 'ticket.escalated_to_human',
       actor: INTAKE_ACTOR,
       scope: { ticketId: t.ticket_id, projectId: t.project_id ?? undefined },
-      meta: { ticketId: t.ticket_id, reason: 'uat_build_missing', decisionId: d.id },
+      meta: { ticketId: t.ticket_id, reason, decisionId: d.id },
       source: 'intake',
       causationId,
     });
-    this.ctx.notify({
-      kind: 'session.attention',
-      title: `No UAT build for ${t.ticket_id}: ${uatRef} does not resolve`,
-      audience: ['approver', 'builder'],
-      severity: 'warn',
-      refs: { ticketId: t.ticket_id, decisionId: d.id },
-    });
+    this.ctx.notify({ kind: 'session.attention', title: notice, audience: ['approver', 'builder'], severity: 'warn', refs: { ticketId: t.ticket_id, decisionId: d.id } });
   }
 
+  private caused(causationId: string, type: string): boolean {
+    return this.ctx.store.findByCausation(causationId, type).length > 0;
+  }
+
+  /**
+   * After a UAT pass (or a human's retry): request the go-live gate. One outcome per cause, so a redelivered event
+   * never requests twice; when go-live cannot be requested the ticket is escalated, never left silently in UAT.
+   */
   async requestGoLive(t: TicketRow, causationId?: string): Promise<void> {
+    if (causationId && (this.caused(causationId, 'ticket.golive_requested') || this.caused(causationId, 'ticket.escalated_to_human'))) return;
     const change = this.ctx.services.maybe('change');
-    if (!change || !t.project_id) {
-      this.ctx.log.warn('intake: change module unavailable; go-live request deferred', { ticketId: t.ticket_id });
-      return;
+    if (!change || !t.project_id) return this.escalateGoLive(t, 'change control is not available', causationId);
+    let r: Awaited<ReturnType<typeof change.requestPromotion>>;
+    try {
+      r = await change.requestPromotion({ projectId: t.project_id, fromRef: t.uat_ref ?? `uat/${t.ticket_id}`, ticketId: t.ticket_id }, INTAKE_ACTOR);
+    } catch (err) {
+      return this.escalateGoLive(t, err instanceof Error ? err.message : String(err), causationId);
     }
-    const r = await change.requestPromotion({ projectId: t.project_id, fromRef: t.uat_ref ?? `uat/${t.ticket_id}`, ticketId: t.ticket_id }, INTAKE_ACTOR);
+    if (r.refused?.length || !r.decisionId) return this.escalateGoLive(t, `promotion ${r.promotionId} was refused: ${(r.refused ?? []).join('; ')}`, causationId);
     this.ctx.store.append({
       type: 'ticket.golive_requested',
       actor: INTAKE_ACTOR,
       scope: { ticketId: t.ticket_id, projectId: t.project_id },
-      meta: { ticketId: t.ticket_id, decisionId: r.decisionId ?? 'none', promotionId: r.promotionId },
+      meta: { ticketId: t.ticket_id, decisionId: r.decisionId, promotionId: r.promotionId },
       source: 'intake',
       causationId,
     });
-    if (r.refused?.length) {
-      this.ctx.notify({ kind: 'info', title: `Go-live refused for ${t.ticket_id}: ${r.refused.join(', ')}`, audience: ['approver', 'builder'], severity: 'warn', refs: { ticketId: t.ticket_id } });
-    }
+  }
+
+  /** Go-live could not be requested or completed: the reason goes on a card a human can act on. */
+  escalateGoLive(t: TicketRow, why: string, causationId?: string): void {
+    this.escalateBuild(
+      t,
+      'golive_blocked',
+      {
+        title: `Go-live blocked for ${t.ticket_id}: ${t.title.slice(0, 80)}`,
+        question: `The requester signed off UAT, but go-live did not go through: ${why.slice(0, 2000)}. How should we proceed?`,
+        options: [
+          { id: 'retry_golive', label: 'Request go-live again' },
+          { id: 'rebuild', label: 'Re-run the build under the approved fix plan' },
+          { id: 'close', label: "Close as won't fix" },
+        ],
+      },
+      `Go-live blocked for ${t.ticket_id}`,
+      causationId,
+    );
   }
 
   close(ticketId: string, resolution: 'fixed' | 'wont_fix' | 'duplicate' | 'cannot_reproduce' | 'withdrawn', actor: Actor, note?: string, causationId?: string): void {
@@ -400,7 +441,8 @@ export class IntakeFlow {
     const m = e.meta as { decisionId: string; kind: string; optionId: string };
     const row = this.ctx.db.prepare('SELECT ticket_id FROM itk_decisions WHERE decision_id = ?').get(m.decisionId) as { ticket_id: string } | undefined;
     if (!row) return;
-    if (this.ctx.store.findByCausation(e.id).length) return;
+    // Single-step reactions are done once anything they caused exists; UAT sign-off checks each of its steps.
+    if (m.kind !== 'uat_signoff' && this.ctx.store.findByCausation(e.id).length) return;
     const t = this.ticket(row.ticket_id);
     if (!t || t.resolution) return;
     const card = this.ctx.services.get('decisions').get(m.decisionId);
@@ -417,28 +459,30 @@ export class IntakeFlow {
       case 'fix_plan':
         if (m.optionId === 'approve' || m.optionId === 'rebuild') return this.startBuild(t.ticket_id, e.id);
         if (m.optionId === 'recheck') return this.readyForUat(t, e.id);
+        if (m.optionId === 'retry_golive') return this.requestGoLive(t, e.id);
         if (m.optionId === 'close') return this.close(t.ticket_id, 'wont_fix', { kind: 'human', id: card?.resolution?.resolvedBy ?? 'unknown' }, undefined, e.id);
         return this.startTriage(t.ticket_id, e.id);
       case 'uat_signoff': {
         const verdict = m.optionId === 'pass' ? 'pass' : 'fail';
-        const comment = (this.ctx.store.readPayload(e) as { comment?: string } | null)?.comment;
-        this.ctx.store.append({
-          type: 'ticket.uat_result',
-          actor: { kind: 'human', id: t.requester_id },
-          scope: { ticketId: t.ticket_id, projectId: t.project_id ?? undefined },
-          meta: { ticketId: t.ticket_id, requesterId: t.requester_id, verdict },
-          payload: comment ? { comment } : {},
-          source: 'intake',
-          causationId: e.id,
-        });
-        if (verdict === 'fail') {
-          this.ctx.services.maybe('learning')?.recordError(
-            { source: 'uat', projectId: t.project_id, sessionId: t.build_session_id, message: `UAT failed for ${t.ticket_id}`, context: comment ?? undefined, priority: 'high' },
-            INTAKE_ACTOR,
-          );
-          // Review before any build turn: read-only triage re-diagnoses with the feedback, then the fix-plan gate.
-          return this.startTriage(t.ticket_id, e.id);
+        if (!this.caused(e.id, 'ticket.uat_result')) {
+          const comment = (this.ctx.store.readPayload(e) as { comment?: string } | null)?.comment;
+          this.ctx.store.append({
+            type: 'ticket.uat_result',
+            actor: { kind: 'human', id: t.requester_id },
+            scope: { ticketId: t.ticket_id, projectId: t.project_id ?? undefined },
+            meta: { ticketId: t.ticket_id, requesterId: t.requester_id, verdict },
+            payload: comment ? { comment } : {},
+            source: 'intake',
+            causationId: e.id,
+          });
+          if (verdict === 'fail')
+            this.ctx.services.maybe('learning')?.recordError(
+              { source: 'uat', projectId: t.project_id, sessionId: t.build_session_id, message: `UAT failed for ${t.ticket_id}`, context: comment ?? undefined, priority: 'high' },
+              INTAKE_ACTOR,
+            );
         }
+        // Review before any build turn: read-only triage re-diagnoses with the feedback, then the fix-plan gate.
+        if (verdict === 'fail') return this.caused(e.id, 'ticket.triage_started') ? undefined : this.startTriage(t.ticket_id, e.id);
         return this.requestGoLive(this.ticket(t.ticket_id)!, e.id);
       }
     }
