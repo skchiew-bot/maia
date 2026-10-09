@@ -24,6 +24,8 @@ const GATE_ICON: Record<GateState, IconName> = {
   passed: 'ok',
   waiting: 'decisions',
   blocked: 'warn',
+  failed: 'danger',
+  rejected: 'close',
   not_reached: 'dot',
   skipped: 'minus',
 };

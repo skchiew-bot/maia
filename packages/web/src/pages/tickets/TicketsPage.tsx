@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import type { AuditEventPageDTO, InternalTicket, Severity, TicketStage } from '@aoc/contracts';
+import type { AuditEventPageDTO, InternalTicket, PromotionDTO, Severity, TicketStage } from '@aoc/contracts';
 import type { StreamMessage } from '../../api/stream';
 import { useResource } from '../../api/useResource';
 import { FunnelBar } from '../../charts/FunnelBar';
@@ -9,7 +9,7 @@ import { Chip } from '../../components/Chip';
 import { DataTable, type DataTableColumn } from '../../components/DataTable';
 import { EmptyState, ErrorState, InlineAlert, describeError } from '../../components/EmptyState';
 import { KpiStrip, KpiTile } from '../../components/KpiStrip';
-import { FilterBar } from '../../components/Layout';
+import { FilterBar, Stack } from '../../components/Layout';
 import { PageHeader } from '../../components/PageHeader';
 import { RelativeTime } from '../../components/RelativeTime';
 import { Widget, WidgetGrid } from '../../components/Widget';
@@ -26,6 +26,7 @@ import {
   diagnosisOf,
   funnelOf,
   gatesOf,
+  latestRound,
   shortTicketId,
   timeInStageMs,
   type TriageBudget,
@@ -34,6 +35,7 @@ import './tickets.css';
 
 const SEVERITIES: readonly Severity[] = ['critical', 'high', 'medium', 'low'];
 const BUDGET_QUERY = { type: 'ticket.triage_started', limit: 1000, order: 'desc' };
+const PROMOTION_QUERY = { limit: 500 };
 
 /**
  * Ticket lifecycle events, decision or session events scoped to a ticket, and token usage of the triage sessions
@@ -86,13 +88,28 @@ export default function TicketsPage() {
     refreshOn: (m) => m.kind === 'aoc' && m.event.type === 'ticket.triage_started',
   });
   const budgets = useMemo(() => budgetsFrom(budgetEvents.data?.events ?? []), [budgetEvents.data]);
+  const promotions = useResource<{ items: PromotionDTO[] }>('/api/promotions', {
+    query: PROMOTION_QUERY,
+    refreshOn: (m) => m.kind === 'aoc' && m.event.type.startsWith('promotion.'),
+  });
+  // Latest go-live promotion per ticket, so the list reads the same gate state as the ticket page.
+  const promotionOf = useMemo(() => {
+    const latest = new Map<string, PromotionDTO>();
+    for (const p of promotions.data?.items ?? []) {
+      if (!p.ticketId) continue;
+      const prev = latest.get(p.ticketId);
+      if (!prev || prev.requestedAt < p.requestedAt) latest.set(p.ticketId, p);
+    }
+    return latest;
+  }, [promotions.data]);
+  const gatesFor = useCallback((t: InternalTicket) => gatesOf(t, promotionOf.get(t.ticketId)), [promotionOf]);
 
   const all = tickets.data ?? [];
   const open = all.filter((t) => !TERMINAL.has(t.stage));
   const funnel = useMemo(() => funnelOf(all, now), [all, now]);
   const gatesWaiting = open.filter((t) => GATE_STAGES.has(t.stage));
   const uatWaiting = open.filter((t) => t.stage === 'uat' && t.openDecisionIds.length > 0);
-  const stuck = open.filter((t) => gatesOf(t).goLive === 'blocked');
+  const stuck = open.filter((t) => gatesFor(t).goLive === 'blocked');
   const urgent = open.filter((t) => t.severity === 'critical' || t.severity === 'high');
   const oldestOpen = open.reduce<string | null>(
     (min, t) => (min === null || t.submittedAt < min ? t.submittedAt : min),
@@ -134,6 +151,8 @@ export default function TicketsPage() {
             <span className="tkt-cell-title__main">{t.title}</span>
             <span className="tkt-cell-title__sub">
               <code>{shortTicketId(t.ticketId)}</code> · {t.requesterName ?? 'Unknown requester'}
+              {t.diagnoses.length + (t.buildSessionId ? 1 : 0) > 0 &&
+                ` · sessions: ${t.diagnoses.length} triage${t.buildSessionId ? ', 1 build' : ''}`}
             </span>
           </span>
         ),
@@ -174,10 +193,11 @@ export default function TicketsPage() {
       {
         id: 'diagnosis',
         header: 'Diagnosis',
-        width: '190px',
-        sortValue: (t) => diagnosisOf(t.diagnoses).best?.confidence ?? null,
+        width: '230px',
+        sortValue: (t) =>
+          diagnosisOf(latestRound(t.diagnoses, budgets.get(t.ticketId))).best?.confidence ?? null,
         cell: (t) => {
-          const d = diagnosisOf(t.diagnoses);
+          const d = diagnosisOf(latestRound(t.diagnoses, budgets.get(t.ticketId)));
           if (!d.best)
             return (
               <span className="tkt-muted">
@@ -199,6 +219,9 @@ export default function TicketsPage() {
                     ? ' · agents disagree'
                     : ''}
               </span>
+              <span className="tkt-cell-diag__cause" title={d.best.rootCause ?? undefined}>
+                {d.best.rootCause ?? '[erased]'}
+              </span>
             </span>
           );
         },
@@ -206,8 +229,8 @@ export default function TicketsPage() {
       {
         id: 'gates',
         header: 'Gates',
-        width: '210px',
-        cell: (t) => <GateTrail gates={gatesOf(t)} compact />,
+        width: '196px',
+        cell: (t) => <GateTrail gates={gatesFor(t)} compact />,
       },
       {
         id: 'budget',
@@ -220,7 +243,7 @@ export default function TicketsPage() {
         cell: (t) => <BudgetCell ticket={t} budget={budgets.get(t.ticketId)} />,
       },
     ],
-    [now, budgets],
+    [now, budgets, gatesFor],
   );
 
   if (tickets.data === undefined) {
@@ -248,111 +271,112 @@ export default function TicketsPage() {
         title="Tickets"
         subtitle="Requester intake tickets and the work they spawned. Requesters only ever see the abstracted status."
       />
-      {tickets.error !== undefined && (
-        <InlineAlert tone="warn" title="Showing the last loaded tickets">
-          {describeError(tickets.error) ?? 'The latest refresh failed.'}
-        </InlineAlert>
-      )}
-      <WidgetGrid>
+      <Stack gap={4}>
+        {tickets.error !== undefined && (
+          <InlineAlert tone="warn" title="Showing the last loaded tickets">
+            {describeError(tickets.error) ?? 'The latest refresh failed.'}
+          </InlineAlert>
+        )}
+        <WidgetGrid>
+          <Widget
+            span={12}
+            title="Ticket pipeline"
+            subtitle={`${formatInteger(open.length)} open · time in stage now`}
+            info="Every ticket by stage in flow order: triage (read-only), the fix-plan gate, build, the requester's UAT and the go-live gate. Bottleneck = the stage holding the most waiting time (count × median time in stage)."
+            busy={tickets.loading}
+          >
+            <FunnelBar stages={funnel} label="Ticket pipeline" unit="tickets" />
+          </Widget>
+        </WidgetGrid>
+        <KpiStrip label="Tickets at a glance">
+          <KpiTile
+            label="Open tickets"
+            value={open.length}
+            href="/tickets?stage=open"
+            footnote={oldestOpen ? `oldest open ${formatAge(now - Date.parse(oldestOpen))}` : 'nothing open'}
+          />
+          <KpiTile
+            label="Waiting on a human gate"
+            value={gatesWaiting.length}
+            href="/tickets?stage=gates"
+            tone={gatesWaiting.length ? 'warn' : 'neutral'}
+            footnote="awaiting human · fix plan · go-live"
+          />
+          <KpiTile
+            label="Waiting on requester UAT"
+            value={uatWaiting.length}
+            href="/tickets?stage=uat"
+            footnote={stuck.length ? `${stuck.length} passed UAT, go-live not started` : 'testing on UAT'}
+          />
+          <KpiTile
+            label="Critical or high, open"
+            value={urgent.length}
+            href={urgent.length ? '/tickets?stage=open&severity=critical' : undefined}
+            footnote={`${open.filter((t) => t.severity === 'critical').length} critical`}
+          />
+        </KpiStrip>
+        {stuck.length > 0 && (
+          <InlineAlert tone="danger" title="Go-live did not start after a UAT pass">
+            {stuck.length === 1 ? 'One ticket passed' : `${stuck.length} tickets passed`} the requester&apos;s
+            UAT but no go-live request was raised, so nothing will promote the fix. Open the ticket to see its
+            history.
+          </InlineAlert>
+        )}
+        <FilterBar
+          label="Ticket filters"
+          end={<span className="aoc-num">{formatInteger(rows.length)} shown</span>}
+        >
+          <Chip selected={stageFilter === null} onToggle={() => set('stage', null)}>
+            All <span className="aoc-num">{all.length}</span>
+          </Chip>
+          <Chip selected={stageFilter === 'open'} onToggle={(on) => set('stage', on ? 'open' : null)}>
+            Open <span className="aoc-num">{open.length}</span>
+          </Chip>
+          {STAGES.filter((s) => funnel.find((f) => f.id === s)!.count > 0).map((s) => (
+            <Chip key={s} selected={stageFilter === s} onToggle={(on) => set('stage', on ? s : null)}>
+              {STAGE_LABEL[s]} <span className="aoc-num">{funnel.find((f) => f.id === s)!.count}</span>
+            </Chip>
+          ))}
+          {stageFilter === 'gates' && (
+            <Chip tone="warn" onRemove={() => set('stage', null)} removeLabel="Remove the gate filter">
+              Waiting on a human gate
+            </Chip>
+          )}
+          {SEVERITIES.filter((s) => all.some((t) => t.severity === s)).map((s) => (
+            <Chip key={s} selected={sevFilter === s} onToggle={(on) => set('severity', on ? s : null)}>
+              {s[0]!.toUpperCase() + s.slice(1)}
+            </Chip>
+          ))}
+        </FilterBar>
         <Widget
           span={12}
-          title="Ticket pipeline"
-          subtitle={`${formatInteger(open.length)} open · time in stage now`}
-          info="Every ticket by stage in flow order: triage (read-only), the fix-plan gate, build, the requester's UAT and the go-live gate. Bottleneck = the stage holding the most waiting time (count × median time in stage)."
+          flush
+          title="Tickets"
+          subtitle="open work first, most severe first"
           busy={tickets.loading}
         >
-          <FunnelBar stages={funnel} label="Ticket pipeline" unit="tickets" />
+          <DataTable
+            caption="Intake tickets"
+            columns={columns}
+            rows={rows}
+            rowKey={(t) => t.ticketId}
+            rowHref={(t) => `/tickets/${encodeURIComponent(t.ticketId)}`}
+            rowTone={(t) => (['blocked', 'failed'].includes(gatesFor(t).goLive) ? 'danger' : undefined)}
+            empty={
+              <EmptyState
+                size="sm"
+                icon="tickets"
+                title={all.length ? 'No tickets match these filters' : 'No tickets yet'}
+                body={
+                  all.length
+                    ? 'Clear the filters to see every ticket.'
+                    : 'Tickets appear when a requester files a bug through the intake portal.'
+                }
+              />
+            }
+          />
         </Widget>
-      </WidgetGrid>
-      <KpiStrip label="Tickets at a glance">
-        <KpiTile
-          label="Open tickets"
-          value={open.length}
-          href="/tickets?stage=open"
-          footnote={oldestOpen ? `oldest open ${formatAge(now - Date.parse(oldestOpen))}` : 'nothing open'}
-        />
-        <KpiTile
-          label="Waiting on a human gate"
-          value={gatesWaiting.length}
-          href="/tickets?stage=gates"
-          tone={gatesWaiting.length ? 'warn' : 'neutral'}
-          footnote="awaiting human · fix plan · go-live"
-        />
-        <KpiTile
-          label="Waiting on requester UAT"
-          value={uatWaiting.length}
-          href="/tickets?stage=uat"
-          footnote={stuck.length ? `${stuck.length} passed UAT, go-live not started` : 'testing on UAT'}
-          tone={stuck.length ? 'danger' : 'neutral'}
-        />
-        <KpiTile
-          label="Critical or high, open"
-          value={urgent.length}
-          href={urgent.length ? '/tickets?stage=open&severity=critical' : undefined}
-          footnote={`${open.filter((t) => t.severity === 'critical').length} critical`}
-        />
-      </KpiStrip>
-      {stuck.length > 0 && (
-        <InlineAlert tone="danger" title="Go-live did not start after a UAT pass">
-          {stuck.length === 1 ? 'One ticket passed' : `${stuck.length} tickets passed`} the requester&apos;s
-          UAT but no go-live request was raised, so nothing will promote the fix. Open the ticket to see its
-          history.
-        </InlineAlert>
-      )}
-      <FilterBar
-        label="Ticket filters"
-        end={<span className="aoc-num">{formatInteger(rows.length)} shown</span>}
-      >
-        <Chip selected={stageFilter === null} onToggle={() => set('stage', null)}>
-          All <span className="aoc-num">{all.length}</span>
-        </Chip>
-        <Chip selected={stageFilter === 'open'} onToggle={(on) => set('stage', on ? 'open' : null)}>
-          Open <span className="aoc-num">{open.length}</span>
-        </Chip>
-        {STAGES.filter((s) => funnel.find((f) => f.id === s)!.count > 0).map((s) => (
-          <Chip key={s} selected={stageFilter === s} onToggle={(on) => set('stage', on ? s : null)}>
-            {STAGE_LABEL[s]} <span className="aoc-num">{funnel.find((f) => f.id === s)!.count}</span>
-          </Chip>
-        ))}
-        {stageFilter === 'gates' && (
-          <Chip tone="warn" onRemove={() => set('stage', null)} removeLabel="Remove the gate filter">
-            Waiting on a human gate
-          </Chip>
-        )}
-        {SEVERITIES.filter((s) => all.some((t) => t.severity === s)).map((s) => (
-          <Chip key={s} selected={sevFilter === s} onToggle={(on) => set('severity', on ? s : null)}>
-            {s[0]!.toUpperCase() + s.slice(1)}
-          </Chip>
-        ))}
-      </FilterBar>
-      <Widget
-        span={12}
-        flush
-        title="Tickets"
-        subtitle="open work first, most severe first"
-        busy={tickets.loading}
-      >
-        <DataTable
-          caption="Intake tickets"
-          columns={columns}
-          rows={rows}
-          rowKey={(t) => t.ticketId}
-          rowHref={(t) => `/tickets/${encodeURIComponent(t.ticketId)}`}
-          rowTone={(t) => (gatesOf(t).goLive === 'blocked' ? 'danger' : undefined)}
-          empty={
-            <EmptyState
-              size="sm"
-              icon="tickets"
-              title={all.length ? 'No tickets match these filters' : 'No tickets yet'}
-              body={
-                all.length
-                  ? 'Clear the filters to see every ticket.'
-                  : 'Tickets appear when a requester files a bug through the intake portal.'
-              }
-            />
-          }
-        />
-      </Widget>
+      </Stack>
     </>
   );
 }

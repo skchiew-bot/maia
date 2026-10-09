@@ -49,6 +49,9 @@ export class UsageAggregator {
   /** Returns true when the line contributed new usage. */
   add(line: TranscriptLine): boolean {
     if (line.type !== 'assistant' || !line.message?.usage) return false;
+    // Claude Code writes failed API calls (e.g. a plan limit) as synthetic messages with zero usage: no API
+    // response happened, so they are neither metered nor the latest context size.
+    if (isSynthetic(line)) return false;
     const id = line.message.id ?? line.requestId ?? line.uuid;
     if (!id) return false;
     const cur = usageOf(line.message.usage);
@@ -211,6 +214,7 @@ export function textOf(line: TranscriptLine): string {
 }
 
 const WARNING = /You['’]ve used \d+% of|Approaching (?:your )?(?:session|5-hour|weekly)? ?limit/i;
+const MAX_NOTICE_CHARS = 2000;
 const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
 
 /** Wall-clock parts of `epochMs` in `tz` (falls back to the host zone for unknown zones). */
@@ -243,7 +247,9 @@ function fromZoned(y: number, mo: number, d: number, h: number, mi: number, tz: 
  * Parse a plan usage-limit message (text fallback — the supervisor prefers stream-json rate_limit_event).
  * resetAt is ISO, or null when no reset time is stated. Warnings ("You've used 90% …") are not throttles.
  */
-export function parseThrottle(text: string, now: Date = new Date()): { resetAt: string | null } | null {
+export function parseThrottle(full: string, now: Date = new Date()): { resetAt: string | null } | null {
+  // Limit notices are short; the contract patterns backtrack quadratically on long runs (e.g. of digits).
+  const text = full.length > MAX_NOTICE_CHARS ? full.slice(0, MAX_NOTICE_CHARS) : full;
   if (WARNING.test(text)) return null;
   const limited = THROTTLE_PATTERNS.some((p) => p.test(text)) || RATE_LIMIT_429.test(text);
   if (!limited) return null;
@@ -283,11 +289,15 @@ export function parseThrottle(text: string, now: Date = new Date()): { resetAt: 
   return { resetAt: null };
 }
 
+/** An assistant line Claude Code made up itself (API error message), not a model response. */
+function isSynthetic(line: TranscriptLine): boolean {
+  return (line as { isApiErrorMessage?: boolean }).isApiErrorMessage === true || line.message?.model === '<synthetic>';
+}
+
 export function detectThrottle(line: TranscriptLine, now?: Date): { resetAt: string | null; message: string } | null {
   if (line.type !== 'assistant' && line.type !== 'system') return null;
   // Real assistant answers that merely mention limits are not throttles; API-error messages are synthetic.
-  const synthetic = (line as { isApiErrorMessage?: boolean }).isApiErrorMessage === true || line.message?.model === '<synthetic>';
-  if (line.type === 'assistant' && line.message?.usage && !synthetic) return null;
+  if (line.type === 'assistant' && line.message?.usage && !isSynthetic(line)) return null;
   const text = textOf(line);
   if (!text) return null;
   const r = parseThrottle(text, now);

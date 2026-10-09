@@ -50,9 +50,12 @@ import {
   buildSessionEnv,
   readCredentialProfile,
   redactArgv,
+  redactSecrets,
+  secretsToRedact,
   toolPolicy,
+  workspaceSettingsProblems,
 } from './launch-config';
-import { processMatches, runCommand, signalProcess, signalTree } from './process-utils';
+import { killProcessGroup, processMatches, runCommand, signalProcess, signalTree } from './process-utils';
 import { handOver, isolatedRunEnv, lookupSandboxUser, type SandboxUser } from './sandbox';
 import { SupervisorView, TERMINAL_LIFECYCLES, type SupervisedSession } from './projection';
 import {
@@ -85,6 +88,8 @@ export interface SupervisorModuleOptions {
   registryFile?: string;
   /** SIGINT → SIGKILL grace when a turn is interrupted (default 10 s). */
   interruptGraceMs?: number;
+  /** How long a turn's sidecar may keep reporting after claude exits before it is sent SIGTERM (default 5 s). */
+  sidecarGraceMs?: number;
   /** Retry delay for a usage limit whose reset time is unknown (default 30 min). */
   throttleFallbackMs?: number;
   /** Output items kept per session for GET /api/sessions/:id/output (default 500). */
@@ -122,6 +127,8 @@ type ContextInfo = { contextTokens: number; contextPct: number };
 const SYSTEM: Actor = { kind: 'system', id: 'supervisor' };
 const CLOSE_GRACE_MS = 2_000;
 const SIDECAR_GRACE_MS = 5_000;
+/** After SIGTERM a sidecar makes its final usage flush (one request, 4 s client timeout) and exits. */
+const SIDECAR_FLUSH_MS = 5_000;
 const MAX_BUFFERED_SESSIONS = 256;
 /** Turn outcomes that prove the model answered, so the conversation exists even when its transcript is not found. */
 const ANSWERED_OUTCOMES = new Set(['end_turn', 'decision', 'credit_cap', 'stop_requested', 'rollover']);
@@ -195,12 +202,18 @@ export class Supervisor implements SupervisorService {
   private readonly queue: TurnRequest[] = [];
   private readonly outputs = new Map<string, RingBuffer<SessionOutputItem>>();
   private readonly tokens = new Map<string, string>();
+  /** Per session: values that must never appear verbatim in its builder-visible output (§3). */
+  private readonly secrets = new Map<string, string[]>();
   private readonly claudeIds = new Map<string, string>();
   private readonly conversations = new Set<string>();
   private readonly lastContext = new Map<string, number>();
   /** Sessions being rolled over right now: no turns for them, and they no longer count as their thread's writer. */
   private readonly rollingOver = new Set<string>();
   private readonly sidecars = new Set<ChildProcess>();
+  /** Running sidecars per session (a turn's sidecar can outlive its turn by the grace). */
+  private readonly sessionSidecars = new Map<string, Set<ChildProcess>>();
+  /** Ingest-token revocations waiting for an ended session's sidecars to finish (see revokeToken). */
+  private readonly pendingRevocations = new Map<string, () => void>();
   private readonly timers = new Set<NodeJS.Timeout>();
   private readonly warned = new Set<string>();
   private readonly sessionsRoot: string;
@@ -565,6 +578,8 @@ export class Supervisor implements SupervisorService {
 
   /** Daemon shutdown: interrupt running turns; the next start marks them Dead. Nothing is appended. */
   async shutdown(): Promise<void> {
+    // Ended sessions keep no valid token across a restart, even if their sidecars are still flushing.
+    for (const revoke of [...this.pendingRevocations.values()]) revoke();
     this.stopping = true;
     this.queue.length = 0;
     for (const t of this.timers) clearTimeout(t);
@@ -959,6 +974,14 @@ export class Supervisor implements SupervisorService {
       );
     const sup = this.ctx.config.supervisor;
     const cwd = s.cwd ?? this.resolveCwd(null, s.projectId);
+    const overrides = workspaceSettingsProblems(cwd);
+    if (overrides.length)
+      throw new HttpError(
+        409,
+        'workspace_settings_override',
+        `The workspace's Claude Code settings would bypass AOC (${overrides.join('; ')}). Remove them, then restart the session.`,
+        { problems: overrides },
+      );
     const token = this.tokenFor(s.sessionId, req.actor);
     const dir = this.ensureSessionDir(s.sessionId);
     const aoc: Record<string, string> = {
@@ -973,6 +996,8 @@ export class Supervisor implements SupervisorService {
     };
     const credentials =
       s.readOnly || !type.credentialProfile ? null : this.credentialsFor(type.credentialProfile);
+    // The model can print anything in its env, and every builder can read a session's output.
+    this.secrets.set(s.sessionId, secretsToRedact([token, ...Object.values(credentials ?? {})]));
     const env = buildSessionEnv({
       source: this.sourceEnv(),
       allowlist: sup.envAllowlist,
@@ -1081,7 +1106,7 @@ export class Supervisor implements SupervisorService {
     const id = live.sessionId;
     // While the model generates, stdout is the only activity signal (stream deltas, thinking tokens, status).
     this.liveness()?.recordActivity(id, 'stream', this.ctx.clock.now());
-    const f = readStreamLine(line);
+    const f = readStreamLine(redactSecrets(line, this.secrets.get(id) ?? []));
     for (const item of f.items) this.pushOutput(id, item);
     if (f.conversation) this.conversations.add(id);
     if (f.contextTokens !== null) {
@@ -1114,8 +1139,9 @@ export class Supervisor implements SupervisorService {
       live.signals.push({ rank: 4, resetAt: this.resetAt(f.cliText), message: f.cliText, source: 'stream' });
   }
 
-  private onStderrLine(live: LiveTurn, line: string): void {
-    if (!line.trim()) return;
+  private onStderrLine(live: LiveTurn, raw: string): void {
+    if (!raw.trim()) return;
+    const line = redactSecrets(raw, this.secrets.get(live.sessionId) ?? []);
     this.pushOutput(live.sessionId, { kind: 'system', text: clip(`stderr: ${line}`) });
     if (isLimitNotice(line))
       live.signals.push({ rank: 4, resetAt: this.resetAt(line), message: line, source: 'exit' });
@@ -1149,6 +1175,9 @@ export class Supervisor implements SupervisorService {
     if (live.settled) return;
     live.settled = true;
     if (live.killTimer) clearTimeout(live.killTimer);
+    // claude has exited. Anything the turn backgrounded (`cmd &`, nohup) still holds the session env, credentials
+    // included, and would act outside any hook: it ends with the turn.
+    if (live.pid !== null) killProcessGroup(live.pid);
     if (live.stdoutRest) this.onStdoutLine(live, live.stdoutRest);
     if (live.stderrRest) this.onStderrLine(live, live.stderrRest);
     live.stdoutRest = live.stderrRest = '';
@@ -1156,10 +1185,9 @@ export class Supervisor implements SupervisorService {
     live.child?.stderr?.destroy();
     if (this.running.get(live.sessionId) === live) this.running.delete(live.sessionId);
     const sidecar = live.sidecar;
-    if (sidecar) this.later(() => sidecar.exitCode === null && sidecar.kill('SIGTERM'), SIDECAR_GRACE_MS);
+    if (sidecar) this.later(() => sidecar.exitCode === null && sidecar.kill('SIGTERM'), this.sidecarGraceMs());
     live.markClosed();
     if (this.stopping) return;
-    this.liveness()?.recordProcess(live.sessionId, false, null);
     try {
       this.finishTurn(live);
     } catch (err) {
@@ -1170,6 +1198,9 @@ export class Supervisor implements SupervisorService {
         // The store is unusable; the next start marks the session Dead.
       }
     }
+    // Only once the turn's outcome is recorded: a session that now waits, idles, is throttled or has ended was never
+    // Dead in between. A follow-up turn already holds the session and reports its own process when it spawns.
+    if (!this.busy(live.sessionId)) this.liveness()?.recordProcess(live.sessionId, false, null);
     this.pump();
   }
 
@@ -1733,9 +1764,28 @@ export class Supervisor implements SupervisorService {
     return token;
   }
 
+  /**
+   * A turn's sidecar sends the turn's last usage after claude has exited, which is after the session may have ended:
+   * the session's token stays valid until its sidecars are done (bounded by their grace and final flush), or that
+   * usage would be refused and never metered.
+   */
   private revokeToken(sessionId: string, actor: Actor): void {
     this.tokens.delete(sessionId);
-    this.ctx.services.maybe('identity')?.revokeIngestTokensFor(sessionId, actor);
+    this.secrets.delete(sessionId);
+    let done = false;
+    const revoke = () => {
+      if (done) return;
+      done = true;
+      this.pendingRevocations.delete(sessionId);
+      this.ctx.services.maybe('identity')?.revokeIngestTokensFor(sessionId, actor);
+    };
+    if (!this.sessionSidecars.get(sessionId)?.size) return revoke();
+    this.pendingRevocations.set(sessionId, revoke);
+    this.later(revoke, this.sidecarGraceMs() + SIDECAR_FLUSH_MS);
+  }
+
+  private sidecarGraceMs(): number {
+    return this.opts.sidecarGraceMs ?? SIDECAR_GRACE_MS;
   }
 
   private startSidecar(live: LiveTurn, plan: SpawnPlan): void {
@@ -1765,10 +1815,22 @@ export class Supervisor implements SupervisorService {
     });
     try {
       const child = spawn(bin, args, { env, stdio: 'ignore' });
-      child.on('error', (err) =>
-        this.log.warn('sidecar failed', { sessionId: live.sessionId, err: err.message }),
-      );
-      child.on('exit', () => this.sidecars.delete(child));
+      const ofSession = this.sessionSidecars.get(live.sessionId) ?? new Set<ChildProcess>();
+      ofSession.add(child);
+      this.sessionSidecars.set(live.sessionId, ofSession);
+      // 'exit' may not follow a spawn 'error', so either one retires the sidecar.
+      const gone = () => {
+        this.sidecars.delete(child);
+        ofSession.delete(child);
+        if (ofSession.size) return;
+        if (this.sessionSidecars.get(live.sessionId) === ofSession) this.sessionSidecars.delete(live.sessionId);
+        this.pendingRevocations.get(live.sessionId)?.();
+      };
+      child.on('error', (err) => {
+        this.log.warn('sidecar failed', { sessionId: live.sessionId, err: err.message });
+        gone();
+      });
+      child.on('exit', gone);
       this.sidecars.add(child);
       live.sidecar = child;
     } catch (err) {

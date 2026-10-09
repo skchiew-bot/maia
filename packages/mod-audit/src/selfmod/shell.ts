@@ -509,11 +509,27 @@ function copyTargets(
 }
 
 const WRITE_API =
-  /\b(?:write\w*|append\w*|unlink\w*|remove\w*|rename\w*|replace|rmtree|rm(?:Sync|dir\w*)?|mkdir\w*|truncate\w*|copy\w*|move|chmod\w*|chown\w*|symlink\w*|touch|system|exec\w*|spawn\w*|popen|subprocess|run|tee|sed|patch|shutil|FileUtils|createWriteStream|mv|cp|ln|dd)\b|>|open\s*\([^)]*['"](?:[wax]|[rwa]\+)/i;
+  /\b(?:write\w*|append\w*|unlink\w*|remove\w*|rename\w*|replace|rmtree|rm(?:Sync|dir\w*)?|mkdir\w*|truncate\w*|copy\w*|move|chmod\w*|chown\w*|symlink\w*|touch|system|exec\w*|spawn\w*|popen|subprocess|run|tee|sed|patch|shutil|FileUtils|createWriteStream|mv|cp|ln|dd)\b|>/i;
+
+/**
+ * `open(…, 'w' | 'a' | 'x' | 'r+' …)`, in one pass. A backtracking `open\s*\([^)]*…` regex went quadratic on
+ * `open(open(open(…` — and this runs on the daemon thread for every managed Bash call.
+ */
+function opensForWriting(code: string): boolean {
+  const call = /open\s*\(/gi;
+  for (let m = call.exec(code); m; m = call.exec(code)) {
+    const close = code.indexOf(')', call.lastIndex);
+    if (/['"](?:[wax]|[rwa]\+)/i.test(code.slice(call.lastIndex, close === -1 ? code.length : close))) return true;
+    if (close === -1) return false;
+    // A nested open( before this ')' sees the same span: it was just checked.
+    call.lastIndex = close + 1;
+  }
+  return false;
+}
 
 /** Inline interpreter code / awk programs: a protected path together with any write-capable API. */
 function opaque(code: string, c: Ctx): ShellFinding | null {
-  if (!code || !WRITE_API.test(code)) return null;
+  if (!code || !(WRITE_API.test(code) || opensForWriting(code))) return null;
   const candidates = [...new Set(code.split(/[\s'"`(){}[\];,<>|&=!?$:\\]+/))]
     .filter((t) => t && t.length < 512 && /^[\w.@+~/*-]+$/.test(t))
     .slice(0, 2000);

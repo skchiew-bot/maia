@@ -104,8 +104,9 @@ export function QueueCard({ card, now, selected, onSelect, directory, actions, p
                 loadingText="Recording…"
                 disabled={actions.busy !== null && !busyHere}
                 onClick={() => void actions.resolve(card, rec.id, null)}
+                aria-label={`Approve: ${rec.label}`}
               >
-                Approve<span className="aoc-sr-only">: {rec.label}</span>
+                Approve
               </Button>
             )}
             {rec && card.requiresPasskey && (
@@ -117,8 +118,9 @@ export function QueueCard({ card, now, selected, onSelect, directory, actions, p
                 loadingText="Waiting for passkey…"
                 disabled={(actions.busy !== null && !busyHere) || passkeys.hasPasskey === false}
                 onClick={() => void actions.resolve(card, rec.id, null)}
+                aria-label={`Approve with passkey: ${rec.label}`}
               >
-                Approve with passkey<span className="aoc-sr-only">: {rec.label}</span>
+                Approve with passkey
               </Button>
             )}
             <Button size="sm" variant={rec ? 'secondary' : 'primary'} onClick={select}>

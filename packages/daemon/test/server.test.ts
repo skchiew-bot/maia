@@ -128,9 +128,18 @@ describe('aocd HTTP surface', () => {
     });
     expect(announced.status).toBe(413);
 
+    // An anonymous ingest call is refused before its body is read at all …
+    const anonymous = await t.request('/ingest/hook', {
+      method: 'POST',
+      body: chunked(JSON_BODY_LIMIT + 10),
+      duplex: 'half',
+    } as RequestInit);
+    expect(anonymous.status).toBe(401);
+    // … and an authenticated one is cut off at the limit.
     const streamed = await t.request('/ingest/hook', {
       method: 'POST',
       body: chunked(JSON_BODY_LIMIT + 10),
+      headers: { authorization: `Bearer ${t.identity.issueObserverToken()}` },
       duplex: 'half',
     } as RequestInit);
     expect(streamed.status).toBe(413);
