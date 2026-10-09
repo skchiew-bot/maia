@@ -148,7 +148,7 @@ describe('hook ingest', () => {
     expect(denied.meta).toMatchObject({ guard: 'protected-op', decision: 'deny' });
     const card = t.decisions!.list({ sessionId: 'ses_A' })[0]!;
     expect(card.requiredRole).toBe('approver');
-    expect(card.requesterId).toBe(owner.user.id);
+    expect(card.requesterId).toBe('session:ses_A');
     expect(t.rt.store.list({ types: ['session.blocked'] })[0]!.meta).toMatchObject({ reason: 'protected_operation' });
     expect(engine().row('ses_A')!.liveness).toBe('waiting_on_you');
     // allowed tool → working; PostToolUse → tool.used with fileChanging

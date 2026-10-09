@@ -268,6 +268,13 @@ export const DECISION_EVENTS = [
     payload: payload({ note: z.string().optional() }),
   }),
   defineEvent({
+    type: 'decision.expired',
+    owner: 'decisions',
+    description: 'Decision expired unanswered (policy-defined deadline passed).',
+    meta: meta({ decisionId: zId, ageMs: zNonNeg }),
+    payload: null,
+  }),
+  defineEvent({
     type: 'decision.escalated',
     owner: 'decisions',
     description: 'Decision escalated to a role (never back to the requester, §6).',

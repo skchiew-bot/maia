@@ -57,8 +57,9 @@ describe('POST /ingest/mcp/request_decision', () => {
       context: 'Branch fix/migration is 2 commits ahead.',
       requiredRole: 'approver',
       requiresPasskey: false,
-      requesterId: builderA.user.id,
-      excludedApproverIds: [builderA.user.id],
+      // The agent is the requester, so the owner is not excluded by separation of duties.
+      requesterId: 'session:ses_1',
+      excludedApproverIds: ['session:ses_1'],
       subjectType: 'session',
       subjectId: 'ses_1',
       sessionId: 'ses_1',
@@ -70,7 +71,7 @@ describe('POST /ingest/mcp/request_decision', () => {
       source: 'mcp',
       scope: { sessionId: 'ses_1', projectId: 'prj_1', decisionId: card.id },
     });
-    expect(engine.canResolve(card, builderA.user).reason).toBe('separation_of_duties');
+    expect(engine.canResolve(card, builderA.user).reason).toBe('role') // main bounces to the Approver; the owner is not SoD-excluded from their agent's cards;
     expect(engine.canResolve(card, approver.user).ok).toBe(true);
 
     // Self-reported tests stay with Builders.
@@ -175,20 +176,31 @@ describe('POST /ingest/mcp/request_decision', () => {
     expect(t.rt.store.list({ types: ['decision.requested'] })).toHaveLength(0);
   });
 
-  it('falls back to the session as requester when no owner is mapped', async () => {
+  it('makes the session the requester even when no owner is mapped', async () => {
     const { t, engine, builderA } = await setup();
     t.sessions!.add({ sessionId: 'ses_orphan', ownerId: null, projectId: null });
     const res = await t.json<RequestDecisionResult>('POST', PATH, {
       headers: t.ingestHeaders('ses_orphan'),
-      body: { sessionId: 'ses_orphan', input: input({ test: 'irreversible' }) },
+      body: { sessionId: 'ses_orphan', input: input({ test: 'ambiguity' }) },
     });
     const card = engine.get(res.decision_id)!;
     expect(card).toMatchObject({
-      requesterId: 'ses_orphan',
-      excludedApproverIds: ['ses_orphan'],
+      requesterId: 'session:ses_orphan',
+      excludedApproverIds: ['session:ses_orphan'],
       projectId: null,
       requiredRole: 'builder',
     });
     expect(engine.canResolve(card, builderA.user).ok).toBe(true);
+  });
+
+  it("lets the owner answer their own agent's Builder-level question, recorded as self-approval", async () => {
+    const { t, engine, builderA } = await setup();
+    const res = await t.json<RequestDecisionResult>('POST', PATH, {
+      headers: t.ingestHeaders('ses_1'),
+      body: { sessionId: 'ses_1', input: input({ test: 'ambiguity' }) },
+    });
+    expect(engine.canResolve(engine.get(res.decision_id)!, builderA.user).ok).toBe(true);
+    const done = await engine.resolve(res.decision_id, { optionId: engine.get(res.decision_id)!.options[0]!.id }, builderA.user);
+    expect(done.resolution?.selfApproved).toBe(true);
   });
 });

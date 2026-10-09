@@ -371,7 +371,7 @@ at(t0 + 5 * DAY);
 for (const [type, title] of [['feature-build', 'Feature build playbook v1'], ['test-repair', 'Flaky test repair playbook']] as const) {
   const playbookId = newId('playbook', clock.now());
   const dec = decision({ kind: 'playbook_approval', title: `Approve playbook: ${title}`, question: `Bind "${title}" so ${type} runs execute on the cheaper model?`, options: [{ id: 'approve', label: 'Approve' }, { id: 'reject', label: 'Reject' }], rec: 'approve', subjectType: 'playbook', subjectId: playbookId, requesterId: U('priya') });
-  store.append({ type: 'playbook.proposed', actor: human(U('priya')), scope: {}, meta: { playbookId, processType: type, sourceSessionId: null, version: 1, stepCount: 4, decisionId: dec.id }, payload: { title, steps: [{ id: 's1', title: 'Reproduce / map the change surface' }, { id: 's2', title: 'Write the acceptance test first' }, { id: 's3', title: 'Implement the smallest change' }, { id: 's4', title: 'Run the full suite and close tasks with evidence' }] }, source: 'api' });
+  store.append({ type: 'playbook.proposed', actor: human(U('priya')), scope: {}, meta: { playbookId, processType: type, sourceSessionId: null, version: 1, stepCount: 4, decisionId: dec.id, method: 'llm' }, payload: { title, steps: [{ id: 's1', title: 'Reproduce / map the change surface' }, { id: 's2', title: 'Write the acceptance test first' }, { id: 's3', title: 'Implement the smallest change' }, { id: 's4', title: 'Run the full suite and close tasks with evidence' }] }, source: 'api' });
   at(clock.now() + 3 * 3600_000);
   await resolve_(dec.id, 'approve', 'ceo', 'Approved for execution runs.');
 }

@@ -288,7 +288,7 @@ export class HookDispatcher {
     const decisions = this.ctx.services.maybe('decisions');
     if (r.raiseDecision && decisions) {
       const card = decisions.request(
-        { ...r.raiseDecision, requesterId: s.ownerId ?? `session:${s.sessionId}`, sessionId: s.sessionId, projectId: s.projectId },
+        { ...r.raiseDecision, requesterId: `session:${s.sessionId}`, sessionId: s.sessionId, projectId: s.projectId },
         this.agent(s.sessionId),
       );
       decisionId = card.id;

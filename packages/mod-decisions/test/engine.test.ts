@@ -53,7 +53,7 @@ describe('routing matrix: role, separation of duties, eligibility (§6)', () => 
     expect(roles).toEqual({
       main: 'approver',
       production: 'approver',
-      irreversible: 'builder',
+      irreversible: 'approver', // builders self-approve only REVERSIBLE off-main work (§6)
       ambiguity: 'builder',
       data: 'approver',
     });

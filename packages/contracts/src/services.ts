@@ -133,6 +133,10 @@ export interface DecisionService {
   get(id: string): DecisionCard | null;
   list(filter?: DecisionListFilter): DecisionCard[];
   canResolve(card: DecisionCard, user: User): { ok: boolean; reason: string | null };
+  /** Raise a Builder-level card to the Approver — never back to the requester (§6). */
+  escalate(id: string, input: { toRole?: Role; reason?: string }, actor: Actor): DecisionCard;
+  /** Counts for the inbox/tab badge for this viewer. */
+  summary(user: User): { open: number; resolvableByMe: number; oldestOpenAt: string | null; oldestResolvableByMeAt: string | null };
 }
 
 // ── ledger (mod-ledger) ────────────────────────────────────────────────────
@@ -337,7 +341,7 @@ export interface LlmService {
 
 // ── notifications ──────────────────────────────────────────────────────────
 export interface Notification {
-  kind: 'decision.new' | 'decision.aging' | 'session.attention' | 'fx.alert' | 'breakglass' | 'anchor.missed' | 'credit.topup' | 'info';
+  kind: 'decision.new' | 'decision.aging' | 'decision.escalated' | 'session.attention' | 'fx.alert' | 'breakglass' | 'anchor.missed' | 'credit.topup' | 'info';
   title: string;
   /** Roles that should see it (requesters never see internal notifications). */
   audience: Role[];

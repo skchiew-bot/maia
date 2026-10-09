@@ -2,11 +2,14 @@
 import type { ChangeScope, DecisionKind, DecisionStatus, Role } from './domain';
 import type { DecisionTest } from './mcp';
 
-/** Tests 1, 2, 5 are enforceable at the tool boundary; 3, 4 are self-reported (§2.4). */
+/**
+ * Tests 1, 2, 5 are enforceable at the tool boundary; 3, 4 are self-reported (§2.4). Builders self-approve only
+ * reversible off-main work (§6), so an irreversible choice (3) bounces to the Approver like main/production/data.
+ */
 export const DECISION_TEST_INFO: Record<DecisionTest, { no: number; label: string; enforcement: 'tool_boundary' | 'self_reported'; bouncesToApprover: boolean }> = {
   main: { no: 1, label: 'Touches main / protected branch', enforcement: 'tool_boundary', bouncesToApprover: true },
   production: { no: 2, label: 'Touches production / deploy', enforcement: 'tool_boundary', bouncesToApprover: true },
-  irreversible: { no: 3, label: 'Irreversible or architectural choice', enforcement: 'self_reported', bouncesToApprover: false },
+  irreversible: { no: 3, label: 'Irreversible or architectural choice', enforcement: 'self_reported', bouncesToApprover: true },
   ambiguity: { no: 4, label: 'Spec ambiguity / low confidence', enforcement: 'self_reported', bouncesToApprover: false },
   data: { no: 5, label: 'Touches data (migrations, deletes, PII)', enforcement: 'tool_boundary', bouncesToApprover: true },
 };
@@ -100,7 +103,11 @@ export interface DecisionRequestInput {
   subjectId: string;
   sessionId?: string | null;
   projectId?: string | null;
-  /** The person (or session owner) on whose behalf the decision is raised — excluded from approving it (SoD). */
+  /**
+   * Who raised it — excluded from approving it (SoD). Agent-raised cards (request_decision, guard-raised
+   * protected operations) use `session:<sessionId>`: the agent is the requester, so its owner may answer
+   * Builder-level tests, and an owner approving their own session's gate is recorded as selfApproved.
+   */
   requesterId: string;
   excludedApproverIds?: string[];
   eligibleUserIds?: string[] | null;

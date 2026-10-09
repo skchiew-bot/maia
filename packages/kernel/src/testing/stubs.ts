@@ -156,6 +156,22 @@ export class SimpleDecisionService implements DecisionService {
     return done;
   }
 
+  escalate(id: string, _input: { toRole?: string; reason?: string }, actor: Actor): DecisionCard {
+    const card = this.cards.get(id);
+    if (!card || card.status !== 'open') throw new Error('decision not open');
+    this.store.append({ type: 'decision.escalated', actor, scope: { decisionId: id }, meta: { decisionId: id, toRole: 'approver', reason: 'other' }, source: 'api' });
+    const up: DecisionCard = { ...card, requiredRole: 'approver' };
+    this.cards.set(id, up);
+    return up;
+  }
+
+  summary(user: User): { open: number; resolvableByMe: number; oldestOpenAt: string | null; oldestResolvableByMeAt: string | null } {
+    const open = [...this.cards.values()].filter((c) => c.status === 'open');
+    const mine = open.filter((c) => this.canResolve(c, user).ok);
+    const oldest = (xs: DecisionCard[]) => xs.map((c) => c.createdAt).sort()[0] ?? null;
+    return { open: open.length, resolvableByMe: mine.length, oldestOpenAt: oldest(open), oldestResolvableByMeAt: oldest(mine) };
+  }
+
   get(id: string): DecisionCard | null {
     return this.cards.get(id) ?? null;
   }

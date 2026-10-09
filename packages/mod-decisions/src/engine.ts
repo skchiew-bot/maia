@@ -317,7 +317,7 @@ export class DecisionEngine implements DecisionService {
         subjectId: session.sessionId,
         sessionId: session.sessionId,
         projectId: session.projectId,
-        requesterId: session.ownerId ?? session.sessionId,
+        requesterId: `session:${session.sessionId}`,
       },
       { kind: 'agent', id: session.sessionId },
       { source: 'mcp' },
@@ -335,10 +335,28 @@ export class DecisionEngine implements DecisionService {
       card.excludedApproverIds.includes(user.id) ||
       (card.kind !== 'uat_signoff' && card.requesterId === user.id)
     ) {
-      return no('separation_of_duties');
+      // Sole-Approver fallback: in an org with one active Approver, their own requests would otherwise
+      // deadlock. Allowed (and recorded selfApproved) except for credit top-ups, which never go to the requester.
+      if (!(card.requesterId === user.id && this.isSoleApprover(user) && card.kind !== 'credit_topup')) {
+        return no('separation_of_duties');
+      }
     }
     if (!roleSatisfies(user.role, card.requiredRole)) return no('role');
     return { ok: true, reason: null };
+  }
+
+  private isSoleApprover(user: User): boolean {
+    if (user.role !== 'approver') return false;
+    const identity = this.ctx.services.maybe('identity');
+    if (!identity) return false;
+    return !identity.listUsers().some((u) => u.id !== user.id && u.active && u.role === 'approver');
+  }
+
+  /** An owner approving their own session's gate is self-approval even though the agent raised the card. */
+  private isSelfApproval(card: DecisionCard, user: User): boolean {
+    if (card.requesterId === user.id) return true;
+    if (!card.sessionId) return false;
+    return this.ctx.services.maybe('sessions')?.get(card.sessionId)?.ownerId === user.id;
   }
 
   mayWithdraw(card: DecisionCard, user: User): boolean {
@@ -368,7 +386,7 @@ export class DecisionEngine implements DecisionService {
       actor: { kind: 'human', id: user.id },
       method: passkeyVerified ? 'passkey' : 'button',
       passkeyVerified,
-      selfApproved: rec.card.requesterId === user.id,
+      selfApproved: this.isSelfApproval(rec.card, user),
       comment: normalizeComment(input.comment),
     });
   }
