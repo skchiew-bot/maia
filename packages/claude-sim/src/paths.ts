@@ -3,9 +3,16 @@ import path from 'node:path';
 
 export type SimEnv = Readonly<Record<string, string | undefined>>;
 
-/** ~/.claude/projects/<slug>/<sessionId>.jsonl — slug = cwd with every non-alphanumeric char replaced by '-'. */
+/**
+ * ~/.claude/projects/<slug>/<sessionId>.jsonl — slug = cwd with every non-alphanumeric char replaced by '-'; past
+ * 200 chars Claude Code 2.1.295 keeps the first 200 and appends `-` + base-36 |Java String.hashCode(cwd)|.
+ */
 export function projectSlug(cwd: string): string {
-  return cwd.replace(/[^A-Za-z0-9]/g, '-');
+  const slug = cwd.replace(/[^A-Za-z0-9]/g, '-');
+  if (slug.length <= 200) return slug;
+  let h = 0;
+  for (let i = 0; i < cwd.length; i++) h = ((h << 5) - h + cwd.charCodeAt(i)) | 0;
+  return `${slug.slice(0, 200)}-${Math.abs(h).toString(36)}`;
 }
 
 /** $CLAUDE_CONFIG_DIR, else $HOME/.claude. */

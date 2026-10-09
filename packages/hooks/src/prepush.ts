@@ -6,6 +6,7 @@
 import { chmodSync, copyFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { AOC_ENV } from '@aoc/contracts';
 import type { Env } from './constants';
 
 /** Env read by the git hooks. Only the supervisor's promotion executor sets supervisorPush (=1). */
@@ -14,7 +15,7 @@ export const GIT_HOOK_ENV = {
   sessionId: 'AOC_SESSION_ID',
   changeId: 'AOC_CHANGE_ID',
   ticketId: 'AOC_TICKET_ID',
-} as const;
+} as const satisfies Pick<typeof AOC_ENV, 'supervisorPush' | 'sessionId' | 'changeId' | 'ticketId'>;
 
 export const PROTECTED_BRANCHES = ['main', 'master', 'production', 'release/*'] as const;
 

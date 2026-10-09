@@ -31,18 +31,20 @@ export interface LoadedConfig {
 export interface DaemonArgs {
   config: string | null;
   help: boolean;
+  version: boolean;
 }
 
 export function parseDaemonArgs(argv: readonly string[]): DaemonArgs {
-  const out: DaemonArgs = { config: null, help: false };
+  const out: DaemonArgs = { config: null, help: false, version: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
     if (a === '--help' || a === '-h') out.help = true;
+    else if (a === '--version' || a === '-V') out.version = true;
     else if (a === '--config' || a.startsWith('--config=')) {
       const v = a === '--config' ? argv[++i] : a.slice('--config='.length);
       if (!v || v.startsWith('-')) throw new ConfigError('--config needs a file path');
       out.config = v;
-    } else throw new ConfigError(`unknown argument "${a}" (usage: aocd [--config <file>])`);
+    } else throw new ConfigError(`unknown argument "${a}" (usage: aocd [--config <file>] [--version])`);
   }
   return out;
 }

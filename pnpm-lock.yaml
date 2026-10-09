@@ -240,9 +240,6 @@ importers:
       '@aoc/contracts':
         specifier: workspace:*
         version: link:../contracts
-      '@aoc/sidecar':
-        specifier: workspace:*
-        version: link:../sidecar
 
   packages/kernel:
     dependencies:

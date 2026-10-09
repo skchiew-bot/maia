@@ -108,6 +108,7 @@ export const LaunchRequestSchema = z.object({
   prompt: z.string().trim().min(1).max(100_000),
   cwd: z.string().min(1).max(4096).nullish(),
   ticketId: zIdent.nullish(),
+  changeId: zIdent.nullish(),
   parentSessionId: zIdent.nullish(),
   brief: z.string().max(200_000).nullish(),
 });
@@ -610,6 +611,12 @@ export class Supervisor implements SupervisorService {
       threadId: thread.threadId,
       ...(r.ticketId ? { ticketId: r.ticketId } : {}),
     };
+    // Recorded, not inferred by readers: the launching human, or a rollover successor's predecessor's owner.
+    const ownerId = r.parentSessionId
+      ? (this.view.get(r.parentSessionId)?.ownerId ?? null)
+      : actor.kind === 'human'
+        ? actor.id
+        : null;
     try {
       this.ctx.store.appendMany([
         ev({
@@ -627,6 +634,8 @@ export class Supervisor implements SupervisorService {
             ticketId: r.ticketId ?? null,
             parentSessionId: r.parentSessionId ?? null,
             phaseId: r.phaseId ?? null,
+            ownerId,
+            changeId: r.changeId ?? null,
           },
           payload: { prompt: r.prompt, cwd },
           source: 'supervisor',
@@ -954,6 +963,9 @@ export class Supervisor implements SupervisorService {
       [AOC_ENV.processType]: s.processType,
       [AOC_ENV.mode]: 'managed',
       [AOC_ENV.readOnly]: s.readOnly ? '1' : '0',
+      // Provenance trailers for this session's commits (git prepare-commit-msg): ids only, never credentials.
+      ...(s.changeId ? { [AOC_ENV.changeId]: s.changeId } : {}),
+      ...(s.ticketId ? { [AOC_ENV.ticketId]: s.ticketId } : {}),
     };
     const credentials =
       s.readOnly || !type.credentialProfile ? null : this.credentialsFor(type.credentialProfile);

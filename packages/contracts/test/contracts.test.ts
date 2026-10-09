@@ -13,6 +13,7 @@ import {
   ProcessTypeSchema,
   validateEvent,
   AocConfigSchema,
+  projectSlug,
   transcriptPathFor,
   type LivenessInput,
 } from '../src';
@@ -105,5 +106,17 @@ describe('registry + config + misc', () => {
     expect(AocConfigSchema.parse({}).port).toBe(7420);
     expect(newId('session')).toMatch(/^ses_[0-9A-Z]{26}$/);
     expect(transcriptPathFor('/home/u/my.repo', 'abc', '/h/.claude')).toBe('/h/.claude/projects/-home-u-my-repo/abc.jsonl');
+  });
+  // Expected slugs were produced by the slug function embedded in the Claude Code 2.1.295 binary (research C11).
+  it('truncates project slugs past 200 characters and appends the cwd hash, like Claude Code', () => {
+    const exactly200 = '/' + 'a'.repeat(199);
+    expect(projectSlug(exactly200)).toBe('-' + 'a'.repeat(199));
+    const nested = '/home/dev/' + 'very-long-directory-name/'.repeat(9) + 'repo';
+    expect(projectSlug(nested)).toBe(
+      '-home-dev-' + 'very-long-directory-name-'.repeat(7) + 'very-long-direc-gy7dfj',
+    );
+    // Non-ASCII characters count as one UTF-16 unit each and become '-'.
+    expect(projectSlug('/srv/wörk/' + 'x'.repeat(195))).toBe('-srv-w-rk-' + 'x'.repeat(190) + '-q0c2ns');
+    expect(projectSlug('/tmp/aoc-capture/work')).toBe('-tmp-aoc-capture-work');
   });
 });

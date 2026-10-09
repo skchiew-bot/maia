@@ -285,8 +285,14 @@ describe('resolveHelperCommands', () => {
 });
 
 describe('parseDaemonArgs', () => {
-  it('parses --config and --help', () => {
-    expect(parseDaemonArgs([])).toEqual({ config: null, help: false });
-    expect(parseDaemonArgs(['--config', 'a.json', '-h'])).toEqual({ config: 'a.json', help: true });
+  it('parses --config, --help and --version', () => {
+    expect(parseDaemonArgs([])).toEqual({ config: null, help: false, version: false });
+    expect(parseDaemonArgs(['--config', 'a.json', '-h'])).toEqual({
+      config: 'a.json',
+      help: true,
+      version: false,
+    });
+    expect(parseDaemonArgs(['--version'])).toMatchObject({ version: true });
+    expect(parseDaemonArgs(['-V'])).toMatchObject({ version: true });
   });
 });

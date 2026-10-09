@@ -2,10 +2,13 @@ import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { serve } from '@hono/node-server';
 import { createLogger } from '@aoc/kernel';
+import pkg from '../package.json' with { type: 'json' };
 import { ConfigError, loadConfig, parseDaemonArgs, type LoadedConfig } from './config';
 import { createAocServer, type AocServer } from './server';
 
-const USAGE = `Usage: aocd [--config <file>]
+export const VERSION: string = pkg.version;
+
+const USAGE = `Usage: aocd [--config <file>] [--version]
 
 Config file: --config <file>, else $AOC_CONFIG, else ./aoc.config.json, else built-in defaults.
 Env overrides: AOC_PORT, AOC_HOST, AOC_DATA_DIR, AOC_PUBLIC_URL; AOC_LOG_LEVEL=debug|info|warn|error.
@@ -24,8 +27,13 @@ export async function runDaemon(
 ): Promise<void> {
   let loaded: LoadedConfig;
   try {
-    if (parseDaemonArgs(argv).help) {
+    const args = parseDaemonArgs(argv);
+    if (args.help) {
       process.stdout.write(USAGE);
+      return;
+    }
+    if (args.version) {
+      process.stdout.write(`aocd ${VERSION}\n`);
       return;
     }
     loaded = loadConfig({ argv, env });

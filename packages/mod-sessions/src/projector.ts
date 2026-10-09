@@ -112,6 +112,20 @@ function bump(db: DatabaseSync, sessionId: string, ts: string): void {
   ).run(sessionId, minuteOf(ts));
 }
 
+/**
+ * The owner the supervisor recorded at launch. Events written before launch_requested carried ownerId: the launching
+ * human, else (rollover) the parent session's owner.
+ */
+function ownerOf(db: DatabaseSync, e: StoredEvent, m: Record<string, JsonValue>): string | null {
+  if ('ownerId' in m) return str(m.ownerId);
+  if (e.actor.kind === 'human') return e.actor.id;
+  if (!m.parentSessionId) return null;
+  const parent = db.prepare('SELECT owner_id FROM sess_sessions WHERE session_id = ?').get(m.parentSessionId as string) as
+    | { owner_id: string | null }
+    | undefined;
+  return parent?.owner_id ?? null;
+}
+
 function apply(db: DatabaseSync, e: StoredEvent, p: P, tz: string): void {
   const m = e.meta as Record<string, JsonValue>;
   switch (e.type) {
@@ -123,7 +137,7 @@ function apply(db: DatabaseSync, e: StoredEvent, p: P, tz: string): void {
          ON CONFLICT(session_id) DO NOTHING`,
       ).run(
         m.sessionId as string,
-        e.actor.kind === 'human' ? e.actor.id : null,
+        ownerOf(db, e, m),
         m.projectId as string,
         m.threadId as string,
         str(m.phaseId),
@@ -138,13 +152,6 @@ function apply(db: DatabaseSync, e: StoredEvent, p: P, tz: string): void {
         e.ts,
         str(m.parentSessionId),
       );
-      // A launch on behalf of an agent (rollover/triage) inherits the parent's owner.
-      if (e.actor.kind !== 'human' && m.parentSessionId) {
-        db.prepare('UPDATE sess_sessions SET owner_id = (SELECT owner_id FROM sess_sessions WHERE session_id = ?) WHERE session_id = ? AND owner_id IS NULL').run(
-          m.parentSessionId as string,
-          m.sessionId as string,
-        );
-      }
       break;
     case 'session.launched':
       db.prepare('UPDATE sess_sessions SET claude_session_id = ?, pid = ?, model = ?, transcript_path = COALESCE(?, transcript_path), cwd = COALESCE(?, cwd) WHERE session_id = ?').run(
@@ -236,7 +243,10 @@ function apply(db: DatabaseSync, e: StoredEvent, p: P, tz: string): void {
         m.cacheWrite5mTokens as number,
         m.cacheWrite1hTokens as number,
       );
-      db.prepare('UPDATE sess_sessions SET context_tokens = ? WHERE session_id = ?').run(m.contextTokens as number, m.sessionId as string);
+      // 0 = the batch held no main-chain message (e.g. a subagent transcript on its own): the context size is unknown.
+      if ((m.contextTokens as number) > 0) {
+        db.prepare('UPDATE sess_sessions SET context_tokens = ? WHERE session_id = ?').run(m.contextTokens as number, m.sessionId as string);
+      }
       const ids = (p?.messageIds as string[] | undefined) ?? [];
       const ins = db.prepare('INSERT OR IGNORE INTO sess_seen_messages (session_id, message_id) VALUES (?, ?)');
       for (const id of ids) ins.run(m.sessionId as string, id);

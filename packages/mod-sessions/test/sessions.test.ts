@@ -55,6 +55,31 @@ const hook = (sid: string | null, claudeId: string, event: string, extra: Record
 const livenessChanges = (sid: string) =>
   t.rt.store.list({ types: ['session.liveness_changed'], sessionId: sid }).map((e) => (e.meta as { to: string | null }).to);
 
+describe('session owner', () => {
+  it('is the owner recorded at launch; launches logged before ownerId existed keep the old inference', async () => {
+    await setup();
+    const owner = t.user('builder');
+    const other = t.user('builder');
+    launch(owner, 'ses_old'); // legacy: the launching human
+    const asSupervisor = (sid: string, meta: Record<string, unknown>) =>
+      t.rt.store.append({
+        type: 'session.launch_requested',
+        actor: { kind: 'system', id: 'supervisor' },
+        scope: { sessionId: sid, projectId: 'prj_1' },
+        meta: { sessionId: sid, projectId: 'prj_1', threadId: 'thr_1', processType: 'discovery', model: 'claude-opus-5-5', readOnly: false, credentialProfile: null, ticketId: null, parentSessionId: null, phaseId: null, ...meta } as never,
+        payload: { prompt: 'Continue', cwd: '/tmp/repo' },
+        source: 'supervisor',
+      });
+    asSupervisor('ses_succ', { parentSessionId: 'ses_old' }); // legacy: the parent's owner
+    asSupervisor('ses_triage', { parentSessionId: 'ses_old', ownerId: null }); // recorded: nobody
+    asSupervisor('ses_rec', { ownerId: other.user.id }); // recorded
+    const owners = () => ['ses_old', 'ses_succ', 'ses_triage', 'ses_rec'].map((id) => engine().get(id)?.ownerId);
+    expect(owners()).toEqual([owner.user.id, owner.user.id, null, other.user.id]);
+    t.rt.store.rebuildProjections(['sessions']);
+    expect(owners()).toEqual([owner.user.id, owner.user.id, null, other.user.id]);
+  });
+});
+
 describe('liveness engine (§4)', () => {
   it('derives states from instrumented events and chains only changes', async () => {
     await setup();
@@ -280,6 +305,9 @@ describe('usage + throttle ingest', () => {
     const r2 = await t.json<{ recorded: number; skipped: number }>('POST', '/ingest/usage', { headers, body: { sessionId: 'ses_A', idempotencyKey: 'usage-key-2', batches: [batch(['m1', 'm2'], 50_000), batch(['m3'], 120_000)] } });
     expect(r1.recorded).toBe(1);
     expect(r2).toMatchObject({ recorded: 1, skipped: 1 });
+    expect(engine().contextTokens('ses_A')).toBe(120_000);
+    // A batch without a main-chain message (a subagent transcript on its own) reports 0: the last size stands.
+    await t.json('POST', '/ingest/usage', { headers, body: { sessionId: 'ses_A', idempotencyKey: 'usage-key-3', batches: [batch(['sub1'], 0)] } });
     expect(engine().contextTokens('ses_A')).toBe(120_000);
     // throttle: one event per episode
     await t.json('POST', '/ingest/throttle', { headers, body: { sessionId: 'ses_A', resetAt: '2026-10-09T05:00:00.000Z', message: 'Claude AI usage limit reached|1791522000', source: 'transcript' } });
