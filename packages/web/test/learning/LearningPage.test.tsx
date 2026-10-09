@@ -147,6 +147,32 @@ describe('Learning page', { timeout: 20_000 }, () => {
     );
   });
 
+  it('says what would fill an empty page, and offers retry when a panel fails', async () => {
+    const user = userEvent.setup();
+    let fail = true;
+    learningRoutes({
+      'GET /api/learning/offences': () => [],
+      'GET /api/learning/classes': () => [],
+      'GET /api/learning/trends': () => ({ ...TREND, classes: [], unclassified: TREND.weeks.map(() => 0) }),
+      'GET /api/learning/model-dimension': () =>
+        fail
+          ? new Response(JSON.stringify({ error: { code: 'boom', message: 'Projection rebuilding' } }), {
+              status: 503,
+            })
+          : { ...MODEL, classes: [] },
+      'GET /api/learning/errors': () => [],
+    });
+    await openPage();
+    expect(await screen.findByText('No repeat offences yet')).toBeInTheDocument();
+    expect(screen.getByText('Every repeating error has a root cause')).toBeInTheDocument();
+    const model = screen.getByRole('region', { name: 'Model as a root-cause dimension' });
+    expect(await within(model).findByText("Couldn't load the model test")).toBeInTheDocument();
+    expect(within(model).getByText(/Projection rebuilding \(HTTP 503/)).toBeInTheDocument();
+    fail = false;
+    await user.click(within(model).getByRole('button', { name: 'Retry' }));
+    expect(await within(model).findByText('Nothing to test yet')).toBeInTheDocument();
+  });
+
   it('refetches when a learning event arrives on the stream, and ignores others', async () => {
     const { calls } = learningRoutes();
     await openPage();

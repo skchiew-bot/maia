@@ -171,6 +171,14 @@ export function tokenHygiene(
   };
 }
 
+/** Actor id that issues the first Approver's token when AOC is set up (mod-identity bootstrap). */
+export const BOOTSTRAP_ACTOR = 'identity:bootstrap';
+
+/** Live bootstrap tokens: setup credentials that should be replaced by a personal token, then revoked. */
+export function liveBootstrapTokens(tokens: readonly IdentityTokenDto[]): IdentityTokenDto[] {
+  return tokens.filter((t) => t.status === 'active' && t.createdBy === BOOTSTRAP_ACTOR);
+}
+
 export function liveTokensOf(tokens: readonly IdentityTokenDto[], userId: string): IdentityTokenDto[] {
   return tokens.filter((t) => t.userId === userId && t.status === 'active');
 }

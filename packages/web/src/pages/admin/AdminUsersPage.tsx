@@ -40,6 +40,7 @@ import {
   isIdentityEvent,
   lastSeen,
   lastSignIns,
+  liveBootstrapTokens,
   liveTokensOf,
   roleCounts,
   tokenHygiene,
@@ -100,6 +101,7 @@ export default function AdminUsersPage() {
   const noLead =
     people !== undefined && !list.some((u) => u.active && u.flags.complianceLead && u.role !== 'requester');
   const liveObservers = (observers.data?.tokens ?? []).filter((t) => t.status === 'active');
+  const bootstrap = liveBootstrapTokens(userTokens.data?.tokens ?? []);
   const openSessions = (sessions.data?.tokens ?? []).filter((t) => t.status === 'active').length;
 
   const openUserId = params.get('user');
@@ -312,6 +314,23 @@ export default function AdminUsersPage() {
               per-decision passkey assertion, not just a bearer token.
             </InlineAlert>
           )}
+          {bootstrap.map((t) => (
+            <InlineAlert
+              key={t.tokenId}
+              tone="warn"
+              title="The setup token is still live"
+              action={
+                t.userId ? (
+                  <Button size="sm" onClick={() => setOpenUser(t.userId)}>
+                    Manage
+                  </Button>
+                ) : undefined
+              }
+            >
+              <code>{t.prefix}…</code> was issued when AOC was first set up and never expires. Issue a
+              personal token, sign in with it, then revoke this one (sessions opened with it end too).
+            </InlineAlert>
+          ))}
           {noLead && (
             <InlineAlert tone="info" title="No compliance lead">
               The ISO/IEC 42001 mapping stays provisional until a compliance lead stamps it. Set the flag with

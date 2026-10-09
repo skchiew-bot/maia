@@ -35,8 +35,10 @@ function ModalSurface({
   const titleId = useId();
   const descId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
-  useFocusTrap(panelRef, open, { initialFocus, onEscape: onClose });
+  // Order matters on close: effect cleanups run in declaration order, and browsers refuse to focus inside an
+  // inert subtree, so the page must stop being inert before the trap hands focus back to the opener.
   useInertBackground(open);
+  useFocusTrap(panelRef, open, { initialFocus, onEscape: onClose });
 
   if (!open || typeof document === 'undefined') return null;
   return createPortal(

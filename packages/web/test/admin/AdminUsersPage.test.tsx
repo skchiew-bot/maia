@@ -162,6 +162,46 @@ describe('Admin › Users page', { timeout: 20_000 }, () => {
     expect(calls.some((c) => c.path === '/api/audit/events?actorId=usr_ceo&order=desc&limit=1')).toBe(true);
   });
 
+  it('surfaces a live setup token with a way to fix it', async () => {
+    adminRoutes({
+      'GET /api/tokens': (url) => {
+        const kind = url.searchParams.get('kind');
+        if (kind !== 'user') return { tokens: [] };
+        return {
+          tokens: [
+            ...USER_TOKENS,
+            {
+              ...USER_TOKENS[0]!,
+              tokenId: 'tok_boot',
+              prefix: 'aoc_u_UellGWtB',
+              createdBy: 'identity:bootstrap',
+            },
+          ],
+        };
+      },
+    });
+    await openPage();
+    const alert = (await screen.findByText('The setup token is still live')).closest(
+      '.aoc-alert',
+    ) as HTMLElement;
+    expect(alert).toHaveTextContent('aoc_u_UellGWtB… was issued when AOC was first set up');
+    expect(within(alert).getByRole('button', { name: 'Manage' })).toBeInTheDocument();
+  });
+
+  it('shows an error with retry when people cannot be loaded', async () => {
+    adminRoutes({
+      'GET /api/users': () =>
+        new Response(JSON.stringify({ error: { code: 'down', message: 'Daemon restarting' } }), {
+          status: 503,
+        }),
+    });
+    renderAt('/admin/users', APPROVER);
+    await screen.findByRole('heading', { level: 1, name: 'Users' }, { timeout: 5000 });
+    const people = screen.getByRole('region', { name: 'People' });
+    expect(await within(people).findByText("Couldn't load users")).toBeInTheDocument();
+    expect(within(people).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+  });
+
   it('explains when this browser cannot register a passkey', async () => {
     adminRoutes();
     await openPage();

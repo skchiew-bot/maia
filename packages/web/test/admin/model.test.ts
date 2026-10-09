@@ -4,6 +4,7 @@ import {
   isLastApprover,
   lastSeen,
   lastSignIns,
+  liveBootstrapTokens,
   liveTokensOf,
   roleCounts,
   tokenHygiene,
@@ -88,6 +89,17 @@ describe('token hygiene', () => {
     ];
     expect(tokenHygiene(tokens, USERS)).toEqual({ live: 4, withoutExpiry: 3, orphaned: 1 });
     expect(liveTokensOf(USER_TOKENS, 'usr_aisyah').map((t) => t.tokenId)).toEqual(['tok_aisyah']);
+  });
+
+  it('finds a setup (bootstrap) token that is still live', () => {
+    const boot = token({
+      tokenId: 'tok_boot',
+      prefix: 'aoc_u_UellGWtB',
+      userId: 'usr_ceo',
+      createdBy: 'identity:bootstrap',
+    });
+    expect(liveBootstrapTokens([...USER_TOKENS, boot]).map((t) => t.tokenId)).toEqual(['tok_boot']);
+    expect(liveBootstrapTokens([{ ...boot, status: 'revoked' }])).toEqual([]);
   });
 });
 
