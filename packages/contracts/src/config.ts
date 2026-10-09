@@ -1,5 +1,6 @@
 /** aocd configuration. `AocConfigSchema.parse({})` yields a complete, safe local default. */
 import { z } from 'zod';
+import { FX_SESSIONS } from './events/fx';
 
 const thresholds = z
   .object({
@@ -9,6 +10,10 @@ const thresholds = z
     deadAfterMs: z.number().int().positive().default(45_000),
   })
   .default({});
+
+/** HH:MM, 24-hour, zero-padded (daily jobs compare it as a string with the local time in `timezone`). */
+const LOCAL_TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
+const localTime = z.string().regex(LOCAL_TIME, 'expected HH:MM (24-hour local time)');
 
 export const AocConfigSchema = z.object({
   /** Where aoc.db, bodies.db, keys, spool and artifacts live. */
@@ -74,15 +79,55 @@ export const AocConfigSchema = z.object({
   fx: z
     .object({
       enabled: z.boolean().default(true),
-      runAtLocalTime: z.string().default('12:30'),
+      /**
+       * BNM session recorded as each day's USD/MYR rate (Kuala Lumpur interbank middle rate, RM per 1 USD), stamped on
+       * every record. 1700 is the page's default view: scraped, then cross-checked with the BNM Open API. 0900 and
+       * 1200 need a form POST on the page, so their figure comes from the API alone (extractor `api`).
+       */
+      session: z.enum(FX_SESSIONS).default('1700'),
+      /** First attempt each day. BNM publishes a session about 40 minutes after its time (1700 → about 17:40). */
+      runAtLocalTime: localTime.default('18:00'),
+      /** Later attempts while the day's rate is not yet published or the source was unreadable; the last one decides. */
+      retryAtLocalTimes: z.array(localTime).default(['18:30', '21:00']),
       pageUrl: z.string().default('https://www.bnm.gov.my/exchange-rates'),
-      apiUrl: z.string().default('https://api.bnm.gov.my/public/exchange-rate/USD'),
+      /** BNM Open API USD endpoint: aocd requests `<apiUrl>/date/<YYYY-MM-DD>?session=<session>`. */
+      apiUrl: z.string().url().default('https://api.bnm.gov.my/public/exchange-rate/USD'),
       extractor: z.enum(['claude-cli', 'anthropic-sdk', 'fake']).default('claude-cli'),
       sanity: z
-        .object({ min: z.number().default(3.5), max: z.number().default(5.5), maxDailyChangePct: z.number().default(3) })
+        .object({
+          min: z.number().default(3.5),
+          max: z.number().default(5.5),
+          /** Day-over-day move (%) rejected outright. */
+          maxDailyChangePct: z.number().default(3),
+          /** Day-over-day move (%) above which a scraped rate is accepted only if the API agrees exactly at 4 dp. */
+          softFlagPct: z.number().default(1.25),
+        })
         .default({}),
-      reconcileTolerance: z.number().default(0.005),
-      carryForwardAlertDays: z.number().int().positive().default(4),
+      /** Largest accepted difference between the scraped and the API rate, both rounded to 4 dp. */
+      reconcileTolerance: z.number().min(0).default(0.0001),
+      /** Weekdays in a row without a live rate (holidays count, weekends do not) before a manual check is requested. */
+      carryForwardAlertWeekdays: z.number().int().positive().default(3),
+    })
+    .superRefine((fx, ctx) => {
+      if (![fx.runAtLocalTime, ...fx.retryAtLocalTimes].every((t) => LOCAL_TIME.test(t))) return;
+      const sessionTime = `${fx.session.slice(0, 2)}:${fx.session.slice(2)}`;
+      if (fx.runAtLocalTime <= sessionTime) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['runAtLocalTime'],
+          message: `must be after the ${fx.session} session (BNM publishes it about 40 minutes later)`,
+        });
+      }
+      fx.retryAtLocalTimes.forEach((time, i) => {
+        const before = i === 0 ? fx.runAtLocalTime : fx.retryAtLocalTimes[i - 1]!;
+        if (time <= before) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['retryAtLocalTimes', i],
+            message: `must be later than ${before} (after runAtLocalTime, ascending)`,
+          });
+        }
+      });
     })
     .default({}),
   audit: z

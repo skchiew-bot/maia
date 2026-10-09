@@ -6,18 +6,22 @@ import { TowerReadModel } from './snapshot';
 export { TowerReadModel, summarize, type SnapshotQuery } from './snapshot';
 export { TOWER_HANDLES, TOWER_TABLES } from './projector';
 export {
-  ageFactor,
+  agePoints,
   cleanTitle,
   costOfDelay,
-  decisionBase,
+  decisionDueMs,
+  decisionImpact,
   decisionSlaMs,
   displayScore,
   formatDuration,
   severityOf,
+  AGEING_POINTS,
   ANCHOR_MAX_AGE_MS,
-  BASE,
+  ATTENTION_SCALE_MS,
+  DECISION_SLA_MS,
   GATE_SLA_MS,
-  TICKET_BASE,
+  IMPACT,
+  TICKET_IMPACT,
   TICKET_SLA_MS,
 } from './scoring';
 

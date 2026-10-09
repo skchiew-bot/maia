@@ -41,13 +41,20 @@ export function createFxModule(opts: FxModuleOptions = {}): AocModule {
       const e = new FxEngine(ctx, model, { fetcher: opts.fetcher ?? createHttpFetcher(), llm });
       engine = e;
       ctx.services.provide('fx', createFxService(model));
-      mod.jobs = ctx.config.fx.enabled
+      const cfg = ctx.config.fx;
+      mod.jobs = cfg.enabled
         ? [
             {
               name: 'fx.daily',
-              schedule: { dailyAt: ctx.config.fx.runAtLocalTime },
+              schedule: { dailyAt: cfg.runAtLocalTime },
               run: async () => void (await e.run({ actor: FX_SYSTEM_ACTOR, source: 'scheduler' })),
             },
+            ...cfg.retryAtLocalTimes.map((time) => ({
+              name: `fx.retry@${time}`,
+              schedule: { dailyAt: time },
+              run: async () =>
+                void (await e.run({ actor: FX_SYSTEM_ACTOR, source: 'scheduler', retry: true })),
+            })),
           ]
         : [];
     },
@@ -65,9 +72,12 @@ export { FX_SYSTEM_ACTOR } from './engine';
 export { FX_EXTRACT_PURPOSE, FX_EXTRACTION_SCHEMA } from './extract';
 export {
   BNM_API_ACCEPT,
+  BNM_PAGE_SESSION,
+  bnmApiDateUrl,
   createHttpFetcher,
   htmlToText,
   parseBnmUsd,
+  type BnmUsdQuote,
   type FxFetcher,
   type FxHttpRequest,
   type FxHttpResponse,

@@ -175,7 +175,7 @@ describe('flow', () => {
     expect(s.kpis.oldestTicketSince).toBe(iso(ago(h, hours(12))));
   });
 
-  it('decision latency by kind: p50/p90 of human resolutions in 7d, open count, SLA breaches; gate KPI excludes UAT', async () => {
+  it('decision latency by kind: p50/p90 of human resolutions in 7d, open count, breaches of approved SLAs or due times; gate KPIs exclude UAT', async () => {
     h = await setup();
     const resolved = (
       id: string,
@@ -193,8 +193,18 @@ describe('flow', () => {
     resolved('dec_bg1', 'break_glass', minutes(10), DAY);
     resolved('dec_bg2', 'break_glass', minutes(30), DAY);
     decide(h, 'dec_bg_open', 'break_glass', { at: ago(h, minutes(20)) });
+    // Break-glass has no approved SLA: only a card's own due time can make it late.
+    decide(h, 'dec_bg_due', 'break_glass', {
+      at: ago(h, minutes(20)),
+      dueAt: new Date(ago(h, minutes(5))).toISOString(),
+    });
     resolved('dec_auto', 'credit_topup', 0, DAY, 'policy');
     resolved('dec_uat', 'uat_signoff', hours(5), DAY);
+    decide(h, 'dec_uat_open', 'uat_signoff', {
+      at: ago(h, DAY),
+      dueAt: new Date(ago(h, hours(1))).toISOString(),
+    });
+    decide(h, 'dec_lesson', 'lesson_binding', { at: ago(h, hours(22)) }); // within its 2-day SLA
 
     const s = await h.snap();
     expect(s.flow.decisionLatency).toEqual([
@@ -209,27 +219,37 @@ describe('flow', () => {
       },
       {
         kind: 'break_glass',
-        open: 1,
+        open: 2,
         resolved7d: 2,
         p50Ms: minutes(20),
         p90Ms: minutes(28),
-        slaMs: minutes(15),
-        breaches: 2,
+        slaMs: minutes(15), // reference scale, not an SLA: no breaches counted against it
+        breaches: 1,
+      },
+      {
+        kind: 'lesson_binding',
+        open: 1,
+        resolved7d: 0,
+        p50Ms: null,
+        p90Ms: null,
+        slaMs: 2 * DAY,
+        breaches: 0,
       },
       {
         kind: 'uat_signoff',
-        open: 0,
+        open: 1,
         resolved7d: 1,
         p50Ms: hours(5),
         p90Ms: hours(5),
         slaMs: hours(24),
-        breaches: 0,
+        breaches: 1,
       },
     ]);
     expect(s.kpis).toMatchObject({
       gateLatencyP50Ms: minutes(30),
       gateLatencyP90Ms: minutes(96),
       gateSlaMs: HOUR,
+      openPastSla: 2, // the 3h go-live gate and the break-glass card past its own due time; UAT is the customer's
     });
     expect(s.summary).toContain('Gate latency p50 30m (SLA 1h).');
   });

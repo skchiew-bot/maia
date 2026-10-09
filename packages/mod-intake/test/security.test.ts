@@ -99,4 +99,31 @@ describe('PDPA erasure of a ticket (§13)', () => {
     const rebuilt = await t.json<InternalTicket>('GET', `/api/tickets/${ticketId}`, { headers: approver.headers });
     expect(live.diagnoses).toEqual(rebuilt.diagnoses);
   });
+
+  it('keeps the agent-written root-cause class out of the clear chain, so the erasure removes it too', async () => {
+    const launches = await setup();
+    const requester = t.user('requester', 'Nur');
+    const approver = t.user('approver');
+    const { ticketId } = await submit(requester.headers, { title: 'Claim rejected', description: 'NRIC 850101-14-5555 is rejected', severity: 'high' });
+    await t.drain();
+    const sessionId = launches[0]!.sessionId;
+    // The triage agent reads untrusted ticket text and can echo it into any field it fills.
+    await t.json('POST', '/ingest/mcp/report_diagnosis', {
+      headers: t.ingestHeaders(sessionId),
+      body: { sessionId, input: { root_cause: 'The validator rejects this id format', confidence: 0.9, fix_plan: 'Accept the format', root_cause_class: 'nric 850101-14-5555' } },
+    });
+    await t.drain();
+    const reported = t.rt.store.list({ types: ['ticket.diagnosis_reported'] });
+    expect(reported).toHaveLength(1);
+    expect(JSON.stringify(reported[0])).not.toContain('850101');
+    const before = await t.json<InternalTicket>('GET', `/api/tickets/${ticketId}`, { headers: approver.headers });
+    expect(before.diagnoses[0]!.rootCauseClass).toBe('nric 850101-14-5555');
+
+    t.rt.store.eraseScope(ticketId, { actor: { kind: 'human', id: approver.user.id }, reason: 'pdpa_request' });
+    const live = await t.json<InternalTicket>('GET', `/api/tickets/${ticketId}`, { headers: approver.headers });
+    expect(JSON.stringify(live)).not.toContain('850101');
+    t.rt.store.rebuildProjections(['intake']);
+    const rebuilt = await t.json<InternalTicket>('GET', `/api/tickets/${ticketId}`, { headers: approver.headers });
+    expect(live.diagnoses).toEqual(rebuilt.diagnoses);
+  });
 });

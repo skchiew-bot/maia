@@ -1,6 +1,6 @@
 {
   "name": "decision",
-  "description": "Declares a plan, does the work, raises request_decision (test=main, 2 options) and ends its turn. When resumed it branches on the answer: a resume prompt containing \"option b\" holds the merge, anything else merges; then it finishes.",
+  "description": "Declares a plan, does the work, raises request_decision (test=main, 2 options) and ends its turn. When resumed it branches on the answer: a resume prompt naming option b (\"option b\", or the supervisor's answer line \"answered: Hold the merge\") holds the merge, anything else merges; then it finishes.",
   "steps": [
     { "kind": "think", "ms": 1500, "outputTokens": 380 },
     { "kind": "text", "text": "Declaring the plan first." },
@@ -59,7 +59,7 @@
     { "kind": "text", "text": "Decision {{decision.decision_id}} is waiting for an answer, so I'm ending my turn." },
     { "kind": "endTurn" },
     { "kind": "think", "ms": 800, "outputTokens": 200 },
-    { "kind": "branch", "onResumeTextIncludes": ["option b"], "goto": "hold" },
+    { "kind": "branch", "onResumeTextIncludes": ["option b", "answered: Hold the merge"], "goto": "hold" },
     { "kind": "text", "text": "The decision came back as option a: merging into main." },
     {
       "kind": "bash",
