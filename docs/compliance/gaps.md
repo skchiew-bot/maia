@@ -188,8 +188,8 @@ commits itself. **Test:** a commit carrying a valid trailer for an unrelated app
 | G-31 | Lessons and playbooks use two distillation engines | S11.1-a | Extract a shared distillation core (LLM call, schema, fallback, Approver gate) from `mod-registry/src/distill.ts`, reuse in `mod-learning/src/ai.ts` | Both proposal paths go through the shared core |
 | G-32 | No automated accessibility checks | UI-12.8 | Add axe + token-contrast checks to web tests | Every page passes axe; token pairs ≥ 4.5:1 |
 | G-33 | `decision.expired` is in the catalog but expiry is a `decision.withdrawn` labelled `expired`; mod-sessions ignores `decision.expired` | — | Pick one: emit `decision.expired` and handle it in `mod-sessions/src/projector.ts`, or delete the event type | Expired card no longer keeps the session Waiting on you |
-| G-34 | Mock says the stall threshold is 10 min; `DEFAULT_LIVENESS_THRESHOLDS.stallAfterMs` is 5 min | S4-b | Align after the CEO answers mock decision 2 (P-09) | — |
-| G-35 | Sole-Approver fallback is always on | S6-m | `decisions.soleApproverFallback` config flag, default per P-11; evidence pack lists every self-approval | With the flag off, the sole Approver cannot resolve their own go-live |
+| G-34 | ~~Mock says the stall threshold is 10 min; code said 5 min~~ **Resolved 2026-10-09:** CEO chose 10 min; `stallAfterMs` default is now 600 000 ms in config and `DEFAULT_LIVENESS_THRESHOLDS` | S4-b | — | `contracts` and `mod-sessions` liveness tests assert thinking at 9 min, stalled at 11 min |
+| G-35 | ~~Sole-Approver fallback is always on~~ **Resolved 2026-10-09:** CEO chose off. `decisions.soleApproverFallback` (default `false`) gates it; when enabled it still never covers credit top-ups and stops applying once a second Approver is active | S6-m | — | `mod-decisions/test/engine.test.ts` › "sole-Approver fallback" |
 
 ## Process items the CEO must own
 

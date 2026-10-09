@@ -73,7 +73,10 @@ describe('liveness engine (§4)', () => {
     t.clock.advance(60_000);
     e.heartbeat('ses_A', now(), true, 4242);
     expect(engine().row('ses_A')!.liveness).toBe('thinking');
-    t.clock.advance(6 * 60_000);
+    t.clock.advance(9 * 60_000);
+    e.heartbeat('ses_A', now(), true, 4242);
+    expect(engine().row('ses_A')!.liveness).toBe('thinking'); // under the 10-minute stall threshold
+    t.clock.advance(2 * 60_000);
     e.heartbeat('ses_A', now(), true, 4242);
     expect(engine().row('ses_A')!.liveness).toBe('stalled');
     t.clock.advance(60_000);
