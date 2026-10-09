@@ -13,17 +13,18 @@ import type {
 } from '@aoc/contracts';
 import type { IconName, Tone } from '../../components';
 
-export const STATUS_META: Record<LessonStatus, { label: string; tone: Tone; icon: IconName; hint: string }> = {
-  proposed: {
-    label: 'Awaiting decision',
-    tone: 'accent',
-    icon: 'decisions',
-    hint: 'Proposed; binds only when an Approver decides',
-  },
-  bound: { label: 'In force', tone: 'ok', icon: 'ok', hint: 'Injected into every session in its scope' },
-  retired: { label: 'Retired', tone: 'neutral', icon: 'retired', hint: 'No longer injected' },
-  rejected: { label: 'Rejected', tone: 'neutral', icon: 'close', hint: 'The Approver did not bind it' },
-};
+export const STATUS_META: Record<LessonStatus, { label: string; tone: Tone; icon: IconName; hint: string }> =
+  {
+    proposed: {
+      label: 'Awaiting decision',
+      tone: 'accent',
+      icon: 'decisions',
+      hint: 'Proposed; binds only when an Approver decides',
+    },
+    bound: { label: 'In force', tone: 'ok', icon: 'ok', hint: 'Injected into every session in its scope' },
+    retired: { label: 'Retired', tone: 'neutral', icon: 'retired', hint: 'No longer injected' },
+    rejected: { label: 'Rejected', tone: 'neutral', icon: 'close', hint: 'The Approver did not bind it' },
+  };
 
 export const SCOPE_LABEL: Record<LessonScopeType, string> = {
   process_type: 'Process type',
@@ -128,7 +129,9 @@ export function retirementProgress(l: LessonDTO): number {
 export function retirementCandidates(lessons: readonly LessonDTO[], threshold = 0.5): LessonDTO[] {
   return lessons
     .filter((l) => l.status === 'bound' && l.usage.unusedStreak > 0 && retirementProgress(l) >= threshold)
-    .sort((a, b) => retirementProgress(b) - retirementProgress(a) || b.usage.unusedStreak - a.usage.unusedStreak);
+    .sort(
+      (a, b) => retirementProgress(b) - retirementProgress(a) || b.usage.unusedStreak - a.usage.unusedStreak,
+    );
 }
 
 export interface PendingLessonDecision {
@@ -173,7 +176,9 @@ export function blockedReason(d: DecisionCardView): string | null {
  */
 export function readyToDistil(offences: readonly OffenceDTO[], lessons: readonly LessonDTO[]): OffenceDTO[] {
   const covered = new Set(
-    lessons.filter((l) => l.classId && (l.status === 'bound' || l.status === 'proposed')).map((l) => l.classId!),
+    lessons
+      .filter((l) => l.classId && (l.status === 'bound' || l.status === 'proposed'))
+      .map((l) => l.classId!),
   );
   return offences
     .filter((o) => o.fix !== null && !covered.has(o.classId))

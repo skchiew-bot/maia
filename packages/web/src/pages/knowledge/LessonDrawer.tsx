@@ -125,7 +125,9 @@ export function LessonDrawer({ lesson, canCurate, onClose, onRetire }: LessonDra
             <Badge tone={meta.tone} icon={meta.icon}>
               {meta.label}
             </Badge>
-            <span className="knowledge-muted">{l.origin === 'ai' ? 'Distilled by AI' : 'Proposed by a person'}</span>
+            <span className="knowledge-muted">
+              {l.origin === 'ai' ? 'Distilled by AI' : 'Proposed by a person'}
+            </span>
           </div>
           <section className="knowledge-drawer__section" aria-labelledby="knowledge-rule-title">
             <h3 id="knowledge-rule-title" className="knowledge-drawer__h">

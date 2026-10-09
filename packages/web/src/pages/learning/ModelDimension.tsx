@@ -82,7 +82,9 @@ export function ModelVerdict({ cls, minRunsPerTier, detailed }: ModelVerdictProp
                 <th scope="row">{p.processType}</th>
                 <td className="aoc-num">
                   {p.tiers
-                    .map((t) => `${TIER_LABEL[t.tier]} ${formatInteger(t.occurrences)}/${formatInteger(t.runs)}`)
+                    .map(
+                      (t) => `${TIER_LABEL[t.tier]} ${formatInteger(t.occurrences)}/${formatInteger(t.runs)}`,
+                    )
                     .join(' · ')}
                 </td>
                 <td>{VERDICT_META[p.verdict].label}</td>
@@ -108,7 +110,11 @@ export function ModelDimensionList({ classes, minRunsPerTier, onOpen }: ModelDim
       {classes.map((c) => (
         <li key={c.classId} className="learning-model__card">
           {onOpen ? (
-            <button type="button" className="learning-model__name aoc-link-button" onClick={() => onOpen(c.classId)}>
+            <button
+              type="button"
+              className="learning-model__name aoc-link-button"
+              onClick={() => onOpen(c.classId)}
+            >
               {c.name}
             </button>
           ) : (

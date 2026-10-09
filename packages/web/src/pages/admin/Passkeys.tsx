@@ -99,7 +99,11 @@ export function PasskeyList({ passkeys, owner, onRemoved }: PasskeyListProps) {
               <span className="admin-keys__label">{p.label ?? 'Unnamed passkey'}</span>
               <span className="admin-muted aoc-num">
                 added {formatShortDate(p.createdAt)} ·{' '}
-                {p.lastUsedAt ? <RelativeTime value={p.lastUsedAt} prefix="last signed " suffix=" ago" /> : 'never used to sign'}
+                {p.lastUsedAt ? (
+                  <RelativeTime value={p.lastUsedAt} prefix="last signed " suffix=" ago" />
+                ) : (
+                  'never used to sign'
+                )}
               </span>
             </div>
             <Badge tone="neutral">{p.deviceType === 'multiDevice' ? 'Synced' : 'This device only'}</Badge>
@@ -196,7 +200,12 @@ export function RegisterPasskey({ onRegistered }: RegisterPasskeyProps) {
         hint="Optional. Helps you recognise it later."
         fieldClassName="admin-register__field"
       />
-      <Button icon="key" onClick={() => void register()} loading={busy} loadingText="Waiting for your authenticator…">
+      <Button
+        icon="key"
+        onClick={() => void register()}
+        loading={busy}
+        loadingText="Waiting for your authenticator…"
+      >
         Register a passkey
       </Button>
       {error && (

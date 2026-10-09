@@ -27,8 +27,8 @@ export interface IssueTokenDialogProps {
 export function AttributionNote() {
   return (
     <InlineAlert tone="info" title="Attribution, not signature">
-      A bearer token proves which token was used, not who used it. Go-live, rollback and break-glass also need a
-      per-decision passkey: that is the signed approval.
+      A bearer token proves which token was used, not who used it. Go-live, rollback and break-glass also need
+      a per-decision passkey: that is the signed approval.
     </InlineAlert>
   );
 }
@@ -77,7 +77,10 @@ export function IssueTokenDialog({ target, onClose, onIssued }: IssueTokenDialog
     setBusy(true);
     setError(undefined);
     const days = EXPIRY_CHOICES.find((c) => c.value === expiry)?.days ?? null;
-    const body = { ...(label.trim() ? { label: label.trim() } : {}), ...(days ? { expiresInDays: days } : {}) };
+    const body = {
+      ...(label.trim() ? { label: label.trim() } : {}),
+      ...(days ? { expiresInDays: days } : {}),
+    };
     try {
       const result =
         target.kind === 'user'
@@ -112,8 +115,8 @@ export function IssueTokenDialog({ target, onClose, onIssued }: IssueTokenDialog
       description={
         target?.kind === 'observer' ? (
           <>
-            For <code>aoc hooks install-observed</code> on a developer host: observed sessions are read-only and
-            buffer locally while the daemon is down.
+            For <code>aoc hooks install-observed</code> on a developer host: observed sessions are read-only
+            and buffer locally while the daemon is down.
           </>
         ) : (
           'A personal token for the CLI and for signing in to the console.'
@@ -130,7 +133,14 @@ export function IssueTokenDialog({ target, onClose, onIssued }: IssueTokenDialog
             <Button variant="ghost" onClick={onClose}>
               Cancel
             </Button>
-            <Button variant="primary" type="submit" form={formId} loading={busy} loadingText="Issuing…" icon="key">
+            <Button
+              variant="primary"
+              type="submit"
+              form={formId}
+              loading={busy}
+              loadingText="Issuing…"
+              icon="key"
+            >
               Issue token
             </Button>
           </>
@@ -163,7 +173,9 @@ export function IssueTokenDialog({ target, onClose, onIssued }: IssueTokenDialog
             {copied === 'failed'
               ? 'Copy is blocked here: the token is selected, copy it with your keyboard.'
               : `Afterwards the console shows only its prefix, ${issued.prefix}. ${
-                  issued.expiresAt ? `Expires ${formatDateTime(issued.expiresAt)}.` : 'No expiry: revoke it when unused.'
+                  issued.expiresAt
+                    ? `Expires ${formatDateTime(issued.expiresAt)}.`
+                    : 'No expiry: revoke it when unused.'
                 }`}
           </p>
           <AttributionNote />
@@ -187,8 +199,8 @@ export function IssueTokenDialog({ target, onClose, onIssued }: IssueTokenDialog
           />
           <AttributionNote />
           <p className="admin-muted">
-            <Icon name="info" size={12} /> Only a hash of the token is kept. The plaintext is shown once, right
-            after issuing.
+            <Icon name="info" size={12} /> Only a hash of the token is kept. The plaintext is shown once,
+            right after issuing.
           </p>
           {error !== undefined && (
             <InlineAlert tone="danger" title="Not issued" live>

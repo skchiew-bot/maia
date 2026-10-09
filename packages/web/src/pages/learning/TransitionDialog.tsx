@@ -44,8 +44,12 @@ export function TransitionDialog({ offence, initialStep, onClose, onDone }: Tran
 
   const current = step ?? (initialStep && steps.includes(initialStep) ? initialStep : steps[0]);
   const needsFix = current === 'fix_applied';
-  const noteError = !needsFix && touched && note.trim().length < 3 ? 'Say what causes it (at least 3 characters).' : undefined;
-  const fixError = needsFix && touched && fix.trim().length < 3 ? 'State the fix (at least 3 characters).' : undefined;
+  const noteError =
+    !needsFix && touched && note.trim().length < 3
+      ? 'Say what causes it (at least 3 characters).'
+      : undefined;
+  const fixError =
+    needsFix && touched && fix.trim().length < 3 ? 'State the fix (at least 3 characters).' : undefined;
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -91,7 +95,13 @@ export function TransitionDialog({ offence, initialStep, onClose, onDone }: Tran
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="primary" type="submit" form={`${groupId}-form`} loading={busy} loadingText="Saving…">
+          <Button
+            variant="primary"
+            type="submit"
+            form={`${groupId}-form`}
+            loading={busy}
+            loadingText="Saving…"
+          >
             {current ? STEP_ACTION[current] : 'Save'}
           </Button>
         </>

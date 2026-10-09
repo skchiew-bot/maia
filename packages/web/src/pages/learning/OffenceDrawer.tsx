@@ -107,7 +107,9 @@ export function OffenceDrawer({
                 value: (
                   <span className="learning-stack">
                     <Money usd={o.costOfRecurrenceUsd} notional />
-                    <span className="learning-muted aoc-num">≈ {formatUsd(perOccurrenceUsd(o))} per occurrence</span>
+                    <span className="learning-muted aoc-num">
+                      ≈ {formatUsd(perOccurrenceUsd(o))} per occurrence
+                    </span>
                   </span>
                 ),
               },
@@ -157,7 +159,9 @@ export function OffenceDrawer({
             {model ? (
               <ModelVerdict cls={model} minRunsPerTier={minRunsPerTier} detailed />
             ) : (
-              <p className="learning-muted">Not tested yet: the class needs two or more occurrences with a known model.</p>
+              <p className="learning-muted">
+                Not tested yet: the class needs two or more occurrences with a known model.
+              </p>
             )}
           </section>
           <section className="learning-drawer__section" aria-labelledby="learning-history-title">

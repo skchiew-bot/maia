@@ -2,7 +2,8 @@
 
 .knowledge-skel {
   border-radius: var(--radius-sm);
-  background: linear-gradient(var(--surface-2), var(--surface-2)) top / 100% 12px no-repeat,
+  background:
+    linear-gradient(var(--surface-2), var(--surface-2)) top / 100% 12px no-repeat,
     linear-gradient(var(--surface-2), var(--surface-2)) 0 28px / 70% 12px no-repeat,
     linear-gradient(var(--surface-2), var(--surface-2)) 0 56px / 84% 12px no-repeat;
 }
@@ -152,7 +153,7 @@ button.knowledge-payoff__rule:hover {
 }
 .knowledge-rulebook__statuses {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(180px, 100%), 1fr));
   gap: var(--sp-2);
   list-style: none;
 }
@@ -410,6 +411,10 @@ button.knowledge-payoff__rule:hover {
 @media (max-width: 640px) {
   .knowledge-registry {
     padding: 0 var(--sp-3) var(--sp-2);
+  }
+  /* rows without an action drop the empty "Action" line from their card */
+  .knowledge-registry .aoc-dt__td:empty {
+    display: none !important;
   }
   .knowledge-lesson {
     max-width: none;

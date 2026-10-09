@@ -16,14 +16,7 @@ import {
   useToast,
 } from '../../components';
 import { PasskeyList, RegisterPasskey } from './Passkeys';
-import {
-  REVOKE_REASON,
-  ROLES_IN_ORDER,
-  ROLE_META,
-  isLastApprover,
-  lastSeen,
-  type UserFacts,
-} from './model';
+import { REVOKE_REASON, ROLES_IN_ORDER, ROLE_META, isLastApprover, lastSeen, type UserFacts } from './model';
 
 export interface UserDrawerProps {
   user: IdentityUserDto | null;
@@ -44,9 +37,7 @@ function TokenRow({ token, onRevoke }: { token: IdentityTokenDto; onRevoke: (t: 
     <li className="admin-tokens__item">
       <code className="admin-tokens__prefix">{token.prefix}…</code>
       <div className="admin-tokens__main">
-        <span>
-          {token.kind === 'web_session' ? 'Console session' : (token.label ?? 'Personal token')}
-        </span>
+        <span>{token.kind === 'web_session' ? 'Console session' : (token.label ?? 'Personal token')}</span>
         <span className="admin-muted aoc-num">
           issued {formatShortDate(token.createdAt)}
           {live
@@ -89,6 +80,8 @@ export function UserDrawer({
   const [revokeBusy, setRevokeBusy] = useState(false);
   const [revokeError, setRevokeError] = useState<unknown>(undefined);
   const [confirmDeactivate, setConfirmDeactivate] = useState(false);
+  // The flag shows the click at once; the server's value takes over when the user list reloads.
+  const [leadDraft, setLeadDraft] = useState<boolean | null>(null);
   const keepRef = useRef<HTMLButtonElement>(null);
   const keepActiveRef = useRef<HTMLButtonElement>(null);
 
@@ -98,6 +91,8 @@ export function UserDrawer({
     if (currentRole) setRole(currentRole);
     setError(undefined);
   }, [userId, currentRole]);
+  const serverLead = user?.flags.complianceLead;
+  useEffect(() => setLeadDraft(null), [userId, serverLead]);
 
   const recent = useResource<AuditEventPageDTO>(userId ? '/api/audit/events' : null, {
     query: userId ? { actorId: userId, order: 'desc', limit: 6 } : undefined,
@@ -109,15 +104,21 @@ export function UserDrawer({
   const demotionBlocked = lastApprover && role !== 'approver';
   const visibleTokens = tokens.filter((t) => t.kind === 'user' || t.status === 'active');
 
-  const patch = async (what: 'role' | 'lead' | 'active', body: Record<string, unknown>, done: string) => {
+  const patch = async (
+    what: 'role' | 'lead' | 'active',
+    body: Record<string, unknown>,
+    done: string,
+  ): Promise<boolean> => {
     setSaving(what);
     setError(undefined);
     try {
       await apiPatch(`/api/users/${encodeURIComponent(user.id)}`, body);
       toast.notify({ tone: 'ok', title: done });
       onChanged();
+      return true;
     } catch (err) {
       setError(err);
+      return false;
     } finally {
       setSaving(null);
     }
@@ -142,13 +143,7 @@ export function UserDrawer({
   const seen = lastSeen(facts?.lastActionAt, lastSignInAt);
 
   return (
-    <Drawer
-      open
-      onClose={onClose}
-      title={user.name}
-      description={user.email ?? undefined}
-      width={520}
-    >
+    <Drawer open onClose={onClose} title={user.name} description={user.email ?? undefined} width={520}>
       <div className="admin-drawer">
         <div className="admin-drawer__badges">
           <Badge tone={ROLE_META[user.role].tone}>{ROLE_META[user.role].label}</Badge>
@@ -192,15 +187,19 @@ export function UserDrawer({
           </div>
           <Checkbox
             label="Compliance lead"
-            checked={user.flags.complianceLead}
+            checked={leadDraft ?? user.flags.complianceLead}
             disabled={saving !== null || user.role === 'requester' || !user.active}
-            onChange={(e) =>
+            onChange={(e) => {
+              const next = e.target.checked;
+              setLeadDraft(next);
               void patch(
                 'lead',
-                { flags: { complianceLead: e.target.checked } },
-                e.target.checked ? `${user.name} is a compliance lead` : `${user.name} is no longer a compliance lead`,
-              )
-            }
+                { flags: { complianceLead: next } },
+                next ? `${user.name} is a compliance lead` : `${user.name} is no longer a compliance lead`,
+              ).then((ok) => {
+                if (!ok) setLeadDraft(null);
+              });
+            }}
             hint={
               user.role === 'requester'
                 ? 'Requesters cannot stamp the compliance mapping.'
@@ -278,7 +277,9 @@ export function UserDrawer({
           {isSelf ? (
             <RegisterPasskey onRegistered={onChanged} />
           ) : (
-            <p className="admin-muted">Only {user.name} can register their own passkey, signed in as themselves.</p>
+            <p className="admin-muted">
+              Only {user.name} can register their own passkey, signed in as themselves.
+            </p>
           )}
         </section>
 
@@ -325,7 +326,12 @@ export function UserDrawer({
             <Button ref={keepRef} onClick={() => setRevokeTarget(null)}>
               Keep it
             </Button>
-            <Button variant="danger" onClick={() => void revoke()} loading={revokeBusy} loadingText="Revoking…">
+            <Button
+              variant="danger"
+              onClick={() => void revoke()}
+              loading={revokeBusy}
+              loadingText="Revoking…"
+            >
               {revokeTarget?.kind === 'web_session' ? 'Sign out' : 'Revoke token'}
             </Button>
           </>

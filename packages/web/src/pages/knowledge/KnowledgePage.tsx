@@ -219,9 +219,12 @@ export default function KnowledgePage() {
             </span>
             {l.status === 'bound' && (
               <span
-                className={l.usage.unusedStreak > 0 ? 'knowledge-muted knowledge-streak is-on' : 'knowledge-muted'}
+                className={
+                  l.usage.unusedStreak > 0 ? 'knowledge-muted knowledge-streak is-on' : 'knowledge-muted'
+                }
               >
-                {formatInteger(l.usage.unusedStreak)} of {formatInteger(l.usage.retireAfterUnusedRuns)} unused in a row
+                {formatInteger(l.usage.unusedStreak)} of {formatInteger(l.usage.retireAfterUnusedRuns)} unused
+                in a row
               </span>
             )}
           </span>
@@ -342,7 +345,9 @@ export default function KnowledgePage() {
           value={lessons.data ? candidates.length : '—'}
           tone={candidates.length > 0 ? 'warn' : 'neutral'}
           footnote={
-            retireLimit ? `retire after ${formatInteger(retireLimit)} unused runs` : 'retire when unused for N runs'
+            retireLimit
+              ? `retire after ${formatInteger(retireLimit)} unused runs`
+              : 'retire when unused for N runs'
           }
           info="Lessons in force that are halfway or more to automatic retirement. A growing global rulebook slows every session (R10)."
         />
@@ -417,23 +422,27 @@ export default function KnowledgePage() {
                     <p className="knowledge-muted">None yet: no session receives a lesson today.</p>
                   ) : (
                     <ul className="knowledge-rulebook__scopes">
-                      {[...new Set(all.filter((l) => l.status === 'bound').map((l) => `${l.scopeType}|${l.scopeValue}`))].map(
-                        (key) => {
-                          const [type, value] = key.split('|') as [LessonDTO['scopeType'], string];
-                          const n = all.filter(
-                            (l) => l.status === 'bound' && l.scopeType === type && l.scopeValue === value,
-                          ).length;
-                          return (
-                            <li key={key}>
-                              <Chip icon={type === 'process_type' ? 'registry' : 'projects'}>
-                                <span className="aoc-sr-only">{SCOPE_LABEL[type]}: </span>
-                                {value}
-                                <span className="knowledge-rulebook__n aoc-num"> ×{n}</span>
-                              </Chip>
-                            </li>
-                          );
-                        },
-                      )}
+                      {[
+                        ...new Set(
+                          all
+                            .filter((l) => l.status === 'bound')
+                            .map((l) => `${l.scopeType}|${l.scopeValue}`),
+                        ),
+                      ].map((key) => {
+                        const [type, value] = key.split('|') as [LessonDTO['scopeType'], string];
+                        const n = all.filter(
+                          (l) => l.status === 'bound' && l.scopeType === type && l.scopeValue === value,
+                        ).length;
+                        return (
+                          <li key={key}>
+                            <Chip icon={type === 'process_type' ? 'registry' : 'projects'}>
+                              <span className="aoc-sr-only">{SCOPE_LABEL[type]}: </span>
+                              {value}
+                              <span className="knowledge-rulebook__n aoc-num"> ×{n}</span>
+                            </Chip>
+                          </li>
+                        );
+                      })}
                     </ul>
                   )}
                 </div>
@@ -456,7 +465,8 @@ export default function KnowledgePage() {
               isEmpty={() => pending.length === 0}
               empty={
                 <p className="knowledge-quiet">
-                  No lesson awaits a decision. Proposing a lesson raises a lesson-binding decision for an Approver.
+                  No lesson awaits a decision. Proposing a lesson raises a lesson-binding decision for an
+                  Approver.
                 </p>
               }
               errorTitle="Couldn't load lesson decisions"
@@ -470,7 +480,9 @@ export default function KnowledgePage() {
                         <div className="knowledge-pending__main">
                           <span className="knowledge-pending__title">{d.title}</span>
                           <span className="knowledge-muted knowledge-pending__rule">
-                            {l ? l.rule : 'No matching lesson in the registry: review the decision for details.'}
+                            {l
+                              ? l.rule
+                              : 'No matching lesson in the registry: review the decision for details.'}
                           </span>
                         </div>
                         <div className="knowledge-pending__meta aoc-num">
@@ -512,7 +524,11 @@ export default function KnowledgePage() {
             <ul className="knowledge-retire">
               {candidates.map((l) => (
                 <li key={l.lessonId} className="knowledge-retire__item">
-                  <button type="button" className="knowledge-retire__rule aoc-link-button" onClick={() => setParam('lesson', l.lessonId)}>
+                  <button
+                    type="button"
+                    className="knowledge-retire__rule aoc-link-button"
+                    onClick={() => setParam('lesson', l.lessonId)}
+                  >
                     {l.rule}
                   </button>
                   <Meter
@@ -562,14 +578,20 @@ export default function KnowledgePage() {
                     {distil.map((o) => (
                       <li key={o.offenceId} className="knowledge-distil__item">
                         <div className="knowledge-distil__main">
-                          <Link to={`/learning?class=${encodeURIComponent(o.classId)}`} className="knowledge-distil__name">
+                          <Link
+                            to={`/learning?class=${encodeURIComponent(o.classId)}`}
+                            className="knowledge-distil__name"
+                          >
                             {o.className}
                           </Link>
                           <span className="knowledge-muted">{o.fix}</span>
                         </div>
                         <span className="knowledge-distil__cost aoc-num">
                           {formatUsd(o.costOfRecurrenceUsd)}
-                          <span className="knowledge-muted"> notional · {formatInteger(o.occurrences)} occurrences</span>
+                          <span className="knowledge-muted">
+                            {' '}
+                            notional · {formatInteger(o.occurrences)} occurrences
+                          </span>
                         </span>
                         <Button size="sm" onClick={() => setParam('propose', o.classId)}>
                           Propose lesson
@@ -598,7 +620,13 @@ export default function KnowledgePage() {
                       </span>
                     }
                   >
-                    <SegmentedControl label="Status" size="sm" value={status} options={STATUS_FILTERS} onChange={setStatus} />
+                    <SegmentedControl
+                      label="Status"
+                      size="sm"
+                      value={status}
+                      options={STATUS_FILTERS}
+                      onChange={setStatus}
+                    />
                   </FilterBar>
                   <DataTable
                     caption="Distilled lessons"
@@ -613,7 +641,11 @@ export default function KnowledgePage() {
                       <EmptyState
                         size="sm"
                         icon="knowledge"
-                        title={status === 'all' ? 'No lessons yet' : `No ${STATUS_META[status].label.toLowerCase()} lessons`}
+                        title={
+                          status === 'all'
+                            ? 'No lessons yet'
+                            : `No ${STATUS_META[status].label.toLowerCase()} lessons`
+                        }
                         body={
                           status === 'all'
                             ? 'Lessons are distilled from repeat offences with a stated fix, then bound by an Approver.'
@@ -692,7 +724,12 @@ export default function KnowledgePage() {
             >
               Cancel
             </Button>
-            <Button variant="danger" onClick={() => void confirmRetire()} loading={retiring} loadingText="Retiring…">
+            <Button
+              variant="danger"
+              onClick={() => void confirmRetire()}
+              loading={retiring}
+              loadingText="Retiring…"
+            >
               Retire lesson
             </Button>
           </>

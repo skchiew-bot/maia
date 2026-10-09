@@ -201,10 +201,7 @@ function trendStage(state: OffenceState | null | undefined): RecurrenceStage | u
  * count), including classes with no occurrence in the window (a verified-closed class shows a flat zero).
  * Classes the trend counts but that have no offence yet follow, by count.
  */
-export function trendFacets(
-  trend: RecurrenceTrendDTO,
-  offences: readonly OffenceDTO[],
-): RecurrenceClass[] {
+export function trendFacets(trend: RecurrenceTrendDTO, offences: readonly OffenceDTO[]): RecurrenceClass[] {
   const weekLabels = trend.weeks.map((w) => formatShortDate(w));
   const zeros = trend.weeks.map(() => 0);
   const counted = new Map(trend.classes.map((c) => [c.classId, c]));
@@ -385,7 +382,7 @@ export function verdictDetail(verdict: ModelVerdict, minRunsPerTier: number): st
     case 'spec_context_tooling':
       return 'Also recurs on a stronger tier, so the cause is spec, context or tooling.';
     default:
-      return `Needs at least ${minRunsPerTier} runs on a cheaper and a stronger tier to test the model.`;
+      return `Not testable yet: no process type has it with ${minRunsPerTier}+ runs on both a cheaper and a stronger tier.`;
   }
 }
 

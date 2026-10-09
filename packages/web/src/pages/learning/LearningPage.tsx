@@ -85,7 +85,10 @@ export default function LearningPage() {
 
   const offences = useResource<OffenceDTO[]>('/api/learning/offences', { refreshOn });
   const classes = useResource<RootCauseClassDTO[]>('/api/learning/classes', { refreshOn });
-  const trend = useResource<RecurrenceTrendDTO>('/api/learning/trends', { query: { weeks: WEEKS }, refreshOn });
+  const trend = useResource<RecurrenceTrendDTO>('/api/learning/trends', {
+    query: { weeks: WEEKS },
+    refreshOn,
+  });
   const model = useResource<ModelDimensionReportDTO>('/api/learning/model-dimension', { refreshOn });
   const errors = useResource<ErrorOccurrenceDTO[]>('/api/learning/errors', {
     query: { limit: ERROR_LIMIT },
@@ -129,7 +132,9 @@ export default function LearningPage() {
   }, [location.hash]);
 
   const openOffence = openClassId ? (ranked.find((o) => o.classId === openClassId) ?? null) : null;
-  const transitionOffence = transition ? (ranked.find((o) => o.offenceId === transition.offenceId) ?? null) : null;
+  const transitionOffence = transition
+    ? (ranked.find((o) => o.offenceId === transition.offenceId) ?? null)
+    : null;
 
   const startStep = useCallback((o: OffenceDTO, step: HumanStep) => {
     setTransition({ offenceId: o.offenceId, step });
@@ -213,7 +218,9 @@ export default function LearningPage() {
               </Button>
             );
           if (o.state === 'fix_applied' && o.verifyDueAt)
-            return <span className="learning-muted">Verifying · closes {formatShortDate(o.verifyDueAt)}</span>;
+            return (
+              <span className="learning-muted">Verifying · closes {formatShortDate(o.verifyDueAt)}</span>
+            );
           if (o.state === 'verified_closed' && o.verifiedClosedAt)
             return <span className="learning-muted">Closed {formatShortDate(o.verifiedClosedAt)}</span>;
           return <span className="learning-muted">—</span>;
@@ -344,24 +351,26 @@ export default function LearningPage() {
               errorTitle="Couldn't load repeat offences"
             >
               {() => (
-                <DataTable
-                  caption="Repeat offences by cost of recurrence"
-                  columns={offenceColumns}
-                  rows={ranked}
-                  rowKey={(o) => o.offenceId}
-                  onRowClick={(o) => setOpenClass(o.classId)}
-                  rowLabel={(o) => `Open details for ${o.className}`}
-                  activeRowKey={openOffence?.offenceId}
-                  rowTone={(o) => (o.state === 'reopened' ? 'danger' : undefined)}
-                  empty={
-                    <EmptyState
-                      size="sm"
-                      icon="ok"
-                      title="No repeat offences"
-                      body="Nothing has recurred yet. A class with two or more occurrences becomes a tracked offence."
-                    />
-                  }
-                />
+                <div className="learning-flush">
+                  <DataTable
+                    caption="Repeat offences by cost of recurrence"
+                    columns={offenceColumns}
+                    rows={ranked}
+                    rowKey={(o) => o.offenceId}
+                    onRowClick={(o) => setOpenClass(o.classId)}
+                    rowLabel={(o) => `Open details for ${o.className}`}
+                    activeRowKey={openOffence?.offenceId}
+                    rowTone={(o) => (o.state === 'reopened' ? 'danger' : undefined)}
+                    empty={
+                      <EmptyState
+                        size="sm"
+                        icon="ok"
+                        title="No repeat offences"
+                        body="Nothing has recurred yet. A class with two or more occurrences becomes a tracked offence."
+                      />
+                    }
+                  />
+                </div>
               )}
             </ResourceView>
           )}

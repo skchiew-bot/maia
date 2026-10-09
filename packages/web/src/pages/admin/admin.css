@@ -2,7 +2,8 @@
 
 .admin-skel {
   border-radius: var(--radius-sm);
-  background: linear-gradient(var(--surface-2), var(--surface-2)) top / 100% 12px no-repeat,
+  background:
+    linear-gradient(var(--surface-2), var(--surface-2)) top / 100% 12px no-repeat,
     linear-gradient(var(--surface-2), var(--surface-2)) 0 28px / 74% 12px no-repeat,
     linear-gradient(var(--surface-2), var(--surface-2)) 0 56px / 88% 12px no-repeat,
     linear-gradient(var(--surface-2), var(--surface-2)) 0 84px / 62% 12px no-repeat;
@@ -357,6 +358,16 @@
 }
 
 @media (max-width: 640px) {
+  .admin-alerts .aoc-alert {
+    flex-wrap: wrap;
+  }
+  .admin-alerts .aoc-alert__action {
+    flex-basis: 100%;
+    padding-left: 26px;
+  }
+  .admin-flush {
+    padding: 0 var(--sp-3) var(--sp-2);
+  }
   .admin-gates__row {
     grid-template-columns: minmax(0, 1fr) auto;
     grid-template-areas:

@@ -6,8 +6,16 @@ import type { IdentityTokenDto, IdentityUserDto, PasskeyDto, Role } from '@aoc/c
 import type { Tone } from '../../components';
 
 export const ROLE_META: Record<Role, { label: string; tone: Tone; hint: string }> = {
-  approver: { label: 'Approver', tone: 'accent', hint: 'Holds the gates: fix plans, go-live, rollback, top-ups' },
-  builder: { label: 'Builder', tone: 'neutral', hint: 'Operator surface; self-approves reversible off-main work' },
+  approver: {
+    label: 'Approver',
+    tone: 'accent',
+    hint: 'Holds the gates: fix plans, go-live, rollback, top-ups',
+  },
+  builder: {
+    label: 'Builder',
+    tone: 'neutral',
+    hint: 'Operator surface; self-approves reversible off-main work',
+  },
   requester: { label: 'Requester', tone: 'neutral', hint: 'Intake portal only: files tickets, tests on UAT' },
 };
 
@@ -19,7 +27,8 @@ export interface UserFacts {
   lastActionAt: string | null;
 }
 
-export type CoverageLevel = 'ok' | 'warn' | 'danger';
+/** `unknown` while the facts a level depends on are still loading. */
+export type CoverageLevel = 'ok' | 'warn' | 'danger' | 'unknown';
 
 export interface GateCoverage {
   id: 'passkey' | 'approver' | 'builder' | 'compliance';
@@ -61,9 +70,11 @@ export function gateCoverage(
       label: 'Passkey gates',
       scope: 'Go-live, rollback, break-glass',
       holders: withPasskey,
-      level: facts ? level(withPasskey.length) : 'ok',
-      note:
-        withPasskey.length === 0
+      level: facts ? level(withPasskey.length) : 'unknown',
+      // Passkeys load per person after the user list: say nothing until they have.
+      note: !facts
+        ? ''
+        : withPasskey.length === 0
           ? 'Nobody can approve them: an Approver must register a passkey.'
           : withPasskey.length === 1
             ? 'One person: no cover when they are away.'
@@ -131,7 +142,10 @@ export function lastSignIns(sessions: readonly IdentityTokenDto[]): Map<string, 
 }
 
 /** The later of a person's last audited action and last console sign-in. */
-export function lastSeen(lastActionAt: string | null | undefined, lastSignInAt: string | null | undefined): string | null {
+export function lastSeen(
+  lastActionAt: string | null | undefined,
+  lastSignInAt: string | null | undefined,
+): string | null {
   if (!lastActionAt) return lastSignInAt ?? null;
   if (!lastSignInAt) return lastActionAt;
   return Date.parse(lastActionAt) >= Date.parse(lastSignInAt) ? lastActionAt : lastSignInAt;
@@ -144,7 +158,10 @@ export interface TokenHygiene {
   orphaned: number;
 }
 
-export function tokenHygiene(tokens: readonly IdentityTokenDto[], users: readonly IdentityUserDto[]): TokenHygiene {
+export function tokenHygiene(
+  tokens: readonly IdentityTokenDto[],
+  users: readonly IdentityUserDto[],
+): TokenHygiene {
   const inactive = new Set(users.filter((u) => !u.active).map((u) => u.id));
   const live = tokens.filter((t) => t.status === 'active');
   return {

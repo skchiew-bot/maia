@@ -3,7 +3,8 @@
 /* Static placeholder that holds a panel's height on first load (no shimmer: no idle animation). */
 .learning-skel {
   border-radius: var(--radius-sm);
-  background: linear-gradient(var(--surface-2), var(--surface-2)) top / 100% 12px no-repeat,
+  background:
+    linear-gradient(var(--surface-2), var(--surface-2)) top / 100% 12px no-repeat,
     linear-gradient(var(--surface-2), var(--surface-2)) 0 28px / 72% 12px no-repeat,
     linear-gradient(var(--surface-2), var(--surface-2)) 0 56px / 86% 12px no-repeat,
     linear-gradient(var(--surface-2), var(--surface-2)) 0 84px / 60% 12px no-repeat;
@@ -261,7 +262,7 @@
 /* ---- Model dimension ---- */
 .learning-model {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(260px, 100%), 1fr));
   gap: var(--sp-3);
   list-style: none;
 }
@@ -456,6 +457,10 @@
 }
 
 @media (max-width: 640px) {
+  /* stacked table cards sit inside the card's padding instead of on its border */
+  .learning-flush {
+    padding: 0 var(--sp-3) var(--sp-2);
+  }
   .learning-dims__row {
     grid-template-columns: minmax(0, 1fr) auto;
   }

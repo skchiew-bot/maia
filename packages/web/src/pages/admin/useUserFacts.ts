@@ -1,12 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AuditEventPageDTO, PasskeyDto } from '@aoc/contracts';
-import {
-  REFRESH_COALESCE_MS,
-  apiGet,
-  useEventStream,
-  useStreamResync,
-  type ResourceState,
-} from '../../api';
+import { REFRESH_COALESCE_MS, apiGet, useEventStream, useStreamResync, type ResourceState } from '../../api';
 import { isIdentityEvent, type UserFacts } from './model';
 
 /**
@@ -16,9 +10,11 @@ import { isIdentityEvent, type UserFacts } from './model';
  */
 export function useUserFacts(userIds: readonly string[] | undefined): ResourceState<Map<string, UserFacts>> {
   const key = userIds ? [...userIds].sort().join(',') : null;
-  const [state, setState] = useState<{ data: Map<string, UserFacts> | undefined; error: unknown; loading: boolean }>(
-    { data: undefined, error: undefined, loading: key !== null },
-  );
+  const [state, setState] = useState<{
+    data: Map<string, UserFacts> | undefined;
+    error: unknown;
+    loading: boolean;
+  }>({ data: undefined, error: undefined, loading: key !== null });
   const requestId = useRef(0);
   const controller = useRef<AbortController | null>(null);
   const coalesce = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);

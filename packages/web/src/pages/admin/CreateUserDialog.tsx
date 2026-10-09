@@ -15,7 +15,12 @@ export interface CreateUserDialogProps {
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /** Creates a person with a role (`user.created`). Names and emails go to the encrypted body store. */
-export function CreateUserDialog({ open, initialRole = 'builder', onClose, onCreated }: CreateUserDialogProps) {
+export function CreateUserDialog({
+  open,
+  initialRole = 'builder',
+  onClose,
+  onCreated,
+}: CreateUserDialogProps) {
   const formId = useId();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -37,7 +42,10 @@ export function CreateUserDialog({ open, initialRole = 'builder', onClose, onCre
   }, [open, initialRole]);
 
   const nameError = touched && !name.trim() ? 'Enter the person’s name.' : undefined;
-  const emailError = touched && email.trim() && !EMAIL.test(email.trim()) ? 'Enter a valid email or leave it empty.' : undefined;
+  const emailError =
+    touched && email.trim() && !EMAIL.test(email.trim())
+      ? 'Enter a valid email or leave it empty.'
+      : undefined;
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -72,7 +80,14 @@ export function CreateUserDialog({ open, initialRole = 'builder', onClose, onCre
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="primary" type="submit" form={formId} loading={busy} loadingText="Creating…" icon="plus">
+          <Button
+            variant="primary"
+            type="submit"
+            form={formId}
+            loading={busy}
+            loadingText="Creating…"
+            icon="plus"
+          >
             Create user
           </Button>
         </>

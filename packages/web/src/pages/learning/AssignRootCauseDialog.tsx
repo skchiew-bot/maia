@@ -57,7 +57,9 @@ export function AssignRootCauseDialog({ group, classes, onClose, onDone }: Assig
   const effectiveMode: Mode = hasClasses ? mode : 'new';
   const classError = effectiveMode === 'existing' && touched && !classId ? 'Choose a class.' : undefined;
   const nameError =
-    effectiveMode === 'new' && touched && name.trim().length < 2 ? 'Name the cause (2–120 characters).' : undefined;
+    effectiveMode === 'new' && touched && name.trim().length < 2
+      ? 'Name the cause (2–120 characters).'
+      : undefined;
   const dimensionError =
     effectiveMode === 'new' && touched && !dimension ? 'Choose where the cause points.' : undefined;
 
@@ -186,7 +188,11 @@ export function AssignRootCauseDialog({ group, classes, onClose, onDone }: Assig
                 onChange={(e) => setDimension(e.target.value as RootCauseDimension)}
                 placeholder="Choose a dimension"
                 error={dimensionError}
-                hint={dimension ? DIMENSION_META[dimension].hint : 'Spec, codebase and guardrail causes are common.'}
+                hint={
+                  dimension
+                    ? DIMENSION_META[dimension].hint
+                    : 'Spec, codebase and guardrail causes are common.'
+                }
                 options={DIMENSIONS.map((d) => ({ value: d, label: DIMENSION_META[d].label }))}
               />
               <TextArea

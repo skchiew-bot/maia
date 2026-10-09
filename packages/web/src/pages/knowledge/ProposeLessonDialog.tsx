@@ -7,15 +7,7 @@ import type {
   RootCauseClassDTO,
 } from '@aoc/contracts';
 import { apiPost } from '../../api';
-import {
-  Button,
-  Dialog,
-  InlineAlert,
-  Select,
-  TextArea,
-  TextField,
-  describeError,
-} from '../../components';
+import { Button, Dialog, InlineAlert, Select, TextArea, TextField, describeError } from '../../components';
 
 export interface ProposeLessonDialogProps {
   open: boolean;
@@ -91,14 +83,13 @@ export function ProposeLessonDialog({
   }, [open]); // classes/offences refresh live underneath; only a new opening resets the form
 
   const scopeValue = scopeType === 'process_type' ? processType : codeArea.trim();
-  const scopeError =
-    !touched
-      ? undefined
-      : scopeType === 'process_type'
-        ? processType
-          ? undefined
-          : 'Choose the process type it applies to.'
-        : (codeAreaProblem(codeArea) ?? undefined);
+  const scopeError = !touched
+    ? undefined
+    : scopeType === 'process_type'
+      ? processType
+        ? undefined
+        : 'Choose the process type it applies to.'
+      : (codeAreaProblem(codeArea) ?? undefined);
   const ruleError = touched && rule.trim().length < MIN ? 'State the rule sessions must follow.' : undefined;
   const fixError = touched && fix.trim().length < MIN ? 'State the fix.' : undefined;
   const rationaleError =

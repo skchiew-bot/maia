@@ -6,6 +6,7 @@ const LEVEL: Record<CoverageLevel, { word: string; tone: Tone; icon: IconName }>
   ok: { word: 'Covered', tone: 'ok', icon: 'ok' },
   warn: { word: 'Single point', tone: 'warn', icon: 'warn' },
   danger: { word: 'Nobody', tone: 'danger', icon: 'danger' },
+  unknown: { word: 'Checking', tone: 'neutral', icon: 'clock' },
 };
 
 /** Holder marks drawn before the rest fold into "+n". */

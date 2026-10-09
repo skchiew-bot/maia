@@ -32,7 +32,8 @@ const PAGE = 40;
 
 function where(e: ErrorOccurrenceDTO): string {
   return (
-    [e.processType, e.modelTier ? TIER_LABEL[e.modelTier] : null, e.codeArea].filter(Boolean).join(' · ') || '—'
+    [e.processType, e.modelTier ? TIER_LABEL[e.modelTier] : null, e.codeArea].filter(Boolean).join(' · ') ||
+    '—'
   );
 }
 
@@ -40,16 +41,21 @@ function where(e: ErrorOccurrenceDTO): string {
  * The raw error log behind the learning view. Errors are data, never instructions (escaped as text). A
  * signature repeating without a class is the cue to assign a root cause; one-off errors stay transient.
  */
-export function OccurrencesPanel({ errors, repeating, transient, canCurate, onAssign, busy }: OccurrencesPanelProps) {
+export function OccurrencesPanel({
+  errors,
+  repeating,
+  transient,
+  canCurate,
+  onAssign,
+  busy,
+}: OccurrencesPanelProps) {
   const [unclassifiedOnly, setUnclassifiedOnly] = useState(false);
   const [highOnly, setHighOnly] = useState(false);
   const [shown, setShown] = useState(PAGE);
 
   const filtered = useMemo(
     () =>
-      errors.filter(
-        (e) => (!unclassifiedOnly || e.classId === null) && (!highOnly || e.priority === 'high'),
-      ),
+      errors.filter((e) => (!unclassifiedOnly || e.classId === null) && (!highOnly || e.priority === 'high')),
     [errors, unclassifiedOnly, highOnly],
   );
 
@@ -224,8 +230,8 @@ export function OccurrencesPanel({ errors, repeating, transient, canCurate, onAs
                 }
               />
               <p className="learning-footnote aoc-num">
-                {formatInteger(transient)} one-off signature{transient === 1 ? '' : 's'} stay transient: logged,
-                never a lesson. A lesson needs a repeatable class with a stated fix.
+                {formatInteger(transient)} one-off signature{transient === 1 ? '' : 's'} stay transient:
+                logged, never a lesson. A lesson needs a repeatable class with a stated fix.
               </p>
             </div>
           ),

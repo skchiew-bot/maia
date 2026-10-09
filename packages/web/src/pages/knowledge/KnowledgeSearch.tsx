@@ -26,7 +26,8 @@ const KIND_OPTIONS: { value: KindFilter; label: string }[] = [
 /** Where a search hit's references lead inside the console. */
 export function refLinks(refs: KnowledgeRefs): { to: string; label: string }[] {
   const out: { to: string; label: string }[] = [];
-  if (refs.lessonId) out.push({ to: `/knowledge?lesson=${encodeURIComponent(refs.lessonId)}`, label: 'Lesson' });
+  if (refs.lessonId)
+    out.push({ to: `/knowledge?lesson=${encodeURIComponent(refs.lessonId)}`, label: 'Lesson' });
   if (refs.playbookId) out.push({ to: '/registry', label: 'Registry' });
   if (refs.ticketId) out.push({ to: `/tickets/${encodeURIComponent(refs.ticketId)}`, label: 'Ticket' });
   if (refs.decisionId) out.push({ to: decisionHref(refs.decisionId), label: 'Decision' });
@@ -94,7 +95,7 @@ export function KnowledgeSearch() {
           value={query}
           maxLength={500}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search lessons, playbooks, resolved bugs and decisions"
+          placeholder="e.g. env var, migration, flaky test"
           autoComplete="off"
         />
         <Button type="submit" icon="search" loading={state.status === 'loading'} loadingText="Searching…">
@@ -114,13 +115,16 @@ export function KnowledgeSearch() {
       <div aria-live="polite" className="knowledge-search__results">
         {state.status === 'idle' && (
           <p className="knowledge-muted">
-            Bound lessons, approved playbooks and resolved bugs become searchable here. Requester text and media
-            are never indexed.
+            Bound lessons, approved playbooks and resolved bugs become searchable here. Requester text and
+            media are never indexed.
           </p>
         )}
         {state.status === 'loading' && <p className="knowledge-muted">Searching for “{state.query}”…</p>}
         {state.status === 'error' && (
-          <InlineAlert tone={state.error instanceof ApiError && state.error.status === 403 ? 'warn' : 'danger'} title="Search failed">
+          <InlineAlert
+            tone={state.error instanceof ApiError && state.error.status === 403 ? 'warn' : 'danger'}
+            title="Search failed"
+          >
             {describeError(state.error)}
           </InlineAlert>
         )}
@@ -135,7 +139,9 @@ export function KnowledgeSearch() {
           ) : (
             <>
               {state.result.match === 'any' && (
-                <p className="knowledge-muted">No result matched every word; showing results matching any word.</p>
+                <p className="knowledge-muted">
+                  No result matched every word; showing results matching any word.
+                </p>
               )}
               <ol className="knowledge-hits">
                 {state.result.results.map((r) => (
@@ -148,7 +154,9 @@ export function KnowledgeSearch() {
                       </time>
                     </div>
                     <p className="knowledge-hits__snippet">
-                      {r.snippetParts.map((p, i) => (p.hit ? <mark key={i}>{p.text}</mark> : <span key={i}>{p.text}</span>))}
+                      {r.snippetParts.map((p, i) =>
+                        p.hit ? <mark key={i}>{p.text}</mark> : <span key={i}>{p.text}</span>,
+                      )}
                     </p>
                     {refLinks(r.refs).length > 0 && (
                       <p className="knowledge-hits__refs">

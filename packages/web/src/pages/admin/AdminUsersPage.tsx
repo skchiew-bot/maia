@@ -66,7 +66,10 @@ export default function AdminUsersPage() {
   const [params, setParams] = useSearchParams();
 
   const users = useResource<{ users: IdentityUserDto[] }>('/api/users', { refreshOn });
-  const userTokens = useResource<{ tokens: IdentityTokenDto[] }>('/api/tokens', { query: { kind: 'user' }, refreshOn });
+  const userTokens = useResource<{ tokens: IdentityTokenDto[] }>('/api/tokens', {
+    query: { kind: 'user' },
+    refreshOn,
+  });
   const sessions = useResource<{ tokens: IdentityTokenDto[] }>('/api/tokens', {
     query: { kind: 'web_session' },
     refreshOn,
@@ -94,7 +97,8 @@ export default function AdminUsersPage() {
   const approvers = activeApprovers(list);
   const approversWithoutKey = facts.data ? approvers.filter((u) => !hasUsablePasskey(facts.data, u.id)) : [];
   const meHasKey = me ? hasUsablePasskey(facts.data, me.id) : false;
-  const noLead = people !== undefined && !list.some((u) => u.active && u.flags.complianceLead && u.role !== 'requester');
+  const noLead =
+    people !== undefined && !list.some((u) => u.active && u.flags.complianceLead && u.role !== 'requester');
   const liveObservers = (observers.data?.tokens ?? []).filter((t) => t.status === 'active');
   const openSessions = (sessions.data?.tokens ?? []).filter((t) => t.status === 'active').length;
 
@@ -214,7 +218,11 @@ export default function AdminUsersPage() {
         sortValue: (u) => lastSeen(facts.data?.get(u.id)?.lastActionAt, signIns.get(u.id)),
         cell: (u) => {
           const seen = lastSeen(facts.data?.get(u.id)?.lastActionAt, signIns.get(u.id));
-          return seen ? <RelativeTime value={seen} suffix=" ago" /> : <span className="admin-muted">never</span>;
+          return seen ? (
+            <RelativeTime value={seen} suffix=" ago" />
+          ) : (
+            <span className="admin-muted">never</span>
+          );
         },
       },
       {
@@ -231,6 +239,7 @@ export default function AdminUsersPage() {
         id: 'manage',
         header: 'Manage',
         hideHeader: true,
+        hideOnMobile: true,
         align: 'end',
         cell: (u) => (
           <Button size="sm" variant="ghost" onClick={() => setOpenUser(u.id)}>
@@ -272,9 +281,9 @@ export default function AdminUsersPage() {
                 </Button>
               }
             >
-              Requests {approvers[0]!.id === me?.id ? 'you raise' : 'they raise'} can never be approved: a requester
-              never resolves their own request, and the sole-Approver fallback is off. Add a deputy, or promote a
-              Builder with Manage.
+              Requests {approvers[0]!.id === me?.id ? 'you raise' : 'they raise'} can never be approved: a
+              requester never resolves their own request, and the sole-Approver fallback is off. Add a deputy,
+              or promote a Builder with Manage.
             </InlineAlert>
           )}
           {approvers.length === 0 && (
@@ -305,7 +314,8 @@ export default function AdminUsersPage() {
           )}
           {noLead && (
             <InlineAlert tone="info" title="No compliance lead">
-              The ISO/IEC 42001 mapping stays provisional until a compliance lead stamps it. Set the flag with Manage.
+              The ISO/IEC 42001 mapping stays provisional until a compliance lead stamps it. Set the flag with
+              Manage.
             </InlineAlert>
           )}
         </div>
@@ -327,14 +337,26 @@ export default function AdminUsersPage() {
           label="Approvers"
           value={people ? counts.approver : '—'}
           tone={people && counts.approver < 2 ? (counts.approver === 0 ? 'danger' : 'warn') : 'neutral'}
-          footnote={counts.approver < 2 ? 'add a deputy: own requests need a second Approver' : 'gates have cover'}
+          footnote={
+            counts.approver < 2 ? 'add a deputy: own requests need a second Approver' : 'gates have cover'
+          }
           info="With the sole-Approver fallback off, an Approver's own requests wait for another Approver."
         />
         <KpiTile
           label="Passkey coverage"
-          value={facts.data ? `${formatInteger(approvers.length - approversWithoutKey.length)} of ${formatInteger(approvers.length)}` : '—'}
+          value={
+            facts.data
+              ? `${formatInteger(approvers.length - approversWithoutKey.length)} of ${formatInteger(approvers.length)}`
+              : '—'
+          }
           unit="Approvers"
-          tone={facts.data && approvers.length > 0 && approversWithoutKey.length === approvers.length ? 'danger' : approversWithoutKey.length > 0 ? 'warn' : 'neutral'}
+          tone={
+            facts.data && approvers.length > 0 && approversWithoutKey.length === approvers.length
+              ? 'danger'
+              : approversWithoutKey.length > 0
+                ? 'warn'
+                : 'neutral'
+          }
           footnote="needed for go-live, rollback, break-glass"
         />
         <KpiTile
@@ -377,7 +399,11 @@ export default function AdminUsersPage() {
           {people === undefined && !users.error ? (
             <Skeleton height={220} label="Loading roles" />
           ) : (
-            <ResourceView resource={combine(users, userTokens)} isEmpty={() => false} errorTitle="Couldn't load users">
+            <ResourceView
+              resource={combine(users, userTokens)}
+              isEmpty={() => false}
+              errorTitle="Couldn't load users"
+            >
               {() => (
                 <div className="admin-mix">
                   <SegmentBar
@@ -395,9 +421,7 @@ export default function AdminUsersPage() {
                       <dd className="aoc-num">{formatInteger(hygiene.live)}</dd>
                     </div>
                     <div className={hygiene.withoutExpiry > 0 ? 'is-warn' : undefined}>
-                      <dt>
-                        {hygiene.withoutExpiry > 0 && <Icon name="warn" size={12} />} Without expiry
-                      </dt>
+                      <dt>{hygiene.withoutExpiry > 0 && <Icon name="warn" size={12} />} Without expiry</dt>
                       <dd className="aoc-num">{formatInteger(hygiene.withoutExpiry)}</dd>
                     </div>
                     <div className={hygiene.orphaned > 0 ? 'is-danger' : undefined}>
@@ -416,29 +440,36 @@ export default function AdminUsersPage() {
           )}
         </Widget>
 
-        <Widget span={12} title="People" subtitle="Role, flags, passkeys, tokens and when each person was last seen" flush>
+        <Widget
+          span={12}
+          title="People"
+          subtitle="Role, flags, passkeys, tokens and when each person was last seen"
+          flush
+        >
           {people === undefined && !users.error ? (
             <Skeleton height={240} label="Loading people" />
           ) : (
             <ResourceView resource={users} isEmpty={() => false} errorTitle="Couldn't load users">
               {() => (
-                <DataTable
-                  caption="People and their access"
-                  columns={columns}
-                  rows={list}
-                  rowKey={(u) => u.id}
-                  defaultSort={{ columnId: 'role', direction: 'asc' }}
-                  onRowClick={(u) => setOpenUser(u.id)}
-                  rowLabel={(u) => `Manage ${u.name}`}
-                  activeRowKey={openUserId ?? undefined}
-                  rowTone={(u) =>
-                    u.active && u.role === 'approver' && facts.data && !hasUsablePasskey(facts.data, u.id)
-                      ? 'warn'
-                      : undefined
-                  }
-                  busy={users.loading}
-                  empty={<EmptyState size="sm" title="No users yet" />}
-                />
+                <div className="admin-flush">
+                  <DataTable
+                    caption="People and their access"
+                    columns={columns}
+                    rows={list}
+                    rowKey={(u) => u.id}
+                    defaultSort={{ columnId: 'role', direction: 'asc' }}
+                    onRowClick={(u) => setOpenUser(u.id)}
+                    rowLabel={(u) => `Manage ${u.name}`}
+                    activeRowKey={openUserId ?? undefined}
+                    rowTone={(u) =>
+                      u.active && u.role === 'approver' && facts.data && !hasUsablePasskey(facts.data, u.id)
+                        ? 'warn'
+                        : undefined
+                    }
+                    busy={users.loading}
+                    empty={<EmptyState size="sm" title="No users yet" />}
+                  />
+                </div>
               )}
             </ResourceView>
           )}
@@ -453,7 +484,11 @@ export default function AdminUsersPage() {
         >
           {me && facts.data ? (
             <div className="admin-own-keys">
-              <PasskeyList passkeys={facts.data.get(me.id)?.passkeys ?? []} owner="you" onRemoved={facts.reload} />
+              <PasskeyList
+                passkeys={facts.data.get(me.id)?.passkeys ?? []}
+                owner="you"
+                onRemoved={facts.reload}
+              />
               <RegisterPasskey onRegistered={facts.reload} />
             </div>
           ) : facts.error ? (
