@@ -38,7 +38,7 @@ function projectRepo(): { dir: string; pushUat(ticketId: string): string; dropUa
 
 /** Change-control stand-in: like mod-change, a fromRef that does not resolve in the project repo throws. */
 function stubs(repoDir: string | null = null) {
-  const ctl = { refuse: null as string[] | null };
+  const ctl = { refuse: null as string[] | null, gate: false };
   const launches: (LaunchRequest & { sessionId: string })[] = [];
   const stops: string[] = [];
   const errors: Parameters<LearningService['recordError']>[0][] = [];
@@ -64,7 +64,7 @@ function stubs(repoDir: string | null = null) {
   };
   const learning: Partial<LearningService> = { recordError: (e) => void errors.push(e), lessonsForScope: () => [], recordLessonsApplied: () => undefined };
   const change: Partial<ChangeService> = {
-    async requestPromotion(input) {
+    async requestPromotion(input, actor) {
       if (repoDir && !git.revParse(repoDir, input.fromRef)) throw new HttpError(422, 'unknown_ref', `${input.fromRef} does not resolve to a commit`);
       const promotionId = newId('promotion');
       if (ctl.refuse) return { promotionId, decisionId: null, refused: ctl.refuse };
@@ -76,7 +76,22 @@ function stubs(repoDir: string | null = null) {
         meta: { promotionId, projectId: input.projectId, fromRef: input.fromRef, fromSha: 'abcdef1', targetBranch: 'main', ticketId: input.ticketId ?? null, changeId: null },
         source: 'api',
       });
-      return { promotionId, decisionId: 'dec_x', refused: null };
+      if (!ctl.gate) return { promotionId, decisionId: 'dec_x', refused: null };
+      // As mod-change does: the Approver's go_live card is about the promotion, not the ticket.
+      const card = t.decisions!.request(
+        {
+          kind: 'go_live',
+          title: `Go live: promote ${input.fromRef} to main in ${input.projectId}`,
+          question: 'Promote it to main?',
+          options: [{ id: 'approve', label: 'Approve' }, { id: 'reject', label: 'Reject' }],
+          subjectType: 'promotion',
+          subjectId: promotionId,
+          projectId: input.projectId,
+          requesterId: actor.id,
+        },
+        actor,
+      );
+      return { promotionId, decisionId: card.id, refused: null };
     },
   };
   return { supervisor, learning, change, launches, stops, errors, promotions, ctl };
@@ -565,5 +580,112 @@ describe('decision cards the flow raises', () => {
     expect(card!.title).toMatch(/^Receipts upload sideways Receipts upload sideways .*… — fix plan$/);
     expect(card!.title.length).toBeLessThanOrEqual(80 + ' — fix plan'.length);
     expect(card!.title).not.toContain('\n');
+  });
+});
+
+describe('closing a ticket withdraws the gates it left open', () => {
+  const close = (ticketId: string, as: { headers: Record<string, string> }, resolution = 'duplicate') =>
+    t.json<InternalTicket>('POST', `/api/tickets/${ticketId}/close`, { headers: as.headers, body: { resolution } });
+  const withdrawals = () => t.rt.store.list({ types: ['decision.withdrawn'] });
+  const statusOf = (ticketId: string) => Object.fromEntries(t.decisions!.list({ subjectId: ticketId }).map((c) => [c.kind, c.status]));
+
+  it('the fix-plan card goes, once, however often the close is repeated', async () => {
+    const s = await setup();
+    const approver = t.user('approver', 'CEO');
+    const req = t.user('requester', 'Nur');
+    const { ticketId } = (await (await submit(req.headers)).json()) as PublicTicket;
+    await t.drain();
+    await report(s.launches[0]!.sessionId, 0.9, 'a');
+    await report(s.launches[1]!.sessionId, 0.9, 'a');
+    await t.drain();
+    expect(statusOf(ticketId)).toEqual({ fix_plan: 'open' });
+
+    await close(ticketId, approver);
+    await t.drain();
+    expect(statusOf(ticketId)).toEqual({ fix_plan: 'withdrawn' });
+    expect(withdrawals().map((e) => e.meta)).toEqual([expect.objectContaining({ reason: 'ticket_closed' })]);
+    expect(t.decisions!.summary(approver.user).open).toBe(0);
+
+    await close(ticketId, approver, 'wont_fix'); // the same request again
+    await t.drain();
+    expect(withdrawals()).toHaveLength(1);
+    expect(t.rt.store.list({ types: ['ticket.closed'] }).map((e) => e.meta.resolution)).toEqual(['duplicate']);
+  });
+
+  it('the UAT request goes: the requester can no longer sign off a closed ticket', async () => {
+    const repo = projectRepo();
+    const s = await setup({}, repo.dir);
+    const approver = t.user('approver', 'CEO');
+    const { ticketId, req, build } = await toBuild(s, approver);
+    repo.pushUat(ticketId);
+    endBuild(build.sessionId);
+    await t.drain();
+    expect(statusOf(ticketId)).toMatchObject({ uat_signoff: 'open' });
+
+    await close(ticketId, approver, 'wont_fix');
+    await t.drain();
+    expect(statusOf(ticketId)).toEqual({ fix_plan: 'resolved', uat_signoff: 'withdrawn' });
+    const pub = await t.json<PublicTicket>('GET', `/portal/api/tickets/${ticketId}`, { headers: req.headers });
+    expect(pub).toMatchObject({ statusLabel: 'Closed', canSignOffUat: false });
+    const late = await t.request('POST', `/portal/api/tickets/${ticketId}/uat`, { headers: req.headers, body: { verdict: 'pass' } });
+    expect(late.status).toBe(409);
+    expect(s.promotions).toHaveLength(0);
+  });
+
+  it('the go-live card goes, although change control raised it about the promotion', async () => {
+    const repo = projectRepo();
+    const s = await setup({}, repo.dir);
+    s.ctl.gate = true;
+    const approver = t.user('approver', 'CEO');
+    const { ticketId, req, build } = await toBuild(s, approver);
+    repo.pushUat(ticketId);
+    endBuild(build.sessionId);
+    await t.drain();
+    await t.json('POST', `/portal/api/tickets/${ticketId}/uat`, { headers: req.headers, body: { verdict: 'pass' } });
+    await t.drain();
+    const goLive = t.decisions!.list({ kind: ['go_live'] });
+    expect(goLive.map((c) => c.status)).toEqual(['open']);
+
+    await close(ticketId, approver, 'wont_fix');
+    await t.drain();
+    expect(t.decisions!.get(goLive[0]!.id)!.status).toBe('withdrawn');
+    expect(t.decisions!.list({ status: ['open'] })).toEqual([]);
+  });
+
+  it('a close that failed half way is finished when it is delivered again', async () => {
+    const repo = projectRepo();
+    const s = await setup({}, repo.dir);
+    s.ctl.gate = true;
+    const approver = t.user('approver', 'CEO');
+    const { ticketId, req, build } = await toBuild(s, approver);
+    repo.pushUat(ticketId);
+    endBuild(build.sessionId);
+    await t.drain();
+    await t.json('POST', `/portal/api/tickets/${ticketId}/uat`, { headers: req.headers, body: { verdict: 'pass' } });
+    await t.drain();
+    // The decisions service fails once as the promotion completes: the ticket closes, the go-live card stays open.
+    const realWithdraw = t.decisions!.withdraw.bind(t.decisions!);
+    let failures = 1;
+    t.decisions!.withdraw = (id, reason, actor) => {
+      if (failures-- > 0) throw new Error('database is locked');
+      return realWithdraw(id, reason, actor);
+    };
+    const completed = t.rt.store.append({
+      type: 'promotion.completed',
+      actor: { kind: 'system', id: 'change' },
+      scope: { projectId: 'prj_1' },
+      meta: { promotionId: s.promotions[0]!.promotionId, mainShaBefore: 'aaaaaaa', mainShaAfter: 'bbbbbbb', breakglass: false, decisionId: null },
+      source: 'api',
+    });
+    await t.drain();
+    expect(t.rt.store.list({ types: ['ticket.closed'] })).toHaveLength(1);
+    expect(t.decisions!.list({ kind: ['go_live'] }).map((c) => c.status)).toEqual(['open']);
+
+    // The runtime hands the reactor the same event again.
+    await mod.reactors!.find((r) => r.name === 'intake.promotion')!.react(completed, null, t.rt.ctx);
+    expect(t.decisions!.list({ kind: ['go_live'] }).map((c) => c.status)).toEqual(['withdrawn']);
+    expect(t.rt.store.list({ types: ['ticket.closed'] })).toHaveLength(1);
+    await mod.reactors!.find((r) => r.name === 'intake.promotion')!.react(completed, null, t.rt.ctx);
+    expect(withdrawals()).toHaveLength(1);
   });
 });

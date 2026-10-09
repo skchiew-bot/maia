@@ -445,18 +445,44 @@ export class IntakeFlow {
 
   close(ticketId: string, resolution: 'fixed' | 'wont_fix' | 'duplicate' | 'cannot_reproduce' | 'withdrawn', actor: Actor, note?: string, causationId?: string): void {
     const t = this.ticket(ticketId);
-    if (!t || t.resolution) return;
-    this.ctx.store.append({
-      type: 'ticket.closed',
-      actor,
-      scope: { ticketId, projectId: t.project_id ?? undefined },
-      meta: { ticketId, resolution },
-      payload: note ? { note } : {},
-      source: 'intake',
-      causationId,
-    });
-    this.setPublicStatus(ticketId, resolution === 'fixed' ? 'completed' : 'closed', causationId);
-    for (const s of this.sessions(ticketId)) if (s.status === 'running') void this.ctx.services.maybe('supervisor')?.stop(s.session_id, true, actor, 'ticket closed');
+    if (!t) return;
+    if (!t.resolution) {
+      this.ctx.store.append({
+        type: 'ticket.closed',
+        actor,
+        scope: { ticketId, projectId: t.project_id ?? undefined },
+        meta: { ticketId, resolution },
+        payload: note ? { note } : {},
+        source: 'intake',
+        causationId,
+      });
+      this.setPublicStatus(ticketId, resolution === 'fixed' ? 'completed' : 'closed', causationId);
+      for (const s of this.sessions(ticketId)) if (s.status === 'running') void this.ctx.services.maybe('supervisor')?.stop(s.session_id, true, actor, 'ticket closed');
+    }
+    // Also when the ticket had already resolved: a close redelivered after a crash between the steps finishes the job.
+    this.withdrawOpenGates(ticketId);
+  }
+
+  /**
+   * A resolved ticket leaves no gate open: its fix-plan, UAT and go-live cards would sit in the queue and the Tower
+   * with nobody able to act on them. Only cards that are still open are touched, so running it again is harmless.
+   */
+  private withdrawOpenGates(ticketId: string): void {
+    const decisions = this.ctx.services.maybe('decisions');
+    if (!decisions) return;
+    const promotions = this.ctx.db.prepare('SELECT promotion_id FROM itk_promotions WHERE ticket_id = ?').all(ticketId) as { promotion_id: string }[];
+    const open = [
+      ...this.openDecisions(ticketId).map((d) => d.decision_id),
+      // Raised by change control about the promotion, not about the ticket.
+      ...promotions.flatMap((p) => decisions.list({ subjectId: p.promotion_id, kind: ['go_live'], status: ['open'] }).map((c) => c.id)),
+    ];
+    for (const decisionId of open) {
+      try {
+        decisions.withdraw(decisionId, 'ticket_closed', INTAKE_ACTOR);
+      } catch (err) {
+        this.ctx.log.warn('intake: could not withdraw a gate of a closed ticket', { ticketId, decisionId, err: String(err) });
+      }
+    }
   }
 
   /** Reactions to decisions on this ticket (idempotent via causation). */
