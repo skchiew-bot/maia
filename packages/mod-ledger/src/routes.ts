@@ -18,6 +18,7 @@ import {
 import { LedgerError, type LedgerCore } from './core';
 import { amendPlan, declarePlan, getStatus, playbookStep, taskDone } from './mcp-handlers';
 import { createProject, createThread, recordEnhancement, updateProject } from './projects';
+import { projectHistory, projectRollups } from './rollup';
 import { projectTimeline, sessionTimeline } from './timeline';
 import { projectDetail, projectSummary, threadDetail, threadSummary } from './views';
 
@@ -134,6 +135,12 @@ export function mountLedgerRoutes(app: App, core: LedgerCore): void {
     }),
   );
 
+  // Registered before /api/projects/:id so the static segment is not read as a project id.
+  app.get('/api/projects/rollup', (c) => {
+    requirePermission(c, 'session.view');
+    return c.json(projectRollups(core));
+  });
+
   app.get('/api/projects/:id', (c) => {
     requirePermission(c, 'session.view');
     return c.json(projectDetail(core, projectOr404(c.req.param('id'))));
@@ -153,6 +160,11 @@ export function mountLedgerRoutes(app: App, core: LedgerCore): void {
     requirePermission(c, 'session.view');
     const timeline = projectTimeline(core, projectOr404(c.req.param('id')).project_id);
     return c.json(timeline);
+  });
+
+  app.get('/api/projects/:id/history', (c) => {
+    requirePermission(c, 'session.view');
+    return c.json(projectHistory(core, projectOr404(c.req.param('id')).project_id));
   });
 
   app.post(
