@@ -1,0 +1,33 @@
+{
+  "name": "@aoc/demo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Deterministic demo-history seeder and live demo driver",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "seed": "node --import tsx src/seed.ts"
+  },
+  "dependencies": {
+    "@aoc/contracts": "workspace:*",
+    "@aoc/kernel": "workspace:*",
+    "@aoc/mod-audit": "workspace:*",
+    "@aoc/mod-change": "workspace:*",
+    "@aoc/mod-credits": "workspace:*",
+    "@aoc/mod-decisions": "workspace:*",
+    "@aoc/mod-evidence": "workspace:*",
+    "@aoc/mod-fx": "workspace:*",
+    "@aoc/mod-identity": "workspace:*",
+    "@aoc/mod-intake": "workspace:*",
+    "@aoc/mod-learning": "workspace:*",
+    "@aoc/mod-ledger": "workspace:*",
+    "@aoc/mod-metering": "workspace:*",
+    "@aoc/mod-registry": "workspace:*",
+    "@aoc/mod-sessions": "workspace:*",
+    "hono": "4.13.13"
+  }
+}
