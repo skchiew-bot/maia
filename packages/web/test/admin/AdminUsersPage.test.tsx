@@ -63,7 +63,12 @@ describe('Admin › Users page', { timeout: 60_000 }, () => {
   it('is closed to Builders', async () => {
     adminRoutes();
     renderAt('/admin/users', BUILDER);
-    expect(await screen.findByText('Not available for your role')).toBeInTheDocument();
+    // The notice is a page of its own: it has the h1 every page needs and says who may open the area.
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'Not available for your role' }),
+    ).toBeInTheDocument();
+    expect(screen.getByText('You are signed in as Builder.')).toBeInTheDocument();
+    expect(screen.getByText('This area needs the Approver role')).toBeInTheDocument();
   });
 
   it('makes a sole Approver visible and offers to add a deputy', async () => {
