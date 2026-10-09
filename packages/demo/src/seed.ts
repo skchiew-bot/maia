@@ -304,6 +304,9 @@ function phaseDone(s: SimSession, phaseId: string) {
 
 function end(s: SimSession, outcome: 'completed' | 'failed' = 'completed') {
   store.append({ type: 'session.turn_ended', actor: sys('supervisor'), scope: { sessionId: s.sessionId }, meta: { sessionId: s.sessionId, turn: 1, outcome: outcome === 'completed' ? 'end_turn' : 'crashed', exitCode: outcome === 'completed' ? 0 : 1, durationMs: 1000 }, payload: {}, source: 'supervisor' });
+  // As Supervisor.endSession does: the lifecycle change first, so the supervisor's projection sees the session as
+  // over (otherwise startup recovery fails every finished history session as process_gone_on_restart).
+  store.append({ type: 'session.lifecycle_changed', actor: sys('supervisor'), scope: { sessionId: s.sessionId }, meta: { sessionId: s.sessionId, from: 'running', to: 'ended', reason: outcome }, source: 'supervisor' });
   store.append({ type: 'session.ended', actor: sys('supervisor'), scope: { sessionId: s.sessionId }, meta: { sessionId: s.sessionId, outcome }, source: 'supervisor' });
 }
 
