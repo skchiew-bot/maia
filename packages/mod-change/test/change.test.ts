@@ -531,4 +531,31 @@ describe('change requests (§8, §14)', () => {
     );
     expect(h.t.rt.store.list({ types: ['change.approved'] })).toHaveLength(1);
   });
+
+  // G-25: an observed session is unverified laptop work (threat model §2.2, T-12) and must never be linked to an
+  // approved change record — that linkage is exactly what the provenance trace's `via: 'session_change'` reads.
+  it('refuses to start an approved change on an observed session', async () => {
+    await setup();
+    const changeId = await draftAndAffirm(h, {
+      projectId: 'prj_app',
+      scope: 'reversible_off_main',
+      owner: h.builder,
+      rollbackRef: repo.head(),
+    });
+    await approveChange(h, changeId, h.builder);
+    h.t.sessions!.add({ sessionId: 'ses_laptop', projectId: 'prj_app', mode: 'observed' });
+    await h.t.json('POST', `/api/changes/${changeId}/start`, {
+      headers: h.builder.headers,
+      body: { sessionId: 'ses_laptop' },
+      expect: 422,
+    });
+    expect(h.t.rt.store.list({ types: ['change.started'] })).toHaveLength(0);
+    // A managed session for the same project still starts the change normally.
+    h.t.sessions!.add({ sessionId: 'ses_managed', projectId: 'prj_app' });
+    const started = await h.t.json<ChangeRequestDTO>('POST', `/api/changes/${changeId}/start`, {
+      headers: h.builder.headers,
+      body: { sessionId: 'ses_managed' },
+    });
+    expect(started.sessions.map((s) => s.sessionId)).toContain('ses_managed');
+  });
 });

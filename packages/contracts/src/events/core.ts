@@ -137,6 +137,31 @@ export const SESSION_EVENTS = [
     payload: null,
   }),
   defineEvent({
+    type: 'session.git_pushed',
+    owner: 'supervisor',
+    description:
+      "A managed session pushed through the supervisor's push gateway (§3, R-02). The supervisor checked every ref against the session's credential profile and forwarded the allowed ones upstream with the credential only it holds. Ref names are agent-chosen text: they stay in the encrypted body.",
+    meta: meta({
+      sessionId: zId,
+      credentialProfile: zLabel,
+      refs: z.number().int().min(1),
+      forwarded: z.number().int().min(0),
+      refused: z.number().int().min(0),
+      failed: z.number().int().min(0),
+    }),
+    payload: payload({
+      results: z.array(
+        z.object({
+          ref: z.string(),
+          oldSha: z.string(),
+          newSha: z.string(),
+          result: z.enum(['forwarded', 'refused', 'failed']),
+          reason: z.string().nullable(),
+        }),
+      ),
+    }),
+  }),
+  defineEvent({
     type: 'session.ended',
     owner: 'supervisor',
     description: 'Session finished for good.',

@@ -70,14 +70,16 @@ describe('launch', () => {
     ]);
     expect(call!.cwd).toBe(join(h.t.config.supervisor.workspacesDir, 'prj_demo'));
 
-    // env: allowlist + AOC_* + the type's credential profile; aocd secrets never leak (§3, R1)
+    // env: allowlist + AOC_* + what the type's credential profile hands to sessions (its `session` part); aocd
+    // secrets never leak, and neither does the credential aocd pushes with (§3, R1, R-02)
     const env = call!.env;
     expect(env).toMatchObject({
       HOME: h.env.HOME,
       LANG: 'C.UTF-8',
       CLAUDE_CONFIG_DIR: h.env.CLAUDE_CONFIG_DIR,
       TZ: 'Asia/Kuala_Lumpur',
-      GIT_PUSH_TOKEN: SECRETS.gitFeature,
+      NPM_READ_TOKEN: SECRETS.sessionRead,
+      GIT_AUTHOR_NAME: 'AOC feature agent',
     });
     expect(env).toMatchObject({
       AOC_SESSION_ID: id,
@@ -91,10 +93,18 @@ describe('launch', () => {
       kind: 'session',
       sessionId: id,
     });
-    for (const leaked of ['DEPLOY_KEY', 'AOC_MASTER_KEY', 'DEPLOY_TOKEN', 'AOC_CHANGE_ID', 'AOC_TICKET_ID'])
+    for (const leaked of [
+      'DEPLOY_KEY',
+      'AOC_MASTER_KEY',
+      'DEPLOY_TOKEN',
+      'GIT_PUSH_TOKEN',
+      'GIT_KEY_FILE',
+      'AOC_CHANGE_ID',
+      'AOC_TICKET_ID',
+    ])
       expect(env[leaked], leaked).toBeUndefined();
-    expect(JSON.stringify(env)).not.toContain(SECRETS.aocdDeployKey);
-    expect(JSON.stringify(env)).not.toContain(SECRETS.aocdMasterKey);
+    for (const held of [SECRETS.aocdDeployKey, SECRETS.aocdMasterKey, SECRETS.gitFeature, SECRETS.featureKey])
+      expect(JSON.stringify(env)).not.toContain(held);
 
     // per-session files
     const mcp = JSON.parse(h.file(id, 'mcp.json'));
@@ -162,7 +172,7 @@ describe('launch', () => {
     const logged = lines.join('\n');
     for (const secret of [...Object.values(SECRETS), env.AOC_INGEST_TOKEN!, sidecarToken])
       expect(logged).not.toContain(secret);
-    expect(logged).toContain('GIT_PUSH_TOKEN'); // names only
+    expect(logged).toContain('NPM_READ_TOKEN'); // names only
   });
 
   it('gives read-only types no credentials, a restricted tool set and no writer lock', async () => {

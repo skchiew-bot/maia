@@ -6,12 +6,13 @@
 // Scenario: `[[fake:<mode>,<mode>…|key=value|…]]` in the first prompt (or FAKE_CLAUDE_MODE), one mode per turn
 // (the last repeats). Modes: normal | gated (waits for gate=<file>; end=crash exits 1 without a result) | crash |
 // usage_limit | rate_limited | error | hang (until SIGINT) | hang_hard (ignores SIGINT) | chatty (count=<n>) |
+// background (pidfile=<path>) | printenv | shell (script=<sh file>, out=<json file for status/stdout/stderr>) |
 // tampered (one short answer, resumed from a deleted cost state: its cumulative modelUsage goes down).
 // Params: context=<tokens>, reset=<epoch s>, gate=<path>, mcp=<status reported for the aoc server>,
 // overhead=<input tokens the result's modelUsage counts but no assistant message carries>, compact=1 (a
 // compact_boundary line). Like Claude Code, result.modelUsage is cumulative across --resume (saved per invocation).
 // FAKE_CLAUDE_LOG=<file> receives one JSON line per invocation (argv, env, cwd, pid, turn, mode, prompt).
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
@@ -206,14 +207,24 @@ async function main() {
       return finish(0);
     }
     case 'printenv': {
-      // What `env`, a chatty model or a failing push with a tokenised remote URL put on the session's output.
-      const token = process.env.GIT_PUSH_TOKEN ?? '';
+      // What `env`, a chatty model or a failing fetch with a tokenised remote URL put on the session's output: the
+      // token its profile hands it (session.env) and its ingest token. The credential aocd pushes with is not here.
+      const token = process.env.NPM_READ_TOKEN ?? '';
       const ingest = process.env.AOC_INGEST_TOKEN ?? '';
-      assistant([{ type: 'tool_use', id: `toolu_${turn}`, name: 'Bash', input: { command: `git push https://x-access-token:${token}@example.com/r.git` } }]);
-      emit({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: `toolu_${turn}`, content: `GIT_PUSH_TOKEN=${token}\nAOC_INGEST_TOKEN=${ingest}` }] } });
-      text(`The push token is ${token} and the ingest token is ${ingest}`);
+      assistant([{ type: 'tool_use', id: `toolu_${turn}`, name: 'Bash', input: { command: `git fetch https://x-access-token:${token}@example.com/r.git` } }]);
+      emit({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: `toolu_${turn}`, content: `NPM_READ_TOKEN=${token}\nAOC_INGEST_TOKEN=${ingest}` }] } });
+      text(`The read token is ${token} and the ingest token is ${ingest}`);
       process.stderr.write(`fatal: unable to access 'https://x-access-token:${token}@example.com/r.git/'\n`);
       result(`Printed ${token}`);
+      return finish(0);
+    }
+    case 'shell': {
+      // A model with a Bash tool: runs the script the test wrote, in the session's cwd with the environment the
+      // supervisor gave this process, and leaves what it printed in params.out.
+      const r = spawnSync('sh', [params.script], { env: process.env, cwd: process.cwd(), encoding: 'utf8' });
+      writeFileSync(params.out, JSON.stringify({ status: r.status, stdout: r.stdout, stderr: r.stderr }));
+      text('ran the script');
+      result('done');
       return finish(0);
     }
     default:

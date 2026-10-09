@@ -485,11 +485,19 @@ export function selfCheck(input: SelfCheckInput): void {
     );
 }
 
-/** Key files every profile names (each must stay unreadable to session users; only per-session copies are). */
+/**
+ * Key files every profile names, held or handed to sessions (each must stay unreadable to session users; only
+ * per-session copies of the `session` ones are readable, and only for the length of a turn).
+ */
 export function profileKeyFiles(profilesFile: string): string[] {
   try {
     return [
-      ...new Set(Object.values(readCredentialProfiles(profilesFile)).flatMap((p) => Object.values(p.files))),
+      ...new Set(
+        Object.values(readCredentialProfiles(profilesFile)).flatMap((p) => [
+          ...Object.values(p.files),
+          ...Object.values(p.session.files),
+        ]),
+      ),
     ];
   } catch (err) {
     throw new IsolationError(`cannot verify the credential profiles file: ${(err as Error).message}`);
