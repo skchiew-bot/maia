@@ -58,6 +58,13 @@
   the `aoc` MCP server is not `connected` (both built). A missing `SessionStart` hook event within N seconds should
   also fail the launch; that check does not exist yet (threat model O-15).
 
+## Implementation status (integration commit `b4fdf57`)
+
+Checked against the real Claude Code 2.1.295 ([research §13](../research/claude-code-integration.md#13-verified-against-the-real-cli-on-2026-10-09)): a
+`PreToolUse` JSON deny reached the model as an error and was obeyed, and 425 managed hook calls took 119 ms at the
+median and 312 ms at the 95th percentile, inside the 2.5 s budget of the hot path. The launch check for a missing
+`SessionStart` is still not built (O-15).
+
 ## Alternatives rejected
 
 | Alternative | Why rejected |

@@ -33,25 +33,25 @@
    Even the AOC host must not be able to rewrite history. Nobody else commits to it: AOC pushes its local branch
    and never merges remote changes, so any other commit on the remote makes every later push fail
    (`push_failed`).
-3. **Give the AOC host a write deploy key for this repository only**, stored with the service user (mode 0600).
-   It is not a credential profile. But until sessions run as their own OS user (threat model O-1), an agent can
-   read it: it could push extra anchor files, which makes anchoring and Verify fail (a false alarm and a
-   denial of service), though it cannot rewrite or delete history on a protected remote. Recovery needs an
-   operator: remove the bogus file with a new commit on the remote, then bring the local anchor repository level
-   with the remote (fetch and fast-forward) so that pushes succeed again. The history keeps both.
+3. **Give the AOC host a write deploy key for this repository only**, stored with the service user (root when
+   sessions are isolated; mode 0600). It is not a credential profile. With session isolation (production) a session
+   cannot read it. Without isolation (development) an agent can: it could push extra anchor files, which makes
+   anchoring and Verify fail (a false alarm and a denial of service), though it cannot rewrite or delete history on
+   a protected remote. Recovery needs an operator: remove the bogus file with a new commit on the remote, then bring
+   the local anchor repository level with the remote (fetch and fast-forward) so that pushes succeed again. The
+   history keeps both.
 
    The anchor git (and the `openssl` of the RFC 3161 provider) does not inherit aocd's environment: it gets `PATH`,
    `HOME`, the locale, proxy and CA settings, plus `GNUPGHOME` (`audit.gnupgHome`, else aocd's own),
    `GIT_SSH_COMMAND`, `GIT_SSH`, `GIT_ASKPASS` and `SSH_AUTH_SOCK` when aocd has them. Wire the deploy key through
    one of those or through `~/.ssh/config` of the service user. Anything else (`GITHUB_TOKEN`, cloud credentials,
    `AOC_*`) never reaches git.
-4. **Commit signing.** `mod-audit` signs anchor commits with OpenPGP when it is given a key id (the module
-   option `gpgKeyId`, with an optional `GNUPGHOME`); Verify then rejects unsigned commits and commits signed by
-   another key. **`aocd` cannot pass that option yet** (threat model O-11), so anchor commits are unsigned in the
-   default build. Signing settings in the anchor repository's own git config have no effect: `mod-audit` sets
-   the identity and signing flags on every commit (`commit.gpgsign=false` without a key) and runs git with hooks
-   disabled. The real protection is the append-only history on the remote anyway, because a signing key would
-   also live on the host.
+4. **Commit signing.** Set `audit.gpgKeyId` (a key id or fingerprint; `audit.gnupgHome` names the GnuPG home) and
+   `mod-audit` signs anchor commits with OpenPGP; Verify then rejects unsigned commits and commits signed by
+   another key. Without `audit.gpgKeyId` anchor commits are unsigned. Signing settings in the anchor repository's
+   own git config have no effect: `mod-audit` sets the identity and signing flags on every commit
+   (`commit.gpgsign=false` without a key) and runs git with hooks disabled. The real protection is the
+   append-only history on the remote anyway, because a signing key would also live on the host.
 5. **Configure aocd:**
 
    ```json
@@ -89,9 +89,9 @@ Approver ("Audit anchor was not pushed off-host"): until the next successful pus
    can be deleted. It cannot be forged for a past time, but a missing anchor is still lost evidence.
 4. **Know what Verify checks.** It checks each token's imprint against the anchor record and rejects a TSA time
    more than 1 h from the record's `anchoredAt` (no back-dating). It checks the TSA's signature and certificate
-   chain (`openssl ts -verify`) **only when a CA file is configured**, and that is a module option (`tsaCaFile`)
-   that `aocd` cannot pass yet (threat model O-11). Until then Verify warns that token signatures are not
-   verified, and a host-level attacker could forge a token: check tokens by hand (below) for evidence purposes.
+   chain (`openssl ts -verify`) **only when `audit.tsaCaFile` is set** (a CA bundle; `audit.tsaUntrustedFile` names
+   intermediate certificates). Until then Verify warns that token signatures are not verified, and a host-level
+   attacker could forge a token: set the CA file, and check tokens by hand (below) for evidence purposes.
 5. **Check a token by hand:**
 
    ```bash
@@ -118,10 +118,10 @@ remote; choose `rfc3161` where an independently signed time matters more and its
 
 The interval and event anchors (G-40) skip when nothing but anchoring's own records (`anchor.created`,
 `anchor.failed`, `chain.verified`) was logged since the newest anchor, so an idle log gains nothing, and a burst of
-high-value events yields one anchor. Each anchor recomputes the whole chain first, as the nightly one does. While
-the anchor store is unreachable, these anchors record `anchor.failed` and alert once per outage (not every hour);
-the nightly run still records its own failure every night. An event anchor lost to a crash before it ran is
-covered by the next interval run.
+high-value events yields one anchor; an anchor whose push failed counts as due. Each anchor recomputes the whole
+chain first, as the nightly one does. While the anchor store is unreachable, these anchors record `anchor.failed`
+and alert once per outage (not every hour); the nightly run still records its own failure every night. An event
+anchor lost to a crash before it ran is covered by the next interval run.
 
 Run the nightly backup **after** an anchor, so every backup is covered ([key custody](key-custody.md#4-backups-off-host-nightly)).
 

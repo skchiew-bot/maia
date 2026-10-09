@@ -45,9 +45,9 @@ Every run is recorded in the chain:
 
    ```bash
    umask 077
-   install -d -m 0700 -o aoc -g aoc /etc/aoc-backup
+   install -d -m 0700 /etc/aoc-backup
    openssl rand -hex 32 > /etc/aoc-backup/backup.key
-   chown aoc:aoc /etc/aoc-backup/backup.key && chmod 0400 /etc/aoc-backup/backup.key
+   chmod 0400 /etc/aoc-backup/backup.key      # root owns it: aocd runs as root with session isolation
    ```
 
    aocd refuses a backup key that is world-accessible, lives inside `dataDir` or `backupDir`, sits in the same

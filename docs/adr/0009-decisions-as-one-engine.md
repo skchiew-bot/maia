@@ -44,9 +44,9 @@
    (`decisions.soleApproverFallback: false`). With one active Approver, an Approver-level request raised by that
    Approver, including one from their own session, waits until a second Approver exists. If the flag is ever
    turned on, the only active Approver may resolve their own request, recorded `selfApproved: true`, but never a
-   credit top-up, and only while no second Approver is active. Each such resolution is chained; the switch itself
-   is not yet, because `decisions` is not among the governed settings that produce `config.changed` (threat
-   model O-8).
+   credit top-up, and only while no second Approver is active. Each such resolution is chained, and so is the
+   switch itself: `decisions` is governed configuration, so turning the flag on appends `config.changed`
+   (`decisions_config`, threat model O-8).
 
 ## Consequences
 
@@ -61,9 +61,9 @@
   from the CEO's own sessions, and a break-glass the CEO invokes. In practice, appoint a second Approver (with a
   passkey) before the CEO runs sessions that raise such gates, and let a Builder invoke break-glass
   ([threat model T-8](../security/threat-model.md#t-8-self-approval-and-separation-of-duties)).
-- **Expiry must be chained** so that it is auditable. The catalog has `decision.expired {ageMs}`; at the time of
-  writing `mod-decisions` still records expiry as `decision.withdrawn {reason: expired}` and should adopt the
-  dedicated event (gap G-33).
+- **Expiry is chained** so that it is auditable: `mod-decisions` appends the catalog's `decision.expired
+  {decisionId, ageMs}` (gap G-33, closed). Older logs recorded expiry as `decision.withdrawn {reason: expired}` and
+  still read as expired.
 
 ## Alternatives rejected
 

@@ -80,6 +80,14 @@ a wrongly typed `timeout` disables that event's hook with no message). Reinstall
 - Hooks never block. Each event is appended to a local spool, `~/.aoc/spool/observed/spool-<pid>.jsonl`
   (directory mode 0700, file mode 0600). Later runs replay it through `/ingest/spool`, which is idempotent:
   duplicates are counted and not stored twice.
+- **What aocd refuses is kept, not dropped.** An item that fails ingest validation (an unreadable timestamp, say) or
+  is too large moves to `spool-rejected.jsonl` in the same directory, with a reason (`too_large`, `invalid`,
+  `rejected_by_daemon`, `unreadable`). The client never replays that file. It holds clear text like the rest of the
+  spool: look at it when events are missing, then delete it.
+- **Observer tokens are rate limited** (R-13), per token: 600 requests a minute with a burst of 1000, and 60 new
+  observed sessions an hour. Over the limit aocd answers 429 with `Retry-After`; hooks still never block, and a
+  replay that is told to wait stays in the spool for the next flush. A developer with a very long backlog is slowed
+  down, not refused. The limits are fixed in this release.
 - Without a usable `~/.aoc/client.json` (daemon URL and observer token), the observed hook switches itself **off**
   silently. A machine that was never logged in records nothing, and says nothing.
 - Inside a managed session, which inherits the user's global settings, the observed entries stand down, so each event
@@ -101,7 +109,8 @@ Developers can bypass observation, intentionally or not:
 - other machines, other accounts, and work without Claude Code at all are never seen.
 
 This is why observed sessions are labelled as such, why they never feed gates, credits or evidence, and why the
-provenance gate refuses any commit on its way to `main` that does not trace to an approved change.
+provenance gate refuses any commit on its way to `main` that does not trace to an approved change. An observed
+session can never be linked to a change (W3-01), so a commit made in one does not trace, whatever trailer it carries.
 
 ## 6. Known behaviours and troubleshooting
 
@@ -112,6 +121,8 @@ provenance gate refuses any commit on its way to `main` that does not trace to a
 | Session shows **Waiting on you** | The last event was `Stop`: Claude Code finished its turn and is waiting for the developer | Expected |
 | Session shows **Stalled** for a long time | The terminal was closed mid-turn, so no `SessionEnd` arrived | Expected for observed sessions. They are never Dead by silence; the console can hide old ones |
 | Events arrive in a burst after an outage | Spool replay | Expected; the timeline uses `sourceTs` |
+| Replay is slow, or aocd answers 429 | The observer token's rate limit (section 4) | Wait: the spool is kept and the next flush retries. `Retry-After` says how long |
+| Some events never arrive although aocd is up | They were refused and moved to `spool-rejected.jsonl` | Read that file in `~/.aoc/spool/observed/`: each line carries `rejectedAt` and `reason`, and can be moved back into a queued spool file by hand once fixed |
 | A protected action (a push to `main`, a deploy) shows in an observed timeline with no decision card | Guards never run for observed sessions | Expected. In a managed session it would have been blocked or turned into a card; the GitHub rulesets still stop the push itself |
 
 ## 7. Uninstall and leaving

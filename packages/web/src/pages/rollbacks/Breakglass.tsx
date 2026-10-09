@@ -210,7 +210,7 @@ export function BreakglassDialog({
   );
   const problems = {
     projectId: !projectId ? 'Choose the project whose production is down.' : undefined,
-    ref: !ref.trim() ? 'Name the commit, branch or pinned tag to promote.' : undefined,
+    ref: !ref.trim() ? 'Name the commit or branch to promote.' : undefined,
     down:
       down.trim().length < 10 ? 'Describe what is down and for whom (at least 10 characters).' : undefined,
     why: why.trim().length < 10 ? 'Explain why change request, UAT and go-live are too slow.' : undefined,
@@ -310,13 +310,13 @@ export function BreakglassDialog({
             options={projects.projects.map((p) => ({ value: p.projectId, label: p.name }))}
           />
           <TextField
-            label="Commit, branch or pinned tag to promote"
+            label="Commit or branch to promote"
             required
             value={ref}
             onChange={(e) => setRef(e.target.value)}
             placeholder="hotfix/claims-dedupe or a commit SHA"
             error={show('ref')}
-            hint="A hotfix from a managed session, or the last known-good pinned tag."
+            hint="A hotfix that fast-forwards the protected branch. To return to an earlier state, request a rollback instead."
           />
         </div>
         <TextArea
