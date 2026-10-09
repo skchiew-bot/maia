@@ -278,8 +278,8 @@ describe('supervisor + claude-sim: what a writer may run (print mode cannot prom
     expect(readFileSync(join(repo, 'hello.txt'), 'utf8')).toBe('hi\n');
     // ... and what the grants leave out was refused: the model was told so, and nothing moved.
     const shown = shownToModel(sessionId).map(([, content]) => String(content));
-    expect(shown.some((c) => c.includes('requires approval') && c.includes('git switch main'))).toBe(true);
-    expect(shown.some((c) => /reset --hard|denied|requires approval/.test(c) && c.includes('git reset'))).toBe(true);
+    expect(shown.some((c) => /require approval: git switch main, git branch -D scratch$/.test(c))).toBe(true);
+    expect(shown).toContain('Permission to use Bash with command git reset --hard HEAD~1 has been denied.');
     expect(execFileSync('git', ['log', '--format=%s'], { cwd: repo, encoding: 'utf8', env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' } }).split('\n')[0]).toBe('Add hello.txt');
   });
 });
