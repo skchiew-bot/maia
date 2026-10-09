@@ -79,7 +79,7 @@ export interface DataTableProps<T> {
   rowTone?: (row: T) => 'warn' | 'danger' | undefined;
   /** Shown when `rows` is empty. Default: a quiet "Nothing to show" EmptyState. */
   empty?: ReactNode;
-  /** Refetch in flight: previous rows stay at reduced opacity, no skeleton flash. */
+  /** Refetch in flight: previous rows stay at full contrast (no skeleton flash), marked by a hairline and aria-busy. */
   busy?: boolean;
   /**
    * Height limit for the scroll area (number = px). The header is sticky inside it — pass this for long
