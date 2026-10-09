@@ -26,15 +26,17 @@
 2. `validateBrief(brief)` checks that every open task and open decision is present. Any problem aborts the rollover
    (`session.rollover_aborted {problems}`), and the old session keeps the thread.
 3. Triggers: context tokens above the type's `rolloverContextPct` of the model's window (default 70 %; 85 % for
-   `migration`). It then happens at the next clean boundary, where `task_done` returns
-   `{continue: false, reason: rollover}` and `boundaryState()` reports no half-done task and no risky playbook
-   step. `risky` types never roll over mid-operation.
+   `migration`). It then happens at the next clean boundary: `task_done` returns
+   `{continue: false, reason: rollover}`, the agent ends its turn, and the supervisor rolls over when the turn ends,
+   provided `boundaryState()` reports no half-done task and no risky playbook step. `risky` types never roll over on
+   their own: the supervisor notifies a human, who rolls over by hand at a clean boundary.
 4. Sequence: `session.rollover_started {contextTokens, contextPct, briefHash}` with the brief in the payload, then
    the successor launches with the brief as opening context, the writer lock moves to the successor, the old
    session ends as `retired`, and `session.rollover_completed` closes it out. There is one active writer per thread
    throughout.
-5. The supervisor sets Claude Code's auto-compaction threshold above the rollover threshold (`--autocompact`), so
-   AOC's rollover happens first.
+5. Claude Code's own auto-compaction threshold is to be set above the rollover threshold (`--autocompact`), so
+   that AOC's rollover happens first. Not implemented yet: the supervisor does not pass the flag, so a session that
+   never reaches a clean boundary can still be compacted in place by Claude Code.
 
 ## Consequences
 

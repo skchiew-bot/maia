@@ -1,8 +1,8 @@
 # 0009. All human decisions run through one engine
 
 - Status: Accepted
-- Date: 2026-10-09
-- Deciders: Platform architect
+- Date: 2026-10-09 (updated the same day with the CEO's decision on a single Approver, item 8)
+- Deciders: Platform architect; the single-Approver rule by the CEO
 - Spec: AOC-SPEC-003 §6, §7, §8, §10, §11, R15, R17
 
 ## Context
@@ -29,14 +29,24 @@
 3. **Separation of duties** is data on the card, chained in `decision.requested` meta: `requesterId` is always in
    `excludedApproverIds` (UAT sign-off is the exception, where `eligibleUserIds` names the ticket's requester).
    `decision.escalated` targets a role, never the requester.
-4. **Passkeys** for `go_live`, `rollback` and `break_glass`: the WebAuthn challenge is bound to
-   `(decisionId, optionId, user)`, and the result is chained (`passkeyVerified`).
+4. **Passkeys** for `go_live`, `rollback` and `break_glass`: the WebAuthn challenge is the hash of a binding of
+   the user, the decision, the option, a hash of the card as shown, a nonce and an expiry. The result is chained
+   (`passkeyVerified`), and `passkey.asserted` keeps the signed assertion so the approval can be re-verified later.
 5. **Policy resolutions** (the 25 %-once credit auto-grant) are explicit decisions resolved with `method: policy`.
    They are never silent side effects.
 6. Modules react to `decision.resolved` through reactors keyed by `subjectType` and `subjectId`, using stable
    option ids (`approve`, `reject`, `pass`, `fail`, `retriage`, …).
 7. Every card shows its age. Reminders fire after `decisions.remindAfterMinutes`, with an opt-in webhook, and
-   `ageMs` is chained on resolution.
+   `ageMs` is chained on resolution. Per-kind SLAs (approved with the static mock on 2026-10-09: rollback 30 min,
+   agent decision 1 h, credit top-up 1 h, go-live 2 h, fix plan 4 h, lesson binding 2 days) drive breaches and the
+   gate-latency KPI.
+8. **A single Approver gets no exception** (CEO decision, 2026-10-09). The sole-Approver fallback is **off**
+   (`decisions.soleApproverFallback: false`). With one active Approver, an Approver-level request raised by that
+   Approver, including one from their own session, waits until a second Approver exists. If the flag is ever
+   turned on, the only active Approver may resolve their own request, recorded `selfApproved: true`, but never a
+   credit top-up, and only while no second Approver is active. Each such resolution is chained; the switch itself
+   is not yet, because `decisions` is not among the governed settings that produce `config.changed` (threat
+   model O-8).
 
 ## Consequences
 
@@ -47,12 +57,13 @@
   a protected path ([self-modification boundary](../compliance/self-modification-boundary.md)).
 - **Bad: coupling through option ids.** Option ids are part of each module's contract with the engine and must stay
   stable.
-- **Bad: a single Approver deadlocks.** Approver-level decisions raised from the Approver's own sessions exclude the
-  only Approver. That needs a deputy Approver or an explicit, audited self-approval rule
+- **Bad: the cost of item 8.** With one Approver, the Approver's own Approver-level requests wait: gates raised
+  from the CEO's own sessions, and a break-glass the CEO invokes. In practice, appoint a second Approver (with a
+  passkey) before the CEO runs sessions that raise such gates, and let a Builder invoke break-glass
   ([threat model T-8](../security/threat-model.md#t-8-self-approval-and-separation-of-duties)).
 - **Expiry must be chained** so that it is auditable. The catalog has `decision.expired {ageMs}`; at the time of
   writing `mod-decisions` still records expiry as `decision.withdrawn {reason: expired}` and should adopt the
-  dedicated event.
+  dedicated event (gap G-33).
 
 ## Alternatives rejected
 
@@ -61,6 +72,7 @@
 | A separate approval flow per module | Inconsistent separation of duties and passkey handling; several inboxes; gaps in the audit |
 | GitHub pull request reviews as the decision system | Covers code only (not FX, credits, lessons or UAT); no per-decision passkey; not in the hash chain |
 | Chat or email approvals | Unstructured, no enforcement of separation of duties, easily forged |
+| A sole-Approver self-approval exception that is on by default | The only Approver would mark their own homework on exactly the gates that matter most. Rejected by the CEO on 2026-10-09: the flag exists but stays off |
 
 ## References
 
