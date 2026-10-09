@@ -22,7 +22,7 @@ export interface ClientOptions {
 
 export type ClientResult<T> =
   | { ok: true; status: number; data: T }
-  | { ok: false; status: number | null; error: string; spooled: boolean };
+  | { ok: false; status: number | null; error: string; code?: string; details?: unknown; body?: unknown; spooled: boolean };
 
 export class AocClient {
   private readonly fetchImpl: typeof fetch;
@@ -41,6 +41,7 @@ export class AocClient {
     const attempts = Math.max(1, o.retries ?? this.opts.retries ?? 2);
     let lastErr = 'unknown error';
     let lastStatus: number | null = null;
+    let lastBody: unknown = undefined;
     for (let i = 0; i < attempts; i++) {
       const ac = new AbortController();
       const timer = setTimeout(() => ac.abort(), o.timeoutMs ?? this.opts.timeoutMs ?? 3000);
@@ -55,7 +56,11 @@ export class AocClient {
         const data = text ? safeJson(text) : null;
         if (res.ok) return { ok: true, status: res.status, data: data as T };
         lastStatus = res.status;
-        lastErr = (data as { error?: { message?: string } } | null)?.error?.message ?? `HTTP ${res.status}`;
+        lastBody = data;
+        const errObj = (data as { error?: unknown } | null)?.error;
+        lastErr =
+          (typeof errObj === 'object' && errObj ? (errObj as { message?: string }).message : typeof errObj === 'string' ? errObj : undefined) ??
+          `HTTP ${res.status}`;
         if (res.status < 500 && res.status !== 429) break; // client errors are not retried
       } catch (err) {
         lastErr = (err as Error).name === 'AbortError' ? 'timeout' : String((err as Error).message ?? err);
@@ -64,7 +69,16 @@ export class AocClient {
       }
       if (i < attempts - 1) await sleep(150 * (i + 1));
     }
-    return { ok: false, status: lastStatus, error: lastErr, spooled: false };
+    const e = (lastBody as { error?: { code?: string; details?: unknown } } | undefined)?.error;
+    return {
+      ok: false,
+      status: lastStatus,
+      error: lastErr,
+      ...(e && typeof e === 'object' && e.code ? { code: e.code } : {}),
+      ...(e && typeof e === 'object' && e.details !== undefined ? { details: e.details } : {}),
+      ...(lastBody !== undefined ? { body: lastBody } : {}),
+      spooled: false,
+    };
   }
 
   get<T>(path: string): Promise<ClientResult<T>> {
