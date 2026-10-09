@@ -43,6 +43,7 @@ function renderSession(id = 'ses_work', user = OWNER) {
 }
 
 const feed = [
+  { seq: 121, id: 'evt_4', ts: ago(0.5), type: 'session.git_pushed', actor: { kind: 'agent', id: 'ses_work' }, scope: { sessionId: 'ses_work' }, meta: { sessionId: 'ses_work', credentialProfile: 'deploy', refs: 2, forwarded: 1, refused: 1, failed: 0 }, hash: 'd'.repeat(64) },
   { seq: 120, id: 'evt_3', ts: ago(1), type: 'tool.used', actor: { kind: 'agent', id: 'ses_work' }, scope: { sessionId: 'ses_work' }, meta: { toolName: 'Edit', fileChanging: true, ok: true }, hash: 'a'.repeat(64) },
   { seq: 118, id: 'evt_2', ts: ago(55), type: 'plan.amended', actor: { kind: 'human', id: 'usr_aisyah' }, scope: { sessionId: 'ses_work' }, meta: { manifestVersion: 2, added: 1, removed: 0 }, hash: 'b'.repeat(64) },
   { seq: 90, id: 'evt_1', ts: ago(150), type: 'drift.detected', actor: { kind: 'system', id: 'ledger' }, scope: { sessionId: 'ses_work' }, meta: { kind: 'off_plan_change', severity: 'medium' }, hash: 'c'.repeat(64) },
@@ -200,6 +201,7 @@ describe('SessionPage', () => {
     const events = screen.getByRole('table', { name: 'Events for this session, newest first' });
     expect(within(events).getByText('Edit · file change')).toBeInTheDocument();
     expect(within(events).getByText('Change outside the plan · medium')).toBeInTheDocument();
+    expect(within(events).getByText('pushed 2 refs · 1 forwarded · 1 refused')).toBeInTheDocument();
   });
 
   it('nudges with the operator note and shows why other actions are off', async () => {
