@@ -10,7 +10,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { PromotionDTO, RollbackDTO } from '@aoc/contracts';
 import { createSupervisorModule } from '@aoc/supervisor';
 import type { ChangeModuleOptions } from '../src';
-import { isWithin } from '../src/clone';
+import { clonePathFor, isWithin } from '../src/clone';
+import { displayUrl, pushOutcome, transportOf } from '../src/repo';
 import {
   ACCEPTANCE_SCRIPT,
   PASSKEY,
@@ -467,4 +468,53 @@ describe('G-04 end to end, with the real supervisor', { timeout: 60_000 }, () =>
       expect(planted.read()).toBe('');
     },
   );
+});
+
+describe('G-04 helpers', () => {
+  it('accepts only ssh, https and absolute local-path promotion remotes', () => {
+    expect(transportOf('git@github.com:org/app.git')).toBe('ssh');
+    expect(transportOf('ssh://git@github.com/org/app.git')).toBe('ssh');
+    expect(transportOf('https://github.com/org/app.git')).toBe('https');
+    expect(transportOf('/srv/git/app.git')).toBe('file');
+    expect(transportOf('file:///srv/git/app.git')).toBe('file');
+    for (const bad of [
+      'http://github.com/org/app.git',
+      'git://github.com/org/app.git',
+      'ext::sh -c touch% /tmp/pwned',
+      'fd::17',
+      '-oProxyCommand=evil:x',
+      'relative/app.git',
+      'helper::address',
+      '',
+    ])
+      expect(transportOf(bad), bad).toBeNull();
+  });
+
+  it('hides URL user-info in messages', () => {
+    expect(displayUrl('https://x-access-token:ghs_secret@github.com/org/app.git')).toBe(
+      'https://***@github.com/org/app.git',
+    );
+    expect(displayUrl('git@github.com:org/app.git')).toBe('git@github.com:org/app.git');
+  });
+
+  it('names a clone after a plain project id, hashes anything else, and detects overlap', () => {
+    expect(clonePathFor('/data/git', 'prj_web')).toBe('/data/git/prj_web.git');
+    expect(clonePathFor('/data/git', '../../etc')).toMatch(/^\/data\/git\/p-[0-9a-f]{32}\.git$/);
+    expect(isWithin('/data/git/prj_web.git', '/data')).toBe(true);
+    expect(isWithin('/data', '/data')).toBe(true);
+    expect(isWithin('/data2/git', '/data')).toBe(false);
+    expect(isWithin('/srv/..data/x', '/srv')).toBe(true);
+  });
+
+  it('reads a stale lease from the porcelain push result', () => {
+    expect(pushOutcome({ code: 0, stdout: 'To /r\n \tabc:refs/heads/main\tx..y\nDone\n', stderr: '' })).toEqual({
+      ok: true,
+    });
+    expect(
+      pushOutcome({ code: 1, stdout: '!\tabc:refs/heads/main\t[rejected] (stale info)\n', stderr: 'error: failed' }),
+    ).toMatchObject({ ok: false, stale: true });
+    expect(
+      pushOutcome({ code: 1, stdout: '!\tabc:refs/heads/main\t[remote rejected] (protected branch)', stderr: '' }),
+    ).toMatchObject({ ok: false, stale: false });
+  });
 });

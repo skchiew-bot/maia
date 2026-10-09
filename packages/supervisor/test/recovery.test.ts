@@ -273,7 +273,9 @@ describe('runIsolated (rollback verification / promotion)', () => {
     expect(r.exitCode).toBe(0);
     expect(r.stderr).toBe('warn\n');
     const env = JSON.parse(r.stdout) as Record<string, string>;
-    expect(env.DEPLOY_TOKEN).toBe(SECRETS.uatDeploy);
+    // The credential reached the command; its value never comes back out in the output.
+    expect(env.DEPLOY_TOKEN).toBe('[redacted]');
+    expect(r.stdout).not.toContain(SECRETS.uatDeploy);
     expect(env.TZ).toBe('Asia/Kuala_Lumpur');
     for (const k of ['DEPLOY_KEY', 'AOC_MASTER_KEY', 'GIT_PUSH_TOKEN', 'AOC_SESSION_ID', 'AOC_INGEST_TOKEN'])
       expect(env[k], k).toBeUndefined();

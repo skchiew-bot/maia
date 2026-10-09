@@ -65,6 +65,7 @@ import { LOG_FORMAT, classifyCommit, parseLog, type ProvenanceLookups } from './
 import {
   AOC_GIT_IDENTITY,
   RepoOpError,
+  displayUrl,
   pushOutcome,
   transportOf,
   updateProjectBranch,
@@ -424,7 +425,7 @@ export class ChangeEngine implements ChangeService {
       return {
         ok: false,
         failed: 'promotion_remote_invalid',
-        detail: `${url} is not an ssh, https or absolute local-path remote`,
+        detail: `${displayUrl(url)} is not an ssh, https or absolute local-path remote`,
       };
     const push = async (expected: string) =>
       pushOutcome(

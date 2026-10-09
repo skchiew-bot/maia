@@ -397,13 +397,16 @@ export class Supervisor implements SupervisorService {
         'no session user is configured: untrusted isolated runs (rollback acceptance tests) run as the aocd OS user, without credentials (development only; G-01)',
       );
     if (user) handOver(input.sandbox?.handOver ?? [], user);
-    return runCommand({
+    const r = await runCommand({
       cwd: input.cwd,
       command: input.command,
       env,
       timeoutMs: input.timeoutMs,
       ...(user ? { uid: user.uid, gid: user.gid } : {}),
     });
+    // The output ends up in event payloads (a failed push's detail): no credential value may appear in it.
+    const secrets = secretsToRedact(Object.values(credentials ?? {}));
+    return { ...r, stdout: redactSecrets(r.stdout, secrets), stderr: redactSecrets(r.stderr, secrets) };
   }
 
   /**

@@ -64,6 +64,17 @@ describe('isolated runs: environment and sandbox (G-04)', () => {
     });
   });
 
+  it('redacts the credential profile’s values from what a credentialed run prints', async () => {
+    h = await createHarness();
+    const r = await h.sup.runIsolated({
+      cwd: h.root,
+      command: [process.execPath, '-e', 'console.log("token " + process.env.DEPLOY_TOKEN); console.error(process.env.DEPLOY_TOKEN)'],
+      credentialProfile: 'uat-deploy',
+      timeoutMs: 5000,
+    });
+    expect(r).toMatchObject({ exitCode: 0, stdout: 'token [redacted]\n', stderr: '[redacted]\n' });
+  });
+
   it('never gives a sandboxed run a credential profile', async () => {
     h = await createHarness();
     await expect(
