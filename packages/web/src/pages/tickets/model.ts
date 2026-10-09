@@ -101,7 +101,7 @@ export function funnelOf(tickets: readonly InternalTicket[], now: number): Funne
   });
 }
 
-export type GateState = 'passed' | 'waiting' | 'blocked' | 'not_reached' | 'skipped';
+export type GateState = 'passed' | 'waiting' | 'blocked' | 'failed' | 'not_reached' | 'skipped';
 
 export interface Gates {
   fixPlan: GateState;
@@ -153,6 +153,7 @@ export const GATE_WORD: Record<GateState, string> = {
   passed: 'passed',
   waiting: 'waiting',
   blocked: 'not started',
+  failed: 'approved, promotion failed',
   not_reached: 'not reached',
   skipped: 'skipped',
 };
@@ -338,4 +339,25 @@ export function latestPromotion(events: readonly AuditEventHeaderDTO[]): Promoti
     out = { promotionId: m.promotionId, status, reason: m.reason ?? null, at: e.ts };
   }
   return out;
+}
+
+/** The go-live decision raised for the ticket (its subject is the promotion, so it is not listed by ticket). */
+export function goLiveDecisionId(events: readonly AuditEventHeaderDTO[]): string | null {
+  let id: string | null = null;
+  for (const e of [...events].sort((a, b) => a.seq - b.seq)) {
+    if (e.type !== 'ticket.golive_requested') continue;
+    const d = (e.meta as { decisionId?: unknown }).decisionId;
+    id = typeof d === 'string' && d && d !== 'none' ? d : null;
+  }
+  return id;
+}
+
+/** Diagnoses of the latest triage round (re-triage starts a new round); all of them when the round is unknown. */
+export function latestRound(
+  diagnoses: readonly TicketDiagnosisDTO[],
+  budget: TriageBudget | undefined,
+): TicketDiagnosisDTO[] {
+  if (!budget?.sessionIds.length) return [...diagnoses];
+  const round = diagnoses.filter((d) => budget.sessionIds.includes(d.sessionId));
+  return round.length ? round : [...diagnoses];
 }

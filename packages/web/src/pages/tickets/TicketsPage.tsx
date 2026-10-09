@@ -26,6 +26,7 @@ import {
   diagnosisOf,
   funnelOf,
   gatesOf,
+  latestRound,
   shortTicketId,
   timeInStageMs,
   type TriageBudget,
@@ -175,9 +176,10 @@ export default function TicketsPage() {
         id: 'diagnosis',
         header: 'Diagnosis',
         width: '190px',
-        sortValue: (t) => diagnosisOf(t.diagnoses).best?.confidence ?? null,
+        sortValue: (t) =>
+          diagnosisOf(latestRound(t.diagnoses, budgets.get(t.ticketId))).best?.confidence ?? null,
         cell: (t) => {
-          const d = diagnosisOf(t.diagnoses);
+          const d = diagnosisOf(latestRound(t.diagnoses, budgets.get(t.ticketId)));
           if (!d.best)
             return (
               <span className="tkt-muted">
