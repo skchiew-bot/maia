@@ -126,7 +126,10 @@ describe('(j) evidence pack', () => {
     const today = localDate(Date.now(), 'Asia/Kuala_Lumpur');
     const from = addDays(today, -1);
     const pack = await h.api<{ packId: string; manifest: EvidencePackManifest }>('POST', '/api/evidence/packs', { as: dev, body: { from, to: today }, expect: 201 });
-    expect(pack.manifest.verification).toMatchObject({ ok: true, chainOk: true });
+    // The in-file chain is intact; with no off-host anchor in this run the pack is honest that it is not verifiable
+    // (G-42: `ok` means verified against off-host anchors), and it is never a failure.
+    expect(pack.manifest.verification).toMatchObject({ chainOk: true });
+    expect(pack.manifest.verification.status).not.toBe('failed');
     const dl = await h.request('GET', `/api/evidence/packs/${pack.packId}/download`, { as: dev });
     expect(dl.status).toBe(200);
     const zip = new Uint8Array(await dl.arrayBuffer());
