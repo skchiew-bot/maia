@@ -141,6 +141,46 @@ export function taskDone(
   });
 }
 
+export function closeTicket(
+  t: TestRuntime,
+  ticketId: string,
+  resolution: 'fixed' | 'wont_fix' = 'fixed',
+): void {
+  t.rt.store.append({
+    type: 'ticket.closed',
+    actor: SYSTEM,
+    scope: { ticketId },
+    meta: { ticketId, resolution },
+    payload: {},
+    source: 'api',
+  });
+}
+
+/** The intake module linking a build session (and optionally its change) to a ticket. */
+export function buildStarted(
+  t: TestRuntime,
+  s: { ticketId: string; sessionId: string; changeId?: string | null },
+): void {
+  t.rt.store.append({
+    type: 'ticket.build_started',
+    actor: SYSTEM,
+    meta: { ticketId: s.ticketId, sessionId: s.sessionId, changeId: s.changeId ?? null },
+    source: 'intake',
+  });
+}
+
+export function phaseCompleted(
+  t: TestRuntime,
+  s: { sessionId: string; projectId: string; phaseId: string },
+): void {
+  t.rt.store.append({
+    type: 'phase.completed',
+    actor: SYSTEM,
+    meta: { ...s, pinnedSha: null, pinnedTag: null },
+    source: 'mcp',
+  });
+}
+
 export function throttleHit(t: TestRuntime, sessionId: string): void {
   t.rt.store.append({
     type: 'throttle.hit',

@@ -91,6 +91,13 @@ const GROUP_EXPR: Record<MeteringGroupBy | 'none', string> = {
   none: 'NULL',
 };
 
+export interface PhaseRef {
+  projectId: string;
+  phaseId: string;
+}
+/** Phase spend: usage attributed to the phase's tasks, plus unattributed usage of sessions launched into the phase. */
+const PHASE_USAGE = 'COALESCE(task_project_id, project_id) = ? AND COALESCE(phase_id, launch_phase_id) = ?';
+
 interface RollupDbRow {
   date: string;
   closed_at: string;
@@ -356,11 +363,13 @@ export class MeteringModel {
     group: MeteringGroupBy | 'none';
     ownerId?: string | null;
     sessionId?: string | null;
+    phase?: PhaseRef | null;
   }): UsageAggRow[] {
     const where = ['date >= ?', 'date <= ?'];
     const args: string[] = [q.from, q.to];
     if (q.ownerId) (where.push('owner_id = ?'), args.push(q.ownerId));
     if (q.sessionId) (where.push('session_id = ?'), args.push(q.sessionId));
+    if (q.phase) (where.push(PHASE_USAGE), args.push(q.phase.projectId, q.phase.phaseId));
     const sql = `SELECT date, ${GROUP_EXPR[q.group]} AS k,
         SUM(input_tokens) AS input, SUM(output_tokens) AS output, SUM(cache_read_tokens) AS cache_read,
         SUM(cache_write_5m_tokens) AS cw5m, SUM(cache_write_1h_tokens) AS cw1h, SUM(messages) AS messages, SUM(cost_usd) AS usd,
@@ -516,28 +525,28 @@ export class MeteringModel {
     return this.db
       .prepare(
         `SELECT l.session_id AS sessionId, 1.0 / (SELECT COUNT(*) FROM mtr_session_links x WHERE x.session_id = l.session_id AND x.kind = l.kind) AS share
-         FROM mtr_session_links l WHERE l.kind = ? AND l.ref_id = ?`,
+         FROM mtr_session_links l WHERE l.kind = ? AND l.ref_id = ? ORDER BY l.session_id`,
       )
       .all(kind, refId) as unknown as { sessionId: string; share: number }[];
   }
 
-  sessionUsage(sessionId: string): { usd: number; unpriced: boolean; projectId: string | null } {
-    const r = this.db
-      .prepare(
-        "SELECT COALESCE(SUM(cost_usd), 0) AS usd, SUM(priced_by = 'unpriced') AS unpriced, MAX(project_id) AS project FROM mtr_usage WHERE session_id = ?",
-      )
-      .get(sessionId) as { usd: number; unpriced: number | null; project: string | null };
-    return { usd: r.usd, unpriced: (r.unpriced ?? 0) > 0, projectId: r.project };
+  /** The project a session's usage was booked to (the greatest id when it spans several). */
+  sessionProject(sessionId: string): string | null {
+    return (
+      this.db
+        .prepare('SELECT MAX(project_id) AS project FROM mtr_usage WHERE session_id = ?')
+        .get(sessionId) as {
+        project: string | null;
+      }
+    ).project;
   }
 
-  /** Phase spend: usage attributed to the phase's tasks, plus unattributed usage of sessions launched into the phase. */
-  phaseUsage(projectId: string, phaseId: string): { usd: number; unpriced: boolean; sessions: number } {
-    const r = this.db
-      .prepare(
-        `SELECT COALESCE(SUM(cost_usd), 0) AS usd, SUM(priced_by = 'unpriced') AS unpriced, COUNT(DISTINCT session_id) AS sessions FROM mtr_usage
-         WHERE COALESCE(task_project_id, project_id) = ? AND COALESCE(phase_id, launch_phase_id) = ?`,
-      )
-      .get(projectId, phaseId) as { usd: number; unpriced: number | null; sessions: number };
-    return { usd: r.usd, unpriced: (r.unpriced ?? 0) > 0, sessions: r.sessions };
+  /** Sessions that booked usage to a phase. */
+  phaseSessions(phase: PhaseRef): number {
+    return (
+      this.db
+        .prepare(`SELECT COUNT(DISTINCT session_id) AS n FROM mtr_usage WHERE ${PHASE_USAGE}`)
+        .get(phase.projectId, phase.phaseId) as { n: number }
+    ).n;
   }
 }

@@ -1,20 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { CostPerOutcomeDTO } from '@aoc/contracts';
-import { launch, meteringRuntime, myt, taskDone, usage } from './helpers';
-import type { TestRuntime } from '@aoc/kernel';
+import { closeTicket, launch, meteringRuntime, myt, StubFx, taskDone, usage } from './helpers';
 
 const SYS = { kind: 'system', id: 'test' } as const;
-
-function closeTicket(t: TestRuntime, ticketId: string, resolution: 'fixed' | 'wont_fix'): void {
-  t.rt.store.append({
-    type: 'ticket.closed',
-    actor: SYS,
-    scope: { ticketId },
-    meta: { ticketId, resolution },
-    payload: {},
-    source: 'api',
-  });
-}
 
 /** Every key anywhere in a JSON value. */
 function keysOf(v: unknown, out = new Set<string>()): Set<string> {
@@ -25,7 +13,9 @@ function keysOf(v: unknown, out = new Set<string>()): Set<string> {
 
 describe('cost per outcome (portfolio lens)', () => {
   it('ties notional spend to tickets fixed, changes shipped and phases completed, with medians and p90', async () => {
-    const t = await meteringRuntime();
+    const t = await meteringRuntime({
+      fx: new StubFx({ '2026-10-09': { rate: 4.2, status: 'live', sourceDate: '2026-10-09' } }),
+    });
     const approver = t.user('approver');
     const alice = t.user('builder', 'Alice');
 
@@ -120,9 +110,18 @@ describe('cost per outcome (portfolio lens)', () => {
     );
     expect(dto).toMatchObject({ lens: 'portfolio', costBasis: 'notional_api_equivalent' });
     expect(dto.notice).toMatch(/never a ranking of individuals/);
-    expect(dto.ticketsFixed.items.map((i) => [i.refId, i.notionalUsd, i.sessions, i.projectId])).toEqual([
-      ['tkt_1', 14, 2, 'prj_a'],
-      ['tkt_2', 20, 1, 'prj_a'],
+    expect(
+      dto.ticketsFixed.items.map((i) => [
+        i.refId,
+        i.notionalUsd,
+        i.notionalRm,
+        i.sessions,
+        i.projectId,
+        i.processType,
+      ]),
+    ).toEqual([
+      ['tkt_1', 14, 58.8, 2, 'prj_a', 'bug-triage'], // the $10 triage outweighs the $4 launch session
+      ['tkt_2', 20, 84, 1, 'prj_a', 'feature'],
     ]);
     expect(dto.ticketsFixed.stats).toEqual({
       count: 2,
@@ -132,16 +131,44 @@ describe('cost per outcome (portfolio lens)', () => {
       p90Usd: 19.4,
       minUsd: 14,
       maxUsd: 20,
+      totalRm: 142.8,
+      meanRm: 71.4,
+      medianRm: 71.4,
+      p90Rm: 81.48,
+      minRm: 58.8,
+      maxRm: 84,
+      rmComplete: true,
     });
-    expect(dto.changesShipped.items.map((i) => [i.refId, i.notionalUsd])).toEqual([
-      ['chg_1', 20],
-      ['chg_2', 1],
+    expect(dto.changesShipped.items.map((i) => [i.refId, i.notionalUsd, i.notionalRm])).toEqual([
+      ['chg_1', 20, 84],
+      ['chg_2', 1, 4.2],
     ]);
-    expect(dto.changesShipped.stats).toMatchObject({ count: 2, medianUsd: 10.5, p90Usd: 18.1 });
+    expect(dto.changesShipped.stats).toMatchObject({
+      count: 2,
+      medianUsd: 10.5,
+      p90Usd: 18.1,
+      medianRm: 44.1,
+      p90Rm: 76.02,
+    });
     expect(dto.phasesCompleted.items).toMatchObject([
-      { refId: 'prj_p/ph1', projectId: 'prj_p', notionalUsd: 12, sessions: 1, unpriced: false },
+      {
+        refId: 'prj_p/ph1',
+        projectId: 'prj_p',
+        notionalUsd: 12,
+        notionalRm: 50.4,
+        rmComplete: true,
+        sessions: 1,
+        unpriced: false,
+        processType: 'feature',
+      },
     ]);
-    expect(dto.phasesCompleted.stats).toMatchObject({ count: 1, medianUsd: 12, p90Usd: 12 });
+    expect(dto.phasesCompleted.stats).toMatchObject({
+      count: 1,
+      medianUsd: 12,
+      p90Usd: 12,
+      medianRm: 50.4,
+      p90Rm: 50.4,
+    });
 
     // portfolio only: no per-person field anywhere, and no person id leaks through values either
     const keys = [...keysOf(dto)];
@@ -155,7 +182,10 @@ describe('cost per outcome (portfolio lens)', () => {
       '/api/metering/cost-per-outcome?from=2026-10-10&to=2026-10-10',
       { headers: approver.headers },
     );
-    expect(next.phasesCompleted.items.map((i) => [i.refId, i.notionalUsd])).toEqual([['prj_p/ph2', 4]]);
+    // ph2 completed on 10-10 but its spend was on 10-09, so it is priced at 10-09's rate
+    expect(next.phasesCompleted.items.map((i) => [i.refId, i.notionalUsd, i.notionalRm])).toEqual([
+      ['prj_p/ph2', 4, 16.8],
+    ]);
     expect(next.ticketsFixed.stats).toEqual({
       count: 0,
       totalUsd: 0,
@@ -164,6 +194,13 @@ describe('cost per outcome (portfolio lens)', () => {
       p90Usd: null,
       minUsd: null,
       maxUsd: null,
+      totalRm: null,
+      meanRm: null,
+      medianRm: null,
+      p90Rm: null,
+      minRm: null,
+      maxRm: null,
+      rmComplete: true,
     });
 
     expect(
