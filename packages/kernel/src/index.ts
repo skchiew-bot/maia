@@ -15,5 +15,6 @@ export * from './host/broadcast';
 export * from './host/runtime';
 export * from './testing/dev-identity';
 export * from './testing/fake-llm';
+export * from './testing/random';
 export * from './testing/runtime';
 export * from './testing/stubs';

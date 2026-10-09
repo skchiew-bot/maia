@@ -229,6 +229,7 @@ export class SessionKit {
         totalWeight: weight,
         ownerId: s.owner,
         ...(tree ? { baseHead: tree.head, treeFingerprint: tree.fingerprint } : {}),
+        shape: s.plan.phases.map((ph) => ({ id: ph.id, tasks: ph.tasks.map((t) => ({ id: t.id, size: t.size })) })),
       },
       payload: { summary: `Plan for ${s.project.name}`, phases: s.plan.phases },
       source: 'mcp',
