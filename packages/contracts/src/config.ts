@@ -89,6 +89,12 @@ export const AocConfigSchema = z.object({
       runAtLocalTime: localTime.default('18:00'),
       /** Later attempts while the day's rate is not yet published or the source was unreadable; the last one decides. */
       retryAtLocalTimes: z.array(localTime).default(['18:30', '21:00']),
+      /**
+       * The day's first run re-checks the previous weekday when it was carried forward unread (a holiday stamp or an
+       * unreadable source): if BNM has since published it, that day is attempted again; a day metering has closed is
+       * never restated, so its late figure is only reported.
+       */
+      recheckPreviousWeekday: z.boolean().default(true),
       pageUrl: z.string().default('https://www.bnm.gov.my/exchange-rates'),
       /** BNM Open API USD endpoint: aocd requests `<apiUrl>/date/<YYYY-MM-DD>?session=<session>`. */
       apiUrl: z.string().url().default('https://api.bnm.gov.my/public/exchange-rate/USD'),

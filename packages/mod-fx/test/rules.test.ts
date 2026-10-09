@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { movePct, pipsApart, reconciles, weekdaysIn } from '../src/rules';
+import { movePct, pipsApart, previousWeekday, reconciles, weekdaysIn } from '../src/rules';
 
 describe('4-dp reconciliation', () => {
   it('rounds both figures to 4 dp before comparing (the API serves binary floats)', () => {
@@ -26,6 +26,12 @@ describe('calendar', () => {
     expect(weekdaysIn('2026-10-10', '2026-10-11')).toEqual({ days: 0, since: null });
     expect(weekdaysIn('2026-10-09', '2026-10-13')).toEqual({ days: 3, since: '2026-10-09' });
     expect(weekdaysIn('2026-10-14', '2026-10-13')).toEqual({ days: 0, since: null });
+  });
+
+  it('finds the previous weekday, skipping the weekend', () => {
+    expect(previousWeekday('2026-10-09')).toBe('2026-10-08');
+    expect(previousWeekday('2026-10-12')).toBe('2026-10-09');
+    expect(previousWeekday('2026-10-11')).toBe('2026-10-09');
   });
 
   it('measures the day-over-day move in percent either way', () => {

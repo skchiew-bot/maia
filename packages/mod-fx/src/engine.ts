@@ -11,6 +11,7 @@
  *         move, which is carried forward (flagged)
  *       → mismatch → re-fetch + re-extract once → still mismatched: discrepancy decision, day carried forward (flagged)
  *   session 0900 / 1200: the API figure for (D, session), sanity-bounded; the page cannot show it, so no cross-check.
+ * The first run of a day first re-checks the previous weekday if it was carried forward and BNM has since published it.
  * Every day is stamped live or inherited with its source date; closed days are never restated.
  */
 import type {
@@ -48,13 +49,16 @@ import {
   type FxRateRow,
   type FxReadModel,
 } from './read-model';
-import { isCalendarDate, isWeekend, movePct, pipsApart, reconciles } from './rules';
+import { isCalendarDate, isWeekend, movePct, pipsApart, previousWeekday, reconciles } from './rules';
 
 export interface FxTrigger {
   actor: Actor;
   source: 'scheduler' | 'api' | 'system';
-  /** A scheduled retry: it re-attempts only a day not recorded yet (awaiting publication) or whose source was unreadable. */
-  retry?: boolean;
+  /**
+   * Scheduled attempts only. `first` (the daily job) also re-checks the previous weekday; a `retry` re-attempts only a
+   * day not recorded yet (awaiting publication) or whose source was unreadable.
+   */
+  attempt?: 'first' | 'retry';
 }
 /** Raises discrepancy decisions (never a human, so no approver is excluded by separation of duties). */
 export const FX_SYSTEM_ACTOR: Actor = { kind: 'system', id: 'scheduler:fx' };
@@ -73,6 +77,8 @@ interface Attempt {
 
 export class FxEngine {
   private chain: Promise<unknown> = Promise.resolve();
+  /** The last previous weekday re-checked conclusively (in memory: a restart re-checks it at most once more). */
+  private recheckedThrough: string | null = null;
 
   constructor(
     private readonly ctx: ModuleContext,
@@ -90,7 +96,13 @@ export class FxEngine {
   }
 
   run(trigger: FxTrigger): Promise<FxRunResultDTO> {
-    return this.exclusive(() => this.runToday(trigger));
+    return this.exclusive(async () => {
+      const date = this.today();
+      if (trigger.attempt === 'first' && this.ctx.config.fx.recheckPreviousWeekday) {
+        await this.recheckPreviousWeekday(trigger, date);
+      }
+      return this.runDay(trigger, date, this.isFinalAttempt(date));
+    });
   }
 
   /** Approver override for a day that metering has not closed (resolves an open discrepancy for that day). */
@@ -218,8 +230,8 @@ export class FxEngine {
 
   // ── the daily run ─────────────────────────────────────────────────────────
 
-  private async runToday(t: FxTrigger): Promise<FxRunResultDTO> {
-    const date = this.today();
+  /** One attempt at `date`; `final` when no scheduled attempt remains for it. */
+  private async runDay(t: FxTrigger, date: string, final: boolean): Promise<FxRunResultDTO> {
     if (this.model.isClosed(date)) return this.result(date, 'skipped_closed');
     const existing = this.model.record(date);
     // A human-set rate is final for the day; only another override changes it.
@@ -229,11 +241,53 @@ export class FxEngine {
     if (open) return this.result(date, 'skipped_discrepancy', { decisionId: open.decisionId });
     // Retries exist for a rate that is not published yet, or a source that could not be read; anything else is settled
     // (a failed Sonnet escalation stops for the day, §10). The approver can still run it again by hand.
-    if (t.retry && existing && existing.reason !== 'source_unreadable') return this.result(date, 'unchanged');
-    const a: Attempt = { t, date, prior: this.model.latestBefore(date), final: this.isFinalAttempt(date) };
+    if (t.attempt === 'retry' && existing && existing.reason !== 'source_unreadable') {
+      return this.result(date, 'unchanged');
+    }
+    const a: Attempt = { t, date, prior: this.model.latestBefore(date), final };
     if (isWeekend(date) && a.prior)
       return this.carryForward(a, 'weekend_or_holiday', 'none', 'not_applicable', {});
     return this.ctx.config.fx.session === BNM_PAGE_SESSION ? this.fromPage(a) : this.fromApi(a);
+  }
+
+  /**
+   * The previous weekday was carried forward because nothing could be read (a holiday stamp or an unreadable source),
+   * but BNM may have published it since: if the API now has it, that day is attempted again. A failed extraction is
+   * not re-checked (the Sonnet escalation stops for the day). Metering normally closes the day at 00:15, and a closed
+   * day is never restated (R12), so then the late figure is only reported.
+   */
+  private async recheckPreviousWeekday(t: FxTrigger, today: string): Promise<void> {
+    const date = previousWeekday(today);
+    // Each weekday is re-checked once: a weekend's first runs would otherwise look at the same Friday again.
+    if (date === this.recheckedThrough) return;
+    const r = this.model.record(date);
+    if (
+      r?.status !== 'inherited' ||
+      !(r.reason === 'weekend_or_holiday' || r.reason === 'source_unreadable')
+    ) {
+      return;
+    }
+    const api = await this.readApi(date);
+    if (!api.ok) {
+      // Still unpublished: a holiday. An unreadable answer is tried again at the next first run.
+      if (api.problem === 'api_not_published') this.recheckedThrough = date;
+      return;
+    }
+    this.recheckedThrough = date;
+    if (this.model.isClosed(date)) {
+      const f = (n: number) => n.toFixed(4);
+      this.ctx.notify({
+        kind: 'fx.alert',
+        title: `BNM published USD/MYR ${f(api.official.rate)} for ${date} (session ${api.official.session}) after it was carried forward; metering has closed ${date}, so it keeps ${f(r.rate)} from ${r.sourceDate}`,
+        audience: ['approver', 'builder'],
+        severity: 'info',
+        link: '/fx',
+        refs: { date },
+      });
+      return;
+    }
+    const res = await this.runDay({ actor: t.actor, source: t.source }, date, true);
+    this.ctx.log.info('fx: re-checked the previous weekday', { date, outcome: res.outcome });
   }
 
   /** No scheduled attempt remains today (weekends never get a later one). */

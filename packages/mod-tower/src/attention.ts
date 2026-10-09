@@ -503,13 +503,14 @@ export function buildAttention(r: ReadCtx, integrity: IntegrityFacts): TowerAtte
     drafts.push({
       id: 'fx_carry_forward',
       kind: 'fx_carry_forward',
-      title: `FX rate carried forward ${plural(days, 'day')}`,
+      // The alert counts weekdays without a live rate (holidays count, weekends do not).
+      title: `No live USD/MYR rate for ${plural(days, 'weekday')}`,
       detail: 'Manual check of the BNM rate requested',
       projectId: null,
       since: fx.fx_alert_ms,
       base: BASE.fx_carry_forward,
       blast: 1,
-      basis: (age) => ['FX carried forward', plural(days, 'day'), `alert ${age} old`],
+      basis: (age) => ['FX carried forward', plural(days, 'weekday'), `alert ${age} old`],
       action: { kind: 'open', label: 'Check rate', href: '/fx' },
       chips: ['FX'],
     });

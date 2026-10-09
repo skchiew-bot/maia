@@ -1,5 +1,5 @@
 import { fileURLToPath } from 'node:url';
-import type { Actor, FxService } from '@aoc/contracts';
+import type { Actor, FxService, FxSession } from '@aoc/contracts';
 import { createTestRuntime, type TestRuntime } from '@aoc/kernel';
 import { createMeteringModule, METERING_CLOSE_JOB } from '../src';
 
@@ -10,18 +10,19 @@ const SYSTEM: Actor = { kind: 'system', id: 'test' };
 export const myt = (date: string, time = '10:00'): string =>
   new Date(`${date}T${time}:00+08:00`).toISOString();
 
-/** Deterministic FX stub: rates by date; missing dates return null. */
+/** Deterministic FX stub: rates by date (session null unless given); missing dates return null. */
 export class StubFx implements FxService {
   readonly calls: string[] = [];
   constructor(
     private readonly rates: Record<
       string,
-      { rate: number; status: 'live' | 'inherited'; sourceDate: string }
+      { rate: number; status: 'live' | 'inherited'; sourceDate: string; session?: FxSession }
     >,
   ) {}
   rateFor(date: string) {
     this.calls.push(date);
-    return this.rates[date] ?? null;
+    const r = this.rates[date];
+    return r ? { ...r, session: r.session ?? null } : null;
   }
 }
 

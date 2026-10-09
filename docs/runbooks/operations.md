@@ -239,9 +239,9 @@ The full procedure (what, the order, encryption, retention, keys kept apart) is 
 
 Jobs are defined by modules: interval jobs (`everyMs`) and daily jobs (`dailyAt`, local time). Each module
 declares its own: for example `intake.diagnosis-budget` and `decisions.aging` (every 60 s), the ledger's overrun
-check, the FX fetch (`fx.daily` at 18:00 MYT, then `fx.retry@18:30` and `fx.retry@21:00` while BNM's 1700 rate is
-unpublished; architecture §11), the metering day close and lesson retirement. `SELECT name FROM job_runs` lists the
-jobs that have run.
+check, the FX fetch (`fx.daily` at 18:00 MYT, which first re-checks the previous weekday, then `fx.retry@18:30`
+and `fx.retry@21:00` while BNM's 1700 rate is unpublished; architecture §11), the metering day close and lesson
+retirement. `SELECT name FROM job_runs` lists the jobs that have run.
 
 **Anchoring now:** the nightly `audit.anchor` job runs at `audit.anchorAtLocalTime` (02:00 by default).
 `aoc anchor` anchors the current chain head immediately. Use it after a missed anchor, before a backup, or
