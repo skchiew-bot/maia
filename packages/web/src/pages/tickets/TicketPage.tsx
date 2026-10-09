@@ -72,7 +72,7 @@ function StageSpans({ spans, now }: { spans: readonly StageSpan[]; now: number }
     .map((s) => `${STAGE_LABEL[s.stage]} ${formatAge(s.end - s.start)}${s.current ? ' so far' : ''}`)
     .join(', ');
   return (
-    <figure
+    <div
       className="tkt-spans"
       aria-label={`Time by stage: ${summary}. Lead time ${formatAge(total)}.`}
       role="img"
@@ -103,10 +103,10 @@ function StageSpans({ spans, now }: { spans: readonly StageSpan[]; now: number }
           </li>
         ))}
       </ol>
-      <figcaption className="aoc-sr-only">
+      <span className="aoc-sr-only">
         Lead time {formatAge(total)} as of {formatDateTime(now)}
-      </figcaption>
-    </figure>
+      </span>
+    </div>
   );
 }
 

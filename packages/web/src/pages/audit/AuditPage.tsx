@@ -312,7 +312,7 @@ function AuditView() {
         </Widget>
       </WidgetGrid>
 
-      <section id="audit-explorer" className="audit-section" aria-label="Event explorer">
+      <section id="audit-explorer" className="audit-section">
         <FilterBar label="Event filters">
           <SegmentedControl
             label="Time range"
