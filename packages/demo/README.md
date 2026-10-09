@@ -198,9 +198,11 @@ Every write-capable process type with a credential profile (`bug-fix`, `feature-
 `diff`, `log`, `show`, `rev-parse`, `add`, `commit`, `checkout -b`, `switch -c`, `switch uat/*`, `switch -` and
 `push aoc …` (the supervisor's push gateway, which holds the credential; sessions never do). `merge`, `rebase` and
 `reset` are denied, anything else is not granted, and the protected-operation PreToolUse guard still bounces a push
-to `main` before the permission rules are consulted. `CLAUDE_SIM_EXEC=1` lets the scenarios' git steps really run, so
-a build's commits are real. There is no operator-settings workaround: the demo uses the same rules as any
-deployment. `config/process-types.json` is governed configuration; mod-audit records its changed hash.
+to `main` before the permission rules are consulted. It also bounces a commit (or cherry-pick, revert, `am`, pull)
+while `main` or another protected branch is checked out, so a build branches before it commits, as the scenarios do; a
+workspace is a detached worktree, where there is no branch to protect. `CLAUDE_SIM_EXEC=1` lets the scenarios' git
+steps really run, so a build's commits are real. There is no operator-settings workaround: the demo uses the same
+rules as any deployment. `config/process-types.json` is governed configuration; mod-audit records its changed hash.
 
 `CLAUDE_SIM_SPEED` (e.g. `0.2`) passes through to the sessions and speeds every scenario up.
 
