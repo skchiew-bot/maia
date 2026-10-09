@@ -268,7 +268,7 @@ unprivileged OS user (O-1).
 | T | Rewrite of events newer than the last anchor | A nightly anchor (`audit.anchor`, 02:00 local) and `aoc anchor` on demand (Built); hourly anchors and anchors after high-value events (Required) | Built / Required (O-11) | Up to a day of events |
 | T | The anchor repository's history is force-pushed | Remote rules forbid force-pushes and deletions; the remote is owned by another account | Ops | — |
 | D | Anchoring fails silently | Two retries 30 s apart, then `anchor.failed` and a notification; audit health warns `anchor_stale` after 26 h and `anchor_failed`; the Tower's `anchor_missed` item | Built / Contracted (Tower) | — |
-| T | An evidence pack vouches for a forged chain | Packs recompute the chain and compare each anchor with the `anchor.created` event in that same chain | Built | A full-chain forgery that also rewrites `anchor.created` yields a pack that says every anchor matched: packs must check the off-host records (O-29). Until then, run `aoc verify` alongside every pack |
+| T | An evidence pack vouches for a forged chain | Packs take `mod-audit`'s Verify: each anchor is confirmed against its off-host record, and a pack whose records are unavailable says `not_verifiable` (O-29, done) | Built | As strong as the anchor setup: with no `anchorRemote` every pack is `not_verifiable`; events after the last anchor are not covered (O-11) |
 | S | A fake TSA or response | Check the token's imprint, and reject a TSA time more than 1 h from the anchor record (Built); verify the TSA certificate chain against a pinned CA file (Built, but see residual); use a qualified or commercial TSA (Ops) | Built / Ops | The CA file and the OpenPGP key that signs anchor commits are `mod-audit` options that `aocd` cannot be configured to pass yet, so no TSA signature is checked and no anchor commit is signed (O-11) |
 
 ### 3.14 LLM-assisted functions
@@ -551,8 +551,8 @@ later hash. `verifyChain()` passes, because the genesis value depends only on th
 - **Residual:** events newer than the last anchor: up to a day with the nightly default. Anchor hourly and after
   high-value events (O-11). With default settings (no `anchorRemote`), R2 is **not mitigated at all**: the anchor
   repository is a local directory that the same attacker can rewrite. The same holds for RFC 3161 tokens whose
-  signatures are not verified, and `aocd` cannot be configured to verify them yet (O-11). Evidence packs compare
-  anchors only with the chain's own `anchor.created` events, so they do not detect this attack (O-29).
+  signatures are not verified, and `aocd` cannot be configured to verify them yet (O-11). Evidence packs
+  confirm anchors off-host as Verify does, so they detect this attack too (O-29, done).
 
 ### T-14. Credit gaming
 
@@ -777,7 +777,7 @@ the [gap list](../compliance/gaps.md), which tracks owners and acceptance tests.
 | O-26 | Admin actions that do not exist yet: re-drive one dead-lettered event for one reactor (to replace the manual cursor reset in the [operations runbook](../runbooks/operations.md#5-reactor-failures)), rebuild named projections on demand, and run a job by name. Each is an audited operator action. Changed and degraded projectors already rebuild at startup | Change | `daemon`, `kernel`, `cli` | §3.4, gap G-47 |
 | O-27 | Provenance from records, not messages: a traced commit must be reachable from a HEAD that AOC recorded for a managed session linked to the approved change or ticket (or carry a per-session signature issued by the supervisor), not merely carry an `AOC-Session` / `AOC-Change` trailer | Change | `mod-change`, `mod-ledger`, `supervisor` | T-22, T-1, R1, gap G-25 |
 | O-28 | Erasure needs an approved request: make `decisionId` mandatory on `POST /api/audit/erase`, and check that the decision approved erasing that scope, by someone other than the person erasing. Today it is optional and only checked to be resolved | Change + decision (CEO, DPO) | `mod-audit`, `mod-decisions` | §3.3, ADR-0003, PDPA |
-| O-29 | Evidence packs must verify anchors against the off-host records, as `aoc verify` does (reuse `mod-audit`'s Verify), and say "not verifiable" when those records are unavailable. Today a pack compares anchors with `anchor.created` in the chain under test | Change | `mod-evidence`, `mod-audit` | T-13, R2, gap G-42 |
+| O-29 | Evidence packs must verify anchors against the off-host records, as `aoc verify` does (reuse `mod-audit`'s Verify), and say "not verifiable" when those records are unavailable. **Done (G-42):** packs take the `audit` service's Verify; no service, an unreadable or unreachable anchor store, or anchors not held off-host → `not_verifiable` | Change | `mod-evidence`, `mod-audit` | T-13, R2, gap G-42 |
 
 ## 7. When to review this document again
 

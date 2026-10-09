@@ -58,8 +58,9 @@
   anchors, so a rewritten history is never anchored; RFC 3161 imprint and time checks (at most 1 h of skew).
 - **Not yet:** hourly and event-triggered anchors (gap G-40). Anchor-commit signing and the TSA certificate
   check exist as module options that `aocd`'s configuration cannot set, so the default build signs nothing and
-  checks no TSA signature. Evidence packs compare anchors with `anchor.created` in the chain, not with the
-  external records (gap G-42).
+  checks no TSA signature.
+- **Done since:** evidence packs confirm anchors against the external records through mod-audit's Verify, and
+  say `not_verifiable` when those records are unavailable (gap G-42).
 - **Caution:** if the remote cannot be fetched, Verify falls back to the local copy with a warning. Treat that
   warning as a failed check.
 
