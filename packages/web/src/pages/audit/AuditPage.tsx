@@ -31,11 +31,12 @@ import { useLatest } from '../../lib/dom';
 import { formatDuration, formatInteger } from '../../lib/format';
 import { useProjects } from '../changes/projects';
 import { AnchorsPanel } from './Anchors';
-import { ErasureForm, ErasureHistory, SelfModBlocks } from './Erasure';
+import { ErasureForm, ErasureHistory } from './Erasure';
+import { SelfModBlocks } from './SelfMod';
 import { EventDrawer } from './EventDrawer';
 import { Explorer, type ExplorerFilters } from './Explorer';
 import { ChainBar, VerifyResult, type LastVerification } from './Integrity';
-import { EVENT_FAMILIES, RANGE_OPTIONS, chainCoverage, type RangePreset } from './model';
+import { EVENT_FAMILIES, RANGE_OPTIONS, chainCoverage, healthWarningText, type RangePreset } from './model';
 import { PeopleProvider, usePeople } from './people';
 import { can } from './permissions';
 import { LoadFailed, Skeleton } from './Skeleton';
@@ -454,7 +455,7 @@ function AuditView() {
               {health.data.warnings.map((w) => (
                 <li key={w}>
                   <Icon name="warn" size={14} className="aoc-tone-text--warn" />
-                  <span>{w}</span>
+                  <span>{healthWarningText(w)}</span>
                 </li>
               ))}
             </ul>

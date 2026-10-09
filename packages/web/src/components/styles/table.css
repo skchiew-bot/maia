@@ -7,6 +7,9 @@
   overflow-x: auto;
 }
 .aoc-dt__scroll--bounded {
+  /* Containing block for absolutely positioned cell content (CopyableHash's live region), so rows below the fold
+     are clipped with the scroller instead of stretching the page. */
+  position: relative;
   overflow: auto;
   overscroll-behavior: contain;
 }

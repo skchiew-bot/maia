@@ -218,3 +218,22 @@ export type EraseReason = (typeof ERASE_REASONS)[number]['value'];
 export function validScopeId(id: string): boolean {
   return /^[A-Za-z0-9_.:#@-]{1,64}$/.test(id.trim());
 }
+
+/** mod-audit health warning labels in words (unknown labels are shown as they are). */
+export const HEALTH_WARNING_TEXT: Record<string, string> = {
+  anchoring_disabled:
+    'Anchoring is disabled (audit.anchorProvider is none): nothing protects the chain against a recompute.',
+  anchor_not_off_host:
+    'Anchors stay on this host (audit.anchorRemote is not set), so they do not yet mitigate R2.',
+  anchor_never: 'The chain has never been anchored.',
+  anchor_stale: 'The last anchor is older than the warning threshold.',
+  anchor_failed: 'The last anchoring attempt failed.',
+  verify_failed: 'The last Verify run failed.',
+  projection_degraded: 'A projection is degraded: a view may be behind the log.',
+  reactor_failures: 'Reactors have failed since start-up.',
+  job_failed: 'A scheduled job failed on its last run.',
+};
+
+export function healthWarningText(label: string): string {
+  return HEALTH_WARNING_TEXT[label] ?? label;
+}
