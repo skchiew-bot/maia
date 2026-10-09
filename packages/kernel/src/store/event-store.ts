@@ -91,6 +91,14 @@ interface EventRow {
   actor_kind: string;
   actor_id: string;
   scope_json: string;
+  project_id: string | null;
+  thread_id: string | null;
+  session_id: string | null;
+  task_id: string | null;
+  ticket_id: string | null;
+  change_id: string | null;
+  decision_id: string | null;
+  user_id: string | null;
   meta: string;
   payload_hash: string | null;
   body_scope: string | null;
@@ -101,6 +109,17 @@ interface EventRow {
   prev_hash: string;
   hash: string;
 }
+
+const SCOPE_COLUMNS = [
+  ['projectId', 'project_id'],
+  ['threadId', 'thread_id'],
+  ['sessionId', 'session_id'],
+  ['taskId', 'task_id'],
+  ['ticketId', 'ticket_id'],
+  ['changeId', 'change_id'],
+  ['decisionId', 'decision_id'],
+  ['userId', 'user_id'],
+] as const satisfies readonly (readonly [keyof Scope, keyof EventRow])[];
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS chain_info (k TEXT PRIMARY KEY, v TEXT NOT NULL);
@@ -472,6 +491,11 @@ export class EventStore {
         );
         if (recomputed !== e.hash) {
           problems.push(`seq ${e.seq}: hash mismatch`);
+          firstBad ??= e.seq;
+        }
+        // Queries filter on the indexed copies of the scope, which the hash does not cover: they must agree with it.
+        if (SCOPE_COLUMNS.some(([k, col]) => ((e.scope as Record<string, string | undefined>)[k] ?? null) !== (r[col] ?? null))) {
+          problems.push(`seq ${e.seq}: indexed scope columns disagree with the chained scope`);
           firstBad ??= e.seq;
         }
         if (want.has(e.seq)) hashesAt[e.seq] = recomputed;

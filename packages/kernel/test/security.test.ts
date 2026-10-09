@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
 import { createTestRuntime, EventStore, EventValidationError, FakeClock, MAX_BODY_BYTES, silentLogger, type AocModule } from '../src';
 
@@ -33,6 +34,28 @@ describe('chained header fields are bounded like meta', () => {
     expect(() => s.append({ ...nudge('ses_a', 'x'), idempotencyKey: 'key\nwith-newline' })).toThrow(EventValidationError);
     expect(s.head().seq).toBe(0);
     expect(s.append({ ...nudge('ses_a', 'x'), idempotencyKey: 'crd:cap:["2026-10","ses_a",null,0]' }).idempotencyKey).toBe('crd:cap:["2026-10","ses_a",null,0]');
+  });
+});
+
+describe('chain verification', () => {
+  it('detects tampering with the indexed scope columns that per-session queries rely on', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'aoc-verify-'));
+    const key = randomBytes(32);
+    const s = mk(dir, key);
+    s.append(nudge('ses_a', 'one'));
+    s.append(nudge('ses_a', 'two'));
+    s.close();
+    const raw = new DatabaseSync(join(dir, 'aoc.db'));
+    raw.exec('DROP TRIGGER events_append_only_u');
+    raw.exec("UPDATE events SET session_id = 'ses_hidden' WHERE seq = 2");
+    raw.close();
+    const s2 = mk(dir, key);
+    expect(s2.list({ sessionId: 'ses_a' })).toHaveLength(1); // the event vanished from the session's audit view…
+    const v = s2.verifyChain();
+    expect(v.ok).toBe(false); // …so verification must notice
+    expect(v.firstBadSeq).toBe(2);
+    s2.close();
+    rmSync(dir, { recursive: true, force: true });
   });
 });
 
