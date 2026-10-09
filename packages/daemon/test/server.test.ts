@@ -103,7 +103,8 @@ describe('aocd HTTP surface', () => {
     const res = await t.request('/api/does-not-exist');
     expect(res.status).toBe(404);
     expect(await res.json()).toEqual({ error: { code: 'not_found', message: 'Not found' } });
-    expect((await t.request('/ingest/nope', { method: 'POST', body: '{}' })).status).toBe(404);
+    // Ingest paths authenticate first: an anonymous caller learns nothing about which routes exist.
+    expect((await t.request('/ingest/nope', { method: 'POST', body: '{}' })).status).toBe(401);
   });
 
   it('limits JSON bodies to 1 MiB, declared or chunked', async () => {

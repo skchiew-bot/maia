@@ -456,7 +456,7 @@ describe('brute-force protection', () => {
           headers: { ...scanner, authorization: 'Bearer aoc_i_nope' },
         })
       ).status,
-    ).toBe(429);
+    ).toBe(401); // the kernel refuses unknown ingest tokens before any module middleware or body parsing
     // Valid credentials from the same address still work outside login (no shared-IP lockout) ...
     expect((await t.request('GET', '/api/auth/me', { headers: { ...scanner, ...ada.headers } })).status).toBe(
       200,

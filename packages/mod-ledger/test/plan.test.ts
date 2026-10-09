@@ -99,7 +99,8 @@ describe('declare_plan', () => {
       body: { sessionId: 'ses_a', input: PLAN },
     });
     expect(noToken.status).toBe(401);
-    expect(await noToken.json()).toMatchObject({ ok: false });
+    // The kernel refuses anonymous ingest before any route parses the body.
+    expect(await noToken.json()).toMatchObject({ error: { code: 'unauthenticated' } });
     const wrong = await h.t.request('POST', '/ingest/mcp/declare_plan', {
       headers: h.t.ingestHeaders('ses_b'),
       body: { sessionId: 'ses_a', input: PLAN },
