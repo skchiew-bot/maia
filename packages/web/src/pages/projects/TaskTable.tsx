@@ -62,9 +62,13 @@ export function TaskTable({
                 <td className="prj-tasks__title" data-label="Title">
                   <span className="prj-tasks__title-text">{t.title}</span>
                   {t.flag && t.status === 'done' && <FlagNote flag={t.flag} />}
-                  {t.status === 'removed' && <p className="prj-tasks__note">Removed by an audited amendment</p>}
+                  {t.status === 'removed' && (
+                    <p className="prj-tasks__note">Removed by an audited amendment</p>
+                  )}
                   {t.carriedToSessionId && (
-                    <p className="prj-tasks__note">Carried over to {shortId(t.carriedToSessionId)} at rollover</p>
+                    <p className="prj-tasks__note">
+                      Carried over to {shortId(t.carriedToSessionId)} at rollover
+                    </p>
                   )}
                 </td>
                 <td className="prj-tasks__owner" data-label="Developer">

@@ -5,7 +5,15 @@ import type { PhaseState } from './model';
  * Glyphs the shared icon set does not have (16px grid, 1.5px strokes, currentColor), matching the mock's
  * legend: ⚑ pinned tag / flagged close, ▼ drift, and the phase/task status circles.
  */
-function Glyph({ children, size = 14, className }: { children: ReactNode; size?: number; className?: string }) {
+function Glyph({
+  children,
+  size = 14,
+  className,
+}: {
+  children: ReactNode;
+  size?: number;
+  className?: string;
+}) {
   return (
     <svg
       className={className ? `aoc-icon ${className}` : 'aoc-icon'}

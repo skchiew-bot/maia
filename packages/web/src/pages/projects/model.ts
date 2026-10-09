@@ -164,9 +164,13 @@ export function buildPeople(
   }
   return {
     resolve(declaredBy, sessionId) {
-      const viaSession = sessionOwner.get(declaredBy) ?? (sessionId ? sessionOwner.get(sessionId) : undefined);
+      const viaSession =
+        sessionOwner.get(declaredBy) ?? (sessionId ? sessionOwner.get(sessionId) : undefined);
       if (declaredBy.startsWith('ses_') && viaSession)
-        return { id: viaSession.id, name: viaSession.name ?? names.get(viaSession.id) ?? shortId(viaSession.id) };
+        return {
+          id: viaSession.id,
+          name: viaSession.name ?? names.get(viaSession.id) ?? shortId(viaSession.id),
+        };
       const name = names.get(declaredBy);
       if (name) return { id: declaredBy, name };
       return declaredBy.startsWith('ses_')
@@ -262,15 +266,7 @@ export function sessionRank(s: SessionSummary): number {
 // ── attention (Projects list order) ─────────────────────────────────────────
 
 export type AttentionKind =
-  | 'decisions'
-  | 'dead'
-  | 'stalled'
-  | 'throttled'
-  | 'drift_high'
-  | 'drift'
-  | 'flagged'
-  | 'scope'
-  | 'stale';
+  'decisions' | 'dead' | 'stalled' | 'throttled' | 'drift_high' | 'drift' | 'flagged' | 'scope' | 'stale';
 
 export interface AttentionReason {
   kind: AttentionKind;

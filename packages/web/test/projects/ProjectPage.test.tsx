@@ -19,27 +19,41 @@ describe('Project page: master timeline', { timeout: 30_000 }, () => {
     expect(screen.getByText('main')).toBeInTheDocument();
 
     const timeline = await screen.findByRole('region', { name: 'Master timeline' });
-    expect(within(timeline).getByRole('img', { name: /Master timeline completion by phase: 47% of declared weight done, 3 of 6 tasks, 1 flagged/ })).toBeInTheDocument();
+    expect(
+      within(timeline).getByRole('img', {
+        name: /Master timeline completion by phase: 47% of declared weight done, 3 of 6 tasks, 1 flagged/,
+      }),
+    ).toBeInTheDocument();
     expect(within(timeline).getByText('1 flagged · count until reviewed')).toBeInTheDocument();
     expect(within(timeline).getByText('ETA ≈ 5h at the current pace')).toBeInTheDocument();
 
-    const design = within(timeline).getByRole('region', { name: 'P1 Design' });
-    expect(within(design).getByRole('button', { name: /P1\s*Design/ })).toHaveAttribute('aria-expanded', 'false');
+    const design = within(timeline).getByRole('group', { name: 'P1 Design' });
+    expect(within(design).getByRole('button', { name: /P1\s*Design/ })).toHaveAttribute(
+      'aria-expanded',
+      'false',
+    );
     expect(within(design).getByText('Done Oct 8')).toBeInTheDocument();
     expect(within(design).getByText('aoc/cx-copilot/design/12')).toBeInTheDocument();
-    expect(within(design).getByRole('button', { name: /Copy full commit pinned by aoc\/cx-copilot\/design\/12/ })).toBeInTheDocument();
-    expect(within(design).getByRole('img', { name: /P1 Design, by developer: Aisyah Rahman: 5 of 5 weight done/ })).toBeInTheDocument();
+    expect(
+      within(design).getByRole('button', { name: /Copy full commit pinned by aoc\/cx-copilot\/design\/12/ }),
+    ).toBeInTheDocument();
+    expect(
+      within(design).getByRole('img', { name: /P1 Design, by developer: Aisyah Rahman: 5 of 5 weight done/ }),
+    ).toBeInTheDocument();
 
     // Build is the current phase: open, with its removed task struck out and explained.
-    const build = within(timeline).getByRole('region', { name: 'P2 Build' });
-    expect(within(build).getByRole('button', { name: /P2\s*Build/ })).toHaveAttribute('aria-expanded', 'true');
+    const build = within(timeline).getByRole('group', { name: 'P2 Build' });
+    expect(within(build).getByRole('button', { name: /P2\s*Build/ })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    );
     const tasks = within(build).getByRole('table', { name: 'P2 Build tasks' });
     expect(within(tasks).getByText('Implement service layer')).toBeInTheDocument();
     expect(within(tasks).getByText('Removed by an audited amendment')).toBeInTheDocument();
     expect(within(tasks).getAllByText('Tan Wei Jie')).toHaveLength(4);
     expect(within(build).getByText('No pin yet')).toBeInTheDocument();
 
-    const verify = within(timeline).getByRole('region', { name: 'P3 Verify' });
+    const verify = within(timeline).getByRole('group', { name: 'P3 Verify' });
     expect(within(verify).getByText('Not started')).toBeInTheDocument();
   });
 
@@ -50,12 +64,20 @@ describe('Project page: master timeline', { timeout: 30_000 }, () => {
     const timeline = await screen.findByRole('region', { name: 'Master timeline' });
     await user.click(within(timeline).getByRole('radio', { name: 'Flagged (1)' }));
     expect(screen.getByTestId('location')).toHaveTextContent('/projects/prj_cx?tasks=flagged');
-    const design = within(timeline).getByRole('region', { name: 'P1 Design' });
+    const design = within(timeline).getByRole('group', { name: 'P1 Design' });
     const tasks = within(design).getByRole('table', { name: 'P1 Design tasks' });
     expect(within(tasks).getAllByRole('row')).toHaveLength(2); // header + the flagged close
     expect(within(tasks).getByText('Closed with no file change')).toBeInTheDocument();
     expect(within(tasks).getByText('api/t2.test.ts > passes')).toBeInTheDocument();
-    expect(within(within(timeline).getByRole('region', { name: 'P2 Build' })).getByText('No flagged closes in this phase.')).toBeInTheDocument();
+    // Phases without a match stay closed, and every phase still opens and closes on demand.
+    const build = within(timeline).getByRole('group', { name: 'P2 Build' });
+    const toggle = within(build).getByRole('button', { name: /P2\s*Build/ });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await user.click(toggle);
+    expect(within(build).getByText('No flagged closes in this phase.')).toBeInTheDocument();
+    const designToggle = within(design).getByRole('button', { name: /P1\s*Design/ });
+    await user.click(designToggle);
+    expect(designToggle).toHaveAttribute('aria-expanded', 'false');
   });
 
   it('shows scope changes, drift, decisions, lineage, process types and change control', async () => {
@@ -64,8 +86,14 @@ describe('Project page: master timeline', { timeout: 30_000 }, () => {
     await screen.findByRole('region', { name: 'Master timeline' });
 
     const scope = section('Scope changes');
-    expect(within(scope).getByRole('img', { name: /Burn-up: declared weight 5 at the first plan, 17 now after 3 changes \(1 amendment\); done weight 8/ })).toBeInTheDocument();
-    expect(within(scope).getByText('1 audited amendment changed the denominator after declaration.')).toBeInTheDocument();
+    expect(
+      within(scope).getByRole('img', {
+        name: /Burn-up: declared weight 5 at the first plan, 17 now after 3 changes \(1 amendment\); done weight 8/,
+      }),
+    ).toBeInTheDocument();
+    expect(
+      within(scope).getByText('1 audited amendment changed the denominator after declaration.'),
+    ).toBeInTheDocument();
     const log = within(scope).getByRole('table', { name: /denominator, newest first/ });
     const [, newest] = within(log).getAllByRole('row');
     expect(newest).toHaveTextContent('Amendment v2');
@@ -74,7 +102,9 @@ describe('Project page: master timeline', { timeout: 30_000 }, () => {
     expect(newest).toHaveTextContent('UAT feedback from the CX ops lead');
 
     const drift = section('Drift');
-    expect(within(drift).getByText('Edit changed files before a plan manifest was declared.')).toBeInTheDocument();
+    expect(
+      within(drift).getByText('Edit changed files before a plan manifest was declared.'),
+    ).toBeInTheDocument();
     expect(within(drift).getByText('high')).toBeInTheDocument();
 
     const decisions = section('Open decisions');
@@ -91,7 +121,10 @@ describe('Project page: master timeline', { timeout: 30_000 }, () => {
 
     const cc = section('Change control');
     expect(within(cc).getByText(/None yet\. Every post-MVP change/)).toBeInTheDocument();
-    expect(within(cc).getByRole('link', { name: 'All rollbacks' })).toHaveAttribute('href', '/rollbacks?projectId=prj_cx');
+    expect(within(cc).getByRole('link', { name: 'All rollbacks' })).toHaveAttribute(
+      'href',
+      '/rollbacks?projectId=prj_cx',
+    );
     expect(within(cc).getByText('1 pinned')).toBeInTheDocument();
 
     const sessions = section('Sessions');
@@ -104,7 +137,16 @@ describe('Project page: master timeline', { timeout: 30_000 }, () => {
     const { writes } = serve({
       'POST /api/projects/prj_cx/enhancements': () =>
         jsonResponse(
-          { eventId: 'evt_1', projectId: 'prj_cx', sessionId: null, changeId: null, at: new Date().toISOString(), by: 'usr_ceo', title: 'Bulk export', detail: null },
+          {
+            eventId: 'evt_1',
+            projectId: 'prj_cx',
+            sessionId: null,
+            changeId: null,
+            at: new Date().toISOString(),
+            by: 'usr_ceo',
+            title: 'Bulk export',
+            detail: null,
+          },
           { status: 201 },
         ),
       'PATCH /api/projects/prj_cx': () => jsonResponse({ ...CX_DETAIL, description: 'Agent assist for CX' }),
@@ -141,6 +183,8 @@ describe('Project page: master timeline', { timeout: 30_000 }, () => {
     renderAt('/projects/prj_nope');
     expect(await screen.findByRole('heading', { level: 1, name: 'Project not found' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'All projects' })).toHaveAttribute('href', '/projects');
-    await waitFor(() => expect(screen.queryByRole('region', { name: 'Master timeline' })).not.toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.queryByRole('region', { name: 'Master timeline' })).not.toBeInTheDocument(),
+    );
   });
 });

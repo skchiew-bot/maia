@@ -196,7 +196,13 @@ function trimmed(v: ProjectFormValues): ProjectFormValues {
   };
 }
 
-export function NewProjectDialog({ onClose, onCreated }: { onClose: () => void; onCreated: (p: ProjectDetail) => void }) {
+export function NewProjectDialog({
+  onClose,
+  onCreated,
+}: {
+  onClose: () => void;
+  onCreated: (p: ProjectDetail) => void;
+}) {
   const nameRef = useRef<HTMLInputElement>(null);
   const [values, setValues] = useState<ProjectFormValues>({
     name: '',
@@ -234,7 +240,10 @@ export function NewProjectDialog({ onClose, onCreated }: { onClose: () => void; 
 }
 
 /** Only changed fields are sent; a blank optional field keeps its value (the API sets values, it never clears them). */
-export function projectChanges(initial: ProjectFormValues, next: ProjectFormValues): Partial<ProjectFormValues> {
+export function projectChanges(
+  initial: ProjectFormValues,
+  next: ProjectFormValues,
+): Partial<ProjectFormValues> {
   const a = trimmed(initial);
   const b = trimmed(next);
   const out: Partial<ProjectFormValues> = {};

@@ -59,7 +59,8 @@ export function serve(overrides: Record<string, unknown | ((url: URL) => Respons
       return jsonResponse(handler ?? {}, { status: method === 'POST' ? 201 : 200 });
     }
     const handler = routes[url.pathname];
-    if (handler === undefined) return jsonResponse({ error: { code: 'not_found', message: 'Not found' } }, { status: 404 });
+    if (handler === undefined)
+      return jsonResponse({ error: { code: 'not_found', message: 'Not found' } }, { status: 404 });
     if (typeof handler === 'function') return (handler as (u: URL) => Response)(url);
     return jsonResponse(handler);
   });

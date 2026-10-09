@@ -47,11 +47,26 @@ import {
 } from './model';
 import { PinRef } from './parts';
 
-function ShowMore({ total, shown, onToggle, expanded }: { total: number; shown: number; onToggle: () => void; expanded: boolean }) {
+function ShowMore({
+  total,
+  shown,
+  onToggle,
+  expanded,
+}: {
+  total: number;
+  shown: number;
+  onToggle: () => void;
+  expanded: boolean;
+}) {
   if (total <= shown && !expanded) return null;
   return (
     <div className="prj-more">
-      <Button size="sm" variant="ghost" iconAfter={expanded ? 'chevron-up' : 'chevron-down'} onClick={onToggle}>
+      <Button
+        size="sm"
+        variant="ghost"
+        iconAfter={expanded ? 'chevron-up' : 'chevron-down'}
+        onClick={onToggle}
+      >
         {expanded ? 'Show fewer' : `Show all ${formatInteger(total)}`}
       </Button>
     </div>
@@ -120,7 +135,8 @@ export function ScopePanel({
                       <span className="prj-log__kind">
                         {s.kind === 'amended' ? (
                           <>
-                            <ScopeGlyph size={12} className="prj-log__amend-icon" /> Amendment v{s.manifestVersion}
+                            <ScopeGlyph size={12} className="prj-log__amend-icon" /> Amendment v
+                            {s.manifestVersion}
                           </>
                         ) : (
                           'Plan declared'
@@ -135,12 +151,19 @@ export function ScopePanel({
                         {shortId(s.sessionId)}
                       </Link>
                     </td>
-                    <td data-label="By">{s.ownerName ?? people.resolve(s.ownerId ?? s.sessionId, s.sessionId).name}</td>
+                    <td data-label="By">
+                      {s.ownerName ?? people.resolve(s.ownerId ?? s.sessionId, s.sessionId).name}
+                    </td>
                     <td data-label="Denominator" className="is-end aoc-num">
                       <span className="prj-log__denominator">
                         {weightText(s.projectWeightBefore)} → <b>{weightText(s.projectWeightAfter)}</b>
                       </span>
-                      <span className={cx('prj-delta', s.weightDelta > 0 ? 'is-up' : s.weightDelta < 0 ? 'is-down' : 'is-flat')}>
+                      <span
+                        className={cx(
+                          'prj-delta',
+                          s.weightDelta > 0 ? 'is-up' : s.weightDelta < 0 ? 'is-down' : 'is-flat',
+                        )}
+                      >
                         {s.weightDelta > 0 ? '+' : s.weightDelta < 0 ? '−' : '±'}
                         {weightText(Math.abs(s.weightDelta))}
                       </span>
@@ -170,7 +193,10 @@ export function ScopePanel({
                     {e.sessionId && (
                       <>
                         {' '}
-                        · <Link to={`/sessions/${encodeURIComponent(e.sessionId)}`}>{shortId(e.sessionId)}</Link>
+                        ·{' '}
+                        <Link to={`/sessions/${encodeURIComponent(e.sessionId)}`}>
+                          {shortId(e.sessionId)}
+                        </Link>
                       </>
                     )}
                   </p>
@@ -187,9 +213,21 @@ export function ScopePanel({
 
 // ── Drift ───────────────────────────────────────────────────────────────────
 
-const SEVERITY_TONE: Record<ProjectDriftDTO['severity'], Tone> = { high: 'danger', medium: 'warn', low: 'neutral' };
+const SEVERITY_TONE: Record<ProjectDriftDTO['severity'], Tone> = {
+  high: 'danger',
+  medium: 'warn',
+  low: 'neutral',
+};
 
-export function DriftPanel({ drift, sessions, now }: { drift: readonly ProjectDriftDTO[]; sessions: ReadonlyMap<string, SessionSummary>; now: number }) {
+export function DriftPanel({
+  drift,
+  sessions,
+  now,
+}: {
+  drift: readonly ProjectDriftDTO[];
+  sessions: ReadonlyMap<string, SessionSummary>;
+  now: number;
+}) {
   const [all, setAll] = useState(false);
   const recent = drift.filter((d) => now - Date.parse(d.at) <= 7 * 86_400_000);
   const byKind = useMemo(() => {
@@ -258,8 +296,7 @@ export function DriftPanel({ drift, sessions, now }: { drift: readonly ProjectDr
 
 function livenessDetail(s: SessionSummary): ReactNode {
   const st = sessionBadgeState(s);
-  if (st === 'throttled' && s.throttledUntil)
-    return <>resets {formatClock(s.throttledUntil)}</>;
+  if (st === 'throttled' && s.throttledUntil) return <>resets {formatClock(s.throttledUntil)}</>;
   if (st === 'waiting_on_you' && s.openDecision) return <RelativeTime value={s.openDecision.createdAt} />;
   return undefined;
 }
@@ -297,7 +334,12 @@ export function SessionsPanel({
         sortLabels: ['most urgent first', 'least urgent first'],
         cell: (s) => <LivenessBadge state={sessionBadgeState(s)} size="sm" detail={livenessDetail(s)} />,
       },
-      { id: 'owner', header: 'Developer', sortValue: (s) => s.ownerName ?? '', cell: (s) => s.ownerName ?? '—' },
+      {
+        id: 'owner',
+        header: 'Developer',
+        sortValue: (s) => s.ownerName ?? '',
+        cell: (s) => s.ownerName ?? '—',
+      },
       {
         id: 'type',
         header: 'Process type',
@@ -314,11 +356,17 @@ export function SessionsPanel({
         id: 'progress',
         header: 'Progress',
         width: '140px',
-        sortValue: (s) => (s.progress && s.progress.totalWeight > 0 ? s.progress.doneWeight / s.progress.totalWeight : -1),
+        sortValue: (s) =>
+          s.progress && s.progress.totalWeight > 0 ? s.progress.doneWeight / s.progress.totalWeight : -1,
         sortLabels: ['least done first', 'most done first'],
         cell: (s) =>
           s.progress ? (
-            <ProgressBar done={s.progress.doneTasks} declared={s.progress.totalTasks} size="sm" showPercent={false} />
+            <ProgressBar
+              done={s.progress.doneTasks}
+              declared={s.progress.totalTasks}
+              size="sm"
+              showPercent={false}
+            />
           ) : (
             <span className="prj-muted">no plan</span>
           ),
@@ -420,22 +468,29 @@ function ThreadCard({
       <div className="prj-thread__head">
         <h3 className="prj-thread__title">{thread.title}</h3>
         <span className="prj-muted">
-          since {formatShortDate(thread.createdAt)} · {formatInteger(rollovers)} {rollovers === 1 ? 'rollover' : 'rollovers'}
+          since {formatShortDate(thread.createdAt)} · {formatInteger(rollovers)}{' '}
+          {rollovers === 1 ? 'rollover' : 'rollovers'}
         </span>
       </div>
       <p className="prj-thread__writer">
         {writer ? (
           <>
-            Active writer{' '}
-            <Link to={`/sessions/${encodeURIComponent(writer.sessionId)}`}>{writer.title}</Link>{' '}
+            Active writer <Link to={`/sessions/${encodeURIComponent(writer.sessionId)}`}>{writer.title}</Link>{' '}
             <LivenessBadge state={sessionBadgeState(writer)} size="sm" />
           </>
         ) : (
-          <span className="prj-muted">No active writer: the next session to declare work here takes the thread.</span>
+          <span className="prj-muted">
+            No active writer: the next session to declare work here takes the thread.
+          </span>
         )}
       </p>
       {d && d.progress.totalTasks > 0 && (
-        <ProgressBar done={d.progress.doneTasks} declared={d.progress.totalTasks} label="Thread tasks" size="sm" />
+        <ProgressBar
+          done={d.progress.doneTasks}
+          declared={d.progress.totalTasks}
+          label="Thread tasks"
+          size="sm"
+        />
       )}
       {detail.error !== undefined && !d && <p className="prj-muted">Thread history unavailable.</p>}
       {chain.length > 0 && (
@@ -546,7 +601,11 @@ export function DecisionsPanel({ decisions }: { decisions: readonly DecisionCard
               <span>
                 waiting <RelativeTime value={d.createdAt} />
               </span>
-              {d.overdue && <Badge tone="danger" icon="clock">past due</Badge>}
+              {d.overdue && (
+                <Badge tone="danger" icon="clock">
+                  past due
+                </Badge>
+              )}
             </p>
           </div>
           <Link to="/decisions" className="prj-decision__open">
@@ -610,7 +669,8 @@ export function ChangeControlPanel({
           <p className="prj-muted">Loading…</p>
         ) : changes.length === 0 ? (
           <p className="prj-muted">
-            None yet. Every post-MVP change is a change request with impact, mitigation, rollback plan and acceptance test.
+            None yet. Every post-MVP change is a change request with impact, mitigation, rollback plan and
+            acceptance test.
           </p>
         ) : (
           <ul className="prj-cc__list">
@@ -639,13 +699,17 @@ export function ChangeControlPanel({
         ) : !rollbacks ? (
           <p className="prj-muted">Loading…</p>
         ) : rollbacks.length === 0 ? (
-          <p className="prj-muted">None. A rollback targets a pinned tag below and is verified on a branch before anything touches main.</p>
+          <p className="prj-muted">
+            None. A rollback targets a pinned tag below and is verified on a branch before anything touches
+            main.
+          </p>
         ) : (
           <ul className="prj-cc__list">
             {rollbacks.slice(0, 6).map((r) => (
               <li key={r.rollbackId}>
                 <span className="prj-cc__title">
-                  To <code>{r.targetRef}</code> <CopyableHash value={r.targetSha} length={8} label="rollback target SHA" />
+                  To <code>{r.targetRef}</code>{' '}
+                  <CopyableHash value={r.targetSha} length={8} label="rollback target SHA" />
                 </span>
                 <span className="prj-cc__meta">
                   <Badge tone={ROLLBACK_TONE[r.status] ?? 'neutral'}>{words(r.status)}</Badge>
@@ -675,7 +739,12 @@ export function ChangeControlPanel({
                 </li>
               ))}
             </ul>
-            <ShowMore total={pinRows.length} shown={5} expanded={allPins} onToggle={() => setAllPins((a) => !a)} />
+            <ShowMore
+              total={pinRows.length}
+              shown={5}
+              expanded={allPins}
+              onToggle={() => setAllPins((a) => !a)}
+            />
           </>
         )}
       </section>
@@ -685,7 +754,12 @@ export function ChangeControlPanel({
 
 // ── Process types & playbooks ───────────────────────────────────────────────
 
-const CLASS_TONE: Record<string, Tone> = { discovery: 'accent', execution: 'info', triage: 'neutral', maintenance: 'neutral' };
+const CLASS_TONE: Record<string, Tone> = {
+  discovery: 'accent',
+  execution: 'info',
+  triage: 'neutral',
+  maintenance: 'neutral',
+};
 
 export function ProcessTypesPanel({
   sessions,
@@ -708,7 +782,14 @@ export function ProcessTypesPanel({
     return [...m.entries()].sort((a, b) => b[1].sessions - a[1].sessions);
   }, [sessions]);
   if (used.length === 0)
-    return <EmptyState size="sm" icon="registry" title="No sessions yet" body="Process types appear once sessions run here." />;
+    return (
+      <EmptyState
+        size="sm"
+        icon="registry"
+        title="No sessions yet"
+        body="Process types appear once sessions run here."
+      />
+    );
   const typeOf = new Map((types ?? []).map((t) => [t.id, t]));
   const playbookOf = new Map((playbooks ?? []).map((p) => [p.playbookId, p]));
   return (

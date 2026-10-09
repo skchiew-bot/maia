@@ -16,14 +16,24 @@ import {
 } from './model';
 
 /** A project's live sessions as liveness badges with counts, in §4 precedence order. */
-export function LiveMix({ counts, empty = 'No live sessions' }: { counts: LivenessCounts; empty?: ReactNode }) {
+export function LiveMix({
+  counts,
+  empty = 'No live sessions',
+}: {
+  counts: LivenessCounts;
+  empty?: ReactNode;
+}) {
   const entries = orderedCounts(counts);
   if (entries.length === 0) return <span className="prj-muted">{empty}</span>;
   return (
     <ul className="prj-livemix" aria-label="Live sessions by state">
       {entries.map(([state, n]) => (
         <li key={state}>
-          <LivenessBadge state={state} size="sm" detail={<span className="aoc-num">{formatInteger(n)}</span>} />
+          <LivenessBadge
+            state={state}
+            size="sm"
+            detail={<span className="aoc-num">{formatInteger(n)}</span>}
+          />
         </li>
       ))}
     </ul>

@@ -149,14 +149,28 @@ export function ActivityLane({
         )}
         {columns.map((c) => {
           const total = Math.min(MAX_COL, (c.verified + c.flagged) * UNIT + 2);
-          const flaggedH = c.flagged ? Math.max(UNIT, Math.round((c.flagged / (c.verified + c.flagged)) * total)) : 0;
+          const flaggedH = c.flagged
+            ? Math.max(UNIT, Math.round((c.flagged / (c.verified + c.flagged)) * total))
+            : 0;
           return (
             <g key={c.x}>
               {c.verified > 0 && (
-                <rect x={c.x - 1} y={BASE - total} width={2.5} height={total - flaggedH} className="prj-lane__close" />
+                <rect
+                  x={c.x - 1}
+                  y={BASE - total}
+                  width={2.5}
+                  height={total - flaggedH}
+                  className="prj-lane__close"
+                />
               )}
               {flaggedH > 0 && (
-                <rect x={c.x - 1} y={BASE - flaggedH} width={2.5} height={flaggedH} className="prj-lane__flagged" />
+                <rect
+                  x={c.x - 1}
+                  y={BASE - flaggedH}
+                  width={2.5}
+                  height={flaggedH}
+                  className="prj-lane__flagged"
+                />
               )}
             </g>
           );
@@ -195,7 +209,12 @@ const KIND_PLURAL: Record<EventKind, string> = {
 
 /** Three rows, one glyph each: audited scope additions (⊕ teal), drift (▼ amber), rollbacks (red). */
 type Row = 'scope' | 'drift' | 'rollback';
-const ROW_OF: Record<EventKind, Row> = { amendment: 'scope', enhancement: 'scope', drift: 'drift', rollback: 'rollback' };
+const ROW_OF: Record<EventKind, Row> = {
+  amendment: 'scope',
+  enhancement: 'scope',
+  drift: 'drift',
+  rollback: 'rollback',
+};
 const ROWS: readonly Row[] = ['scope', 'drift', 'rollback'];
 const ROW_SHAPE: Record<Row, 'enhancement' | 'drift' | 'rollback'> = {
   scope: 'enhancement',
@@ -237,7 +256,15 @@ function clusterLabel(c: Cluster): string {
 }
 
 /** Scope and drift on the shared scale, so a jump in the denominator lines up with the work around it. */
-export function EventsLane({ scale, events, label }: { scale: TimeScale; events: readonly LaneEvent[]; label: string }) {
+export function EventsLane({
+  scale,
+  events,
+  label,
+}: {
+  scale: TimeScale;
+  events: readonly LaneEvent[];
+  label: string;
+}) {
   const [ref, width] = useElementWidth<HTMLDivElement>(480);
   const H = 46;
   const rowY = (r: Row) => 9 + ROWS.indexOf(r) * 14;
@@ -247,7 +274,9 @@ export function EventsLane({ scale, events, label }: { scale: TimeScale; events:
     .filter(([, n]) => n > 0);
   const summary = `${label}: ${
     counts.length
-      ? counts.map(([k, n]) => `${formatInteger(n)} ${n === 1 ? KIND_WORD[k].toLowerCase() : KIND_PLURAL[k]}`).join(', ')
+      ? counts
+          .map(([k, n]) => `${formatInteger(n)} ${n === 1 ? KIND_WORD[k].toLowerCase() : KIND_PLURAL[k]}`)
+          .join(', ')
       : 'none yet'
   }.`;
   const hits: HitItem[] = clusters.map((c, i) => ({
@@ -281,7 +310,9 @@ export function EventsLane({ scale, events, label }: { scale: TimeScale; events:
           ))}
           {clusters.map((c, i) => (
             <g key={`${c.row}-${i}`}>
-              {c.row === 'drift' && <line x1={c.x} x2={c.x} y1={2} y2={H - 2} className="prj-lane__drift-rule" />}
+              {c.row === 'drift' && (
+                <line x1={c.x} x2={c.x} y1={2} y2={H - 2} className="prj-lane__drift-rule" />
+              )}
               <MarkShape kind={ROW_SHAPE[c.row]} x={c.x} y={rowY(c.row)} r={4.5} />
               {c.events.length > 1 && (
                 <text x={c.x + 7} y={rowY(c.row) + 4} className="prj-lane__count">
@@ -298,7 +329,12 @@ export function EventsLane({ scale, events, label }: { scale: TimeScale; events:
             className="prj-lane__now"
           />
         </svg>
-        <HitLayer items={hits} label={`${label}: use arrow keys to move between marks`} width={width} height={H} />
+        <HitLayer
+          items={hits}
+          label={`${label}: use arrow keys to move between marks`}
+          width={width}
+          height={H}
+        />
       </div>
     </div>
   );

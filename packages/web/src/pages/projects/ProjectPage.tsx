@@ -27,7 +27,15 @@ import { useProjectData } from './data';
 import { EditProjectDialog, EnhancementDialog, NewThreadDialog } from './dialogs';
 import { MasterTimeline } from './MasterTimeline';
 import { buildPeople, livenessCounts, liveTotal, weightText } from './model';
-import { ChangeControlPanel, DecisionsPanel, DriftPanel, ProcessTypesPanel, ScopePanel, SessionsPanel, ThreadsPanel } from './panels';
+import {
+  ChangeControlPanel,
+  DecisionsPanel,
+  DriftPanel,
+  ProcessTypesPanel,
+  ScopePanel,
+  SessionsPanel,
+  ThreadsPanel,
+} from './panels';
 import { LiveMix } from './parts';
 import type { TimeScale } from './lanes';
 import type { TaskFilter } from './TaskTable';
@@ -55,10 +63,13 @@ export default function ProjectPage() {
   const [params, setParams] = useSearchParams();
   const [dialog, setDialog] = useState<DialogKind>(null);
   const data = useProjectData(id);
-  const { detail, timeline, history, sessions, decisions, changes, rollbacks, registry, playbooks, spend } = data;
+  const { detail, timeline, history, sessions, decisions, changes, rollbacks, registry, playbooks, spend } =
+    data;
 
   const filterParam = params.get('tasks');
-  const filter: TaskFilter = TASK_FILTERS.includes(filterParam as TaskFilter) ? (filterParam as TaskFilter) : 'all';
+  const filter: TaskFilter = TASK_FILTERS.includes(filterParam as TaskFilter)
+    ? (filterParam as TaskFilter)
+    : 'all';
   const setFilter = (f: TaskFilter) => {
     const next = new URLSearchParams(params);
     if (f === 'all') next.delete('tasks');
@@ -72,7 +83,8 @@ export default function ProjectPage() {
   const people = useMemo(
     () =>
       buildPeople(sessionList, [
-        ...(timeline.data?.phases.flatMap((p) => p.segments.map((s) => [s.ownerId, s.ownerName] as const)) ?? []),
+        ...(timeline.data?.phases.flatMap((p) => p.segments.map((s) => [s.ownerId, s.ownerName] as const)) ??
+          []),
         ...(history.data?.scope.map((s) => [s.ownerId ?? '', s.ownerName] as const) ?? []),
         ...(timeline.data?.amendments.map((a) => [a.by, a.byName] as const) ?? []),
       ]),
@@ -85,18 +97,20 @@ export default function ProjectPage() {
       Date.parse(project.createdAt),
       ...(history.data?.scope.map((s) => Date.parse(s.at)) ?? []),
       ...(history.data?.drift.map((d) => Date.parse(d.at)) ?? []),
-      ...(timeline.data?.manifest.flatMap((p) => p.tasks.map((t) => (t.doneAt ? Date.parse(t.doneAt) : NaN))) ?? []),
+      ...(timeline.data?.manifest.flatMap((p) =>
+        p.tasks.map((t) => (t.doneAt ? Date.parse(t.doneAt) : NaN)),
+      ) ?? []),
     ].filter(Number.isFinite);
     const start = Math.min(...times);
     return { start, end: Math.max(now, ...times), now };
   }, [project, history.data, timeline.data, now]);
 
+  // In-page links (#timeline, #drift…) and deep links from the list scroll once the target has rendered.
   const ready = Boolean(project && timeline.data);
   useEffect(() => {
     if (!ready || !location.hash) return;
-    document.getElementById(location.hash.slice(1))?.scrollIntoView({ block: 'start' });
-    // Scroll once when the page first has content to scroll to.
-  }, [ready]); // eslint-disable-line react-hooks/exhaustive-deps
+    document.getElementById(decodeURIComponent(location.hash.slice(1)))?.scrollIntoView?.({ block: 'start' });
+  }, [ready, location.hash, location.key]);
 
   if (!project) {
     const notFound = detail.error instanceof ApiError && detail.error.status === 404;
@@ -203,7 +217,15 @@ export default function ProjectPage() {
           value={decisions.data ? openDecisions.length : project.openDecisions}
           tone={project.openDecisions > 0 ? 'warn' : 'neutral'}
           href="#decisions"
-          footnote={oldestDecision ? <>oldest waiting <RelativeTime value={oldestDecision} /></> : 'nothing waiting'}
+          footnote={
+            oldestDecision ? (
+              <>
+                oldest waiting <RelativeTime value={oldestDecision} />
+              </>
+            ) : (
+              'nothing waiting'
+            )
+          }
         />
         <KpiTile
           label="Live sessions"
@@ -227,7 +249,9 @@ export default function ProjectPage() {
         <KpiTile
           label="Drift, 7 days"
           value={history.data ? drift7d.length : '—'}
-          tone={drift7d.some((d) => d.severity === 'high') ? 'danger' : drift7d.length > 0 ? 'warn' : 'neutral'}
+          tone={
+            drift7d.some((d) => d.severity === 'high') ? 'danger' : drift7d.length > 0 ? 'warn' : 'neutral'
+          }
           href="#drift"
           footnote={
             history.data
@@ -268,7 +292,12 @@ export default function ProjectPage() {
               />
             )
           ) : timeline.error !== undefined ? (
-            <ErrorState size="sm" title="Couldn't load the master timeline" error={timeline.error} onRetry={timeline.reload} />
+            <ErrorState
+              size="sm"
+              title="Couldn't load the master timeline"
+              error={timeline.error}
+              onRetry={timeline.reload}
+            />
           ) : (
             <div className="prj-skel prj-skel--hero" aria-hidden="true" />
           )}
@@ -296,7 +325,12 @@ export default function ProjectPage() {
           busy={history.loading && history.data !== undefined}
         >
           {history.data && timeline.data && scale ? (
-            <ScopePanel history={history.data} manifest={timeline.data.manifest} scale={scale} people={people} />
+            <ScopePanel
+              history={history.data}
+              manifest={timeline.data.manifest}
+              scale={scale}
+              people={people}
+            />
           ) : history.error !== undefined ? (
             <ErrorState size="sm" error={history.error} onRetry={history.reload} />
           ) : (
@@ -380,7 +414,10 @@ export default function ProjectPage() {
             rollbacks={rollbacks.data?.items}
             pins={history.data?.pins ?? []}
             projectId={project.projectId}
-            errors={{ changes: changes.error !== undefined && !changes.data, rollbacks: rollbacks.error !== undefined && !rollbacks.data }}
+            errors={{
+              changes: changes.error !== undefined && !changes.data,
+              rollbacks: rollbacks.error !== undefined && !rollbacks.data,
+            }}
           />
         </Widget>
 
@@ -401,7 +438,11 @@ export default function ProjectPage() {
           onClose={() => setDialog(null)}
           onSaved={() => {
             setDialog(null);
-            toast.notify({ tone: 'ok', title: 'Project details saved', body: 'Recorded as project.updated under your name.' });
+            toast.notify({
+              tone: 'ok',
+              title: 'Project details saved',
+              body: 'Recorded as project.updated under your name.',
+            });
             detail.reload();
           }}
         />
@@ -413,7 +454,11 @@ export default function ProjectPage() {
           onClose={() => setDialog(null)}
           onRecorded={(e) => {
             setDialog(null);
-            toast.notify({ tone: 'ok', title: `Enhancement recorded: ${e.title}`, body: 'It shows as a teal mark on the master timeline.' });
+            toast.notify({
+              tone: 'ok',
+              title: `Enhancement recorded: ${e.title}`,
+              body: 'It shows as a teal mark on the master timeline.',
+            });
             history.reload();
           }}
         />

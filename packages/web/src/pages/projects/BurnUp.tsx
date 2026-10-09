@@ -15,7 +15,12 @@ interface Step {
 }
 
 /** Step path through (t, value) points, holding each value until the next point and then to `end`. */
-function stepPath(points: readonly Step[], x: (t: number) => number, y: (v: number) => number, end: number): string {
+function stepPath(
+  points: readonly Step[],
+  x: (t: number) => number,
+  y: (v: number) => number,
+  end: number,
+): string {
   if (points.length === 0) return '';
   let d = `M${x(points[0]!.at)},${y(0)}V${y(points[0]!.value)}`;
   for (let i = 1; i < points.length; i++) d += `H${x(points[i]!.at)}V${y(points[i]!.value)}`;
@@ -30,7 +35,7 @@ export function niceMax(v: number): number {
   return step * mag;
 }
 
-export function scopeDescription(s: ScopeChangeDTO): string {
+function scopeDescription(s: ScopeChangeDTO): string {
   const who = s.ownerName ?? 'unknown developer';
   const delta = `${s.weightDelta >= 0 ? '+' : '−'}${weightText(Math.abs(s.weightDelta))}`;
   if (s.kind === 'declared')
@@ -67,7 +72,10 @@ export function BurnUp({
         return { s, at: last };
       });
   }, [scope]);
-  const declared = useMemo<Step[]>(() => points.map((p) => ({ at: p.at, value: p.s.projectWeightAfter })), [points]);
+  const declared = useMemo<Step[]>(
+    () => points.map((p) => ({ at: p.at, value: p.s.projectWeightAfter })),
+    [points],
+  );
   const done = useMemo<Step[]>(() => {
     const closes = manifest
       .flatMap((p) => p.tasks)
@@ -156,7 +164,12 @@ export function BurnUp({
             ))}
           <line x1={x(scale.now)} x2={x(scale.now)} y1={TOP - 4} y2={y(0)} className="prj-lane__now" />
         </svg>
-        <HitLayer items={hits} label="Denominator changes: use arrow keys to move between them" width={width} height={H} />
+        <HitLayer
+          items={hits}
+          label="Denominator changes: use arrow keys to move between them"
+          width={width}
+          height={H}
+        />
       </div>
     </figure>
   );

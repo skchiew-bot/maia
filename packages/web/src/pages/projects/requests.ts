@@ -9,7 +9,11 @@ export async function apiPatch<T>(path: string, body: unknown): Promise<T> {
   try {
     res = await fetch(path, {
       method: 'PATCH',
-      headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-Requested-With': 'aoc-web' },
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        'X-Requested-With': 'aoc-web',
+      },
       body: JSON.stringify(body),
       credentials: 'include',
     });
@@ -24,7 +28,8 @@ export async function apiPatch<T>(path: string, body: unknown): Promise<T> {
     parsed = undefined;
   }
   if (!res.ok) {
-    const error = (parsed as { error?: { code?: string; message?: string; details?: unknown } } | undefined)?.error;
+    const error = (parsed as { error?: { code?: string; message?: string; details?: unknown } } | undefined)
+      ?.error;
     throw new ApiError(
       res.status,
       error?.code ?? `http_${res.status}`,

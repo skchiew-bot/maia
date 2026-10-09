@@ -50,7 +50,14 @@ export const SUMMARIES: ProjectSummary[] = [
     name: 'AOC Platform',
     slug: 'aoc-platform',
     repoPath: '/srv/repos/aoc-platform',
-    progress: progress({ doneTasks: 10, totalTasks: 10, doneWeight: 30, totalWeight: 30, pct: 100, etaHiddenReason: 'complete' }),
+    progress: progress({
+      doneTasks: 10,
+      totalTasks: 10,
+      doneWeight: 30,
+      totalWeight: 30,
+      pct: 100,
+      etaHiddenReason: 'complete',
+    }),
     activeSessions: 0,
     openDecisions: 0,
     lastActivityAt: iso(2 * H),
@@ -60,14 +67,25 @@ export const SUMMARIES: ProjectSummary[] = [
     name: 'CX Copilot',
     slug: 'cx-copilot',
     repoPath: '/srv/repos/cx-copilot',
-    progress: progress({ doneTasks: 3, totalTasks: 6, doneWeight: 8, totalWeight: 17, pct: 47.1, flaggedTasks: 1, etaMs: 5 * H, etaHiddenReason: null }),
+    progress: progress({
+      doneTasks: 3,
+      totalTasks: 6,
+      doneWeight: 8,
+      totalWeight: 17,
+      pct: 47.1,
+      flaggedTasks: 1,
+      etaMs: 5 * H,
+      etaHiddenReason: null,
+    }),
     activeSessions: 2,
     openDecisions: 1,
     lastActivityAt: iso(10 * 60_000),
   },
 ];
 
-const rollupPhase = (p: Partial<ProjectRollup['phases'][number]> & { phaseId: string; name: string; order: number }) => ({
+const rollupPhase = (
+  p: Partial<ProjectRollup['phases'][number]> & { phaseId: string; name: string; order: number },
+) => ({
   doneTasks: 0,
   totalTasks: 0,
   doneWeight: 0,
@@ -83,7 +101,20 @@ const rollupPhase = (p: Partial<ProjectRollup['phases'][number]> & { phaseId: st
 export const ROLLUPS: ProjectRollup[] = [
   {
     projectId: 'prj_aoc',
-    phases: [rollupPhase({ phaseId: 'docs', name: 'Docs', order: 0, doneTasks: 10, totalTasks: 10, doneWeight: 30, totalWeight: 30, completedAt: iso(3 * H), pinnedTag: 'aoc/aoc-platform/docs/40', pinnedSha: 'c381ede6a1b2' })],
+    phases: [
+      rollupPhase({
+        phaseId: 'docs',
+        name: 'Docs',
+        order: 0,
+        doneTasks: 10,
+        totalTasks: 10,
+        doneWeight: 30,
+        totalWeight: 30,
+        completedAt: iso(3 * H),
+        pinnedTag: 'aoc/aoc-platform/docs/40',
+        pinnedSha: 'c381ede6a1b2',
+      }),
+    ],
     currentPhaseId: null,
     drift: { total: 0, last7d: 0, highLast7d: 0, lastAt: null },
     amendments: { count: 0, last7d: 0, lastAt: null },
@@ -91,8 +122,29 @@ export const ROLLUPS: ProjectRollup[] = [
   {
     projectId: 'prj_cx',
     phases: [
-      rollupPhase({ phaseId: 'design', name: 'Design', order: 0, doneTasks: 2, totalTasks: 2, doneWeight: 5, totalWeight: 5, flaggedTasks: 1, flaggedWeight: 2, completedAt: iso(20 * H), pinnedTag: 'aoc/cx-copilot/design/12', pinnedSha: 'b5553275aa' }),
-      rollupPhase({ phaseId: 'build', name: 'Build', order: 1, doneTasks: 1, totalTasks: 3, doneWeight: 3, totalWeight: 10 }),
+      rollupPhase({
+        phaseId: 'design',
+        name: 'Design',
+        order: 0,
+        doneTasks: 2,
+        totalTasks: 2,
+        doneWeight: 5,
+        totalWeight: 5,
+        flaggedTasks: 1,
+        flaggedWeight: 2,
+        completedAt: iso(20 * H),
+        pinnedTag: 'aoc/cx-copilot/design/12',
+        pinnedSha: 'b5553275aa',
+      }),
+      rollupPhase({
+        phaseId: 'build',
+        name: 'Build',
+        order: 1,
+        doneTasks: 1,
+        totalTasks: 3,
+        doneWeight: 3,
+        totalWeight: 10,
+      }),
       rollupPhase({ phaseId: 'verify', name: 'Verify', order: 2, totalTasks: 1, totalWeight: 2 }),
     ],
     currentPhaseId: 'build',
@@ -160,7 +212,11 @@ export const SESSIONS: SessionSummary[] = [
   }),
 ];
 
-const row = (key: string, usd: number, rm: number): MeteringSummaryDTO['rows'][number] => ({ ...cost(usd, rm), key, label: null });
+const row = (key: string, usd: number, rm: number): MeteringSummaryDTO['rows'][number] => ({
+  ...cost(usd, rm),
+  key,
+  label: null,
+});
 function cost(usd: number, rm: number): MeteringCostRow {
   return {
     inputTokens: 1000,
@@ -197,7 +253,9 @@ export const SPEND: MeteringSummaryDTO = {
   generatedAt: new Date(NOW).toISOString(),
 };
 
-function task(p: Partial<ManifestTaskDTO> & { taskId: string; phaseId: string; title: string }): ManifestTaskDTO {
+function task(
+  p: Partial<ManifestTaskDTO> & { taskId: string; phaseId: string; title: string },
+): ManifestTaskDTO {
   return {
     acceptance: null,
     size: 's',
@@ -218,7 +276,13 @@ export const CX_DETAIL: ProjectDetail = {
   defaultBranch: 'main',
   createdAt: iso(48 * H),
   threads: [
-    { threadId: 'thr_cx_main', projectId: 'prj_cx', title: 'CX Copilot — main thread', activeWriterSessionId: 'ses_01CXWAIT000001', createdAt: iso(40 * H) },
+    {
+      threadId: 'thr_cx_main',
+      projectId: 'prj_cx',
+      title: 'CX Copilot — main thread',
+      activeWriterSessionId: 'ses_01CXWAIT000001',
+      createdAt: iso(40 * H),
+    },
   ],
 };
 
@@ -237,8 +301,25 @@ export const CX_TIMELINE: ProjectTimeline = {
       pinnedSha: 'b5553275aa11cc',
       pinnedTag: 'aoc/cx-copilot/design/12',
       tasks: [
-        task({ taskId: 't1', phaseId: 'design', title: 'Map current flow and data contracts', status: 'done', doneAt: iso(21 * H), evidence: { kind: 'commit', ref: '3558d66aa0', verified: true } }),
-        task({ taskId: 't2', phaseId: 'design', title: 'Write API contract + acceptance tests', size: 'm', weight: 3, status: 'done', doneAt: iso(20 * H), evidence: { kind: 'test', ref: 'api/t2.test.ts > passes', verified: true }, flag: 'no_file_change' }),
+        task({
+          taskId: 't1',
+          phaseId: 'design',
+          title: 'Map current flow and data contracts',
+          status: 'done',
+          doneAt: iso(21 * H),
+          evidence: { kind: 'commit', ref: '3558d66aa0', verified: true },
+        }),
+        task({
+          taskId: 't2',
+          phaseId: 'design',
+          title: 'Write API contract + acceptance tests',
+          size: 'm',
+          weight: 3,
+          status: 'done',
+          doneAt: iso(20 * H),
+          evidence: { kind: 'test', ref: 'api/t2.test.ts > passes', verified: true },
+          flag: 'no_file_change',
+        }),
       ],
     },
     {
@@ -249,10 +330,42 @@ export const CX_TIMELINE: ProjectTimeline = {
       pinnedSha: null,
       pinnedTag: null,
       tasks: [
-        task({ taskId: 't3', phaseId: 'build', title: 'Implement service layer', size: 'm', weight: 3, status: 'done', doneAt: iso(H), declaredBy: USERS.weijie, sessionId: 'ses_01CXWAIT000001', evidence: { kind: 'diff', ref: 'diff:e07195bf548b', verified: true } }),
-        task({ taskId: 't4', phaseId: 'build', title: 'Wire UI and telemetry events', size: 'l', weight: 5, declaredBy: USERS.weijie, sessionId: 'ses_01CXWAIT000001' }),
-        task({ taskId: 't7', phaseId: 'build', title: 'Keyboard shortcuts for the overlay', declaredBy: USERS.weijie, sessionId: 'ses_01CXWAIT000001' }),
-        task({ taskId: 't5', phaseId: 'build', title: 'Edge cases', status: 'removed', declaredBy: USERS.weijie, sessionId: 'ses_01CXWAIT000001' }),
+        task({
+          taskId: 't3',
+          phaseId: 'build',
+          title: 'Implement service layer',
+          size: 'm',
+          weight: 3,
+          status: 'done',
+          doneAt: iso(H),
+          declaredBy: USERS.weijie,
+          sessionId: 'ses_01CXWAIT000001',
+          evidence: { kind: 'diff', ref: 'diff:e07195bf548b', verified: true },
+        }),
+        task({
+          taskId: 't4',
+          phaseId: 'build',
+          title: 'Wire UI and telemetry events',
+          size: 'l',
+          weight: 5,
+          declaredBy: USERS.weijie,
+          sessionId: 'ses_01CXWAIT000001',
+        }),
+        task({
+          taskId: 't7',
+          phaseId: 'build',
+          title: 'Keyboard shortcuts for the overlay',
+          declaredBy: USERS.weijie,
+          sessionId: 'ses_01CXWAIT000001',
+        }),
+        task({
+          taskId: 't5',
+          phaseId: 'build',
+          title: 'Edge cases',
+          status: 'removed',
+          declaredBy: USERS.weijie,
+          sessionId: 'ses_01CXWAIT000001',
+        }),
       ],
     },
     {
@@ -262,7 +375,15 @@ export const CX_TIMELINE: ProjectTimeline = {
       completedAt: null,
       pinnedSha: null,
       pinnedTag: null,
-      tasks: [task({ taskId: 't6', phaseId: 'verify', title: 'Regression suite green', declaredBy: USERS.weijie, sessionId: 'ses_01CXWAIT000001' })],
+      tasks: [
+        task({
+          taskId: 't6',
+          phaseId: 'verify',
+          title: 'Regression suite green',
+          declaredBy: USERS.weijie,
+          sessionId: 'ses_01CXWAIT000001',
+        }),
+      ],
     },
   ],
 };
@@ -323,10 +444,26 @@ export const CX_HISTORY: ProjectHistory = {
     },
   ],
   drift: [
-    { seq: 250, at: iso(H), sessionId: 'ses_01CXWAIT000001', kind: 'off_plan_change', severity: 'high', taskId: null, detail: 'Edit changed files before a plan manifest was declared.' },
+    {
+      seq: 250,
+      at: iso(H),
+      sessionId: 'ses_01CXWAIT000001',
+      kind: 'off_plan_change',
+      severity: 'high',
+      taskId: null,
+      detail: 'Edit changed files before a plan manifest was declared.',
+    },
   ],
   enhancements: [],
-  pins: [{ phaseId: 'design', sessionId: 'ses_01CXOLD0000003', tag: 'aoc/cx-copilot/design/12', sha: 'b5553275aa11cc', at: iso(20 * H) }],
+  pins: [
+    {
+      phaseId: 'design',
+      sessionId: 'ses_01CXOLD0000003',
+      tag: 'aoc/cx-copilot/design/12',
+      sha: 'b5553275aa11cc',
+      at: iso(20 * H),
+    },
+  ],
 };
 
 export const CX_DECISION: DecisionCardView = {
@@ -363,7 +500,10 @@ export const CX_DECISION: DecisionCardView = {
   viewer: { canResolve: true, reason: null, canWithdraw: true, canEscalate: false },
 };
 
-export const DECISIONS: DecisionListResponse = { generatedAt: new Date(NOW).toISOString(), decisions: [CX_DECISION] };
+export const DECISIONS: DecisionListResponse = {
+  generatedAt: new Date(NOW).toISOString(),
+  decisions: [CX_DECISION],
+};
 
 export const THREAD: ThreadDetail = {
   ...CX_DETAIL.threads[0]!,

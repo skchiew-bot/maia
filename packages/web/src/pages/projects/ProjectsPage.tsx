@@ -71,7 +71,7 @@ const ratio = (r: Row) =>
   r.summary.progress.totalWeight > 0 ? r.summary.progress.doneWeight / r.summary.progress.totalWeight : 0;
 const activity = (r: Row) => (r.summary.lastActivityAt ? Date.parse(r.summary.lastActivityAt) : 0);
 
-export function sortRows(rows: readonly Row[], sort: SortKey): Row[] {
+function sortRows(rows: readonly Row[], sort: SortKey): Row[] {
   const byName = (a: Row, b: Row) => a.summary.name.localeCompare(b.summary.name);
   const cmp: Record<SortKey, (a: Row, b: Row) => number> = {
     attention: (a, b) => b.score - a.score || ratio(a) - ratio(b) || byName(a, b),
@@ -157,13 +157,14 @@ function ProjectRow({ row, spendKnown }: { row: Row; spendKnown: boolean }) {
           <code>{summary.slug}</code>
           {current ? (
             <span>
-              now in <b>P{current.index} {current.name}</b>
+              now in{' '}
+              <b>
+                P{current.index} {current.name}
+              </b>
             </span>
           ) : phases.length > 0 ? (
             <span>every phase complete</span>
-          ) : (
-            <span>no plan declared yet</span>
-          )}
+          ) : null}
         </p>
         <p className="prj-row__meta">
           {summary.lastActivityAt ? (
@@ -178,24 +179,38 @@ function ProjectRow({ row, spendKnown }: { row: Row; spendKnown: boolean }) {
 
       <div className="prj-row__completion">
         <span className="aoc-sr-only">Completion: </span>
-        <p className="prj-row__figures">
-          <strong className="aoc-num">{formatPercent(p.totalWeight > 0 ? p.doneWeight / p.totalWeight : 0)}</strong>
-          <span className="aoc-num">
-            {weightText(p.doneWeight)}/{weightText(p.totalWeight)} weight
-          </span>
-          <span className="aoc-num">
-            {formatInteger(p.doneTasks)}/{formatInteger(p.totalTasks)} tasks
-          </span>
-          {p.flaggedTasks > 0 && (
-            <span className="prj-row__flagged aoc-num">
-              <FlagGlyph size={12} /> {formatInteger(p.flaggedTasks)} flagged
-            </span>
-          )}
-        </p>
-        {row.rollup ? (
-          <PhaseBar phases={phases} label={`${summary.name} completion by phase`} currentId={current?.id} />
+        {p.totalTasks === 0 ? (
+          <p className="prj-muted">
+            No plan declared yet: the master timeline starts with the first session's plan.
+          </p>
         ) : (
-          <span className="prj-muted">Phase breakdown unavailable</span>
+          <>
+            <p className="prj-row__figures">
+              <strong className="aoc-num">
+                {formatPercent(p.totalWeight > 0 ? p.doneWeight / p.totalWeight : 0)}
+              </strong>
+              <span className="aoc-num">
+                {weightText(p.doneWeight)}/{weightText(p.totalWeight)} weight
+              </span>
+              <span className="aoc-num">
+                {formatInteger(p.doneTasks)}/{formatInteger(p.totalTasks)} tasks
+              </span>
+              {p.flaggedTasks > 0 && (
+                <span className="prj-row__flagged aoc-num">
+                  <FlagGlyph size={12} /> {formatInteger(p.flaggedTasks)} flagged
+                </span>
+              )}
+            </p>
+            {row.rollup ? (
+              <PhaseBar
+                phases={phases}
+                label={`${summary.name} completion by phase`}
+                currentId={current?.id}
+              />
+            ) : (
+              <span className="prj-muted">Phase breakdown unavailable</span>
+            )}
+          </>
         )}
       </div>
 
@@ -265,7 +280,8 @@ export default function ProjectsPage() {
   const portfolioLive: LivenessCounts = {};
   for (const r of rows)
     for (const [state, n] of Object.entries(r.liveness))
-      portfolioLive[state as keyof LivenessCounts] = (portfolioLive[state as keyof LivenessCounts] ?? 0) + (n ?? 0);
+      portfolioLive[state as keyof LivenessCounts] =
+        (portfolioLive[state as keyof LivenessCounts] ?? 0) + (n ?? 0);
   const openDecisions = rows.reduce((a, r) => a + r.summary.openDecisions, 0);
   const totals = totalsOf(rows.flatMap((r) => r.phases));
   const spendTotals = spend.resource.data?.totals;
@@ -287,7 +303,11 @@ export default function ProjectsPage() {
       onClose={() => setCreating(false)}
       onCreated={(p) => {
         setCreating(false);
-        toast.notify({ tone: 'ok', title: `Project ${p.name} created`, body: 'Recorded as project.created under your name.' });
+        toast.notify({
+          tone: 'ok',
+          title: `Project ${p.name} created`,
+          body: 'Recorded as project.created under your name.',
+        });
         navigate(`/projects/${encodeURIComponent(p.projectId)}`);
       }}
     />
@@ -330,7 +350,11 @@ export default function ProjectsPage() {
         />
         <KpiTile
           label="Completion"
-          value={loading || !rollups.data ? '—' : formatPercent(totals.totalWeight > 0 ? totals.doneWeight / totals.totalWeight : 0)}
+          value={
+            loading || !rollups.data
+              ? '—'
+              : formatPercent(totals.totalWeight > 0 ? totals.doneWeight / totals.totalWeight : 0)
+          }
           unit="by weight"
           footnote={
             rollups.data
@@ -389,41 +413,42 @@ export default function ProjectsPage() {
         />
       </FilterBar>
 
-      {(rollups.error !== undefined || sessions.error !== undefined || spend.resource.error !== undefined) && !loading && (
-        <div className="prj-alerts">
-          {rollups.error !== undefined && (
-            <InlineAlert
-              tone="warn"
-              title="Completion by phase is unavailable"
-              action={
-                <button type="button" className="aoc-link-button" onClick={rollups.reload}>
-                  Retry
-                </button>
-              }
-            >
-              {describeError(rollups.error)}
-            </InlineAlert>
-          )}
-          {sessions.error !== undefined && (
-            <InlineAlert
-              tone="warn"
-              title="Live sessions are unavailable"
-              action={
-                <button type="button" className="aoc-link-button" onClick={sessions.reload}>
-                  Retry
-                </button>
-              }
-            >
-              {describeError(sessions.error)}
-            </InlineAlert>
-          )}
-          {spend.resource.error !== undefined && (
-            <InlineAlert tone="info" title="Spend is not shown">
-              {describeError(spend.resource.error)}
-            </InlineAlert>
-          )}
-        </div>
-      )}
+      {(rollups.error !== undefined || sessions.error !== undefined || spend.resource.error !== undefined) &&
+        !loading && (
+          <div className="prj-alerts">
+            {rollups.error !== undefined && (
+              <InlineAlert
+                tone="warn"
+                title="Completion by phase is unavailable"
+                action={
+                  <button type="button" className="aoc-link-button" onClick={rollups.reload}>
+                    Retry
+                  </button>
+                }
+              >
+                {describeError(rollups.error)}
+              </InlineAlert>
+            )}
+            {sessions.error !== undefined && (
+              <InlineAlert
+                tone="warn"
+                title="Live sessions are unavailable"
+                action={
+                  <button type="button" className="aoc-link-button" onClick={sessions.reload}>
+                    Retry
+                  </button>
+                }
+              >
+                {describeError(sessions.error)}
+              </InlineAlert>
+            )}
+            {spend.resource.error !== undefined && (
+              <InlineAlert tone="info" title="Spend is not shown">
+                {describeError(spend.resource.error)}
+              </InlineAlert>
+            )}
+          </div>
+        )}
 
       <WidgetGrid>
         <Widget
@@ -464,7 +489,11 @@ export default function ProjectsPage() {
                   : 'No open decisions, dead or stalled sessions, recent drift, flagged closes or recent amendments.'
               }
               action={
-                <Button size="sm" variant="ghost" onClick={() => setParams(new URLSearchParams(), { replace: true })}>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setParams(new URLSearchParams(), { replace: true })}
+                >
                   Clear filters
                 </Button>
               }
@@ -480,7 +509,11 @@ export default function ProjectsPage() {
               </div>
               <ol className="prj-list">
                 {visible.map((r) => (
-                  <ProjectRow key={r.summary.projectId} row={r} spendKnown={spend.resource.error === undefined} />
+                  <ProjectRow
+                    key={r.summary.projectId}
+                    row={r}
+                    spendKnown={spend.resource.error === undefined}
+                  />
                 ))}
               </ol>
               <p className="prj-legend">
@@ -488,8 +521,8 @@ export default function ProjectsPage() {
                   <span className="prj-legend__swatch prj-legend__swatch--done" /> done with evidence
                 </span>
                 <span className="prj-legend__item">
-                  <span className="prj-legend__swatch prj-legend__swatch--flagged" /> flagged: closed with no file change,
-                  counts until reviewed
+                  <span className="prj-legend__swatch prj-legend__swatch--flagged" /> flagged: closed with no
+                  file change, counts until reviewed
                 </span>
                 <span className="prj-legend__item">
                   <span className="prj-legend__swatch prj-legend__swatch--open" /> declared, not done

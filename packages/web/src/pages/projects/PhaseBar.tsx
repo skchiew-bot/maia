@@ -23,6 +23,40 @@ export interface PhaseBarProps {
 const GAP = 2;
 const LABEL_ROW = 16;
 
+/** One segment: the declared extent (outlined track), done with evidence, then done but flagged. */
+export function SegmentFill({
+  x,
+  width,
+  verified,
+  flagged,
+  height,
+}: {
+  x: number;
+  width: number;
+  verified: number;
+  flagged: number;
+  height: number;
+}) {
+  return (
+    <>
+      <rect x={x} y={0} width={Math.max(0, width)} height={height} rx={2} className="prj-phasebar__track" />
+      {verified > 0 && (
+        <rect x={x} y={0} width={verified} height={height} rx={2} className="prj-phasebar__done" />
+      )}
+      {flagged > 0 && (
+        <rect
+          x={x + verified}
+          y={0}
+          width={flagged}
+          height={height}
+          rx={verified > 0 ? 0 : 2}
+          className="prj-phasebar__flagged"
+        />
+      )}
+    </>
+  );
+}
+
 export function phaseSentence(p: PhaseStat): string {
   const pct = p.totalWeight > 0 ? p.doneWeight / p.totalWeight : 0;
   const flagged = p.flaggedTasks > 0 ? `, ${formatInteger(p.flaggedTasks)} flagged` : '';
@@ -113,25 +147,22 @@ export function PhaseBar({
   return (
     <div className={cx('aoc-chart', 'prj-phasebar', className)}>
       <div className="aoc-chart__plot" ref={ref}>
-        <svg role="img" aria-label={summary} width={width} height={svgHeight} viewBox={`0 0 ${width} ${svgHeight}`}>
+        <svg
+          role="img"
+          aria-label={summary}
+          width={width}
+          height={svgHeight}
+          viewBox={`0 0 ${width} ${svgHeight}`}
+        >
           {segments.map((s) => (
             <g key={s.phase.id} className={cx(s.phase.id === currentId && 'is-current')}>
-              <rect x={s.x} y={0} width={Math.max(0, s.w)} height={height} rx={2} className="prj-phasebar__track" />
-              {s.verified > 0 && (
-                <rect x={s.x} y={0} width={s.verified} height={height} rx={2} className="prj-phasebar__done" />
-              )}
-              {s.flagged > 0 && (
-                <rect
-                  x={s.x + s.verified}
-                  y={0}
-                  width={s.flagged}
-                  height={height}
-                  rx={s.verified > 0 ? 0 : 2}
-                  className="prj-phasebar__flagged"
-                />
-              )}
+              <SegmentFill x={s.x} width={s.w} verified={s.verified} flagged={s.flagged} height={height} />
               {s.text && (
-                <text x={s.x} y={height + 12} className={cx('prj-phasebar__label', s.phase.id === currentId && 'is-current')}>
+                <text
+                  x={s.x}
+                  y={height + 12}
+                  className={cx('prj-phasebar__label', s.phase.id === currentId && 'is-current')}
+                >
                   {s.text}
                 </text>
               )}

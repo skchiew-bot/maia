@@ -34,7 +34,9 @@ describe('GET /api/projects/rollup', () => {
 
     expect((await h.t.request('GET', '/api/projects/rollup')).status).toBe(401);
     const requester = h.t.user('requester');
-    expect((await h.t.request('GET', '/api/projects/rollup', { headers: requester.headers })).status).toBe(403);
+    expect((await h.t.request('GET', '/api/projects/rollup', { headers: requester.headers })).status).toBe(
+      403,
+    );
 
     const rows = await h.t.json<ProjectRollup[]>('GET', '/api/projects/rollup', { headers: h.owner.headers });
     expect(rows.map((r) => r.projectId).sort()).toEqual([empty, projectId].sort());
@@ -84,13 +86,17 @@ describe('GET /api/projects/rollup', () => {
     });
 
     h.t.clock.advance(8 * DAY);
-    const later = await h.t.json<ProjectRollup[]>('GET', '/api/projects/rollup', { headers: h.owner.headers });
+    const later = await h.t.json<ProjectRollup[]>('GET', '/api/projects/rollup', {
+      headers: h.owner.headers,
+    });
     expect(later.find((r) => r.projectId === projectId)).toMatchObject({
       drift: { total: 1, last7d: 0, highLast7d: 0 },
       amendments: { count: 1, last7d: 0 },
     });
     // The static /rollup route sits before /:id without shadowing real project ids.
-    expect((await h.t.request('GET', `/api/projects/${projectId}`, { headers: h.owner.headers })).status).toBe(200);
+    expect(
+      (await h.t.request('GET', `/api/projects/${projectId}`, { headers: h.owner.headers })).status,
+    ).toBe(200);
   });
 });
 
@@ -103,7 +109,10 @@ describe('GET /api/projects/:id/history', () => {
     h.ledger.acquireWriter(threadId, 'ses_1', supervisor);
     await h.mcp('declare_plan', 'ses_1', PLAN); // t1 s, t2 m, t3 l → 10
     h.toolUsed('ses_1');
-    await h.mcp('task_done', 'ses_1', { task_id: 't1', evidence: { kind: 'test', ref: 'test/widget.test.ts > a' } });
+    await h.mcp('task_done', 'ses_1', {
+      task_id: 't1',
+      evidence: { kind: 'test', ref: 'test/widget.test.ts > a' },
+    });
     await h.mcp('amend_plan', 'ses_1', {
       reason: 'Export was missing',
       add: [{ id: 't4', title: 'Export', size: 'm', phaseId: 'P2' }],
@@ -218,7 +227,9 @@ describe('GET /api/projects/:id/history', () => {
     expect(erased.scope.map((s) => s.projectWeightAfter)).toEqual([10, 13, 14, 13]);
     expect(erased.scope[1]!.reason).toBe('[erased]');
 
-    expect((await h.t.request('GET', '/api/projects/prj_nope/history', { headers: h.owner.headers })).status).toBe(404);
+    expect(
+      (await h.t.request('GET', '/api/projects/prj_nope/history', { headers: h.owner.headers })).status,
+    ).toBe(404);
     const requester = h.t.user('requester');
     expect(
       (await h.t.request('GET', `/api/projects/${projectId}/history`, { headers: requester.headers })).status,

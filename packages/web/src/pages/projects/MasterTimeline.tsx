@@ -17,6 +17,7 @@ import {
   DRIFT_KIND_LABEL,
   SIZE_LEGEND,
   contributorsOf,
+  currentPhase,
   isFlagged,
   isLiveTask,
   phaseStatsFromManifest,
@@ -27,7 +28,7 @@ import {
   type PhaseStat,
 } from './model';
 import { PinRef, StatusText } from './parts';
-import { PhaseBar } from './PhaseBar';
+import { PhaseBar, SegmentFill } from './PhaseBar';
 import { TaskTable, matchesTaskFilter, type TaskFilter } from './TaskTable';
 
 const GAP = 2;
@@ -50,7 +51,9 @@ function ContributorBar({ contributors, label }: { contributors: readonly Contri
   const sentence = (c: Contributor) =>
     `${c.name}: ${weightText(c.doneWeight)} of ${weightText(c.totalWeight)} weight done, ${formatInteger(
       c.doneTasks,
-    )} of ${formatInteger(c.totalTasks)} tasks${c.flaggedWeight > 0 ? ', some flagged' : ''}`;
+    )} of ${formatInteger(c.totalTasks)} tasks${
+      c.flaggedWeight > 0 ? `, ${weightText(c.flaggedWeight)} of that weight flagged` : ''
+    }`;
   const hits: HitItem[] = segs.map((s) => ({
     key: s.c.id,
     x: s.x,
@@ -81,20 +84,7 @@ function ContributorBar({ contributors, label }: { contributors: readonly Contri
         >
           {segs.map((s) => (
             <g key={s.c.id}>
-              <rect x={s.x} y={0} width={Math.max(0, s.w)} height={height} rx={2} className="prj-phasebar__track" />
-              {s.verified > 0 && (
-                <rect x={s.x} y={0} width={s.verified} height={height} rx={2} className="prj-phasebar__done" />
-              )}
-              {s.flagged > 0 && (
-                <rect
-                  x={s.x + s.verified}
-                  y={0}
-                  width={s.flagged}
-                  height={height}
-                  rx={s.verified > 0 ? 0 : 2}
-                  className="prj-phasebar__flagged"
-                />
-              )}
+              <SegmentFill x={s.x} width={s.w} verified={s.verified} flagged={s.flagged} height={height} />
             </g>
           ))}
         </svg>
@@ -105,7 +95,8 @@ function ContributorBar({ contributors, label }: { contributors: readonly Contri
 }
 
 function phaseStatus(p: PhaseStat): { state: 'done' | 'active' | 'pending'; text: string } {
-  if (p.state === 'done') return { state: 'done', text: p.completedAt ? `Done ${formatShortDate(p.completedAt)}` : 'Done' };
+  if (p.state === 'done')
+    return { state: 'done', text: p.completedAt ? `Done ${formatShortDate(p.completedAt)}` : 'Done' };
   if (p.state === 'active') return { state: 'active', text: 'In progress' };
   return { state: 'pending', text: 'Not started' };
 }
@@ -151,14 +142,27 @@ export function MasterTimeline({
 }: MasterTimelineProps) {
   const stats = useMemo(() => phaseStatsFromManifest(manifest), [manifest]);
   const totals = totalsOf(stats);
-  const current = stats.find((p) => p.state !== 'done' && p.totalWeight > 0) ?? null;
+  const current = currentPhase(stats);
   const sessionsById = useMemo(() => new Map(sessions.map((s) => [s.sessionId, s])), [sessions]);
   const ordered = useMemo(() => [...manifest].sort((a, b) => a.order - b.order), [manifest]);
-  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set(current ? [current.id] : []));
 
-  const matching = (p: ManifestPhaseDTO) => p.tasks.filter((t) => matchesTaskFilter(t, filter));
-  const isOpen = (id: string, p: ManifestPhaseDTO) =>
-    expanded.has(id) || (filter !== 'all' && matching(p).length > 0);
+  // Open the current phase, or under a task filter every phase that has a match; the reader can then
+  // open and close rows freely until the filter changes again.
+  const openFor = (f: TaskFilter): ReadonlySet<string> =>
+    new Set(
+      f === 'all'
+        ? current
+          ? [current.id]
+          : []
+        : ordered.filter((p) => p.tasks.some((t) => matchesTaskFilter(t, f))).map((p) => p.phaseId),
+    );
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => openFor(filter));
+  const [expandedFor, setExpandedFor] = useState(filter);
+  if (expandedFor !== filter) {
+    setExpandedFor(filter);
+    setExpanded(openFor(filter));
+  }
+  const isOpen = (id: string) => expanded.has(id);
   const toggle = (id: string) =>
     setExpanded((s) => {
       const next = new Set(s);
@@ -166,7 +170,7 @@ export function MasterTimeline({
       else next.add(id);
       return next;
     });
-  const allOpen = ordered.every((p) => isOpen(p.phaseId, p));
+  const allOpen = ordered.every((p) => isOpen(p.phaseId));
 
   const flaggedCount = manifest.flatMap((p) => p.tasks).filter(isFlagged).length;
   const openCount = manifest.flatMap((p) => p.tasks).filter((t) => t.status === 'open').length;
@@ -190,7 +194,13 @@ export function MasterTimeline({
       });
     }
     for (const e of history?.enhancements ?? [])
-      out.push({ id: e.eventId, kind: 'enhancement', at: Date.parse(e.at), title: e.title, detail: people.resolve(e.by).name });
+      out.push({
+        id: e.eventId,
+        kind: 'enhancement',
+        at: Date.parse(e.at),
+        title: e.title,
+        detail: people.resolve(e.by).name,
+      });
     for (const d of history?.drift ?? [])
       out.push({
         id: `d${d.seq}`,
@@ -200,7 +210,13 @@ export function MasterTimeline({
         detail: `${d.severity} severity`,
       });
     for (const r of rollbacks ?? [])
-      out.push({ id: r.rollbackId, kind: 'rollback', at: Date.parse(r.requestedAt), title: `To ${r.targetRef}`, detail: r.status });
+      out.push({
+        id: r.rollbackId,
+        kind: 'rollback',
+        at: Date.parse(r.requestedAt),
+        title: `To ${r.targetRef}`,
+        detail: r.status,
+      });
     return out;
   }, [history, rollbacks, people]);
 
@@ -236,7 +252,12 @@ export function MasterTimeline({
         height={16}
         showLabels
         currentId={current?.id}
-        onSelect={(id) => setExpanded((s) => new Set([...s, id]))}
+        onSelect={(id) => {
+          setExpanded((s) => new Set([...s, id]));
+          requestAnimationFrame(() =>
+            document.getElementById(`prj-mt-phase-${id}`)?.scrollIntoView?.({ block: 'nearest' }),
+          );
+        }}
       />
 
       <p className="prj-legend prj-legend--inline">
@@ -244,7 +265,8 @@ export function MasterTimeline({
           <span className="prj-legend__swatch prj-legend__swatch--done" /> done with evidence
         </span>
         <span className="prj-legend__item">
-          <span className="prj-legend__swatch prj-legend__swatch--flagged" /> flagged: closed with no file change
+          <span className="prj-legend__swatch prj-legend__swatch--flagged" /> flagged: closed with no file
+          change
         </span>
         <span className="prj-legend__item">
           <span className="prj-legend__swatch prj-legend__swatch--open" /> declared, not done
@@ -314,7 +336,7 @@ export function MasterTimeline({
         </div>
         {ordered.map((phase, i) => {
           const stat = stats[i]!;
-          const open = isOpen(phase.phaseId, phase);
+          const open = isOpen(phase.phaseId);
           const tasks = phase.tasks.filter((t) => matchesTaskFilter(t, filter));
           const contributors = contributorsOf(phase, people);
           const live = phase.tasks.filter(isLiveTask);
@@ -331,8 +353,10 @@ export function MasterTimeline({
           const tableId = `prj-mt-tasks-${phase.phaseId}`;
           const label = `P${stat.index} ${stat.name}`;
           return (
-            <section
+            <div
               key={phase.phaseId}
+              id={`prj-mt-phase-${phase.phaseId}`}
+              role="group"
               className={cx('prj-mt__phase', stat.id === current?.id && 'is-current', open && 'is-open')}
               aria-label={label}
             >
@@ -354,8 +378,10 @@ export function MasterTimeline({
                 <div className="prj-mt__completion">
                   <ContributorBar contributors={contributors} label={label} />
                   <p className="prj-mt__nums aoc-num">
-                    <b>{weightText(stat.doneWeight)}/{weightText(stat.totalWeight)}</b> weight ·{' '}
-                    {formatInteger(stat.doneTasks)}/{formatInteger(stat.totalTasks)} tasks ·{' '}
+                    <b>
+                      {weightText(stat.doneWeight)}/{weightText(stat.totalWeight)}
+                    </b>{' '}
+                    weight · {formatInteger(stat.doneTasks)}/{formatInteger(stat.totalTasks)} tasks ·{' '}
                     {formatPercent(stat.totalWeight > 0 ? stat.doneWeight / stat.totalWeight : 0)}
                     {stat.flaggedTasks > 0 && (
                       <span className="prj-mt__flagged">
@@ -373,7 +399,13 @@ export function MasterTimeline({
                   <ActivityLane
                     scale={scale}
                     label={`${label} activity`}
-                    spanStart={starts.length ? Math.min(...starts) : closes.length ? Math.min(...closes.map((c) => c.at)) : null}
+                    spanStart={
+                      starts.length
+                        ? Math.min(...starts)
+                        : closes.length
+                          ? Math.min(...closes.map((c) => c.at))
+                          : null
+                    }
                     spanEnd={stat.state === 'done' && stat.completedAt ? Date.parse(stat.completedAt) : null}
                     closes={closes}
                     pins={pins.map((p) => ({ at: Date.parse(p.at), label: p.tag ?? p.sha ?? '' }))}
@@ -402,7 +434,12 @@ export function MasterTimeline({
               <div id={tableId} hidden={!open} className="prj-mt__tasks">
                 {open &&
                   (tasks.length > 0 ? (
-                    <TaskTable caption={`${label} tasks`} tasks={tasks} people={people} sessions={sessionsById} />
+                    <TaskTable
+                      caption={`${label} tasks`}
+                      tasks={tasks}
+                      people={people}
+                      sessions={sessionsById}
+                    />
                   ) : (
                     <p className="prj-mt__none">
                       {filter === 'flagged'
@@ -413,10 +450,14 @@ export function MasterTimeline({
                     </p>
                   ))}
               </div>
-            </section>
+            </div>
           );
         })}
-        <section className="prj-mt__phase prj-mt__phase--events" aria-label="Scope changes, drift and rollbacks">
+        <div
+          role="group"
+          className="prj-mt__phase prj-mt__phase--events"
+          aria-label="Scope changes, drift and rollbacks"
+        >
           <div className="prj-mt__row">
             <div className="prj-mt__name">
               <span className="prj-mt__events-title">Scope, drift, rollbacks</span>
@@ -427,7 +468,8 @@ export function MasterTimeline({
                 {countOf(events, 'enhancement', 'enhancement', 'enhancements')}
               </span>
               <span className="aoc-num">
-                {countOf(events, 'drift', 'drift mark', 'drift marks')} · {countOf(events, 'rollback', 'rollback', 'rollbacks')}
+                {countOf(events, 'drift', 'drift mark', 'drift marks')} ·{' '}
+                {countOf(events, 'rollback', 'rollback', 'rollbacks')}
               </span>
             </div>
             <div className="prj-mt__activity">
@@ -439,7 +481,7 @@ export function MasterTimeline({
               <a href="#changes">Change control</a>
             </div>
           </div>
-        </section>
+        </div>
       </div>
     </div>
   );
