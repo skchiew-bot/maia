@@ -438,6 +438,21 @@ importers:
         specifier: 3.25.76
         version: 3.25.76
 
+  packages/mod-tower:
+    dependencies:
+      '@aoc/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@aoc/kernel':
+        specifier: workspace:*
+        version: link:../kernel
+      hono:
+        specifier: 4.13.13
+        version: 4.13.13
+      zod:
+        specifier: 3.25.76
+        version: 3.25.76
+
   packages/sidecar:
     dependencies:
       '@aoc/client':

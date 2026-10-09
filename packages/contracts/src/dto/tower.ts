@@ -1,0 +1,149 @@
+/**
+ * Control Tower (owner: mod-tower) — the Approver's landing view. Console answers "what are my agents doing";
+ * the Control Tower answers "where is the operation at risk and what needs me, across every project":
+ * exception-first, ranked by cost of delay, with inline intervention. Gaming/anomaly signals are portfolio-level
+ * only — never per-person ranking (R11).
+ */
+import type { LivenessState } from '../domain';
+import type { TicketStage } from './intake';
+
+export const ATTENTION_KINDS = [
+  'decision', // any open human-required decision (go-live, rollback, break-glass, agent test 1–5, top-up, lesson…)
+  'session_dead',
+  'session_stalled',
+  'session_throttled',
+  'credit_blocked', // developer at cap with a pending/absent top-up
+  'post_incident_overdue',
+  'breakglass_open',
+  'chain_broken',
+  'anchor_missed',
+  'fx_discrepancy',
+  'fx_carry_forward',
+  'ticket_waiting', // customer waiting beyond the severity SLA
+  'projection_degraded',
+  'provenance_refused',
+] as const;
+export type AttentionKind = (typeof ATTENTION_KINDS)[number];
+
+export type AttentionSeverity = 'critical' | 'high' | 'medium' | 'low';
+
+export interface TowerAttentionItem {
+  /** Stable key (e.g. `decision:dec_…`, `session_dead:ses_…`). */
+  id: string;
+  kind: AttentionKind;
+  severity: AttentionSeverity;
+  /** Short, PII-free title. */
+  title: string;
+  detail: string | null;
+  projectId: string | null;
+  projectName: string | null;
+  /** When it started needing attention. */
+  since: string;
+  ageMs: number;
+  /** Ranking: higher = act first. `basis` explains it in words ("Go-live gate · 2h 14m · blocks a UAT-signed fix"). */
+  costOfDelay: { score: number; basis: string };
+  action: {
+    kind: 'resolve_decision' | 'nudge' | 'restart' | 'open';
+    label: string;
+    href: string;
+    decisionId?: string;
+    sessionId?: string;
+    requiresPasskey?: boolean;
+  };
+  chips: string[];
+}
+
+export interface TowerKpis {
+  needsYou: number;
+  oldestNeedsYouSince: string | null;
+  tasksVerifiedToday: number;
+  tasksVerifiedBaseline: number; // same-time-of-day 7-day average
+  gateLatencyP50Ms: number | null;
+  gateLatencyP90Ms: number | null;
+  gateSlaMs: number;
+  openTickets: number;
+  oldestTicketSince: string | null;
+  chainOk: boolean | null;
+  anchorAgeMs: number | null;
+}
+
+export interface TowerFlow {
+  /** Last 12 local hours, oldest → newest. */
+  tasksPerHour: { hour: string; verified: number; flagged: number }[];
+  baselinePerHour: number[];
+  wipByProject: { projectId: string; name: string; activeSessions: number; openTasks: number; progressPct: number }[];
+  ticketFunnel: { stage: TicketStage; count: number; oldestSince: string | null; medianAgeMs: number | null; bottleneck: boolean }[];
+  decisionLatency: { kind: string; open: number; resolved7d: number; p50Ms: number | null; p90Ms: number | null; slaMs: number; breaches: number }[];
+}
+
+export interface TowerFleet {
+  byLiveness: Record<LivenessState, number> & { ended_today: number };
+  /** 2h, 5-minute buckets, oldest → newest. */
+  trend: { at: string; working: number; thinking: number; stalled: number; dead: number; throttled: number; waiting_on_you: number }[];
+  stallRatePct: number;
+  throttleLostMsToday: number;
+  rolloverPressure: number; // live sessions above 60% of their context window
+}
+
+export interface TowerSpend {
+  notionalUsdToday: number;
+  notionalRmToday: number | null;
+  avg7dUsd: number;
+  byProject: { projectId: string; name: string; usdToday: number }[];
+  modelMix: { tier: string; usdToday: number; pct: number }[];
+  discoveryRuns7d: number;
+  executionRuns7d: number;
+  savingsPct: number | null;
+  /** Capacity planning (credits): developers projected to hit their cap before period end. */
+  capForecast: { userId: string; name: string | null; balanceUsd: number; burnPerDayUsd: number; projectedCapAt: string | null }[];
+}
+
+export interface TowerIntegrity {
+  chainOk: boolean | null;
+  lastVerifiedAt: string | null;
+  lastAnchorAt: string | null;
+  anchorAgeMs: number | null;
+  unanchoredEvents: number;
+  breakglassOpen: number;
+  postIncidentOverdue: number;
+  provenanceRefusals7d: number;
+  selfModBlocks7d: number;
+  mappingStatus: 'provisional' | 'stamped' | 'unknown';
+  degradedProjections: number;
+  reactorFailures24h: number;
+}
+
+export const ANOMALY_SIGNALS = [
+  'no_file_change_closes',
+  'xs_heavy_manifests',
+  'late_denominator_growth',
+  'blind_affirm_rate',
+  'discovery_with_playbook',
+  'evidence_unverified',
+  'self_approval_rate',
+] as const;
+export type AnomalySignal = (typeof ANOMALY_SIGNALS)[number];
+
+export interface TowerAnomaly {
+  signal: AnomalySignal;
+  label: string;
+  value: number;
+  baseline: number | null;
+  unit: '%' | 'count' | 'ratio';
+  status: 'normal' | 'watch' | 'alert';
+  /** 'portfolio', a process type or a project — NEVER a person (R11). */
+  scope: string;
+  explanation: string;
+}
+
+export interface TowerSnapshot {
+  generatedAt: string;
+  summary: string;
+  kpis: TowerKpis;
+  attention: TowerAttentionItem[];
+  flow: TowerFlow;
+  fleet: TowerFleet;
+  spend: TowerSpend;
+  integrity: TowerIntegrity;
+  anomalies: TowerAnomaly[];
+}
