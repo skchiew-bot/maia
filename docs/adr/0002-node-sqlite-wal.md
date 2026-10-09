@@ -26,7 +26,7 @@
 - Store large encrypted blobs as files under `dataDir/blobs/<scope>/` (mode 0600).
 - Make `events` append-only to the application with `BEFORE UPDATE` and `BEFORE DELETE` triggers. (These are not
   a security control against someone with file access; see ADR-0010.)
-- Tests use `:memory:` databases. Node is pinned by `engines` (`>=22.13`).
+- Tests use `:memory:` databases. Node is pinned by `engines` (`>=22.20`): the SQLite in earlier 22.x releases lacks FTS5 (before 22.16), and their `node:sqlite` refuses a numbered parameter used twice with one argument (before 22.20). CI runs the minimum.
 
 ## Consequences
 

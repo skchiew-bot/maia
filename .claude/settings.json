@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR\"/scripts/claude-stop-hook.mjs",
+            "timeout": 60,
+            "statusMessage": "Checking compliance docs against the code"
+          }
+        ]
+      }
+    ]
+  }
+}

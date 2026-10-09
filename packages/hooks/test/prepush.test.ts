@@ -1,8 +1,8 @@
 import { spawnSync } from 'node:child_process';
-import { readFileSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { evaluatePrePush, gitHooksDir, installGitHooks, isProtectedRef } from '../src';
+import { ensureGitHooks, evaluatePrePush, gitHooksDir, installGitHooks, isProtectedRef } from '../src';
 import { tmp } from './helpers';
 
 const SHA_A = '1111111111111111111111111111111111111111';
@@ -159,5 +159,42 @@ describe('installGitHooks', () => {
         readFileSync(join(gitHooksDir(), p.slice(dir.length + 1)), 'utf8'),
       );
     }
+  });
+});
+
+describe('ensureGitHooks (G-37)', () => {
+  const repo = () => {
+    const dir = tmp();
+    spawnSync('git', ['init', '-q', dir]);
+    return dir;
+  };
+  const ours = (name: string) => readFileSync(join(gitHooksDir(), name), 'utf8');
+
+  it('installs both hooks where git looks for them, from any directory of the repository', () => {
+    const dir = repo();
+    mkdirSync(join(dir, 'src'));
+    const installed = ensureGitHooks(join(dir, 'src'));
+    expect(installed).toEqual(['pre-push', 'prepare-commit-msg'].map((n) => join(dir, '.git', 'hooks', n)));
+    for (const p of installed) expect(statSync(p).mode & 0o777).toBe(0o755);
+  });
+
+  it('follows core.hooksPath', () => {
+    const dir = repo();
+    spawnSync('git', ['config', 'core.hooksPath', '.githooks'], { cwd: dir });
+    expect(ensureGitHooks(dir)).toEqual(['pre-push', 'prepare-commit-msg'].map((n) => join(dir, '.githooks', n)));
+  });
+
+  it("keeps the project's own hook and refreshes an older AOC copy", () => {
+    const dir = repo();
+    const hooks = join(dir, '.git', 'hooks');
+    writeFileSync(join(hooks, 'pre-push'), '#!/bin/sh\nnpx lint-staged\n');
+    writeFileSync(join(hooks, 'prepare-commit-msg'), '#!/bin/sh\n# AOC provenance trailers (old)\nexit 0\n');
+    expect(ensureGitHooks(dir)).toEqual([join(hooks, 'prepare-commit-msg')]);
+    expect(readFileSync(join(hooks, 'pre-push'), 'utf8')).toBe('#!/bin/sh\nnpx lint-staged\n');
+    expect(readFileSync(join(hooks, 'prepare-commit-msg'), 'utf8')).toBe(ours('prepare-commit-msg'));
+  });
+
+  it('does nothing outside a git repository', () => {
+    expect(ensureGitHooks(tmp())).toEqual([]);
   });
 });

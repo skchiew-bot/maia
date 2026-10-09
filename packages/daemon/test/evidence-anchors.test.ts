@@ -73,7 +73,16 @@ describe('evidence packs verify anchors off-host (G-42)', () => {
     expect(spawnSync('git', ['init', '-q', '--bare', '-b', 'main', remote]).status).toBe(0);
     const srv = await bootTestServer({
       modules: [createAuditModule(), createEvidenceModule({ mappingFile: null })],
-      config: { audit: { anchorProvider: 'git', anchorRepoPath: join(root, 'anchor-repo'), anchorRemote: remote } },
+      config: {
+        audit: {
+          anchorProvider: 'git',
+          anchorRepoPath: join(root, 'anchor-repo'),
+          anchorRemote: remote,
+          // One anchor, made by hand below, before the database is rewritten behind aocd's back.
+          anchorIntervalMinutes: 0,
+          anchorAfterEvents: false,
+        },
+      },
     });
     try {
       const approver = srv.user('approver').headers;

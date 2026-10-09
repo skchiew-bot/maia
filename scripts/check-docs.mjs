@@ -179,6 +179,42 @@ if (existsSync(gapsFile)) {
     const key = Object.keys(counts).find((k) => m[1].replace(/ `[0-9a-f]+`$/, '').startsWith(k));
     if (key && counts[key] !== Number(m[2])) problem(gapsFile, `summary says ${m[2]} for "${m[1]}" but the tables hold ${counts[key]}`);
   }
+  // A gap open twice, or closed in code but still open (CLAUDE.md lessons 1 and 3): a commit whose subject starts
+  // "G-nn:" either closed it (a Resolved row) or narrowed it (its open row cites that commit's short hash).
+  const openRows = new Map();
+  for (const l of tableRows(between('## Open software gaps', '## Residual risks'), /^\| G-\d+ \|/)) {
+    const id = /^\| (G-\d+)/.exec(l)[1];
+    if (openRows.has(id)) problem(gapsFile, `${id} has more than one open row`);
+    openRows.set(id, l);
+  }
+  const resolved = new Set(tableRows(between('## Resolved since', null), /^\| G-\d+/).map((l) => /^\| (G-\d+)/.exec(l)[1]));
+  let subjects = [];
+  try {
+    subjects = execFileSync('git', ['-C', ROOT, 'log', '--format=%h %s'], { encoding: 'utf8', maxBuffer: 64 << 20 }).split('\n');
+  } catch {
+    // no history (an exported tree): nothing to compare with
+  }
+  const commitsOf = new Map();
+  for (const s of subjects) {
+    const m = /^(\w+) (G-\d+):/.exec(s);
+    if (m) commitsOf.set(m[2], [...(commitsOf.get(m[2]) ?? []), m[1]]);
+  }
+  for (const [id, row] of openRows)
+    if (commitsOf.has(id) && !resolved.has(id) && !commitsOf.get(id).some((h) => row.includes(h)))
+      problem(gapsFile, `${id} has a "${id}:" commit (${commitsOf.get(id)[0]}) but is still open: move it to Resolved, or cite the commit in its open row if it only narrowed the gap`);
+  // Test titles cited anywhere in the gap list exist, as in traceability.md.
+  for (const m of read(gapsFile).matchAll(/`(packages\/[^`]+?\.test\.tsx?)`((?:\s*,?\s*›\s*"(?:[^"\\]|\\.)*")+)/g)) {
+    const p = join(ROOT, m[1]);
+    if (!existsSync(p)) {
+      problem(gapsFile, `missing test file ${m[1]}`);
+      continue;
+    }
+    for (const t of m[2].matchAll(/"((?:[^"\\]|\\.)*)"/g)) {
+      titles++;
+      for (const part of norm(t[1].replace(/\\"/g, '"')).split('…').map((s) => s.trim()).filter(Boolean))
+        if (!fileText(p).includes(part)) problem(gapsFile, `no test titled "${part.slice(0, 80)}" in ${m[1]}`);
+    }
+  }
 }
 const modelFile = join(ROOT, 'docs/security/threat-model.md');
 if (existsSync(modelFile)) {

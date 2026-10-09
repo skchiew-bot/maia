@@ -358,11 +358,17 @@ describe('KEK custody (R6)', () => {
     it('accepts a systemd credential as systemd hands it over', () => {
       const { d, load } = setup();
       const creds = join(d, 'credentials');
-      mkdirSync(creds, { mode: 0o500 });
+      mkdirSync(creds, { mode: 0o700 });
       const file = join(creds, 'aoc-kek');
       writeFileSync(file, `${hex()}\n`, { mode: 0o440 });
-      expect(() => load(file)).toThrow(/mode 0440/);
-      expect(load(file, { CREDENTIALS_DIRECTORY: creds }).key).toHaveLength(32);
+      // Read-only only once filled, and writable again for cleanup: only root writes into a 0500 directory.
+      chmodSync(creds, 0o500);
+      try {
+        expect(() => load(file)).toThrow(/mode 0440/);
+        expect(load(file, { CREDENTIALS_DIRECTORY: creds }).key).toHaveLength(32);
+      } finally {
+        chmodSync(creds, 0o700);
+      }
     });
 
     it.runIf(isRoot)('refuses a KEK owned by another user (root only: needs chown)', () => {

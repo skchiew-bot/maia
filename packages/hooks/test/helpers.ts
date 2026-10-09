@@ -168,6 +168,7 @@ export const postToolUse = (toolUseId = 'toolu_01K2X3hZ9kat9pi8zg8YnP34') => ({
   tool_use_id: toolUseId,
   duration_ms: 12,
 });
+export const sessionStart = (cwd: string) => ({ ...base('SessionStart'), cwd, source: 'startup' });
 export const userPromptSubmit = () => ({ ...base('UserPromptSubmit'), prompt: 'Fix the flaky test.' });
 export const stop = (transcriptPath: string) => ({
   ...base('Stop', transcriptPath),

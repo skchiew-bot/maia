@@ -6,7 +6,7 @@ sidecar, AOC MCP server, hooks, and one daemon (`aocd`) that is the **sole write
 hash-chained SQLite event log.
 
 ## Stack
-- TypeScript (strict), ESM, Node >= 22.13 (`node:sqlite` built-in, WAL). pnpm workspaces.
+- TypeScript (strict), ESM, Node >= 22.20 (`node:sqlite` built-in, WAL; FTS5 needs 22.16, repeated `?1` parameters 22.20). pnpm workspaces.
 - Server: Hono (+ @hono/node-server). Validation: zod v3 (`import { z } from 'zod'`).
 - MCP: @modelcontextprotocol/sdk. Tests: vitest 3. UI: React 19 + Vite 7 + react-router-dom 7.
 - Binaries (daemon, cli, hooks, mcp-server, sidecar, claude-sim) are bundled with esbuild by `scripts/build.mjs`.
@@ -62,3 +62,31 @@ packages/demo        demo seeder + `live` launcher (real sessions on claude-sim;
 - No idle animation. A mark moves only when an event moved it. `prefers-reduced-motion` → instant changes.
 - Dark + light from one token set (`packages/web/src/design/tokens.css`) following the OS; no manual toggle in v1.
 - Compact, high-density, keyboard accessible, WCAG AA, works at 360px wide.
+
+## Lessons from past mistakes (binding; add one whenever a mistake is found)
+Each rule names the mistake it prevents. `node scripts/check-docs.mjs` enforces 1–3; it runs in `scripts/check.sh` and as a
+Claude Code Stop hook (`.claude/settings.json`), which will not let a session finish while it fails.
+1. **Gap list drifted from the code** (17 gaps closed in code were still "open", so work was re-planned). Name the gap
+   at the start of every commit subject that works on it (`G-nn: …`). The commit that closes a gap moves its row to a
+   Resolved table in `docs/compliance/gaps.md`, with the commit and the proving tests, and updates `traceability.md`.
+   A commit that only narrows a gap cites its short hash in the open row. Agents who may not edit those files list
+   the change in their final report; the lead applies it at merge.
+2. **Docs cited tests that had been renamed.** Cite tests as `` `path` › "exact title" `` copied from the source,
+   never from memory; rename a test → fix its citations in the same commit.
+3. **Duplicate rows from scripted table edits.** After a scripted edit of a markdown table, re-read the table.
+4. **Unverified claims written into docs.** Write only what you read in the code or saw a test prove. If unsure,
+   leave it out or mark it "not verified".
+5. **Subagent output committed as finished.** Review every line a subagent wrote (`git diff`) before committing;
+   look for text describing a state that has since changed.
+6. **Before starting a gap, check it is still open**: `git log --oneline | grep G-nn`, then read the code and run its
+   tests. The tracking docs can be stale.
+7. **Building on unobserved external behaviour** (e.g. what the real `claude` CLI does). Probe it first
+   (`docs/research/probes/`); claude-sim only models what was observed.
+8. **`claude` CLI flags such as `--allowedTools` take several values** and swallow a trailing prompt: put the
+   prompt right after `-p`.
+9. **A new reactor or job that appends events changes other tests' counts.** Run every suite that loads the
+   module (daemon, e2e included); tests that drive the mechanism by hand switch the new behaviour off explicitly.
+10. **Validated where CI does not run** (green on Node 22.22 as root, red in CI on the `engines` minimum as a normal
+    user). Before pushing, run `scripts/check.sh` with the Node version CI uses (the `engines` minimum, which CI
+    tests), `GIT_CONFIG_GLOBAL=/dev/null`, and run tests that touch file modes or ownership as a non-root user too
+    (root ignores a read-only directory, including in cleanup).

@@ -59,7 +59,9 @@
   TSA certificate chain against `audit.tsaCaFile`, and signed anchor commits with `audit.gpgKeyId`, once those are
   set; evidence packs that confirm each anchor against the off-host record through the audit service and say
   `not_verifiable` when they cannot (G-42, closed).
-- **Not yet:** hourly and event-triggered anchors (gap G-40). Until `audit.tsaCaFile` and `audit.gpgKeyId` are set,
+- **Done since:** hourly anchors and anchors right after high-value events (G-40, `audit.anchorIntervalMinutes`,
+  `audit.anchorAfterEvents`); every decision a person resolves counts, not only go-live, rollback and break-glass.
+- **Not yet:** until `audit.tsaCaFile` and `audit.gpgKeyId` are set,
   the default build signs nothing and checks no TSA signature (P-04).
 - **Caution:** if the remote cannot be fetched, Verify falls back to the local copy with a warning. Treat that
   warning as a failed check.

@@ -49,6 +49,8 @@ export function makeSite(audit: Record<string, unknown> = {}, extra: Record<stri
       anchorRemote: remote,
       backupDir,
       backupKeyFile,
+      anchorIntervalMinutes: 0,
+      anchorAfterEvents: false,
       ...audit,
     },
   });

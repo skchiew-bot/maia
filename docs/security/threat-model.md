@@ -280,7 +280,7 @@ environment, is inside Zone 3**, whatever its name. Zone 3 therefore runs as a s
 | | Threat | Control | Status | Residual |
 | --- | --- | --- | --- | --- |
 | T | Rewrite of anchored events | Detected by Verify against the external records: the anchor commits, fetched from the remote when one is configured, or the RFC 3161 tokens | Built | Only as strong as the record's independence: a local anchor repository, or a token whose signature is not checked, can be rewritten by the same attacker (O-11) |
-| T | Rewrite of events newer than the last anchor | A nightly anchor (`audit.anchor`, 02:00 local) and `aoc anchor` on demand (Built); hourly anchors and anchors after high-value events (Required) | Built / Required (O-11) | Up to a day of events |
+| T | Rewrite of events newer than the last anchor | A nightly anchor (`audit.anchor`, 02:00 local), hourly anchors, anchors right after high-value events and `aoc anchor` on demand (Built, G-40) | Built | Up to an hour of routine events (`audit.anchorIntervalMinutes`) |
 | T | The anchor repository's history is force-pushed | Remote rules forbid force-pushes and deletions; the remote is owned by another account | Ops | — |
 | D | Anchoring fails silently | Two retries 30 s apart, then `anchor.failed` and a notification; audit health warns `anchor_stale` after 26 h and `anchor_failed`; the Tower's `anchor_missed` item | Built | — |
 | T | An evidence pack vouches for a forged chain | Each anchor is confirmed against its off-host record through the audit service, never against the `anchor.created` event of the chain being evidenced; the pack says `not_verifiable` when it cannot (G-42) | Built | A pack is only as strong as the anchor store behind it (O-11) |
@@ -585,8 +585,8 @@ later hash. `verifyChain()` passes, because the genesis value depends only on th
     into `refs/aoc/anchor-remote` and checks the anchors found there. RFC 3161 tokens are checked against their
     imprint and time, and against the TSA's certificate chain only when `audit.tsaCaFile` is set.
   - Separate OS users so agents cannot reach the file (Built, O-1).
-- **Residual:** events newer than the last anchor: up to a day with the nightly default. Anchor hourly and after
-  high-value events (O-11, gap G-40). With default settings (no `audit.anchorRemote`), R2 is **not mitigated at
+- **Residual:** events newer than the last anchor: up to an hour of routine events by default; high-value events
+  are anchored as they happen (G-40). With default settings (no `audit.anchorRemote`), R2 is **not mitigated at
   all**: the anchor repository is a local directory that the same attacker can rewrite. The same holds for RFC 3161
   tokens until `audit.tsaCaFile` is set. Evidence packs confirm each anchor against the off-host record through the
   audit service and say `not_verifiable` when they cannot (O-29, G-42), so a pack is only as strong as the anchor
@@ -725,8 +725,8 @@ charged (R14).
   - AOC's own promotion gate refuses a promotion whose commits from a managed session change the core of a listed AOC
     repository, and records the refusal outside AOC; a break-glass promotion that lands such changes is recorded
     there too (Built, G-41).
-  - CODEOWNERS and required human review for core paths (Ops). The repository ships `.github/CODEOWNERS.example` and
-    `.github/workflows/ci.yml.example` as starting points; neither is installed (gap P-24).
+  - CODEOWNERS and required human review for core paths (Ops). CI is installed (`.github/workflows/ci.yml`);
+    `.github/CODEOWNERS.example` and the required-check ruleset are not (gap P-24).
 - **Residual and findings (O-10):**
   - `selfModification.aocRepoPaths` defaults to empty, which leaves the core protection inert. The audit-state
     protection applies regardless. Production mode refuses to start from a source checkout of AOC while the list is
@@ -764,9 +764,8 @@ Now (`mod-change`, `provenance.ts`) a commit is traced only when
   them from the repository itself; the session supplies none.
 
 - **Controls:** the go-live decision is a human gate with a passkey, and the Approver sees the diff (Built); only the
-  supervisor can move `main` (Ops). Managed sessions are told to add the trailers by their system prompt; the
-  `prepare-commit-msg` hook that would write them is not installed in managed workspaces (gap G-37), which is now a
-  speed bump and not a control.
+  supervisor can move `main` (Ops). The `prepare-commit-msg` hook installed at `SessionStart`
+  writes the trailers (G-37); it is a speed bump and not a control.
 - **Residual:** a recorded HEAD proves a commit was in the session's workspace when the platform read it, not that the
   session wrote it. A session (or a prompt injected into one) that checks a foreign commit out before a turn ends or
   a task closes, for example one fetched from a branch of the remote, gets it recorded for itself, and a copied
@@ -781,7 +780,7 @@ Now (`mod-change`, `provenance.ts`) a commit is traced only when
 | # | Risk (§16) | Severity | Controls (where) | Status | Residual / open items |
 | --- | --- | --- | --- | --- | --- |
 | R1 | Work bypasses the platform | Critical | Push credentials stay in aocd and reach no session; the push gateway refuses protected refs (R-02); sessions run as an unprivileged OS user (G-01); privileged git runs in a service-owned clone (G-04); provenance is checked against AOC's own records (G-25); `envAllowlist`; GitHub rulesets; observed hooks; `aoc doctor` (T-1) | Built (isolation, gateway, clone, provenance gate, `aoc doctor`) + Ops | The host set-up (P-13, P-22) and the rulesets (P-01) are operator work; concurrent sessions of one kind share an OS user (G-49); Claude credentials in the environment and open egress (O-14); a recorded HEAD does not prove authorship (T-22) |
-| R2 | The in-file chain is defeatable | High | Off-host anchors; Verify against the external records, in evidence packs too (T-13, ADR-0010) | Built (`mod-audit`, `mod-evidence`) | The default configuration anchors to a local directory (`audit.anchorRemote`, P-04); nightly cadence (G-40); no TSA signature check or signed anchor commit until `audit.tsaCaFile` and `audit.gpgKeyId` are set |
+| R2 | The in-file chain is defeatable | High | Off-host anchors; Verify against the external records, in evidence packs too (T-13, ADR-0010) | Built (`mod-audit`, `mod-evidence`) | The default configuration anchors to a local directory (`audit.anchorRemote`, P-04); up to an hour of routine events unanchored (G-40); no TSA signature check or signed anchor commit until `audit.tsaCaFile` and `audit.gpgKeyId` are set |
 | R3 | ISO 42001 mapping wrong in ≥ 5 rows | High | Provisional corrected mapping (`docs/compliance/iso42001-annex-a.md`); compliance-lead stamp; evidence packs provisional until stamped | Provisional | The mapping was compiled from secondary sources; the compliance lead must review it against the purchased standard |
 | R4 | Intake uploads are an attack and PDPA surface | High | Magic bytes, size caps, scan, encrypted blobs, hashes only in the chain, abstracted status, media access log, read-only triage (UAT feedback too), untrusted framing, budget, human gates (T-11, T-19) | Built | The `builtin` scanner is not AV, and production refuses uploads without ClamAV (P-12); uploads are parsed in memory (O-16, G-47); build-session egress (O-14) |
 | R5 | Scope sprawl with weak auth bolted on | High | §15 sequencing; identity before any non-CEO surface; per-stage sign-off | Process | Modules exist before their stage: gate **enablement** (O-21) |
@@ -830,7 +829,7 @@ the [gap list](../compliance/gaps.md), which tracks owners and acceptance tests.
 | O-8 | Separation of duties with a single Approver. **Decided by the CEO on 2026-10-09:** no exception; `decisions.soleApproverFallback` stays `false`, so the Approver's own Approver-level requests wait for a second Approver. **Done:** the `decisions` settings are governed configuration, so turning the flag on is chained as `config.changed` (`bc0cc03`). Remaining: appoint a second Approver with a passkey | **Decided (CEO)**; follow-up Ops | CEO | T-8, R15, gaps G-35, P-11 |
 | O-9 | Route Requester UAT feedback through a human or a read-only triage pass before it reaches a credentialed build session. **Done (G-45):** the feedback reaches only a read-only triage pass, fenced in a random delimiter, and the build prompt carries the approved fix plan and no requester text. Remaining: restrict build-session network egress (O-14) | Done; egress is a decision | `mod-intake`, CEO | T-11, R4, gaps G-45, P-20 |
 | O-10 | Self-modification boundary (the guard and external log are built): set `aocRepoPaths` in production; review `protectedPaths` (the default now covers all of Tier 1); put the external log off-host; CODEOWNERS with required human review (`.github/CODEOWNERS.example` and `.github/workflows/ci.yml.example` are starting points); complete the human review of the AI-built core before go-live | **Decision (CEO)** + change | CEO, lead, `mod-audit` | T-21, R14, gaps G-41, P-06, P-07, P-18, P-24 |
-| O-11 | Configure an off-host anchor remote that forbids force-pushes and deletions, owned by another account; use a qualified TSA with `audit.tsaCaFile` and signed anchor commits with `audit.gpgKeyId` (**both are configurable now**); anchor hourly and after high-value events (today nightly and on demand, G-40) | Ops + change (hourly anchors) | Platform architect, `mod-audit` | T-13, R2, gaps G-40, P-04 |
+| O-11 | Configure an off-host anchor remote that forbids force-pushes and deletions, owned by another account; use a qualified TSA with `audit.tsaCaFile` and signed anchor commits with `audit.gpgKeyId` (**both are configurable now**); anchor hourly and after high-value events (**done**, G-40) | Ops | Platform architect, `mod-audit` | T-13, R2, gaps G-40, P-04 |
 | O-12 | Set backup retention within the PDPA erasure promise (`audit.backupRetentionDays`, 35 days by default), and state "erased from backups within N days" in erasure responses | **Decision (CEO, DPO)** | CEO | T-18, R6, gap P-03 |
 | O-13 | Production KEK from a file (for example a systemd credential), never `AOC_MASTER_KEY` (refused in production, done). **Done:** every helper aocd starts itself gets an allowlisted environment (kernel git, the anchor git and `openssl`, the claude CLI adapter, the ClamAV client); the backup copy command is the deliberate exception (aocd's environment minus `AOC_*`, `ANTHROPIC_*`, `CLAUDE_CODE_OAUTH*`, because it carries the operator's own transfer credentials) | Ops | Ops | T-18, R6, gaps G-46, P-03 |
 | O-14 | Claude credentials reach every session through `envAllowlist` and are readable by the model. Restrict egress, prefer per-host login state over environment tokens where possible, and evaluate Claude Code's tool sandboxing on the deployed version | **Decision** + change | CEO, `supervisor` | T-3, gap P-20 |

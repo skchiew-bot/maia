@@ -46,7 +46,7 @@ Contribution rules (imports, event sourcing, security, UI) are in [CLAUDE.md](CL
 
 ## Build and run (development)
 
-Requirements: Node 22.13 or later (for `node:sqlite`), pnpm 10, git.
+Requirements: Node 22.20 or later (`node:sqlite` with FTS5, and repeated numbered parameters), pnpm 10, git.
 
 ```bash
 pnpm install

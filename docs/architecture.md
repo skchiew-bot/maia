@@ -336,9 +336,9 @@ idempotencyKey}` to `/ingest/hook` and applies the daemon's `HookIngestResponse`
 - **Git hooks for managed workspaces.** The hooks package also ships a `pre-push` guard (it refuses pushes to `main`,
   `master`, `production` and `release/*`, and no environment variable overrides it: AOC's own promotion pushes from a
   service-owned clone with hooks off, so it never meets this hook) and a `prepare-commit-msg` hook that adds the
-  `AOC-Session`, `AOC-Change` and `AOC-Ticket` trailers. Like every client-side hook, they are speed bumps. The
-  supervisor does not install them in managed workspaces yet (gap G-37): today the system prompt asks the agent to
-  add the trailers.
+  `AOC-Session`, `AOC-Change` and `AOC-Ticket` trailers. Like every client-side hook, they are speed bumps. The hook
+  binary installs both in a managed workspace at `SessionStart`, as the session user, leaving a project's own hook of
+  the same name alone (G-37).
 - **Observed mode** (global hooks on developer machines, observer token). It never blocks: the ingest does not
   run guards for observed sessions, and the kernel policy would turn any denial into an allow with a "would deny"
   note anyway. When aocd is down, events are buffered in the local spool and replayed later (§2,
@@ -642,8 +642,10 @@ An in-file chain alone is defeatable by anyone who can write the file: drop the 
 Real verification compares recomputed hashes with **off-host anchors** (`mod-audit`, ADR-0010):
 
 - The job `audit.anchor` runs daily at `audit.anchorAtLocalTime` (02:00). It checks governed config for changes,
-  anchors the head (two retries, 30 s apart), then runs Verify. `aoc anchor` and `aoc verify` do the
-  same on demand.
+  anchors the head (two retries, 30 s apart), then runs Verify. `audit.anchor_interval` anchors every
+  `audit.anchorIntervalMinutes` (60), and the `audit.anchor_after` reactor right after high-value events
+  (break-glass, approvals, promotions, rollbacks, erasure, config changes); both skip when nothing but anchoring's
+  own records is new (G-40). `aoc anchor` and `aoc verify` do the same on demand.
 - **git provider:** one commit per anchor in a separate repository (`anchors/<date>-<seq>.json` holding
   `{chainId, seq, hash, anchoredAt, previousAnchor}`), pushed to `audit.anchorRemote`. Commits use explicit
   identity and signing settings, so the host's global git config never applies. **rfc3161 provider:** a timestamp
@@ -1079,8 +1081,7 @@ flowchart LR
   names a session that the platform itself linked to the gate **and** the commit is reachable from a HEAD that AOC
   recorded for that session (a task close, a phase pin, or the turn-end `session.head_recorded`); a trailer alone
   proves nothing (G-25, threat model T-22). A recorded HEAD shows the commit was in the session's workspace, not who
-  wrote it. The system prompt asks managed agents to add the trailers; the `prepare-commit-msg` hook that would write
-  them is not installed in managed workspaces (gap G-37). A passing UAT sign-off is required for a ticket-driven
+  wrote it. The `prepare-commit-msg` hook that the hook binary installs at `SessionStart` writes the trailers (G-37). A passing UAT sign-off is required for a ticket-driven
   promotion; whether a change-driven one needs one too is the CEO's to confirm (gap P-25).
 - Only the supervisor's machine identity can move `main` and `release/*`. That is enforced by GitHub, not by AOC
   ([credential isolation runbook](runbooks/credential-isolation.md)).
@@ -1238,12 +1239,11 @@ Open items. Owners, fixes and acceptance tests are in the [gap list](compliance/
    [self-modification boundary](compliance/self-modification-boundary.md)). The human review of the AI-built core
    has not happened (P-06).
 5. Default anchoring (`anchorProvider: git` with no `anchorRemote`) is local only and does not mitigate R2 until a
-   remote is configured, and it runs nightly only (G-40, P-04). The TSA CA file and anchor-commit signing are
+   remote is configured (P-04). Up to an hour of routine events after the last anchor can still be rewritten (G-40). The TSA CA file and anchor-commit signing are
    `audit.tsaCaFile` and `audit.gpgKeyId`. Evidence packs confirm anchors against the off-host records (G-42).
 6. FX follows the BNM research (§11, G-36): the 1700 middle rate from 18:00 MYT. The CEO has yet to confirm the 1700
    (end of day) rate over the 1200 (noon) rate (P-19).
-7. The supervisor does not install the `pre-push` and `prepare-commit-msg` hooks in managed workspaces (G-37), and
-   guard denials that raise a card answer `deny`, so ending the turn still depends on the agent (G-48, ADR-0006).
+7. Guard denials that raise a card answer `deny`, so ending the turn still depends on the agent (G-48, ADR-0006).
 8. **Builder shell policy: undecided** (O-30, P-26). The shipped writer types are granted scoped git verbs only, so
    under `claude -p` a builder cannot run tests; the supervisor grants blanket `Bash` to a writer type whose entry
    says nothing about Bash. The options and the lead's recommendation are in P-26.

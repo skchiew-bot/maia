@@ -9,6 +9,8 @@ export interface ManagedMode {
   daemonUrl: string | null;
   token: string | null;
   spoolDir: string;
+  /** Read-only (triage) sessions cannot write their workspace, so they get no git hooks. */
+  readOnly: boolean;
 }
 export interface ObservedMode {
   kind: 'observed';
@@ -44,6 +46,7 @@ export function resolveMode(env: Env, homeDir: string): HookMode {
       aocSessionId,
       daemonUrl: nonEmpty(env[ENV.daemonUrl]),
       token: nonEmpty(env[ENV.ingestToken]),
+      readOnly: env[ENV.readOnly] === '1',
       // One spool per session: a flush replays every item with this session's token, and the daemon refuses (and
       // the client then deletes) items of any other session.
       spoolDir:

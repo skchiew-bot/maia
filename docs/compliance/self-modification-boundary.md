@@ -132,7 +132,8 @@ For the **AOC repository itself**, configure the `main` ruleset differently from
 - **No bypass actors at all, including AOC's supervisor machine user.** In product repositories the supervisor is
   the only bypass actor, because AOC's go-live gate is the review of record there. In AOC's own repository that
   would let AOC approve its own core, which is exactly what §13 forbids.
-- Required status checks: `scripts/check.sh` (typecheck, tests and the packaging smoke test); `.github/workflows/ci.yml.example` runs it.
+- Required status check: the `check` job of `.github/workflows/ci.yml`, which runs `scripts/check.sh` (typecheck,
+  tests, the compliance-docs check and the packaging smoke test).
 
 Built (threat model O-10, gap G-41): AOC's own promotion gate refuses any candidate for an AOC repository whose
 commits touch Tier 1 paths and trace to a managed session (`promotion.refused {reason: self_modification}`), after

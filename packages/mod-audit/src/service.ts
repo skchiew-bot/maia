@@ -47,6 +47,9 @@ export type AnchorOutcome =
   | { ok: false; provider: AnchorProviderName; reason: string; detail: string };
 
 export const AUDIT_SYSTEM_ACTOR: Actor = { kind: 'system', id: 'scheduler:audit' };
+
+/** Anchoring's own records: they never need an anchor of their own between nightly runs. */
+const ANCHOR_BOOKKEEPING = ['anchor.created', 'anchor.failed', 'chain.verified'] as const;
 const PROVIDERS = ['git', 'rfc3161'] as const;
 const LABEL = /^[a-z0-9_.:/-]{1,80}$/i;
 
@@ -124,6 +127,8 @@ export class AuditService implements AuditServiceContract {
   readonly rfc3161: Rfc3161AnchorProvider;
   readonly backups: BackupRunner;
   private queue: Promise<unknown> = Promise.resolve();
+  /** Set while anchors between nightly runs keep failing, so an outage alerts once rather than every hour. */
+  private outage = false;
   /** Aborted on module stop: a running chain pass or backup ends at its next chunk instead of holding shutdown. */
   private readonly stopping = new AbortController();
 
@@ -269,82 +274,120 @@ export class AuditService implements AuditServiceContract {
    * anchor.created append was lost.
    */
   anchorNow(actor: Actor, source: EventSource, recordFailure = true): Promise<AnchorOutcome> {
+    return this.exclusive(() => this.anchorHead(actor, source, recordFailure));
+  }
+
+  /**
+   * True when anything other than anchoring's own records was appended after the newest anchor, or when that anchor
+   * never reached the remote (the next anchor pushes it).
+   */
+  hasUnanchoredEvents(): boolean {
+    const last = this.lastAnchor();
+    if (last?.pushed === false) return true;
+    const after = last?.seq ?? 0;
+    const row = this.ctx.db
+      .prepare(
+        `SELECT 1 FROM events WHERE seq > ? AND type NOT IN (${ANCHOR_BOOKKEEPING.map(() => '?').join(',')}) LIMIT 1`,
+      )
+      .get(after, ...ANCHOR_BOOKKEEPING);
+    return row !== undefined;
+  }
+
+  /**
+   * Anchor between nightly runs (G-40): on the hourly job and right after high-value events. Does nothing when no
+   * event but anchoring's own came after the newest anchor; checked inside the queue, so a burst of triggers yields
+   * one anchor. A failure is recorded (and alerts) once per outage; the nightly run records its own every night.
+   */
+  anchorIfDue(source: EventSource): Promise<AnchorOutcome | null> {
     return this.exclusive(async () => {
-      const name = this.providerName;
-      if (name === 'none') return { ok: false, skipped: 'disabled' };
-      const provider = this.provider(name);
-      const { store } = this.ctx;
-      const fail = (reason: string, detail: string): AnchorOutcome => {
-        if (recordFailure) this.recordFailure(name, reason, detail, actor, source);
-        return { ok: false, provider: name, reason, detail };
-      };
-      if (store.head().seq === 0) return { ok: false, skipped: 'empty_chain' };
-      let listing: ExternalListing;
-      try {
-        listing = await provider.list(store.chainId);
-      } catch (err) {
-        return fail('anchor_store_unreadable', String(err));
-      }
-      if (listing.problems.length)
-        return fail('anchor_store_invalid', listing.problems.slice(0, 3).join('; '));
-      const known = this.chainAnchors().filter((a) => a.provider === name);
-      // Captured in the same tick as the verifier's upper bound (the stored head), so rows added behind the store's
-      // back show up as a head mismatch while events appended during the chunked pass do not.
-      const head = store.head();
-      const v = await store.verifyChainAsync({
-        atSeqs: [...known.map((a) => a.seq), ...listing.anchors.map((a) => a.record.seq)],
-        signal: this.stopping.signal,
-      });
-      if (v.headSeq !== head.seq || v.headHash !== head.hash)
-        return fail(
-          'head_mismatch',
-          `in-memory head ${head.seq} differs from the stored chain head ${v.headSeq}`,
-        );
-      if (!v.ok) return fail('chain_invalid', v.problems.slice(0, 5).join('; '));
-      for (const a of known)
-        if (v.hashesAt[a.seq] !== a.hash)
-          return fail('anchor_mismatch', `chain hash at seq ${a.seq} no longer matches anchor ${a.anchorId}`);
-      for (const a of listing.anchors)
-        if (v.hashesAt[a.record.seq] !== a.record.hash)
-          return fail(
-            'anchor_mismatch',
-            `chain hash at seq ${a.record.seq} differs from off-host anchor ${a.file}`,
-          );
-
-      const knownSeqs = new Set(known.map((a) => a.seq));
-      let recovered: StoredEvent | null = null;
-      for (const a of listing.anchors.filter((x) => !knownSeqs.has(x.record.seq))) {
-        const proofRef = await provider.locate(a, listing);
-        if (!proofRef) continue;
-        const e = this.appendCreated(name, a.record, { proofRef }, actor, source);
-        this.ctx.log.warn('audit: re-recorded an off-host anchor that had no anchor.created event', {
-          provider: name,
-          seq: a.record.seq,
-        });
-        if (a.record.seq === head.seq) recovered = e;
-      }
-      if (recovered) return { ok: true, anchor: toAnchorDTO(recovered), pushError: null, recovered: true };
-
-      const record: AnchorRecord = {
-        chainId: store.chainId,
-        seq: head.seq,
-        hash: head.hash,
-        anchoredAt: this.ctx.clock.iso(),
-        previousAnchor: previousOf(listing.anchors),
-      };
-      let created: CreatedAnchor;
-      try {
-        created = await provider.create(record, anchorFileName(record, this.ctx.config.timezone));
-      } catch (err) {
-        const e = err instanceof AnchorError ? err : new AnchorError('anchor_error', String(err));
-        return fail(e.reason, e.detail);
-      }
-      const e = this.appendCreated(name, record, created, actor, source);
-      // The anchor exists locally but is not off-host until the next successful push: alert, but keep it.
-      if (created.pushed === false)
-        this.recordFailure(name, 'push_failed', created.pushError ?? '', actor, source);
-      return { ok: true, anchor: toAnchorDTO(e), pushError: created.pushError ?? null, recovered: false };
+      if (this.providerName === 'none' || !this.hasUnanchoredEvents()) return null;
+      const r = await this.anchorHead(AUDIT_SYSTEM_ACTOR, source, !this.outage);
+      if (r.ok) this.outage = false;
+      else if (!('skipped' in r)) this.outage = true;
+      return r;
     });
+  }
+
+  /** Waits for every queued anchor, verify and backup (tests, and callers that triggered one without awaiting). */
+  async idle(): Promise<void> {
+    await this.queue;
+  }
+
+  private async anchorHead(actor: Actor, source: EventSource, recordFailure: boolean): Promise<AnchorOutcome> {
+    const name = this.providerName;
+    if (name === 'none') return { ok: false, skipped: 'disabled' };
+    const provider = this.provider(name);
+    const { store } = this.ctx;
+    const fail = (reason: string, detail: string): AnchorOutcome => {
+      if (recordFailure) this.recordFailure(name, reason, detail, actor, source);
+      return { ok: false, provider: name, reason, detail };
+    };
+    if (store.head().seq === 0) return { ok: false, skipped: 'empty_chain' };
+    let listing: ExternalListing;
+    try {
+      listing = await provider.list(store.chainId);
+    } catch (err) {
+      return fail('anchor_store_unreadable', String(err));
+    }
+    if (listing.problems.length)
+      return fail('anchor_store_invalid', listing.problems.slice(0, 3).join('; '));
+    const known = this.chainAnchors().filter((a) => a.provider === name);
+    // Captured in the same tick as the verifier's upper bound (the stored head), so rows added behind the store's
+    // back show up as a head mismatch while events appended during the chunked pass do not.
+    const head = store.head();
+    const v = await store.verifyChainAsync({
+      atSeqs: [...known.map((a) => a.seq), ...listing.anchors.map((a) => a.record.seq)],
+      signal: this.stopping.signal,
+    });
+    if (v.headSeq !== head.seq || v.headHash !== head.hash)
+      return fail(
+        'head_mismatch',
+        `in-memory head ${head.seq} differs from the stored chain head ${v.headSeq}`,
+      );
+    if (!v.ok) return fail('chain_invalid', v.problems.slice(0, 5).join('; '));
+    for (const a of known)
+      if (v.hashesAt[a.seq] !== a.hash)
+        return fail('anchor_mismatch', `chain hash at seq ${a.seq} no longer matches anchor ${a.anchorId}`);
+    for (const a of listing.anchors)
+      if (v.hashesAt[a.record.seq] !== a.record.hash)
+        return fail(
+          'anchor_mismatch',
+          `chain hash at seq ${a.record.seq} differs from off-host anchor ${a.file}`,
+        );
+
+    const knownSeqs = new Set(known.map((a) => a.seq));
+    let recovered: StoredEvent | null = null;
+    for (const a of listing.anchors.filter((x) => !knownSeqs.has(x.record.seq))) {
+      const proofRef = await provider.locate(a, listing);
+      if (!proofRef) continue;
+      const e = this.appendCreated(name, a.record, { proofRef }, actor, source);
+      this.ctx.log.warn('audit: re-recorded an off-host anchor that had no anchor.created event', {
+        provider: name,
+        seq: a.record.seq,
+      });
+      if (a.record.seq === head.seq) recovered = e;
+    }
+    if (recovered) return { ok: true, anchor: toAnchorDTO(recovered), pushError: null, recovered: true };
+
+    const record: AnchorRecord = {
+      chainId: store.chainId,
+      seq: head.seq,
+      hash: head.hash,
+      anchoredAt: this.ctx.clock.iso(),
+      previousAnchor: previousOf(listing.anchors),
+    };
+    let created: CreatedAnchor;
+    try {
+      created = await provider.create(record, anchorFileName(record, this.ctx.config.timezone));
+    } catch (err) {
+      const e = err instanceof AnchorError ? err : new AnchorError('anchor_error', String(err));
+      return fail(e.reason, e.detail);
+    }
+    const e = this.appendCreated(name, record, created, actor, source);
+    // The anchor exists locally but is not off-host until the next successful push: alert, but keep it.
+    if (created.pushed === false)
+      this.recordFailure(name, 'push_failed', created.pushError ?? '', actor, source);
+    return { ok: true, anchor: toAnchorDTO(e), pushError: created.pushError ?? null, recovered: false };
   }
 
   // ── verification ───────────────────────────────────────────────────────────

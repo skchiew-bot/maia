@@ -13,7 +13,7 @@
 
 | Item | Default | Production |
 | --- | --- | --- |
-| Process | One Node ≥ 22.13 process, `aocd`: the sole writer | A supervised service (systemd), restarted on failure. It runs as **root** with a reduced capability set, because session isolation, which production requires, needs root to start turns as the session users ([credential isolation §4](credential-isolation.md#4-the-supervisor-host), item 1) |
+| Process | One Node ≥ 22.20 process, `aocd`: the sole writer | A supervised service (systemd), restarted on failure. It runs as **root** with a reduced capability set, because session isolation, which production requires, needs root to start turns as the session users ([credential isolation §4](credential-isolation.md#4-the-supervisor-host), item 1) |
 | Listen | `127.0.0.1:7420` | Loopback, behind a TLS reverse proxy; `publicUrl` and `identity.origin` set to the public HTTPS origin (WebAuthn requires it) |
 | Data | `.aoc/data/`: `aoc.db` (chain and read models), `bodies.db` (encrypted bodies), `blobs/`, and `master.key` (dev only) | `/var/lib/aoc/data`, on a disk with monitoring; the KEK elsewhere ([key custody](key-custody.md)) |
 | Config | `AocConfigSchema.parse({})` gives a complete, safe local default (`packages/contracts/src/config.ts`) | See the example below |
@@ -300,6 +300,7 @@ declares its own:
 | --- | --- | --- |
 | `metering.close-days` | Daily 00:15 | Closes the previous days' rollups |
 | `audit.anchor` | Daily 02:00 (`audit.anchorAtLocalTime`) | Governed-config check, anchor, Verify |
+| `audit.anchor_interval` | Every `audit.anchorIntervalMinutes` (60) | Anchors when anything new was logged (G-40) |
 | `audit.backup` | Daily 02:30 (`audit.backupAtLocalTime`), once `audit.backupKeyFile` is set | The sealed backup |
 | `evidence.integrity-sweep` | Daily 03:00 | Re-checks the stored evidence packs |
 | `learning.verify-offences`, `learning.retire-lessons` | Daily 03:10, 03:20 | Closure verification, retirement of unused lessons |
@@ -311,7 +312,9 @@ declares its own:
 
 `SELECT name FROM job_runs` lists the jobs that have run.
 
-**Anchoring now:** the nightly `audit.anchor` job runs at `audit.anchorAtLocalTime` (02:00 by default).
+**Anchoring now:** the nightly `audit.anchor` job runs at `audit.anchorAtLocalTime` (02:00 by default);
+`audit.anchor_interval` anchors every `audit.anchorIntervalMinutes` (60) when anything new was logged, and
+high-value events are anchored as they happen.
 `aoc anchor` anchors the current chain head immediately. Use it after a missed anchor, before a backup, or
 after a high-value event ([anchoring](anchoring.md)).
 
@@ -327,7 +330,7 @@ Jobs must be idempotent: a daily job forced by hand runs again even if it alread
    superseded [ADRs](../adr/README.md). If the release touches the governance core, check that it carries a human
    code review ([self-modification boundary](../compliance/self-modification-boundary.md)).
 2. **Back up and verify** (§6, [anchoring §6](anchoring.md#6-verify)).
-3. **Node.** Stay within `engines` (Node ≥ 22.13). `node:sqlite` behaviour is re-tested on every Node upgrade
+3. **Node.** Stay within `engines` (Node ≥ 22.20). `node:sqlite` behaviour is re-tested on every Node upgrade
    (ADR-0002); do not upgrade Node and AOC in the same window.
 4. **Claude Code.** A new Claude Code version can change hook events, stream-json lines, flags or usage-limit
    messages. Before upgrading `claude` on the host, re-run the captures in the
@@ -389,7 +392,7 @@ nothing surprises you afterwards; **C** is what this release still cannot do.
 | # | Limit | Where |
 | --- | --- | --- |
 | C1 | Sessions of one kind that run at the same time share an OS user (G-49) | Use `hidepid=2` on `/proc` as a stop-gap |
-| C2 | Hourly and event-triggered anchors do not exist (G-40). Events newer than the last anchor can be cut off the end of the chain or rewritten, and only the off-host anchors can show it; `aoc anchor` from cron is the workaround | [Anchoring §4](anchoring.md#4-cadence) |
+| C2 | Up to `audit.anchorIntervalMinutes` (60) of routine events after the last anchor can be cut off the end of the chain or rewritten; high-value events are anchored as they happen (G-40) | [Anchoring §4](anchoring.md#4-cadence) |
 | C3 | The default tool set still lists `RemoteTrigger`, `CronCreate`, `PushNotification`, `WebFetch` and `WebSearch` for writer types. Print mode refuses them unless granted | Deny them in the registry for any type that must never have them (P-26) |
 | C4 | Not run against the real Claude Code CLI: the usage-limit path, OAuth or keychain login and per-session config directories, the isolation modes, compaction and automatic rollover, models other than Haiku, and the scoped `Bash` grants live. Not run at all: the `aocd` executable itself | [Research §13.6](../research/claude-code-integration.md#136-not-checked-and-why). Re-run `AOC_REAL_CLI=1 pnpm --filter @aoc/e2e real-cli:full` on your host and Claude Code version |
 | C5 | The evidence flags are noisy (`no_file_change` on tasks that cannot change files), refused permission requests are not audited, and a model can ignore a stop notice until its turn ends (G-52, G-53, G-54) | Read the flags as prompts to look |

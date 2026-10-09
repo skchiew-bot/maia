@@ -190,6 +190,7 @@ describe('hot-path constants', () => {
       ingestToken: AOC_ENV.ingestToken,
       spoolDir: AOC_ENV.spoolDir,
       internalLlm: AOC_ENV.internalLlm,
+      readOnly: AOC_ENV.readOnly,
     });
   });
 });
