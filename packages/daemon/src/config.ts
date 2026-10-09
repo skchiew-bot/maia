@@ -24,6 +24,8 @@ export interface LoadedConfig {
   /** Absolute path of the file that was read; null when running on built-in defaults. */
   file: string | null;
   source: ConfigSource;
+  /** Root of the source checkout aocd runs from; null for a bundle detached from any checkout. */
+  repoRoot: string | null;
   /** Non-fatal findings worth printing at startup (unknown keys, helpers that do not exist yet). */
   warnings: string[];
 }
@@ -94,7 +96,25 @@ export function loadConfig(opts: LoadConfigOptions = {}): LoadedConfig {
     repoRoot,
   );
   const helpers = resolveHelperCommands(config, { binDir, repoRoot });
-  return { config: helpers.config, file, source, warnings: [...warnings, ...helpers.warnings] };
+  return { config: helpers.config, file, source, repoRoot, warnings: [...warnings, ...helpers.warnings] };
+}
+
+/**
+ * Production refuses a source checkout of AOC that nothing guards (gap P-18, §13). With `selfModification.aocRepoPaths`
+ * empty the self-modification guard protects no core code, and aocd started from a checkout means the AOC repository
+ * is on this host. A bundle detached from any checkout (dist) is not asked: where its operator keeps clones is theirs
+ * to list. Not part of loadConfig, which `aocd restore` uses on a host that need not be ready to serve.
+ */
+export function checkSelfModificationBoundary(loaded: Pick<LoadedConfig, 'config' | 'repoRoot'>): void {
+  const { config, repoRoot } = loaded;
+  if (config.mode !== 'production' || config.selfModification.aocRepoPaths.length > 0) return;
+  if (!repoRoot || !existsSync(join(repoRoot, '.git')) || !existsSync(join(repoRoot, 'packages', 'kernel'))) return;
+  throw new ConfigError(
+    `production mode: aocd runs from a source checkout of AOC (${repoRoot}) and selfModification.aocRepoPaths is ` +
+      'empty, so the self-modification guard protects none of the governance core. List every clone of the AOC ' +
+      'repository that managed sessions can reach in selfModification.aocRepoPaths ' +
+      '(docs/compliance/self-modification-boundary.md)',
+  );
 }
 
 const HELPERS = [

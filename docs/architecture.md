@@ -248,8 +248,9 @@ Thinking must be told apart from Stalled (§2.1). The sidecar fills that gap:
   batches every 10 s or 50 messages, with a content-hash idempotency key.
 - It detects plan-limit hits in transcript text (the text fallback in `THROTTLE_PATTERNS`; structured signals
   come first, see §6) and reports `/ingest/throttle`.
-- It reports the process exit (`/ingest/process`), flushes and stops. Its offsets and counted state persist in a
-  0600 state file, so a restart does not double-count.
+- It reports the process exit (`/ingest/process`, with the pid it watched: a sidecar can outlive its process into the
+  next turn, and the daemon ignores a report about a pid that is no longer the session's current one), flushes and
+  stops. Its offsets and counted state persist in a 0600 state file, so a restart does not double-count.
 - **It has its own principal (G-44).** The supervisor issues one `sidecar` ingest token (`aoc_c_…`) per managed
   session and passes it only in the sidecar's environment (`AOC_INGEST_TOKEN`, never argv, never the `claude`
   environment). `/ingest/usage`, `heartbeat`, `activity`, `process` and `throttle` for a managed session accept only
@@ -297,10 +298,11 @@ idempotencyKey}` to `/ingest/hook` and applies the daemon's `HookIngestResponse`
   A guard denial from the daemon is returned as a JSON `permissionDecision: "deny"` rather than exit 2, because exit
   2 shows the hook's command line to the model. The hook command line never carries a secret.
 - **Git hooks for managed workspaces.** The hooks package also ships a `pre-push` guard (it refuses pushes to `main`,
-  `master`, `production` and `release/*` unless `AOC_SUPERVISOR_PUSH=1`, which only the promotion executor sets)
-  and a `prepare-commit-msg` hook that adds the `AOC-Session`, `AOC-Change` and `AOC-Ticket` trailers. Like every
-  client-side hook, they are speed bumps. The supervisor does not install them in managed workspaces yet (gap
-  G-37): today the system prompt asks the agent to add the trailers.
+  `master`, `production` and `release/*`, and no environment variable overrides it: AOC's own promotion pushes from a
+  service-owned clone with hooks off, so it never meets this hook) and a `prepare-commit-msg` hook that adds the
+  `AOC-Session`, `AOC-Change` and `AOC-Ticket` trailers. Like every client-side hook, they are speed bumps. The
+  supervisor does not install them in managed workspaces yet (gap G-37): today the system prompt asks the agent to
+  add the trailers.
 - **Observed mode** (global hooks on developer machines, observer token). It never blocks: the ingest does not
   run guards for observed sessions, and the kernel policy would turn any denial into an allow with a "would deny"
   note anyway. When aocd is down, events are buffered in the local spool and replayed later (§2,
@@ -511,7 +513,10 @@ can never share a directory.
   record, so ciphertexts cannot be swapped between records.
 - **Scope choice.** `bodyScope` defaults to the event's `sessionId`, then `ticketId`, then `projectId`, then
   `global`. Writers set it explicitly when the data belongs elsewhere. Intake uses the ticket, so one ticket can be
-  erased without touching the session that worked on it. **The scope decides what can be erased on its own.**
+  erased without touching the session that worked on it. Change control keeps the decision cards it raises (change
+  request, rollback, go-live) under the change record they are about, else under the project (break-glass), together
+  with what the approver typed on them; the record's own text (drafts, affirmed fields, reasons) stays project-scoped.
+  **The scope decides what can be erased on its own.**
   Identity events use a per-person scope, `user:<userId>`, so one person's profile and passkey data can be
   erased alone. Personal data must never land in `global` (see [threat model](security/threat-model.md) item O-7).
 - `bodies.db` runs with `secure_delete = ON`. KEK loading and custody are in the
@@ -725,7 +730,7 @@ the Requester-only UAT sign-off.
 | --- | --- | --- | --- | --- |
 | `agent_decision`, test `main` (1), `production` (2), `data` (5) | Agent, `request_decision` | Approver | — | The session owner (requester) is excluded. These tests are also enforced at the tool boundary |
 | `agent_decision`, test `irreversible` (3), `ambiguity` (4) | Agent | Builder | — | Owner excluded. These tests are self-reported (§2.4) |
-| `protected_operation` | A guard turning a blocked attempt into a card | Approver | — | Owner excluded |
+| `protected_operation`, test `main` (1), `production` (2) or `data` (5) | The `protected-op` guard (`mod-change`), for a blocked attempt | Approver | — | The session owner (requester) is excluded. Earlier logs recorded these cards as `agent_decision`; both kinds resolve the same way |
 | `fix_plan` | Intake, after triage | Approver | — | Nothing touches code before it clears |
 | `go_live` | Promotion, after the provenance check | Approver | **Yes** | Requester excluded |
 | `rollback` | Change control, after a clean verification | Approver | **Yes** | Requester excluded |
@@ -755,7 +760,7 @@ the Requester-only UAT sign-off.
   event (gap G-33).
 - **Decision SLAs** (approved with the static mock on 2026-10-09): rollback 30 min, agent decision 1 h, credit
   top-up 1 h, go-live 2 h, fix plan 4 h, lesson binding 2 days. They drive breaches and the gate-latency KPI in
-  the Control Tower.
+  the Control Tower. A protected operation keeps the agent decision's 1 h: it was one until it got its own kind.
 - **Passkeys.** For `go_live`, `rollback` and `break_glass`, the WebAuthn challenge is bound to
   `(decisionId, optionId, user)`, and `decision.resolved` records `passkeyVerified`. Elsewhere in v1 a bearer
   token or cookie proves **which token**, not who. That is attribution, not a signature (§6).
@@ -1135,9 +1140,10 @@ Open items found while writing this document. Owners and details are in the
 
 1. Agents can get code execution as a privileged user through git configuration and hooks in their own workspace,
    whenever aocd or the supervisor runs git or repository code there (threat model T-2). Today the ledger
-   fingerprints workspaces with aocd's own git, promotion deliberately runs the repository's `pre-push` hook with
-   the promotion credential, and `runIsolated` runs as aocd's OS user. Privileged git must never run in an
-   agent-writable repository.
+   fingerprints workspaces with aocd's own git and `runIsolated` runs as aocd's OS user. (Promotion no longer runs
+   the repository's `pre-push` hook with the promotion credential: since G-04 it pushes from a service-owned clone
+   with hooks off, and no environment variable unlocks a push to a protected ref.) Privileged git must never run
+   in an agent-writable repository.
 2. Agents and aocd must run as different OS users, and sessions must not inherit aocd's `HOME`. Otherwise every
    0600 file of aocd, and the service user's `~/.ssh`, git credentials and `~/.claude`, are reachable from every
    agent.

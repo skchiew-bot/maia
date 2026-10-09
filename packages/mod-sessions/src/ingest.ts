@@ -8,6 +8,7 @@ import {
   type HookInput,
   type IngestPrincipal,
   type PreToolContext,
+  type ProcessEventRequest,
   type SessionInfo,
   type SpoolFlushResponse,
   type SpoolItem,
@@ -93,7 +94,6 @@ const UsageSchema = z.object({
     .max(200),
 });
 const ThrottleSchema = z.object({ sessionId: z.string(), resetAt: z.string().nullable(), message: z.string().max(2000), source: z.enum(['stream', 'transcript', 'exit']) });
-/** `pid` (sent by the sidecar, not yet in ProcessEventRequest) lets a stale sidecar's report be told apart. */
 const ProcessSchema = z.object({
   sessionId: z.string(),
   event: z.literal('exited'),
@@ -101,7 +101,7 @@ const ProcessSchema = z.object({
   signal: z.string().nullable(),
   at: z.string(),
   pid: z.number().int().nullable().optional(),
-});
+}) satisfies z.ZodType<ProcessEventRequest>;
 const SpoolSchema = z.object({ items: z.array(z.object({ path: z.string(), body: z.unknown(), queuedAt: z.string() })).max(500) });
 
 const READ_ONLY_PREFIX = /^\s*(ls|cat|head|tail|wc|grep|rg|pwd|echo|which|file|stat|du|df|tree|git\s+(log|show|diff|status|blame|branch|rev-parse))\b/;

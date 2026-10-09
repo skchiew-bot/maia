@@ -215,6 +215,8 @@ export function createTowerProjector(): Projector {
     tables: TOWER_TABLES,
     ddl: DDL,
     handles: TOWER_HANDLES,
+    // 1: a session's owner is the one its launch recorded; installs that derived it from the actor rebuild once.
+    version: 1,
     apply({ db }, e, payload) {
       apply(db, e, payload as Payload);
     },
@@ -311,16 +313,19 @@ function apply(db: DatabaseSync, e: StoredEvent, p: Payload): void {
     // ── sessions & fleet ────────────────────────────────────────────────────
     case 'session.launch_requested': {
       const m = metaOf(e, 'session.launch_requested');
-      // Same ownership rule as the sessions directory: the launching human, else the parent session's owner.
+      // The owner the supervisor recorded (null: nobody). Launches logged before it existed have the launching
+      // human, else the parent session's owner: the same rule as the sessions directory.
       const owner =
-        e.actor.kind === 'human'
-          ? e.actor.id
-          : m.parentSessionId
-            ? (get<{ owner_id: string | null }>(
-                'SELECT owner_id FROM twr_sessions WHERE session_id = ?',
-                m.parentSessionId,
-              )?.owner_id ?? null)
-            : null;
+        m.ownerId !== undefined
+          ? m.ownerId
+          : e.actor.kind === 'human'
+            ? e.actor.id
+            : m.parentSessionId
+              ? (get<{ owner_id: string | null }>(
+                  'SELECT owner_id FROM twr_sessions WHERE session_id = ?',
+                  m.parentSessionId,
+                )?.owner_id ?? null)
+              : null;
       const playbook = get(
         'SELECT 1 FROM twr_playbooks WHERE process_type = ? AND status = ? LIMIT 1',
         m.processType,

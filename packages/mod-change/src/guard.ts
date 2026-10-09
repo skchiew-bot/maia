@@ -622,7 +622,7 @@ export function createProtectedOpGuard(
           `AOC blocked a protected operation (test ${info.no}: ${info.label}): ${hit.label}. ` +
           'A decision card was raised for the approver. End your turn; the supervisor resumes this session with the answer.',
         raiseDecision: {
-          kind: 'agent_decision',
+          kind: 'protected_operation',
           test: hit.test,
           title: `Protected operation: ${hit.label}`,
           question: `The agent attempted a protected operation (${info.label.toLowerCase()}). Allow it to run?`,

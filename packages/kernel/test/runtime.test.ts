@@ -103,6 +103,24 @@ describe('reactor drain', () => {
   });
 });
 
+describe('drain', () => {
+  it('is a promise whether or not anything is queued, so callers can chain on it', async () => {
+    const t = await createTestRuntime({ modules: [] });
+    const idle = t.rt.drain();
+    expect(idle).toBeInstanceOf(Promise);
+    await expect(idle.then(() => 'drained')).resolves.toBe('drained');
+
+    let reacted = 0;
+    const busy = await createTestRuntime({
+      modules: [{ name: 'slow', reactors: [{ name: 'slow.react', handles: ['session.nudged'], async react() { await new Promise((r) => setTimeout(r, 10)); reacted++; } }] }],
+    });
+    busy.rt.store.append({ type: 'session.nudged', actor: { kind: 'human', id: 'usr_1' }, meta: { sessionId: 'ses_z' }, payload: { text: 'x' }, source: 'api' });
+    await busy.rt.drain().then(() => expect(reacted).toBe(1));
+    await expect(busy.rt.drain().then(() => 'idle again')).resolves.toBe('idle again');
+    await Promise.all([t.close(), busy.close()]);
+  });
+});
+
 describe('projection back-fill on an existing log', () => {
   it('replays after module init, so projectors see module settings such as the configured timezone', async () => {
     const { mkdtempSync } = await import('node:fs');

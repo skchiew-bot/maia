@@ -144,10 +144,13 @@ export function severityOf(score: number): AttentionSeverity {
 /**
  * Decision SLAs approved by the CEO with the mock (mocks/README.md, decision 3, 2026-10-09). They drive breaches,
  * "open past SLA" and the gate-latency KPI; kinds without one never count as past an SLA (as in the Decisions inbox).
+ * A protected operation is an agent's attempt turned into a card, and was an agent decision until it got its own
+ * kind, so it keeps the agent decision's SLA rather than silently dropping out of the breach counts.
  */
 export const DECISION_SLA_MS: Partial<Record<DecisionKind, number>> = {
   rollback: 30 * MINUTE,
   agent_decision: HOUR,
+  protected_operation: HOUR,
   credit_topup: HOUR,
   go_live: 2 * HOUR,
   fix_plan: 4 * HOUR,
@@ -155,15 +158,13 @@ export const DECISION_SLA_MS: Partial<Record<DecisionKind, number>> = {
 };
 
 /**
- * Time scale of a decision kind: its approved SLA, else a reference scale (break-glass 15m — production is down,
- * protected operation 1h like an agent decision, otherwise 1 day). It ages the score and scales the latency chart;
- * only approved SLAs (or a card's own due time) count breaches.
+ * Time scale of a decision kind: its SLA, else a reference scale (break-glass 15m — production is down, otherwise
+ * 1 day). It ages the score and scales the latency chart; only an SLA (or a card's own due time) counts breaches.
  */
 export function decisionSlaMs(kind: string): number {
   const approved = DECISION_SLA_MS[kind as DecisionKind];
   if (approved !== undefined) return approved;
   if (kind === 'break_glass') return 15 * MINUTE;
-  if (kind === 'protected_operation') return HOUR;
   return DAY;
 }
 

@@ -23,6 +23,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { AocConfigSchema, ProcessRegistrySchema, defaultConfig, type AocConfig } from '@aoc/contracts';
 import { AocRuntime, FakeClock, createLogger, silentLogger } from '@aoc/kernel';
 import { createSupervisorModule } from '../src';
+import { PromotionProfileError } from '../src/promotion-profiles';
 import {
   IsolationError,
   NO_ISOLATION_WARNING,
@@ -520,6 +521,8 @@ function world(): World {
           // What the session itself gets: a read-only key, as a private per-turn copy.
           session: { env: { READ_KEY_FILE: '{{file:read-key}}' }, files: { 'read-key': readKeyFile } },
         },
+        // The promotion credential: only aocd's own push holds it, and no process type names it.
+        'prod-promote': { env: {} },
       },
     }),
     { mode: 0o600 },
@@ -856,12 +859,18 @@ describe.skipIf(!canCreateUsers)('OS-level isolation end to end (needs root to c
   );
 
   describe('startup self-check', () => {
-    const start = (w: World, dataDir: string, supervisor: Record<string, unknown> = {}) =>
+    const start = (
+      w: World,
+      dataDir: string,
+      supervisor: Record<string, unknown> = {},
+      config: Record<string, unknown> = {},
+    ) =>
       AocRuntime.create({
         config: AocConfigSchema.parse({
           dataDir,
           keys: { masterKeyFile: w.kek },
           supervisor: { ...isolationSettings(w, WRITER, READER), ...supervisor },
+          ...config,
         }),
         modules: [
           createSupervisorModule({
@@ -900,6 +909,24 @@ describe.skipIf(!canCreateUsers)('OS-level isolation end to end (needs root to c
       // Held or handed to sessions as a copy: the original of either must stay unreadable.
       for (const f of [w.kek, w.profiles, w.keyFile, w.readKeyFile])
         expect(String(err)).toContain(`session user ${WRITER} can read ${f}`);
+    }, 60_000);
+
+    it('refuses to start in production while a promotion credential profile is undefined, and starts once it is', async () => {
+      const w = world();
+      const dataDir = join(w.root, 'data');
+      mkdirSync(dataDir, { mode: 0o700 });
+      const bare = join(w.secret, 'profiles-without-promotion.json');
+      writeFileSync(bare, JSON.stringify({ profiles: { 'git-feature': { env: {} } } }), { mode: 0o600 });
+      const err = await start(w, dataDir, { credentialProfilesFile: bare }, { mode: 'production' }).catch(
+        (e: unknown) => e,
+      );
+      expect(err).toBeInstanceOf(PromotionProfileError);
+      expect(String(err)).toContain(
+        'production mode: promotion credential profile "prod-promote" (promotion.promoteCredentialProfile) is unusable',
+      );
+      // Development only warns, and the world's own profiles file defines it.
+      await (await start(w, dataDir, { credentialProfilesFile: bare })).stop();
+      await (await start(w, dataDir, {}, { mode: 'production' })).stop();
     }, 60_000);
 
     it('refuses a runner that does not switch to the session user', async () => {

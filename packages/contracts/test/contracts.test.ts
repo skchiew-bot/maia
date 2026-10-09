@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
 import {
   ALL_EVENTS,
+  AOC_ENV,
   EVENT_CATALOG,
   computeProgress,
   deriveLiveness,
@@ -21,8 +22,13 @@ import {
   validateEvent,
   AocConfigSchema,
   projectSlug,
+  promotionProfileUses,
+  promotionProfilesOf,
+  promotionRemoteProblem,
   transcriptPathFor,
+  transportOf,
   type LivenessInput,
+  type ProcessEventRequest,
 } from '../src';
 
 const base: LivenessInput = {
@@ -79,6 +85,9 @@ describe('roles & decisions (§6)', () => {
   it('routes main/production/data to the approver, others to builders', () => {
     expect(requiredRoleFor({ kind: 'agent_decision', test: 'main' })).toBe('approver');
     expect(requiredRoleFor({ kind: 'agent_decision', test: 'ambiguity' })).toBe('builder');
+    // A guard-raised card (tests 1, 2, 5, all tool-boundary) goes to the Approver, whatever the test says.
+    for (const test of ['main', 'production', 'data', null] as const)
+      expect(requiredRoleFor({ kind: 'protected_operation', test })).toBe('approver');
     expect(requiredRoleFor({ kind: 'change_request', changeScope: 'reversible_off_main' })).toBe('builder');
     expect(requiredRoleFor({ kind: 'go_live' })).toBe('approver');
     expect(requiresPasskey('rollback')).toBe(true);
@@ -192,5 +201,96 @@ describe('intake upload allowance', () => {
     }).intake;
     expect(intakeTotalBytes(many)).toBe(4096);
     expect(intakeRequestBytes(many)).toBe(4096 + INTAKE_ENVELOPE_BYTES);
+  });
+});
+
+describe('ingest wire types', () => {
+  it('has no environment variable that lets a push to a protected ref through (AOC pushes from a service-owned clone)', () => {
+    expect(Object.keys(AOC_ENV)).not.toContain('supervisorPush');
+    expect(Object.values(AOC_ENV)).not.toContain('AOC_SUPERVISOR_PUSH');
+  });
+
+  it('a process exit report can name the process it is about, so a stale sidecar is told apart from the current one', () => {
+    const named: ProcessEventRequest = { sessionId: 'ses_A', event: 'exited', exitCode: 0, signal: null, at: '2026-10-09T10:00:00.000Z', pid: 4242 };
+    const unnamed: ProcessEventRequest = { sessionId: 'ses_A', event: 'exited', exitCode: null, signal: 'SIGKILL', at: '2026-10-09T10:00:00.000Z' };
+    expectTypeOf<ProcessEventRequest['pid']>().toEqualTypeOf<number | null | undefined>();
+    expect([named.pid, unnamed.pid]).toEqual([4242, undefined]);
+  });
+});
+
+describe('promotion configuration (per-project remote and credential profile)', () => {
+  const parse = (promotion: unknown) => AocConfigSchema.safeParse({ promotion });
+
+  it('defaults to no project entries and the prod-promote profile', () => {
+    const config = AocConfigSchema.parse({});
+    expect(config.promotion).toEqual({ promoteCredentialProfile: 'prod-promote', projects: {} });
+    expect(promotionProfilesOf(config)).toEqual(['prod-promote']);
+  });
+
+  it('takes a remote and a credential profile per project, and names every profile in use', () => {
+    const config = AocConfigSchema.parse({
+      promotion: {
+        promoteCredentialProfile: 'release-bot',
+        projects: {
+          prj_web: { promotionRemote: 'git@github.com:acme/web.git', promoteCredentialProfile: 'web-promote' },
+          prj_api: { promotionRemote: 'https://github.com/acme/api.git' },
+          prj_ops: { promoteCredentialProfile: 'web-promote' },
+          'prj.mirror:1': { promotionRemote: '/srv/git/mirror.git' },
+        },
+      },
+    });
+    expect(config.promotion.projects.prj_web).toEqual({
+      promotionRemote: 'git@github.com:acme/web.git',
+      promoteCredentialProfile: 'web-promote',
+    });
+    expect(promotionProfilesOf(config)).toEqual(['release-bot', 'web-promote']);
+    expect(promotionProfileUses(config)).toEqual([
+      { profile: 'release-bot', key: 'promotion.promoteCredentialProfile' },
+      { profile: 'web-promote', key: 'promotion.projects.prj_web.promoteCredentialProfile' },
+      { profile: 'web-promote', key: 'promotion.projects.prj_ops.promoteCredentialProfile' },
+    ]);
+  });
+
+  it('refuses a remote AOC would not push to, one with a credential in it, and a misspelt or malformed entry', () => {
+    const remote = (promotionRemote: string) => parse({ projects: { prj_web: { promotionRemote } } });
+    expect(remote('ssh://git@github.com/acme/web.git').success).toBe(true);
+    for (const bad of [
+      'http://github.com/acme/web.git',
+      'git://github.com/acme/web.git',
+      'ext::sh -c touch% /tmp/pwned',
+      '-oProxyCommand=evil:x',
+      'relative/web.git',
+      '',
+    ]) {
+      const r = remote(bad);
+      expect(r.success, bad).toBe(false);
+      expect(r.error?.issues[0]?.path, bad).toEqual(['promotion', 'projects', 'prj_web', 'promotionRemote']);
+    }
+    const secret = 'https://x-access-token:ghs_SECRET@github.com/acme/web.git';
+    const withSecret = remote(secret);
+    expect(withSecret.success).toBe(false);
+    expect(JSON.stringify(withSecret.error?.issues)).toContain('must not embed credentials');
+    expect(JSON.stringify(withSecret.error?.issues)).not.toContain('ghs_SECRET'); // a message never echoes the URL
+    expect(remote('https://ghs_SECRET@github.com/acme/web.git').success).toBe(false);
+    expect(remote('ssh://git:ghs_SECRET@github.com/acme/web.git').success).toBe(false);
+
+    expect(parse({ projects: { prj_web: { promotionRemotee: '/srv/git/web.git' } } }).success).toBe(false);
+    expect(parse({ projects: { 'not a project': { promotionRemote: '/srv/git/web.git' } } }).success).toBe(false);
+    expect(parse({ projects: { prj_web: { promoteCredentialProfile: 'has spaces' } } }).success).toBe(false);
+    expect(parse({ promoteCredentialProfile: '' }).success).toBe(false);
+  });
+
+  it('judges transports and embedded credentials the same way for every consumer', () => {
+    expect(transportOf('git@github.com:org/app.git')).toBe('ssh');
+    expect(transportOf('ssh://git@github.com/org/app.git')).toBe('ssh');
+    expect(transportOf('https://github.com/org/app.git')).toBe('https');
+    expect(transportOf('/srv/git/app.git')).toBe('file');
+    expect(transportOf('file:///srv/git/app.git')).toBe('file');
+    expect(transportOf('helper::address')).toBeNull();
+    expect(promotionRemoteProblem('git@github.com:org/app.git')).toBeNull();
+    expect(promotionRemoteProblem('ssh://git@github.com/org/app.git')).toBeNull();
+    expect(promotionRemoteProblem('https://github.com/org/app.git')).toBeNull();
+    expect(promotionRemoteProblem('https://github.com/org/app@v1')).toBeNull();
+    expect(promotionRemoteProblem('http://github.com/org/app.git')).toMatch(/ssh, https or absolute/);
   });
 });

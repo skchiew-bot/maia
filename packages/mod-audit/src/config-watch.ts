@@ -32,7 +32,8 @@ function fileSource(key: string, path: string, optional = false): GovernedSource
 /**
  * Governed configuration: the process-type registry, the rate card, the ISO 42001 mapping, the credential profiles
  * file (existence + mode only — its content is deploy credentials, §3), the audit / self-modification settings
- * themselves (weakening the boundary must leave a trace in the chain), and the decision, credit and liveness policy.
+ * themselves (weakening the boundary must leave a trace in the chain), the decision, credit and liveness policy, and
+ * the promotion settings (the remote and credential profile of the push to a protected branch).
  */
 export function governedSources(
   config: AocConfig,
@@ -55,6 +56,8 @@ export function governedSources(
     { key: 'decisions_config', optional: false, current: () => sha256hex(canonicalJson(config.decisions)) },
     { key: 'credits_config', optional: false, current: () => sha256hex(canonicalJson(config.credits)) },
     { key: 'liveness_config', optional: false, current: () => sha256hex(canonicalJson(config.liveness)) },
+    // Where promotions, rollbacks and break-glass push, and with which credential profile (only the hash is chained).
+    { key: 'promotion_config', optional: false, current: () => sha256hex(canonicalJson(config.promotion)) },
   ];
   const creds = config.supervisor.credentialProfilesFile;
   if (creds) {
