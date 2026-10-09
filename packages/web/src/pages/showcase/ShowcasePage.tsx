@@ -23,6 +23,7 @@ import {
   type LivenessState,
 } from '../../components';
 import { cx } from '../../lib/dom';
+import { decisionHref } from '../../lib/links';
 import { EventFeed } from './EventFeed';
 import { FleetTrack, nodeColor } from './FleetTrack';
 import {
@@ -300,7 +301,7 @@ function Lane({
           <ul className="sc-decisions__list">
             {lane.decisions.map((d) => (
               <li key={d.id}>
-                <Link to="/decisions" className="sc-decision">
+                <Link to={decisionHref(d.id)} className="sc-decision">
                   <DecisionGlyph />
                   <span>{d.label}</span>
                   <RelativeTime value={d.createdAt} now={now} className="sc-decision__age" />

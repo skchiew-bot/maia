@@ -1,6 +1,7 @@
 import type { AuditEventHeaderDTO, DecisionCardView, DecisionKind, PublicTicketStatus } from '@aoc/contracts';
 import type { IconName } from '../../components/Icon';
 import { formatInteger, formatPercent, formatTokens } from '../../lib/format';
+import { decisionHref } from '../../lib/links';
 import { KIND_LABEL, requesterOf, shortId, type PeopleLookup } from '../decisions/model';
 import { PUBLIC_STATUS_LABEL, RESOLUTION_LABEL } from './model';
 
@@ -42,7 +43,7 @@ export function describeEvent(
   const kind = (str(m.kind) || decision?.kind) as DecisionKind | '';
   const kindLabel = kind ? KIND_LABEL[kind] : 'Decision';
   const decisionLink = m.decisionId
-    ? { to: `/decisions?focus=${encodeURIComponent(str(m.decisionId))}`, label: 'Open decision' }
+    ? { to: decisionHref(str(m.decisionId)), label: 'Open decision' }
     : undefined;
   switch (e.type) {
     case 'intake.submitted':

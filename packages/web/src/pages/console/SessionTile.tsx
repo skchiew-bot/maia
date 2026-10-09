@@ -9,6 +9,7 @@ import { LivenessBadge } from '../../components/liveness/LivenessBadge';
 import { Money } from '../../components/Money';
 import { cx } from '../../lib/dom';
 import { formatClock, formatInteger, formatPercent } from '../../lib/format';
+import { decisionHref } from '../../lib/links';
 import { ContextMeter } from '../sessions/ContextMeter';
 import { impliedWindow } from '../sessions/processTypes';
 import { etaText, livenessDetail, modelLabel, phaseLabel, sessionLiveness } from '../sessions/sessionText';
@@ -66,10 +67,7 @@ export function SessionTile({ session: s, apmMax, rolloverPct, activitySeq, now 
             title={s.liveness?.reason}
             detail={
               s.openDecision && state === 'waiting_on_you' ? (
-                <Link
-                  to={`/decisions#${encodeURIComponent(s.openDecision.decisionId)}`}
-                  className="console-tile__decision"
-                >
+                <Link to={decisionHref(s.openDecision.decisionId)} className="console-tile__decision">
                   {detail}
                 </Link>
               ) : (

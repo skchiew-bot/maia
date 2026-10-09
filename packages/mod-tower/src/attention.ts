@@ -82,7 +82,7 @@ const REFUSAL_LABEL: Record<string, string> = {
 const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 const plural = (n: number, word: string) => `${n.toLocaleString('en-US')} ${word}${n === 1 ? '' : 's'}`;
 const usd = (n: number) => `$${n.toFixed(2)}`;
-const decisionHref = (id: string) => `/decisions?id=${encodeURIComponent(id)}`;
+const decisionHref = (id: string) => `/decisions?focus=${encodeURIComponent(id)}`;
 
 type Action = TowerAttentionItem['action'];
 /** A non-decision action: nothing to apply inline. */
@@ -316,7 +316,7 @@ export function buildAttention(r: ReadCtx, integrity: IntegrityFacts): TowerAtte
       action: go(
         'open',
         'Open record',
-        b.change_id ? `/changes?id=${encodeURIComponent(b.change_id)}` : '/changes',
+        b.change_id ? `/changes/${encodeURIComponent(b.change_id)}` : '/changes',
       ),
       chips: ['Break-glass'],
     });

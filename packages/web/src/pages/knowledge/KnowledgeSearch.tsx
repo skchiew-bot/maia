@@ -11,7 +11,8 @@ import {
   describeError,
   formatShortDate,
 } from '../../components';
-import { KIND_LABEL, decisionHref } from './model';
+import { decisionHref } from '../../lib/links';
+import { KIND_LABEL } from './model';
 
 type KindFilter = 'all' | KnowledgeKind;
 

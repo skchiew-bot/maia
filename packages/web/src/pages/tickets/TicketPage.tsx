@@ -26,6 +26,7 @@ import { Widget, WidgetGrid } from '../../components/Widget';
 import { useClock, useNow } from '../../lib/clock';
 import { cx } from '../../lib/dom';
 import { formatAge, formatDateTime, formatInteger, formatTokens } from '../../lib/format';
+import { decisionHref } from '../../lib/links';
 import { usePasskeys, useDecisionActions } from '../decisions/actions';
 import { RecommendationBox } from '../decisions/DecisionDetail';
 import { useDirectory, type Directory } from '../decisions/directory';
@@ -129,7 +130,7 @@ function OpenDecision({
         <KindLine card={card}>
           <AgingBadge aging={agingOf(card, now)} />
         </KindLine>
-        <Link to={`/decisions?focus=${encodeURIComponent(card.id)}`} className="tkt-links__sub">
+        <Link to={decisionHref(card.id)} className="tkt-links__sub">
           Open in Decisions
         </Link>
       </div>
@@ -683,7 +684,7 @@ export default function TicketPage() {
             {[...openCards, ...closedCards].map((d) => (
               <li key={d.id}>
                 <Icon name="decisions" size={12} />
-                <Link to={`/decisions?focus=${encodeURIComponent(d.id)}`}>{KIND_LABEL[d.kind]}</Link>
+                <Link to={decisionHref(d.id)}>{KIND_LABEL[d.kind]}</Link>
                 <span className="tkt-links__sub">
                   {d.status === 'open'
                     ? `open · waiting ${formatAge(now - Date.parse(d.createdAt))}`

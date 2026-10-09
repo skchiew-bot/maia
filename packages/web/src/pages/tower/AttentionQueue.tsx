@@ -25,10 +25,8 @@ import {
   approveTarget,
   attentionKindLabel,
   decisionBlockText,
-  decisionHref,
   denyOption,
   foldAttention,
-  subjectHref,
 } from './towerModel';
 import type { ActionVerb, AttentionActions, OptionRef, PendingAction } from './useAttentionActions';
 
@@ -223,7 +221,7 @@ function QueueRow({ item, rank, scoreMax, card, cardsLoaded, cardsFailed, pendin
           ))}
         </p>
         <h3 className="tower-q__title" id={titleId}>
-          <Link to={subjectHref(item)}>{item.title}</Link>
+          <Link to={item.action.href}>{item.title}</Link>
         </h3>
         <p className="tower-q__basis">
           {item.costOfDelay.basis}
@@ -436,7 +434,7 @@ function RowActions({
   );
 
   if (action.kind === 'resolve_decision' && action.decisionId) {
-    const href = decisionHref(action.decisionId);
+    const href = action.href;
     const cannot = card && !card.viewer.canResolve ? decisionBlockText(card.viewer.reason) : null;
     if (passkey) {
       // The WebAuthn ceremony lives on the Decisions page, bound to this decision and option.
@@ -535,7 +533,7 @@ function RowActions({
   }
 
   return (
-    <ButtonLink size="sm" to={subjectHref(item)} aria-describedby={titleId}>
+    <ButtonLink size="sm" to={action.href} aria-describedby={titleId}>
       {label}
     </ButtonLink>
   );
@@ -603,7 +601,7 @@ function DecisionPanel({
     (mode === 'approve' ? confirmRef.current : commentRef.current)?.focus();
   }, [mode, option?.id]);
 
-  const href = subjectHref(item);
+  const href = item.action.href;
   if (!option) {
     if (cardsFailed) {
       return (

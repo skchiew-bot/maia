@@ -129,7 +129,8 @@ function AuditView() {
       q: params.get('prefix') ?? params.get('type') ?? '',
       actorId: params.get('actor') ?? '',
       projectId: params.get('project') ?? '',
-      scopeId: params.get('scope') ?? '',
+      // `?sessionId=` is the Session page's "Open in Audit" link: the same filter as typing the id.
+      scopeId: params.get('scope') ?? params.get('sessionId') ?? '',
       range,
     }),
     [params, range],
@@ -138,6 +139,7 @@ function AuditView() {
     (key: string, value: string | null) => {
       const next = new URLSearchParams(params);
       if (key === 'prefix') next.delete('type');
+      if (key === 'scope') next.delete('sessionId');
       if (value) next.set(key, value);
       else next.delete(key);
       setParams(next, { replace: true });

@@ -37,6 +37,7 @@ import {
   useToast,
   type DataTableColumn,
 } from '../../components';
+import { decisionHref } from '../../lib/links';
 import { combine, useSectionScroll } from '../learning/resources';
 import { KnowledgeSearch } from './KnowledgeSearch';
 import { LessonDrawer } from './LessonDrawer';
@@ -46,7 +47,6 @@ import {
   SCOPE_LABEL,
   STATUS_META,
   blockedReason,
-  decisionHref,
   filterLessons,
   isKnowledgeEvent,
   payoffRows,

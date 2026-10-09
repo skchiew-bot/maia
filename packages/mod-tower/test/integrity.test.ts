@@ -312,7 +312,7 @@ describe('integrity', () => {
           score: 64.7,
           basis: 'Post-incident record · 2h 20m overdue · open audit finding until filed',
         }, // 62 + 20·log2(1 + 2h 20m/1d)
-        action: { kind: 'open', label: 'Open record', href: '/changes?id=chg_pi', recommendedOptionId: null },
+        action: { kind: 'open', label: 'Open record', href: '/changes/chg_pi', recommendedOptionId: null },
       }),
     ]);
     changeCompleted(h, 'chg_pi');
@@ -405,7 +405,7 @@ describe('integrity', () => {
         action: {
           kind: 'resolve_decision',
           label: 'Review',
-          href: '/decisions?id=dec_lost',
+          href: '/decisions?focus=dec_lost',
           decisionId: 'dec_lost',
           requiresPasskey: true,
           recommendedOptionId: null,

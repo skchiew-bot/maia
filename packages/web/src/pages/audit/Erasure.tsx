@@ -16,6 +16,7 @@ import {
   type DataTableColumn,
 } from '../../components';
 import { formatInteger } from '../../lib/format';
+import { decisionHref } from '../../lib/links';
 import { shortId } from './ids';
 import { ERASE_REASONS, validScopeId, type EraseReason } from './model';
 import { ActorName } from './people';
@@ -189,9 +190,7 @@ export function ErasureHistory({ events }: { events: readonly AuditEventHeaderDT
         header: 'Decision',
         cell: (e) =>
           typeof e.meta.decisionId === 'string' ? (
-            <Link to={`/decisions?focus=${encodeURIComponent(e.meta.decisionId)}`}>
-              {shortId(e.meta.decisionId)}
-            </Link>
+            <Link to={decisionHref(e.meta.decisionId)}>{shortId(e.meta.decisionId)}</Link>
           ) : (
             <span className="audit-muted">none recorded</span>
           ),
