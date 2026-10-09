@@ -325,8 +325,8 @@ export function createIntakeModule(opts: IntakeModuleOptions = {}): AocModule {
           actor: { kind: 'agent', id: body.sessionId },
           scope: { ticketId: link.ticket_id, sessionId: body.sessionId },
           // The class is agent-written text from a session that reads untrusted ticket text: it goes in the erasable
-          // body with the rest of the diagnosis, never in the clear chain (meta keeps the contract's field null).
-          meta: { ticketId: link.ticket_id, sessionId: body.sessionId, confidence: input.data.confidence, rootCauseClass: null },
+          // body with the rest of the diagnosis, never in the clear chain.
+          meta: { ticketId: link.ticket_id, sessionId: body.sessionId, confidence: input.data.confidence },
           payload: {
             rootCause: input.data.root_cause,
             fixPlan: input.data.fix_plan,

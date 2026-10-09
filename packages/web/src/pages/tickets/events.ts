@@ -75,7 +75,7 @@ export function describeEvent(
       return {
         icon: 'learning',
         tone: 'neutral',
-        text: `Diagnosis from ${shortId(str(m.sessionId))}: confidence ${formatPercent(num(m.confidence) ?? 0)}${m.rootCauseClass ? ` · class ${str(m.rootCauseClass)}` : ''}`,
+        text: `Diagnosis from ${shortId(str(m.sessionId))}: confidence ${formatPercent(num(m.confidence) ?? 0)}`,
         link: m.sessionId
           ? { to: `/sessions/${encodeURIComponent(str(m.sessionId))}`, label: 'Session' }
           : undefined,

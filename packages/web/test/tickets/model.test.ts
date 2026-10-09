@@ -121,7 +121,7 @@ describe('ticket history', () => {
     expect(lines).toEqual([
       'Submitted by Daniel Lim · severity high · 0 attachment(s)',
       'Read-only triage started: 2 agent(s), budget 400K tokens and 30 min each',
-      'Diagnosis from ses_tri_a: confidence 82% · class unit-mismatch',
+      'Diagnosis from ses_tri_a: confidence 82%',
       'Fix-plan sign-off requested',
       'Fix plan submitted to the fix-plan gate',
     ]);

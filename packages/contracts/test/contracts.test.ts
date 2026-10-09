@@ -4,6 +4,7 @@ import {
   EVENT_CATALOG,
   computeProgress,
   deriveLiveness,
+  diagnosisRootCauseClass,
   hasPermission,
   ID_PREFIX,
   idKindOf,
@@ -114,6 +115,27 @@ describe('event catalog', () => {
     expect(validateEvent('session.nudged', { sessionId: 'ses_1', text: 'free text!' }, { text: 'x' })[0]).toMatch(/meta/);
     expect(validateEvent('session.nudged', { sessionId: 'ses_1' }, { text: 'x' })).toEqual([]);
     expect(validateEvent('nope.nope', {}, null)[0]).toMatch(/unknown/);
+  });
+});
+
+describe('diagnosis root-cause class', () => {
+  const meta = { ticketId: 'tkt_1', sessionId: 'ses_1', confidence: 0.9 };
+  const body = { rootCause: 'x', fixPlan: 'y' };
+
+  it('is agent-written free text, so only the encrypted body may carry it', () => {
+    expect(validateEvent('ticket.diagnosis_reported', meta, { ...body, rootCauseClass: 'null-check' })).toEqual([]);
+    expect(validateEvent('ticket.diagnosis_reported', { ...meta, rootCauseClass: 'nric 850101-14-5555' }, body)[0]).toMatch(/meta/);
+    expect(validateEvent('ticket.diagnosis_reported', { ...meta, rootCauseClass: null }, body)[0]).toMatch(/meta/);
+  });
+
+  it('is read from the body, from the meta of a log written before it moved, and blanked once the body is erased', () => {
+    expect(diagnosisRootCauseClass(meta, { ...body, rootCauseClass: 'null-check' })).toBe('null-check');
+    expect(diagnosisRootCauseClass({ ...meta, rootCauseClass: 'legacy-class' }, body)).toBe('legacy-class');
+    expect(diagnosisRootCauseClass({ ...meta, rootCauseClass: 'legacy-class' }, { ...body, rootCauseClass: 'null-check' })).toBe('null-check');
+    expect(diagnosisRootCauseClass({ ...meta, rootCauseClass: null }, body)).toBeNull();
+    expect(diagnosisRootCauseClass(meta, body)).toBeNull();
+    // Erased body: even an old event that chained the class in clear reads as unclassified.
+    expect(diagnosisRootCauseClass({ ...meta, rootCauseClass: 'legacy-class' }, null)).toBeNull();
   });
 });
 

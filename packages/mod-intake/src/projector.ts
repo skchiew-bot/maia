@@ -1,5 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite';
-import type { JsonValue, StoredEvent, TicketStage } from '@aoc/contracts';
+import { diagnosisRootCauseClass, type JsonValue, type StoredEvent, type TicketStage } from '@aoc/contracts';
 import type { Projector } from '@aoc/kernel';
 
 export const INTAKE_TABLES = ['itk_tickets', 'itk_attachments', 'itk_sessions', 'itk_decisions', 'itk_promotions'];
@@ -93,8 +93,7 @@ export const intakeProjector: Projector = {
       case 'ticket.diagnosis_reported':
         db.prepare("UPDATE itk_sessions SET status = 'reported', confidence = ?, root_cause_class = ?, root_cause = ?, fix_plan = ?, reported_at = ? WHERE session_id = ?").run(
           m.confidence as number,
-          // In the body since the class stopped being chained in clear; older events carry it in meta.
-          s(p?.rootCauseClass) ?? s(m.rootCauseClass),
+          diagnosisRootCauseClass(m, p),
           s(p?.rootCause) ?? '[erased]',
           s(p?.fixPlan) ?? '[erased]',
           e.ts,

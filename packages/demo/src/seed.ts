@@ -535,8 +535,9 @@ for (const t of ticketSpecs) {
       type: 'ticket.diagnosis_reported',
       actor: agent(s.sessionId),
       scope: { ticketId, sessionId: s.sessionId },
-      meta: { ticketId, sessionId: s.sessionId, confidence, rootCauseClass: 'exif-orientation-dropped' },
+      meta: { ticketId, sessionId: s.sessionId, confidence },
       payload: {
+        rootCauseClass: 'exif-orientation-dropped',
         rootCause: 'normalizeImage() re-encodes uploads and strips all metadata without applying the EXIF orientation tag first, so portrait photos taken on phones are stored rotated 90 degrees.',
         fixPlan: "Apply the EXIF orientation (sharp().rotate()) before stripping metadata in src/uploads/normalize.ts, add a regression test with a rotated receipt, then verify on UAT with the reporter's receipt.",
         affectedAreas: ['src/uploads/normalize.ts', 'test/uploads/normalize.test.ts'],

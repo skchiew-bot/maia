@@ -1,10 +1,12 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { afterEach, describe, expect, it } from 'vitest';
-import { newId, type Actor, type InternalTicket, type LaunchRequest, type LedgerService, type PublicTicket, type SupervisorService } from '@aoc/contracts';
+import { newId, type Actor, type InternalTicket, type LaunchRequest, type LedgerService, type PublicTicket, type StoredEvent, type SupervisorService } from '@aoc/contracts';
 import { createGitService, createTestRuntime, initRepo, type TestRuntime } from '@aoc/kernel';
 import { builtinScanner, createIntakeModule } from '../src';
+import { intakeProjector } from '../src/projector';
 
 let t: TestRuntime;
 let repo: string;
@@ -169,7 +171,7 @@ describe('PDPA erasure of a ticket (§13)', () => {
     expect(live.diagnoses).toEqual(rebuilt.diagnoses);
   });
 
-  it('keeps the agent-written root-cause class out of the clear chain, so the erasure removes it too', async () => {
+  it('keeps the agent-written root-cause class out of the clear chain; a rebuild keeps it and the erasure removes it, live and rebuilt', async () => {
     const launches = await setup();
     const requester = t.user('requester', 'Nur');
     const approver = t.user('approver');
@@ -185,14 +187,38 @@ describe('PDPA erasure of a ticket (§13)', () => {
     const reported = t.rt.store.list({ types: ['ticket.diagnosis_reported'] });
     expect(reported).toHaveLength(1);
     expect(JSON.stringify(reported[0])).not.toContain('850101');
-    const before = await t.json<InternalTicket>('GET', `/api/tickets/${ticketId}`, { headers: approver.headers });
-    expect(before.diagnoses[0]!.rootCauseClass).toBe('nric 850101-14-5555');
+    expect(Object.keys(reported[0]!.meta).sort()).toEqual(['confidence', 'sessionId', 'ticketId']);
+    const diagnoses = async () => (await t.json<InternalTicket>('GET', `/api/tickets/${ticketId}`, { headers: approver.headers })).diagnoses;
+    const before = await diagnoses();
+    expect(before[0]).toMatchObject({ rootCauseClass: 'nric 850101-14-5555', rootCause: 'The validator rejects this id format' });
+
+    // The class lives in the body, which the log can replay: a rebuild gives the same read model.
+    t.rt.store.rebuildProjections(['intake']);
+    expect(await diagnoses()).toEqual(before);
 
     t.rt.store.eraseScope(ticketId, { actor: { kind: 'human', id: approver.user.id }, reason: 'pdpa_request' });
-    const live = await t.json<InternalTicket>('GET', `/api/tickets/${ticketId}`, { headers: approver.headers });
+    const live = await diagnoses();
+    expect(live[0]).toMatchObject({ rootCauseClass: null, rootCause: '[erased]', fixPlan: '[erased]' });
     expect(JSON.stringify(live)).not.toContain('850101');
     t.rt.store.rebuildProjections(['intake']);
-    const rebuilt = await t.json<InternalTicket>('GET', `/api/tickets/${ticketId}`, { headers: approver.headers });
-    expect(live.diagnoses).toEqual(rebuilt.diagnoses);
+    expect(await diagnoses()).toEqual(live);
+  });
+
+  it('reads a class that an older log chained in meta, and still blanks it when the body is erased', () => {
+    const db = new DatabaseSync(':memory:');
+    for (const sql of intakeProjector.ddl) db.exec(sql);
+    db.prepare("INSERT INTO itk_sessions (session_id, ticket_id, role, round, status, started_at) VALUES ('ses_old', 'tkt_old', 'triage', 1, 'running', 't0')").run();
+    const legacy = {
+      type: 'ticket.diagnosis_reported',
+      ts: '2026-10-01T00:00:00.000Z',
+      meta: { ticketId: 'tkt_old', sessionId: 'ses_old', confidence: 0.8, rootCauseClass: 'null-check' },
+    } as unknown as StoredEvent;
+    const row = () => db.prepare("SELECT root_cause_class AS cls, root_cause AS cause FROM itk_sessions WHERE session_id = 'ses_old'").get();
+    intakeProjector.apply({ db, replaying: true }, legacy, { rootCause: 'Null check missing', fixPlan: 'Add a guard' });
+    expect({ ...row() }).toEqual({ cls: 'null-check', cause: 'Null check missing' });
+    // Replayed after the ticket's body was erased: the clear copy in the old meta does not bring the class back.
+    intakeProjector.apply({ db, replaying: true }, legacy, null);
+    expect({ ...row() }).toEqual({ cls: null, cause: '[erased]' });
+    db.close();
   });
 });

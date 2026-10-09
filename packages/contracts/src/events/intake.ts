@@ -39,8 +39,9 @@ export const INTAKE_EVENTS = [
     type: 'ticket.diagnosis_reported',
     owner: 'intake',
     description: 'A triage session reported a root cause, confidence and fix plan.',
-    meta: meta({ ticketId: zId, sessionId: zId, confidence: z.number().min(0).max(1), rootCauseClass: z.string().max(120).nullable() }),
-    payload: payload({ rootCause: z.string(), fixPlan: z.string(), affectedAreas: z.array(z.string()).optional() }),
+    meta: meta({ ticketId: zId, sessionId: zId, confidence: z.number().min(0).max(1) }),
+    // The class is a label the agent wrote after reading untrusted ticket text: free text, so it lives in the erasable body.
+    payload: payload({ rootCause: z.string(), fixPlan: z.string(), rootCauseClass: z.string().max(120).optional(), affectedAreas: z.array(z.string()).optional() }),
   }),
   defineEvent({
     type: 'ticket.escalated_to_human',
@@ -107,3 +108,15 @@ export const INTAKE_EVENTS = [
     payload: null,
   }),
 ] as const;
+
+/**
+ * The root-cause class a `ticket.diagnosis_reported` event carries: in the body, or, in logs written before the class
+ * moved there, chained in clear in meta. An erased body (`payload === null`) blanks it everywhere, so a rebuilt read
+ * model equals the live one even where an old event still holds the class in its meta.
+ */
+export function diagnosisRootCauseClass(meta: unknown, payload: unknown): string | null {
+  if (payload === null || payload === undefined) return null;
+  const text = (v: unknown) => (typeof v === 'string' && v ? v : null);
+  const field = (o: unknown) => (typeof o === 'object' && o !== null ? (o as { rootCauseClass?: unknown }).rootCauseClass : undefined);
+  return text(field(payload)) ?? text(field(meta));
+}
