@@ -42,6 +42,7 @@ import {
   RANGE_START,
   SECRET,
   anchorHead,
+  offHostAudit,
   seed,
   sha256,
   unzip,
@@ -80,9 +81,16 @@ afterEach(async () => {
   for (const d of tempDirs.splice(0)) rmSync(d, { recursive: true, force: true });
 });
 
-async function boot(opts: { mappingFile?: string | null } = {}): Promise<TestRuntime> {
+async function boot(
+  opts: { mappingFile?: string | null; audit?: 'off_host' | 'store_unavailable' | 'none' } = {},
+): Promise<TestRuntime> {
+  const audit = opts.audit ?? 'off_host';
   t = await createTestRuntime({
     modules: [createEvidenceModule({ mappingFile: opts.mappingFile ?? null })],
+    services:
+      audit === 'none'
+        ? {}
+        : { audit: offHostAudit(() => t.rt.store, { record: audit === 'off_host' ? 'found' : 'store_unavailable' }) },
     onDisk: true,
     now: '2026-10-01T00:00:00.000Z',
   });
@@ -140,6 +148,7 @@ describe('evidence pack generation', () => {
       chainOk: true,
       anchorsChecked: 3,
       anchorsMatched: 3,
+      verification: 'verified',
     });
     expect(() => writeFrozen(p.path, new Uint8Array([1, 2, 3]))).toThrow(PackExistsError);
     expect(sha256(readFileSync(p.path))).toBe(p.detail.packHash);
@@ -171,6 +180,7 @@ describe('evidence pack generation', () => {
       fx: { days: 3, live: 1, inherited: 1, missing: 1, minRate: 4.2, maxRate: 4.2, carryForwardAlerts: 1 },
       verification: {
         ok: true,
+        status: 'verified',
         chainOk: true,
         anchorsChecked: 3,
         anchorsMatched: 3,
@@ -178,6 +188,7 @@ describe('evidence pack generation', () => {
       },
     });
     expect(p.detail).toMatchObject({
+      verification: 'verified',
       integrity: 'ok',
       manifest: p.manifest,
       downloadUrl: `/api/evidence/packs/${p.detail.packId}/download`,
@@ -413,6 +424,53 @@ describe('evidence pack generation', () => {
     expect(v.chain.firstBadSeq).toBe(t.rt.store.get(s.boundary.atStart)!.seq);
     expect(v.range.hashesMatched).toBe(v.range.hashesRecomputed - 1);
     expect(second.detail.chainOk).toBe(false);
+    expect(v.status).toBe('failed');
+  });
+
+  it('without the audit service the pack is not verifiable: in-chain anchors are never taken as proof (G-42)', async () => {
+    await boot({ audit: 'none' });
+    const s = seed(t);
+    const notes: BroadcastMessage[] = [];
+    t.rt.broadcaster.subscribe({ role: 'approver', send: (m) => notes.push(m) });
+    const p = await generate(s.builder);
+    expect(p.manifest.verification).toMatchObject({
+      ok: false,
+      status: 'not_verifiable',
+      chainOk: true,
+      anchorsChecked: 3,
+      anchorsMatched: 0,
+      rangeCoveredByAnchor: false,
+    });
+    const v = p.json<EvidenceVerification>('verification.json');
+    expect(v).toMatchObject({ notVerifiableReason: 'audit_service_unavailable', external: null });
+    expect(v.chain).toMatchObject({ ok: true, checked: p.manifest.head.seq });
+    expect(v.anchors.every((a) => a.external === null && !a.matched)).toBe(true);
+    expect(v.anchors.map((a) => a.recomputedHash)).toEqual(v.anchors.map((a) => a.anchoredHash));
+    expect(p.files['index.html']).toContain('Not verifiable against the off-host anchors');
+    expect(p.files['index.html']).toContain('the audit service was not running');
+    expect(p.detail.verification).toBe('not_verifiable');
+    expect(t.rt.store.list({ types: ['evidence_pack.generated'] })[0]!.meta.verification).toBe('not_verifiable');
+    expect(notes).toContainEqual(
+      expect.objectContaining({
+        event: 'notification',
+        data: expect.objectContaining({ kind: 'evidence.integrity', severity: 'warn' }),
+      }),
+    );
+  });
+
+  it('an unreadable off-host anchor store makes the pack not verifiable rather than verified', async () => {
+    await boot({ audit: 'store_unavailable' });
+    const s = seed(t);
+    const p = await generate(s.builder);
+    const v = p.json<EvidenceVerification>('verification.json');
+    expect(v).toMatchObject({
+      ok: false,
+      status: 'not_verifiable',
+      notVerifiableReason: 'off_host_record_unavailable',
+      anchorsMatched: 0,
+    });
+    expect(v.anchors[0]!.external).toMatchObject({ record: 'store_unavailable', hash: null, offHost: false });
+    expect(v.external!.problems).toContain('git anchor store unreadable');
   });
 
   it('validates the range and the caller', async () => {

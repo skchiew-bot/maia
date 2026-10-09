@@ -122,8 +122,12 @@ Rules that make Verify meaningful:
 **Independent verification** (quarterly, and for the auditor): give the auditor a copy of `aoc.db` (the chain
 tables are enough; bodies are not needed) and read access to the anchor remote. The auditor recomputes every hash
 following [architecture §5.1](../architecture.md#51-the-chain-row) (canonical JSON of the header fields, SHA-256,
-genesis `SHA-256("aoc-genesis:" + chainId)`), and compares them with the anchors. The evidence pack
-(`evidence_pack.generated {chainOk, …}`) records the same check for its date range.
+genesis `SHA-256("aoc-genesis:" + chainId)`), and compares them with the anchors. Every evidence pack records the
+same check: its anchors are confirmed against their off-host records by the `audit` service, never by the
+`anchor.created` rows of the log being evidenced. `verification.status` (also `evidence_pack.generated.meta.verification`)
+is `verified`, `failed` (the pack documents a mismatch), or `not_verifiable` (no audit service, an unreadable or
+unreachable anchor store, anchors not held off-host, or no anchors): such a pack proves nothing beyond the in-file
+chain and must not be cited as evidence of integrity.
 
 ## 7. When Verify fails (Sev-1)
 

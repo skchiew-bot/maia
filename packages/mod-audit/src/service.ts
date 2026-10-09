@@ -433,6 +433,8 @@ export class AuditService implements AuditServiceContract {
           provider: name,
           seq,
           anchoredHash,
+          chainHash: d?.hash ?? null,
+          record: x ? 'found' : listing.available ? 'missing' : 'store_unavailable',
           recomputedHash: recomputed,
           matched: recomputed !== null && recomputed === anchoredHash,
           proofOk: false,
@@ -497,6 +499,8 @@ export class AuditService implements AuditServiceContract {
     return {
       ok: problems.length === 0,
       chainOk: v.ok,
+      chainFirstBadSeq: v.firstBadSeq,
+      chainProblems: v.problems,
       chainId: store.chainId,
       headSeq: v.headSeq,
       headHash: v.headHash,

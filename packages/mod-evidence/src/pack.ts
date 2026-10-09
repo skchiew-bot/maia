@@ -7,6 +7,7 @@ import {
   type EvidencePackFileEntry,
   type EvidencePackManifest,
   type EvidencePackRange,
+  type EvidenceVerification,
   type MappingStatus,
   type StoredEvent,
 } from '@aoc/contracts';
@@ -26,7 +27,12 @@ import {
   rateCardVersionsUsed,
   type SectionContext,
 } from './sections';
-import { buildVerification, recomputeLineHash, type RangeLinkage } from './verification';
+import {
+  buildVerification,
+  recomputeLineHash,
+  type PackVerificationSource,
+  type RangeLinkage,
+} from './verification';
 
 export const PACK_PRIVACY_STATEMENT =
   'events.jsonl holds chained event headers only (ids, enums, numbers, hashes). Event payloads and bodies are never exported: personal data stays behind the role boundary.';
@@ -47,6 +53,8 @@ export interface BuildPackInput {
   generatedAt: string;
   generatedBy: Actor;
   mapping: MappingSnapshot;
+  /** The verification the pack is frozen with (audit service, or in-file only); its head is the pack's head. */
+  verification: PackVerificationSource;
 }
 
 export interface BuiltPack {
@@ -54,6 +62,8 @@ export interface BuiltPack {
   /** sha256 of the zip bytes. */
   packHash: string;
   manifest: EvidencePackManifest;
+  /** verification.json as packed. */
+  verification: EvidenceVerification;
 }
 
 const json = (x: unknown) => strToU8(JSON.stringify(x, null, 2) + '\n');
@@ -81,7 +91,8 @@ function publicRange(r: ResolvedRange): EvidencePackRange {
  */
 export function buildEvidencePack(input: BuildPackInput): BuiltPack {
   const { store, range, mapping } = input;
-  const head = store.head();
+  const verified = input.verification.report ?? input.verification.inFile;
+  const head = { seq: verified.headSeq, hash: verified.headHash, chainId: verified.chainId };
   const endTsIncl = new Date(range.endMs - 1).toISOString();
   const ctx: SectionContext = { store, headSeq: head.seq, range, endTsIncl, generatedAt: input.generatedAt };
   const beforeTs = new Date(range.startMs - 1).toISOString();
@@ -150,7 +161,7 @@ export function buildEvidencePack(input: BuildPackInput): BuiltPack {
     else if (e.type === 'promotion.completed' && e.meta.breakglass === true) breakglassPromotions.push(e);
   }
 
-  const verification = buildVerification(store, head.seq, linkage);
+  const verification = buildVerification(store, head.seq, linkage, input.verification);
   const gatesFile = buildGates(ctx, resolved);
   const changesFile = buildChanges(ctx, changes);
   const rollbacksFile = buildRollbacks(ctx, rollbacks);
@@ -228,6 +239,7 @@ export function buildEvidencePack(input: BuildPackInput): BuiltPack {
     fx: fxFile.summary,
     verification: {
       ok: verification.ok,
+      status: verification.status,
       chainOk: verification.chain.ok,
       anchorsChecked: verification.anchorsChecked,
       anchorsMatched: verification.anchorsMatched,
@@ -255,5 +267,5 @@ export function buildEvidencePack(input: BuildPackInput): BuiltPack {
     { 'manifest.json': json(manifest), ...Object.fromEntries(data), 'index.html': html },
     { level: 6, mtime: new Date(input.generatedAt) },
   );
-  return { zip, packHash: sha256hex(zip), manifest };
+  return { zip, packHash: sha256hex(zip), manifest, verification };
 }

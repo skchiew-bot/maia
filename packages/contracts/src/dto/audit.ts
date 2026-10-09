@@ -71,7 +71,12 @@ export interface AnchorCheckDTO {
   anchorId: string | null;
   provider: AnchorProviderName;
   seq: number;
+  /** The off-host record's hash when it was found, otherwise the chain's own anchor.created hash. */
   anchoredHash: string;
+  /** Hash recorded by the chain's anchor.created event (null when the chain holds no event for this anchor). */
+  chainHash: string | null;
+  /** The off-host record: found, missing from a readable anchor store, or the store could not be read. */
+  record: 'found' | 'missing' | 'store_unavailable';
   recomputedHash: string | null;
   matched: boolean;
   proofOk: boolean;
@@ -88,6 +93,9 @@ export interface VerifyReportDTO {
   ok: boolean;
   /** In-file recomputation only (defeatable on its own — R2). */
   chainOk: boolean;
+  /** The in-file recomputation's own first bad seq and findings (also part of firstBadSeq / problems). */
+  chainFirstBadSeq: number | null;
+  chainProblems: string[];
   chainId: string;
   headSeq: number;
   headHash: string;

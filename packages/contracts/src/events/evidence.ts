@@ -27,7 +27,10 @@ export const EVIDENCE_EVENTS = [
       rateCardVersion: count,
       chainOk: z.boolean(),
       anchorsChecked: count,
+      /** Anchors confirmed by their off-host record (not by the chain's own anchor.created rows). */
       anchorsMatched: count,
+      /** Off-host verification outcome via the audit service (absent on packs made before it was recorded). */
+      verification: z.enum(['verified', 'failed', 'not_verifiable']).optional(),
     }),
     payload: null,
   }),
