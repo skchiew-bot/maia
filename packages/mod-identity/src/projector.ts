@@ -177,8 +177,13 @@ export const identityProjector: Projector = {
   onErase(db, scopeId) {
     db.prepare('UPDATE idn_users SET name = ?, email = NULL WHERE body_scope = ?').run(ERASED, scopeId);
     db.prepare('UPDATE idn_tokens SET label = NULL WHERE body_scope = ?').run(scopeId);
+    // Everything the registration body held, as a replay without it leaves it: the signature counter then comes from
+    // the counter_updated events alone (their meta is chained in clear), the registration's own figure being gone.
     db.prepare(
-      'UPDATE idn_passkeys SET label = NULL, credential_id = NULL, public_key = NULL WHERE body_scope = ?',
+      `UPDATE idn_passkeys SET label = NULL, credential_id = NULL, public_key = NULL, transports = NULL, device_type = NULL, backed_up = NULL,
+         counter = COALESCE((SELECT MAX(json_extract(u.meta, '$.counter')) FROM events u
+           WHERE u.type = 'passkey.counter_updated' AND json_extract(u.meta, '$.credentialIdHash') = idn_passkeys.id), 0)
+       WHERE body_scope = ?`,
     ).run(scopeId);
   },
 };
