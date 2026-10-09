@@ -25,6 +25,13 @@ export const SESSION_EVENTS = [
       ticketId: zId.nullable(),
       parentSessionId: zId.nullable(),
       phaseId: zId.nullable(),
+      /**
+       * The user the session belongs to (null: nobody, e.g. an intake triage run). Absent on events written
+       * before it existed: projections then fall back to the human actor, else the parent session's owner.
+       */
+      ownerId: zId.nullable().optional(),
+      /** Change record the session works under (its env carries AOC_CHANGE_ID). */
+      changeId: zId.nullable().optional(),
     }),
     payload: payload({ prompt: z.string(), cwd: z.string() }),
   }),

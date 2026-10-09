@@ -368,6 +368,26 @@ describe('playbook lifecycle: retire and supersede', () => {
     await t.close();
   });
 
+  it('a proposal whose approval card expires unanswered is retired, never bound (G-33)', async () => {
+    const t = await start();
+    t.llm.on('registry.distill', LLM_PLAYBOOK);
+    await seedRun(t, { sessionId: 'ses_run1' });
+    const v1 = (await (await distill(t, t.user('builder').headers, 'ses_run1')).json()) as DistillResponse;
+    t.rt.store.append({
+      type: 'decision.expired',
+      actor: { kind: 'system', id: 'decisions' },
+      scope: { decisionId: v1.decisionId },
+      meta: { decisionId: v1.decisionId, ageMs: 86_400_000 },
+      source: 'system',
+    });
+    await t.drain();
+    expect(t.rt.store.list({ types: ['playbook.retired'] }).map((e) => e.meta)).toEqual([
+      expect.objectContaining({ playbookId: v1.playbook.playbookId, reason: 'decision_withdrawn' }),
+    ]);
+    expect(t.rt.services.get('registry').activePlaybook('feature-build')).toBeNull();
+    await t.close();
+  });
+
   it('approving a newer version supersedes the active one', async () => {
     const t = await start();
     t.llm.on('registry.distill', LLM_PLAYBOOK);

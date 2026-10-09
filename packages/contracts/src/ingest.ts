@@ -13,7 +13,10 @@ export const INGEST_PATHS = {
   mcp: (tool: AocMcpToolName) => `/ingest/mcp/${tool}` as const,
 } as const;
 
-/** Env vars the supervisor sets on managed claude processes (inherited by hooks; passed explicitly to the MCP server). */
+/**
+ * Env vars AOC sets on the processes it starts: managed claude sessions (inherited by hooks and the model's own Bash;
+ * passed explicitly to the MCP server), the supervisor's promotion executor and @aoc/llm's own CLI calls.
+ */
 export const AOC_ENV = {
   sessionId: 'AOC_SESSION_ID',
   projectId: 'AOC_PROJECT_ID',
@@ -24,6 +27,14 @@ export const AOC_ENV = {
   mode: 'AOC_MODE', // managed | observed
   spoolDir: 'AOC_SPOOL_DIR',
   readOnly: 'AOC_READ_ONLY',
+  /** Change record a managed session works under (git prepare-commit-msg adds an `AOC-Change` trailer). */
+  changeId: 'AOC_CHANGE_ID',
+  /** Intake ticket a managed session works on (`AOC-Ticket` trailer). */
+  ticketId: 'AOC_TICKET_ID',
+  /** "1" only in the supervisor's promotion executor (never a session env): the pre-push guard lets it through. */
+  supervisorPush: 'AOC_SUPERVISOR_PUSH',
+  /** "1" on @aoc/llm's own claude CLI calls (FX extraction, distillation): not a session, observed hooks skip them. */
+  internalLlm: 'AOC_INTERNAL_LLM',
 } as const;
 
 export interface HookIngestRequest {
@@ -49,10 +60,14 @@ export interface SpoolItem {
 export interface SpoolFlushRequest {
   items: SpoolItem[];
 }
+/** What the daemon did with one replayed item. */
+export type SpoolItemResult = 'accepted' | 'duplicate' | 'rejected';
 export interface SpoolFlushResponse {
   accepted: number;
   duplicates: number;
   rejected: number;
+  /** Per-item outcomes in request order (same length as `items`). Optional: clients fall back to the counts. */
+  results?: SpoolItemResult[];
 }
 
 export interface HeartbeatRequest {

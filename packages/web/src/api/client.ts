@@ -176,6 +176,11 @@ export function apiPut<T>(path: string, body?: unknown, opts?: RequestOptions): 
   return request<T>('PUT', path, body, opts);
 }
 
+/** PATCH a JSON body → parsed JSON. */
+export function apiPatch<T>(path: string, body?: unknown, opts?: RequestOptions): Promise<T> {
+  return request<T>('PATCH', path, body, opts);
+}
+
 /** DELETE → parsed JSON (usually undefined). */
 export function apiDelete<T>(path: string, opts?: RequestOptions): Promise<T> {
   return request<T>('DELETE', path, undefined, opts);

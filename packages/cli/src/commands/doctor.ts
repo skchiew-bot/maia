@@ -1,6 +1,13 @@
 import type { Command } from 'commander';
 import type { CommandContext } from '../context';
-import { nodeDoctorFs, runDoctor, type DaemonProbe, type DoctorCheck, type Verdict } from '../doctor';
+import {
+  nodeDoctorFs,
+  runDoctor,
+  type DaemonProbe,
+  type DoctorCheck,
+  type IntakeScannerHealth,
+  type Verdict,
+} from '../doctor';
 import { EXIT } from '../errors';
 import { renderTable } from '../format';
 import { Api, ApiError } from '../http';
@@ -10,10 +17,25 @@ import { userOf } from './auth';
 
 const PROBE_TIMEOUT_MS = 3000;
 
+async function probeIntakeScanner(api: Api): Promise<IntakeScannerHealth | null> {
+  try {
+    const health = await api.get<{ checks?: { intake?: IntakeScannerHealth } } | null>(API_PATHS.health);
+    return health?.checks?.intake ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export async function probeDaemon(api: Api): Promise<DaemonProbe> {
   try {
     const u = userOf(await api.get(API_PATHS.authMe));
-    return { reachable: true, status: 200, user: { id: u.id, name: u.name, role: u.role }, error: null };
+    return {
+      reachable: true,
+      status: 200,
+      user: { id: u.id, name: u.name, role: u.role },
+      error: null,
+      intakeScanner: await probeIntakeScanner(api),
+    };
   } catch (err) {
     if (err instanceof ApiError)
       return { reachable: err.status !== null, status: err.status, user: null, error: err.message };

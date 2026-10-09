@@ -138,11 +138,39 @@ describe('G-04: privileged git never runs in agent-writable trees', { timeout: 6
     });
   }
 
-  /** A traced feature branch on top of main; the project repository stays on main. */
+  /** What mod-ledger appends when a session closes a task: the HEAD it read from the session's repository (G-25). */
+  let closes = 0;
+  function recordHead(sessionId: string, sha: string) {
+    const taskId = `tsk_${++closes}`;
+    h.t.rt.store.append({
+      type: 'task.done',
+      actor: { kind: 'agent', id: sessionId },
+      scope: { sessionId, projectId: PROJECT, taskId },
+      meta: {
+        sessionId,
+        projectId: PROJECT,
+        taskId,
+        phaseId: 'ph_1',
+        weight: 1,
+        evidenceKind: 'commit',
+        evidenceVerified: true,
+        flag: null,
+        fileChangesSinceLast: 1,
+        headSha: sha,
+      },
+      payload: { evidence: { kind: 'commit', ref: sha } },
+      source: 'mcp',
+    });
+  }
+
+  /** A traced feature branch on top of main, worked by the linked session; the project repository stays on main. */
   function feature(name: string, file: string): string {
     repo.git('checkout', '-q', '-b', name);
-    const tip = repo.commit(`feat: ${name}\n\nAOC-Change: ${changeId}`, { [file]: `${name}\n` });
+    const tip = repo.commit(`feat: ${name}\n\nAOC-Session: ses_g04\nAOC-Change: ${changeId}`, {
+      [file]: `${name}\n`,
+    });
     repo.git('checkout', '-q', 'main');
+    recordHead('ses_g04', tip);
     return tip;
   }
 
@@ -414,10 +442,21 @@ describe('G-04 end to end, with the real supervisor', { timeout: 60_000 }, () =>
       writeFileSync(pushLog, '');
       const planted = plant(repo);
 
+      // Session isolation (G-01) with `nobody` as the session user, in directories it can reach.
+      const reachable = tempDir('aoc-g04-iso-');
+      chmodSync(reachable, 0o755);
       h = await harness({
         supervisor: false,
-        modules: [createSupervisorModule({ sandboxUser: SANDBOX_USER, sessionsDir: join(dir, 'sessions') })],
-        config: { supervisor: { credentialProfilesFile: profiles } },
+        modules: [createSupervisorModule({ sessionsDir: join(dir, 'sessions') })],
+        config: {
+          supervisor: {
+            sessionUser: SANDBOX_USER,
+            sessionHomesDir: join(reachable, 'homes'),
+            workspacesDir: join(reachable, 'work'),
+            claudeBin: process.execPath,
+            credentialProfilesFile: profiles,
+          },
+        },
         change: { serviceClonesDir: clones, projects: { [PROJECT]: { promotionRemote: remote } } },
       });
       const t = h.t;

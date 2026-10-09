@@ -1,0 +1,358 @@
+/* Compliance area: mapping status hero, coverage strip, clause → evidence table, evidence packs. */
+
+.compliance-muted {
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+}
+.compliance-list {
+  margin: 0;
+  padding-left: 16px;
+}
+.compliance-note {
+  padding: 6px 10px;
+  border-left: 3px solid var(--border-strong);
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+}
+.compliance-details > summary {
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  cursor: pointer;
+}
+.compliance-details > p {
+  margin-top: 6px;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  white-space: pre-wrap;
+}
+
+/* ---- status hero ---- */
+.compliance-status {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+.compliance-status__banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-3) var(--sp-4);
+  padding: var(--sp-3) var(--sp-4);
+  border: 1px solid;
+  border-radius: var(--radius);
+}
+.compliance-status__banner > div {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+.compliance-status__banner.is-provisional {
+  border-color: color-mix(in srgb, var(--warn) 45%, transparent);
+  background: var(--warn-soft);
+}
+.compliance-status__banner.is-provisional > .aoc-icon {
+  color: var(--warn);
+}
+.compliance-status__banner.is-stamped {
+  border-color: color-mix(in srgb, var(--ok) 40%, transparent);
+  background: var(--ok-soft);
+}
+.compliance-status__banner.is-stamped > .aoc-icon {
+  color: var(--ok);
+}
+.compliance-status__title {
+  font-size: var(--fs-xl);
+  font-weight: 600;
+  line-height: var(--lh-tight);
+}
+.compliance-status__statement {
+  margin-top: 2px;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+}
+.compliance-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--sp-2) var(--sp-5);
+}
+.compliance-facts dt {
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+.compliance-facts dd {
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+}
+
+/* ---- coverage strip ---- */
+.compliance-strip {
+  margin: 0;
+}
+.compliance-strip__bar {
+  display: flex;
+  gap: 2px;
+  min-height: 40px;
+}
+.compliance-strip__seg {
+  position: relative;
+  display: flex;
+  flex: var(--share, 1) 1 0;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 34px;
+  padding: 2px 4px;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  font-size: var(--fs-xs);
+  line-height: 1.2;
+  text-align: center;
+}
+.compliance-strip__seg:first-child {
+  border-radius: 4px 0 0 4px;
+}
+.compliance-strip__seg:last-child {
+  border-radius: 0 4px 4px 0;
+}
+.compliance-strip__seg.is-annex {
+  background: var(--surface-3);
+}
+.compliance-strip__seg.is-provisional {
+  background-image: repeating-linear-gradient(
+    135deg,
+    transparent 0 6px,
+    color-mix(in srgb, var(--warn) 18%, transparent) 6px 9px
+  );
+  border-color: color-mix(in srgb, var(--warn) 45%, var(--border-strong));
+}
+.compliance-strip__seg.is-stamped {
+  border-color: color-mix(in srgb, var(--ok) 50%, var(--border-strong));
+}
+.compliance-strip__key {
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.compliance-strip__seg strong {
+  color: var(--text);
+  font-size: var(--fs-sm);
+}
+.compliance-strip__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin-top: 6px;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+}
+.compliance-strip__legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.compliance-strip__swatch {
+  width: 10px;
+  height: 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 2px;
+  background: var(--surface-2);
+}
+.compliance-strip__swatch.is-annex {
+  background: var(--surface-3);
+}
+@media (max-width: 640px) {
+  /* Fourteen proportional segments do not fit a phone: equal tiles that wrap, each with a fill bar sized to its
+     family's share of the largest one, keep both the comparison and the numbers. */
+  .compliance-strip__bar {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(52px, 1fr));
+  }
+  .compliance-strip__seg,
+  .compliance-strip__seg:first-child,
+  .compliance-strip__seg:last-child {
+    min-width: 0;
+    padding-bottom: 6px;
+    border-radius: 4px;
+  }
+  .compliance-strip__seg::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    width: calc(var(--rel, 0) * 100%);
+    height: 3px;
+    background: var(--text-3);
+  }
+}
+
+/* ---- clause → evidence table ---- */
+.compliance-table__filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--sp-2) var(--sp-3);
+  padding: 0 var(--sp-4) var(--sp-3);
+}
+.compliance-filter {
+  min-width: 200px;
+}
+.compliance-filter .aoc-field__label {
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+}
+.compliance-table .aoc-dt__td {
+  padding-top: 6px;
+  padding-bottom: 6px;
+  vertical-align: top;
+}
+.compliance-clause,
+.compliance-control,
+.compliance-evidence,
+.compliance-pack,
+.compliance-generated {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  font-size: var(--fs-sm);
+  line-height: 1.35;
+}
+.compliance-clause__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+.compliance-clause code {
+  color: var(--text);
+  font-weight: 600;
+}
+.compliance-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+.compliance-chip {
+  height: 20px;
+  padding: 0 6px;
+  font-family: var(--font-mono);
+  font-weight: 500;
+  text-decoration: none;
+}
+.compliance-chips__more {
+  font-size: var(--fs-xs);
+}
+.compliance-chip:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.compliance-correction {
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+}
+
+/* ---- evidence packs ---- */
+.compliance-generate {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--sp-2) var(--sp-3);
+}
+.compliance-generate .aoc-field {
+  width: 170px;
+}
+.compliance-generate__submit {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+.compliance-generate > .aoc-alert {
+  flex-basis: 100%;
+}
+.compliance-packs {
+  margin: var(--sp-4) calc(-1 * var(--sp-4)) calc(-1 * var(--sp-4));
+  border-top: 1px solid var(--border);
+  padding-top: var(--sp-2);
+}
+.compliance-download {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.compliance-drawer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+.compliance-drawer__title {
+  margin-top: var(--sp-2);
+  font-size: var(--fs-md);
+  font-weight: 600;
+}
+.compliance-checks,
+.compliance-files {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--fs-sm);
+}
+.compliance-checks li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.compliance-checks .is-ok .aoc-icon {
+  color: var(--ok);
+}
+.compliance-checks .is-bad .aoc-icon {
+  color: var(--warn);
+}
+.compliance-files li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 8px;
+  padding: 3px 0;
+  border-top: 1px solid var(--border);
+}
+.compliance-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+.compliance-clamp {
+  display: block;
+}
+.compliance-clamp__text.is-clamped {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.compliance-clamp__toggle {
+  margin-left: 4px;
+  font-size: var(--fs-xs);
+}
+@media (max-width: 640px) {
+  .compliance-packs .aoc-dt__mobile-sort {
+    padding: 0 var(--sp-4);
+  }
+  .compliance-packs .aoc-dt:has(.aoc-dt__empty-row) .aoc-dt__mobile-sort {
+    display: none;
+  }
+  /* Long text reads top-down under its label on phones instead of right-aligned beside it. */
+  .compliance-table .aoc-dt__td:not(.is-primary) {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    text-align: left;
+  }
+}

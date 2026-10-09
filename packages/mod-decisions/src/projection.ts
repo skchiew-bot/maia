@@ -1,15 +1,16 @@
 import type { DatabaseSync } from 'node:sqlite';
-import type {
-  DecisionCard,
-  DecisionKind,
-  DecisionOption,
-  DecisionStatus,
-  DecisionTest,
-  JsonValue,
-  MetaOf,
-  PayloadOf,
-  Role,
-  StoredEvent,
+import {
+  resolutionAssurance,
+  type DecisionCard,
+  type DecisionKind,
+  type DecisionOption,
+  type DecisionStatus,
+  type DecisionTest,
+  type JsonValue,
+  type MetaOf,
+  type PayloadOf,
+  type Role,
+  type StoredEvent,
 } from '@aoc/contracts';
 import type { Projector } from '@aoc/kernel';
 
@@ -209,7 +210,7 @@ function applyResolved(db: DatabaseSync, e: StoredEvent, payload: JsonValue | nu
 
 function applyWithdrawn(db: DatabaseSync, e: StoredEvent, payload: JsonValue | null): void {
   const m = e.meta as unknown as MetaOf<'decision.withdrawn'>;
-  // The catalog has no decision.expired event: a withdrawal labelled `expired` is how a card expires.
+  // Logs written before decision.expired was emitted expire cards as a withdrawal labelled `expired`.
   const status: DecisionStatus = m.reason === 'expired' ? 'expired' : 'withdrawn';
   db.prepare(
     `UPDATE ${TABLE} SET status = ?, withdrawn_by = ?, withdrawn_at = ?, withdraw_reason = ?, withdraw_note = ?, withdraw_body_scope = ?,
@@ -226,6 +227,13 @@ function applyWithdrawn(db: DatabaseSync, e: StoredEvent, payload: JsonValue | n
     e.seq,
     m.decisionId,
   );
+}
+
+function applyExpired(db: DatabaseSync, e: StoredEvent): void {
+  const m = e.meta as unknown as MetaOf<'decision.expired'>;
+  db.prepare(
+    `UPDATE ${TABLE} SET status = 'expired', closed_at = ?, closed_seq = ? WHERE id = ? AND status = 'open'`,
+  ).run(e.ts, e.seq, m.decisionId);
 }
 
 function applyEscalated(db: DatabaseSync, e: StoredEvent): void {
@@ -270,6 +278,7 @@ export const DECISION_EVENT_TYPES = [
   'decision.requested',
   'decision.resolved',
   'decision.withdrawn',
+  'decision.expired',
   'decision.escalated',
 ] as const;
 
@@ -287,6 +296,8 @@ export function createDecisionsProjector(): Projector {
           return applyResolved(db, e, payload);
         case 'decision.withdrawn':
           return applyWithdrawn(db, e, payload);
+        case 'decision.expired':
+          return applyExpired(db, e);
         case 'decision.escalated':
           return applyEscalated(db, e);
       }
@@ -328,6 +339,10 @@ function toRecord(r: Row): DecisionRecord {
             resolvedAt: r.resolved_at ?? r.closed_at ?? r.created_at,
             method: r.resolution_method as 'button' | 'passkey' | 'policy',
             passkeyVerified: r.passkey_verified === 1,
+            assurance: resolutionAssurance({
+              method: r.resolution_method as 'button' | 'passkey' | 'policy',
+              passkeyVerified: r.passkey_verified === 1,
+            }),
             selfApproved: r.self_approved === 1,
             comment: r.resolution_comment,
           }

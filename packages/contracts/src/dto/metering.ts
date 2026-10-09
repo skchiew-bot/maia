@@ -5,6 +5,7 @@
  */
 import type { ModelTier } from '../domain';
 import type { RateCardRate } from '../events/metering';
+import type { FxSession } from './fx';
 
 export const NOTIONAL_COST_BASIS = 'notional_api_equivalent' as const;
 export const NOTIONAL_COST_LABEL = 'Notional API-equivalent cost (decision support, not a bill)';
@@ -20,6 +21,8 @@ export interface MeteringFxStamp {
   rate: number | null;
   status: 'live' | 'inherited' | 'missing';
   sourceDate: string | null;
+  /** BNM session of the rate (null when missing, or for rates and rollups made before sessions were stamped). */
+  session: FxSession | null;
 }
 
 export interface MeteringTokenTotals {

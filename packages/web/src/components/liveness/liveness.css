@@ -43,8 +43,13 @@
   box-shadow: none;
 }
 .aoc-liveness:is([data-tone='waiting'], [data-tone='throttled'], [data-tone='dead'], [data-tone='stalled'])
-  :is(.aoc-liveness__icon, .aoc-liveness__word, .aoc-liveness__detail, .aoc-liveness__detail::before) {
+  :is(.aoc-liveness__icon, .aoc-liveness__word, .aoc-liveness__detail) {
   color: var(--text-inverse);
+}
+/* :is() cannot match pseudo-elements, so the separator gets its own rule. */
+.aoc-liveness:is([data-tone='waiting'], [data-tone='throttled'], [data-tone='dead'], [data-tone='stalled'])
+  .aoc-liveness__detail::before {
+  color: inherit;
 }
 
 /* ---- Alive indicator: static dot; one pulse per activity event ---- */

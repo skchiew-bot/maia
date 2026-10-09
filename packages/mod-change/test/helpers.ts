@@ -2,7 +2,14 @@ import { spawn, spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import type { ChangeScope, LearningService, LedgerService, SupervisorService, User } from '@aoc/contracts';
+import type {
+  ChangeScope,
+  LearningService,
+  LedgerService,
+  SelfModificationService,
+  SupervisorService,
+  User,
+} from '@aoc/contracts';
 import {
   createTestRuntime,
   initRepo,
@@ -220,9 +227,10 @@ export async function harness(
     supervisor?: boolean;
     ledger?: Partial<LedgerService>;
     learning?: Partial<LearningService>;
+    selfmod?: SelfModificationService;
     /** More modules, e.g. the real supervisor (with `supervisor: false`). */
     modules?: AocModule[];
-    config?: Record<string, unknown>;
+    config?: Parameters<typeof createTestRuntime>[0]['config'];
   } = {},
 ): Promise<Harness> {
   const sup = new FakeSupervisor();
@@ -231,10 +239,11 @@ export async function harness(
   if (opts.supervisor !== false) services.supervisor = sup;
   if (opts.ledger) services.ledger = opts.ledger;
   if (opts.learning) services.learning = opts.learning;
+  if (opts.selfmod) services.selfmod = opts.selfmod;
   const t = await createTestRuntime({
     modules: [mod, ...(opts.modules ?? [])],
     services,
-    ...(opts.config ? { config: opts.config } : {}),
+    config: opts.config,
   });
   const notifications: Harness['notifications'] = [];
   t.rt.broadcaster.subscribe({

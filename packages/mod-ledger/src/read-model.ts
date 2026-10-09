@@ -126,6 +126,17 @@ export interface AmendmentRow {
   new_total_weight: number;
   reason: string | null;
 }
+export interface DriftRow {
+  event_id: string;
+  seq: number;
+  session_id: string;
+  project_id: string;
+  kind: DriftKind;
+  severity: 'low' | 'medium' | 'high';
+  task_id: string | null;
+  at: string;
+  detail: string | null;
+}
 export interface EnhancementRow {
   event_id: string;
   seq: number;
@@ -296,6 +307,16 @@ export class LedgerReadModel {
           kind,
         )!.n
       : this.one<{ n: number }>('SELECT COUNT(*) AS n FROM ledger_drift WHERE session_id = ?', sessionId)!.n;
+  }
+  driftOfProject(projectId: string): DriftRow[] {
+    return this.many('SELECT * FROM ledger_drift WHERE project_id = ? ORDER BY seq', projectId);
+  }
+  /** Every phase pin recorded in the project (one per session and phase: the latest), oldest first. */
+  pinsOfProject(projectId: string): PhaseRow[] {
+    return this.many(
+      'SELECT * FROM ledger_phases WHERE project_id = ? AND pinned_at IS NOT NULL ORDER BY pinned_at, session_id',
+      projectId,
+    );
   }
   amendmentsOfSession(sessionId: string): AmendmentRow[] {
     return this.many('SELECT * FROM ledger_amendments WHERE session_id = ? ORDER BY seq', sessionId);

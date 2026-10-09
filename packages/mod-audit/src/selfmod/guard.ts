@@ -60,6 +60,12 @@ export function boundaryConfig(config: AocConfig, dataDir: string, tsrDir?: stri
   const store = [
     dataDir === ':memory:' ? null : dataDir,
     config.audit.anchorRepoPath,
+    // The anchor signing keyring and the TSA trust anchors decide what Verify accepts as proof.
+    config.audit.gnupgHome,
+    config.audit.tsaCaFile,
+    config.audit.tsaUntrustedFile,
+    config.audit.backupDir,
+    config.audit.backupKeyFile,
     config.selfModification.externalAuditLog,
     config.keys.masterKeyFile,
     config.supervisor.credentialProfilesFile,

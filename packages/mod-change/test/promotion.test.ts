@@ -105,6 +105,49 @@ describe('provenance guarantee and promotion (§14)', () => {
     return shas;
   }
 
+  /** What mod-ledger appends when a session closes a task: the HEAD it read from the session's repo. */
+  let closes = 0;
+  function recordHead(sessionId: string, sha: string) {
+    const taskId = `tsk_${++closes}`;
+    h.t.rt.store.append({
+      type: 'task.done',
+      actor: { kind: 'agent', id: sessionId },
+      scope: { sessionId, projectId: PROJECT, taskId },
+      meta: {
+        sessionId,
+        projectId: PROJECT,
+        taskId,
+        phaseId: 'ph_1',
+        weight: 1,
+        evidenceKind: 'commit',
+        evidenceVerified: true,
+        flag: null,
+        fileChangesSinceLast: 1,
+        headSha: sha,
+      },
+      payload: { evidence: { kind: 'commit', ref: sha } },
+      source: 'mcp',
+    });
+  }
+
+  /** A second approved change record, worked by session ses_other. */
+  async function otherChange(): Promise<string> {
+    h.t.sessions!.add({ sessionId: 'ses_other', projectId: PROJECT });
+    const id = await draftAndAffirm(h, {
+      projectId: PROJECT,
+      scope: 'reversible_off_main',
+      owner: h.builder,
+      rollbackRef: base,
+      title: 'Unrelated work',
+    });
+    await approveChange(h, id, h.builder);
+    await h.t.json('POST', `/api/changes/${id}/start`, {
+      headers: h.builder.headers,
+      body: { sessionId: 'ses_other' },
+    });
+    return id;
+  }
+
   it('traces every commit in <main>..<sha> through a gate and names the orphans', async () => {
     await setup();
     await approvedTicket('tkt_ok', 'ses_ticket');
@@ -120,7 +163,7 @@ describe('provenance guarantee and promotion (§14)', () => {
       'feature/mixed',
       [
         ['feat: a\n\nAOC-Session: ses_change', { 'a.ts': '1' }],
-        [`feat: b\n\nAOC-Change: ${changeId}`, { 'b.ts': '1' }],
+        [`feat: b\n\nAOC-Session: ses_change\nAOC-Change: ${changeId}`, { 'b.ts': '1' }],
         ['chore: sneaky manual edit', { 'c.ts': '1' }],
         ['feat: d\n\nAOC-Session: ses_unknown', { 'd.ts': '1' }],
         ['fix: ticket\n\nAOC-Session: ses_ticket', { 'e.ts': '1' }],
@@ -128,6 +171,8 @@ describe('provenance guarantee and promotion (§14)', () => {
         ['fix: g\n\nAOC-Session: ses_rejected_plan', { 'g.ts': '1' }],
       ],
     );
+    for (const s of ['ses_change', 'ses_unknown', 'ses_ticket', 'ses_successor', 'ses_rejected_plan'])
+      recordHead(s, rejectedPlan!);
     const p = await h.t.json<ProvenanceDTO>('GET', `/api/provenance?projectId=${PROJECT}&sha=feature/mixed`, {
       headers: h.builder.headers,
     });
@@ -164,12 +209,61 @@ describe('provenance guarantee and promotion (§14)', () => {
     });
   });
 
+  it('a valid trailer for an unrelated approved change is an orphan: trailers are corroborated, never trusted (G-25)', async () => {
+    await setup();
+    await otherChange();
+    const [selfAsserted, borrowed, unrecorded] = branch('feature/forged', [
+      [`feat: claims the change\n\nAOC-Change: ${changeId}`, { 'a.ts': '1' }],
+      [`feat: borrows the change\n\nAOC-Session: ses_other\nAOC-Change: ${changeId}`, { 'b.ts': '1' }],
+      ['feat: names the right session\n\nAOC-Session: ses_change', { 'c.ts': '1' }],
+    ]);
+    // ses_other really worked on this branch (its HEAD contains every commit); ses_change never recorded one.
+    recordHead('ses_other', unrecorded!);
+    const svc = h.t.rt.services.get('change') as ChangeService;
+    const first = svc.provenance(PROJECT, 'feature/forged');
+    expect(first.orphanShas).toEqual([unrecorded, borrowed, selfAsserted]);
+    const reason = (sha: string) => first.reasons.find((r) => r.startsWith(sha.slice(0, 12)));
+    expect(reason(selfAsserted!)).toContain('an AOC-Change trailer alone is self-asserted');
+    expect(reason(borrowed!)).toContain(`session ses_other is not linked to approved change ${changeId}`);
+    expect(reason(unrecorded!)).toContain('session ses_change never recorded a HEAD containing this commit');
+
+    const refused = await h.t.request('POST', '/api/promotions', {
+      headers: h.builder.headers,
+      body: { projectId: PROJECT, fromRef: 'feature/forged', changeId },
+    });
+    expect(refused.status).toBe(422);
+    expect(h.t.rt.store.list({ types: ['promotion.refused'] })[0]!.meta).toMatchObject({
+      reason: 'provenance_gap',
+      orphanShas: [unrecorded, borrowed, selfAsserted],
+    });
+    expect(h.t.decisions!.list({ kind: ['go_live'] })).toHaveLength(0);
+
+    // Once the ledger records a ses_change HEAD containing it, the honest commit traces; the forged ones never do.
+    recordHead('ses_change', unrecorded!);
+    expect(svc.provenance(PROJECT, 'feature/forged')).toMatchObject({
+      ok: false,
+      orphanShas: [borrowed, selfAsserted],
+    });
+    expect(repo.head('main')).toBe(base);
+  });
+
+  it('a HEAD recorded in a clone the project repo never saw proves nothing', async () => {
+    await setup();
+    const [tip] = branch('feature/elsewhere', [['feat: x\n\nAOC-Session: ses_change', { 'x.ts': '1' }]]);
+    recordHead('ses_change', 'f'.repeat(40));
+    const svc = h.t.rt.services.get('change') as ChangeService;
+    expect(svc.provenance(PROJECT, tip!)).toMatchObject({ ok: false, orphanShas: [tip] });
+    recordHead('ses_change', tip!);
+    expect(svc.provenance(PROJECT, tip!)).toEqual({ ok: true, orphanShas: [], reasons: [] });
+  });
+
   it('refuses to promote orphan commits; no gate is raised and main is untouched', async () => {
     await setup();
-    const [, orphan] = branch('feature/x', [
-      [`feat: ok\n\nAOC-Change: ${changeId}`, { 'a.ts': '1' }],
+    const [traced, orphan] = branch('feature/x', [
+      [`feat: ok\n\nAOC-Session: ses_change\nAOC-Change: ${changeId}`, { 'a.ts': '1' }],
       ['hotfix without a change record', { 'b.ts': '1' }],
     ]);
+    recordHead('ses_change', traced!);
     const res = await h.t.request('POST', '/api/promotions', {
       headers: h.builder.headers,
       body: { projectId: PROJECT, fromRef: 'feature/x' },
@@ -200,8 +294,9 @@ describe('provenance guarantee and promotion (§14)', () => {
     const clone = setPromotionRemote(h, PROJECT, remote);
     const [, tip] = branch('feature/y', [
       ['feat: one\n\nAOC-Session: ses_change', { 'a.ts': '1' }],
-      [`feat: two\n\nAOC-Change: ${changeId}`, { 'b.ts': '2' }],
+      [`feat: two\n\nAOC-Session: ses_change\nAOC-Change: ${changeId}`, { 'b.ts': '2' }],
     ]);
+    recordHead('ses_change', tip!);
     const requested = await h.t.json<PromotionDTO>('POST', '/api/promotions', {
       headers: h.builder.headers,
       body: { projectId: PROJECT, fromRef: 'feature/y', changeId },
@@ -270,6 +365,7 @@ describe('provenance guarantee and promotion (§14)', () => {
     await approvedTicket('tkt_9', 'ses_fix');
     repo.git('checkout', '-q', '-b', 'fix/tkt-9');
     const tip = repo.commit('fix: tkt 9\n\nAOC-Session: ses_fix', { 'fix.ts': '1' }); // repo stays on the fix branch: main is moved by ref update
+    recordHead('ses_fix', tip);
     const svc = h.t.rt.services.get('change') as ChangeService;
     const request = () =>
       svc.requestPromotion({ projectId: PROJECT, fromRef: 'fix/tkt-9', ticketId: 'tkt_9' }, SYSTEM);
@@ -302,9 +398,11 @@ describe('provenance guarantee and promotion (§14)', () => {
 
   it('refuses non-fast-forward promotions at request and at execution, gates change-driven promotions, records rejections', async () => {
     await setup();
-    const [stale] = branch('feature/stale', [[`feat: stale\n\nAOC-Change: ${changeId}`, { 's.ts': '1' }]]);
-    const [fresh] = branch('feature/fresh', [[`feat: fresh\n\nAOC-Change: ${changeId}`, { 'f.ts': '1' }]]);
-    const [other] = branch('feature/other', [[`feat: other\n\nAOC-Change: ${changeId}`, { 'o.ts': '1' }]]);
+    const trailers = `AOC-Session: ses_change\nAOC-Change: ${changeId}`;
+    const [stale] = branch('feature/stale', [[`feat: stale\n\n${trailers}`, { 's.ts': '1' }]]);
+    const [fresh] = branch('feature/fresh', [[`feat: fresh\n\n${trailers}`, { 'f.ts': '1' }]]);
+    const [other] = branch('feature/other', [[`feat: other\n\n${trailers}`, { 'o.ts': '1' }]]);
+    for (const sha of [stale!, fresh!, other!]) recordHead('ses_change', sha);
     const promote = (fromRef: string, extra: Record<string, unknown> = {}) =>
       h.t.request('POST', '/api/promotions', {
         headers: h.builder.headers,

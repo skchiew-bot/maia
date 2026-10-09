@@ -3,19 +3,31 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync, write
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { handOver, isolatedRunEnv, lookupSandboxUser } from '../src/sandbox';
-import { createHarness, type Harness } from './harness';
+import { lookupOsUser } from '../src/isolation';
+import { handOver, isolatedRunEnv } from '../src/sandbox';
+import { FAKE_CLAUDE, createHarness, type Harness } from './harness';
 
 const SANDBOX = 'nobody';
 const sandboxUnavailable = ((): string | null => {
   if (process.getuid?.() !== 0) return 'aocd must be root to run commands as another user';
   try {
-    lookupSandboxUser(SANDBOX);
+    lookupOsUser(SANDBOX);
     return null;
   } catch (err) {
     return (err as Error).message;
   }
 })();
+
+/** Session isolation (G-01) with `nobody` as the session user, in directories it can reach. */
+function isolatedSupervisor(dir: string) {
+  return {
+    sessionUser: SANDBOX,
+    sessionHomesDir: join(dir, 'homes'),
+    workspacesDir: join(dir, 'work'),
+    hookCommand: [process.execPath, FAKE_CLAUDE],
+    mcpCommand: [process.execPath, FAKE_CLAUDE],
+  };
+}
 
 let h: Harness | null = null;
 const temps: string[] = [];
@@ -88,7 +100,7 @@ describe('isolated runs: environment and sandbox (G-04)', () => {
     ).rejects.toThrow(/never gets a credential profile/);
   });
 
-  it('without a session user, a sandboxed run stays with aocd’s user and holds no credential', async () => {
+  it('without session isolation, a sandboxed run stays with aocd’s user and holds no credential', async () => {
     h = await createHarness();
     const r = await h.sup.runIsolated({
       cwd: h.root,
@@ -105,8 +117,10 @@ describe('isolated runs: environment and sandbox (G-04)', () => {
   it.skipIf(sandboxUnavailable !== null)(
     `as the session user, an acceptance test writes only what was handed over${sandboxUnavailable ? ` (skipped: ${sandboxUnavailable})` : ''}`,
     async () => {
-      h = await createHarness({ module: { sandboxUser: SANDBOX } });
-      const user = lookupSandboxUser(SANDBOX);
+      const reachable = temp('aoc-iso-');
+      chmodSync(reachable, 0o755);
+      h = await createHarness({ supervisor: isolatedSupervisor(reachable) });
+      const user = lookupOsUser(SANDBOX);
       const root = temp('aoc-verify-');
       const checkout = join(root, 'checkout');
       mkdirSync(checkout);
@@ -159,7 +173,5 @@ describe('isolated runs: environment and sandbox (G-04)', () => {
     const someone = { name: SANDBOX, uid: 65534, gid: 65534 };
     expect(() => handOver([join(dir, 'etc-link')], someone)).toThrow(/not a link/);
     expect(() => handOver(['relative/dir'], someone)).toThrow(/absolute/);
-    expect(() => lookupSandboxUser('root')).toThrow(/neither root/);
-    expect(() => lookupSandboxUser('no such user!')).toThrow(/not a valid OS user name/);
   });
 });

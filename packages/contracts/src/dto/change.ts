@@ -117,7 +117,12 @@ export interface RollbackDTO {
 export const PROMOTION_STATUSES = ['requested', 'completed', 'refused', 'rejected', 'failed'] as const;
 export type PromotionStatus = (typeof PROMOTION_STATUSES)[number];
 export type PromotionRefusalReason =
-  'provenance_gap' | 'uat_missing' | 'gate_missing' | 'tests_failed' | 'not_fast_forward';
+  | 'provenance_gap'
+  | 'uat_missing'
+  | 'gate_missing'
+  | 'tests_failed'
+  | 'not_fast_forward'
+  | 'self_modification';
 
 export interface PromotionDTO {
   promotionId: string;
@@ -169,7 +174,12 @@ export interface ProvenanceCommitDTO {
   sha: string;
   subject: string;
   traced: boolean;
-  /** How the commit traces to a gate: AOC-Change trailer, a session linked to an approved change, or a session on a ticket with an approved fix plan. */
+  /**
+   * How the commit traces to a gate, always through its AOC-Session (trailers alone are self-asserted): `change` = its
+   * AOC-Change trailer names an approved change that session is linked to; `session_change` = the session is linked to
+   * an approved change; `session_ticket` = the session works a ticket with an approved fix plan. Each also requires
+   * the commit to be reachable from a HEAD the ledger recorded for that session.
+   */
   via: 'change' | 'session_change' | 'session_ticket' | null;
   changeIds: string[];
   sessionIds: string[];
@@ -186,6 +196,32 @@ export interface ProvenanceDTO {
   commits: ProvenanceCommitDTO[];
   orphanShas: string[];
   reasons: string[];
+}
+
+/** What recorded a pinned state: a phase completion, a change record (rollback point or completion pin), or a tag. */
+export type PinSource = 'phase.completed' | 'change.submitted' | 'change.completed' | 'git.ref_pinned';
+/** Why a pin can no longer be restored (rollback targets must still resolve to their pinned commit). */
+export type PinProblem = 'repo_unknown' | 'tag_missing' | 'tag_moved' | 'commit_missing';
+
+export interface PinDTO {
+  /** Immutable tag (null for a SHA-only pin). */
+  tag: string | null;
+  /** SHA recorded when the state was pinned. */
+  sha: string | null;
+  /** Every record that pinned this state, oldest first. */
+  pinnedBy: { source: PinSource; sourceId: string | null; at: string; seq: number }[];
+  /** The commit a rollback to this pin restores; null when it no longer resolves (see `problem`). */
+  resolvedSha: string | null;
+  problem: PinProblem | null;
+}
+
+/** `GET /api/pins?projectId=` — the project's pinned states, newest first, checked against its repository. */
+export interface PinListDTO {
+  projectId: string;
+  defaultBranch: string | null;
+  /** Current head of the default branch: the natural rollback target for a new change record (not yet pinned). */
+  head: string | null;
+  pins: PinDTO[];
 }
 
 export interface AffirmRateRowDTO {

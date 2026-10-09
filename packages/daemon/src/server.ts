@@ -61,7 +61,7 @@ export async function createAocServer(config: AocConfig, opts: AocServerOptions 
   // The data dir holds the event log, the encrypted body store and possibly the generated KEK.
   if (config.dataDir !== ':memory:') mkdirSync(config.dataDir, { recursive: true, mode: 0o700 });
 
-  const llm = opts.llm ?? (await resolveLlm(config, log));
+  const llm = opts.llm ?? resolveLlm(config);
   const daemon: AocModule = {
     name: 'aocd',
     init(ctx) {
@@ -86,12 +86,30 @@ export async function createAocServer(config: AocConfig, opts: AocServerOptions 
 
   app.get('/api/health', (c) => {
     const degraded = runtime.store.projectionHealth().filter((p) => p.status !== 'ok').length;
+    const checks = runtime.modules.flatMap((m) => {
+      if (!m.health) return [];
+      try {
+        return [{ name: m.name, ...m.health() }];
+      } catch {
+        return [{ name: m.name, ok: false, detail: { error: 'health_check_failed' } }];
+      }
+    });
+    // Module details (e.g. which malware scanner runs) are for operators, not anonymous callers or requesters.
+    const role = c.get('auth')?.user.role;
+    const operator = role === 'approver' || role === 'builder';
     return c.json({
-      status: degraded ? 'degraded' : 'ok',
+      status: degraded || checks.some((h) => !h.ok) ? 'degraded' : 'ok',
       headSeq: runtime.store.head().seq,
       uptimeMs: Math.max(0, clock.now() - startedAt),
       modules: runtime.modules.map((m) => m.name),
       projections: { degraded },
+      ...(checks.length
+        ? {
+            checks: Object.fromEntries(
+              checks.map((h) => [h.name, operator ? { ok: h.ok, ...h.detail } : { ok: h.ok }]),
+            ),
+          }
+        : {}),
     });
   });
 

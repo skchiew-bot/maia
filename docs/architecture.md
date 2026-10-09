@@ -836,6 +836,13 @@ stateDiagram-v2
 - **Alert.** After `fx.carryForwardAlertWeekdays` (default 3) weekdays in a row without a live rate,
   `fx.carry_forward_alert` asks for a manual check, once per streak. Weekends never count. Holidays and weekdays
   without any record do; BNM's longest holiday run in 2025–26 was two weekdays.
+- **Re-check of the previous weekday** (`fx.recheckPreviousWeekday`, default on). The first run of a day looks at
+  the previous weekday once. If it was stamped a holiday or its page was unreadable, and the API now has that day,
+  the day is attempted again. Metering closes each day at 00:15, though, and a closed day is never restated, so
+  with the default schedule a late figure is usually only reported (`fx.alert`, info). A failed extraction is not
+  re-checked.
+- **Stamped downstream.** `FxService.rateFor` returns the session with the rate, and `rollup.closed` records it as
+  `fxSession` (optional, so older rollups stay valid).
 - **Session 0900 or 1200.** If the noon rate is mandated, set `fx.session: "1200"`, `fx.runAtLocalTime: "13:00"` and
   `fx.retryAtLocalTimes: ["13:30", "15:00"]`. The page cannot show 1200 without a form POST, so the rate is the API
   figure alone (`extractor: api`): sanity-bounded, but with no page cross-check and no LLM.

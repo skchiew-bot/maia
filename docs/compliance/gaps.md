@@ -24,26 +24,42 @@ Threat-model items are cited as O-n (`docs/security/threat-model.md` §6).
 | G-34 | Stall threshold | CEO decision 2026-10-09: 10 min (`a2a4e96`) | `packages/contracts/test/contracts.test.ts`, `packages/mod-sessions/test/sessions.test.ts` |
 | G-35 | Sole-Approver fallback always on | CEO decision 2026-10-09: off by default (`a2a4e96`) | `packages/mod-decisions/test/engine.test.ts` › "is off by default: the only Approver cannot resolve their own requests" |
 | G-39 | Erasure left decrypted read-model text in `aoc.db` free pages and the WAL; FTS5 kept erased terms in live index segments | kernel `63331da` (`secure_delete` on `aoc.db`, `wal_checkpoint(TRUNCATE)` after `eraseScope`), mod-registry `503b8df` (FTS5 `optimize` when an erasure removes knowledge documents) | `packages/kernel/test/security.test.ts` › "scrubbed projection text is gone from aoc.db and its WAL, not just from the table"; `packages/mod-registry/test/security.test.ts` › "leaves no trace of an erased document in the FTS index pages on disk" (raw `aoc.db` / `-wal` bytes) |
-| G-01 / G-04 / G-07 | Supervisor launch, `runIsolated`, self-modification guard | supervisor, mod-audit | **Narrowed**, not closed — what remains is below. |
+| G-04 / G-07 | Supervisor launch, `runIsolated`, self-modification guard | supervisor, mod-audit | **Narrowed**, not closed — what remains is below. (G-01 was narrowed with them and is now closed: next row.) |
+| G-01 | Sessions ran as the aocd OS user | session isolation (supervisor, contracts config, daemon) | `packages/supervisor/test/isolation.test.ts` (end-to-end part needs root; it creates two OS users): › "runs a build turn, its hooks and its MCP server as the session user, who can read none of aocd’s secrets" (claude-sim Bash tries the profiles file, the KEK, `aoc.db`, the data dir, aocd's `~/.ssh` key and the original key file → all `Permission denied`; `HOME` is the session's, not aocd's), › "a read-only session cannot open a profile key file, a build session’s key copy or its environment", › "startup self-check › refuses to start while a session user can read the data dir, and starts once it is private" (and the KEK / profiles / key-file and runner variants), › "runs supervisor commands without credentials (acceptance tests) as the session user, never as root"; `packages/daemon/test/production.test.ts` › "refuses to run managed sessions as the aocd OS user". Residuals below. |
+| G-46 | KEK from `AOC_MASTER_KEY`; git children inherited all of `process.env` | kernel `crypto.ts`, `git.ts`, `child-env.ts` | `packages/kernel/test/secrets.test.ts` › "a git child (and whatever git starts) sees no AOC_*, ANTHROPIC_* or tokens", › "production › refuses a KEK from AOC_MASTER_KEY, even when the file is fine" (and never generated, mode 0400/0600 only, not inside `dataDir`, owner check); `packages/daemon/test/production.test.ts` › "refuses a KEK from AOC_MASTER_KEY even beside a valid key file, without echoing it". Residuals below. |
 
-## P0 — software (both unassigned)
+## P0 — software
 
-### G-01 Sessions must not run as the aocd OS user (threat model O-1)
-Rows: S3-a, S3-d, S7-m, R1, R4. **Owner: unassigned.**
-Today `claude`, its hooks, MCP server and Bash run as the user that owns the credential profiles file, every key
-file a profile names, the KEK and both databases, with that user's `HOME` (the default `envAllowlist` passes `HOME`
-through: `packages/contracts/src/config.ts:43`, `packages/supervisor/src/launch-config.ts:76-107`). Any session —
-including a read-only triage session through `Read` — can read all of them, so the credential isolation of §3 holds
-only against agents that do not look.
-**Change** (`packages/supervisor`): spawn every turn (and the hook / MCP children) as a dedicated unprivileged user
-(`aoc-agent`, configurable `supervisor.sessionUser`) or in a per-session container; give each session its own `HOME`
-and `CLAUDE_CONFIG_DIR` under the session dir, `GIT_CONFIG_GLOBAL=/dev/null`, no credential helpers; materialise a
-profile's key file as a per-session copy readable by that user and delete it at session end; refuse to start when
-the session user can read `dataDir`, the KEK or `credentialProfilesFile` (startup self-check). The sidecar stays with
-the service user (it needs the transcript, not the agent's rights).
-**Tests:** claude-sim scenario whose Bash step tries to read the profiles file, the KEK, `aoc.db` and `~/.ssh` →
-all denied; `HOME` in the session env differs from aocd's; a read-only session cannot open a profile key file;
-startup fails when `sessionUser` can read `dataDir`.
+### G-01 Sessions must not run as the aocd OS user (threat model O-1) — closed; residuals
+Rows: S3-a, S3-d, S7-m, R1, R4. **Closed** by session isolation (evidence in the Resolved table above).
+**Enforced now** with `supervisor.isolation: "user"` (on as soon as `supervisor.sessionUser` is set, and always in
+`"mode": "production"`): every turn — `claude`, its hooks, its MCP server and the model's tools — runs as
+`sessionUser`, read-only types as `readOnlySessionUser` (production requires a separate user with its own uid and
+group), directly by uid/gid or through `supervisor.runner` (per-session container, `setpriv`); aocd must be root. Each
+session has its own `HOME`, `CLAUDE_CONFIG_DIR` and `TMPDIR` under `supervisor.sessionHomesDir`, root-owned
+`mcp.json`/`settings.json` it cannot rewrite, `GIT_CONFIG_GLOBAL=/dev/null` and `GIT_CONFIG_NOSYSTEM=1`; a profile's
+key files (`files` + `{{file:<name>}}`) become private `0400` copies that exist only while a turn runs. The startup
+self-check refuses to start when a session user can read `dataDir`, `aoc.db`, `bodies.db`, the KEK, the profiles
+file, a key file it names or aocd's session files, when a turn's commands are unreachable, or when a runner does not
+switch users. `runIsolated` without a credential profile (acceptance tests) runs as the session user, not root. The
+sidecar stays with aocd. Development keeps `isolation: "none"` as the default, warned at startup and on every launch.
+`session.launched.payload.runAs` records who each turn ran as. Operator setup: `docs/runbooks/credential-isolation.md`
+§4.
+**Residuals** (owners to assign):
+- **Egress is not restricted** (O-14, O-9): a session can still send out whatever it holds — its own key copy, the
+  Claude token, the ingest token. Isolation narrows what it holds; it does not stop exfiltration.
+- **Credentialed sessions share one OS user**: a build session can read a concurrent build session's key copy and
+  `/proc/<pid>/environ` (a `git-feature` session can reach a `bug-fix` session's `uat-deploy` key while it runs).
+  Per-session uids or containers (`supervisor.runner`) close this.
+- **With aocd as root, privileged git fails closed in agent-owned repositories** until G-04: root's git refuses them
+  (dubious ownership), so promotion pushes, pin tags, rollback checkouts and the ledger's commit-evidence check do
+  not work there. Never work around it with `safe.directory`.
+- The ingest token is still in the session's environment (G-44 / O-3).
+- A non-root aocd with a `sudo` runner is not supported: the sidecar cannot read the 0600 transcript and aocd cannot
+  SIGKILL another user's process.
+- A session's own `HOME` keeps what the agent writes there across that session's turns (it no longer reaches other
+  sessions or aocd). `~/.claude/settings.json` gets the workspace-settings rules before every turn (no
+  `disableAllHooks`, no `env`); other Claude Code state there (for example `.claude.json`) is not checked.
 
 ### G-04 Privileged git never in agent-writable trees (threat model O-2)
 Rows: S3-b, S8-g, S14.2-a, R1. **Status: enforced in code** (G-04 agent; `packages/mod-change`,
@@ -90,7 +106,7 @@ still read agent repositories as aocd (hardened flags, not yet as the session us
 | G-44 | Agents can forge metering: the sidecar posts with the session's own ingest token, which is in the model's env (`packages/supervisor/src/supervisor.ts:1702-1738`), so Bash can post usage / heartbeats (O-3, O-5, T-4, T-14) | S10.1-a, S2.1-a | **Unassigned** | Issue a separate sidecar principal (mod-identity), accept `/ingest/usage` / `heartbeat` / `process` only from it; reconcile per turn against the supervisor's stream-json `result.modelUsage` | A usage POST with the session token → 403; sidecar totals that disagree with `modelUsage` are flagged |
 | G-45 | Requester UAT feedback reaches a **credentialed** build session (framed, but unreviewed) — O-9, T-11 | S7-m, R4 | **Unassigned** | Route UAT feedback through a read-only triage pass or a Builder review before `startBuild`; restrict build-session egress (with O-14) | A UAT failure creates a review step before any build turn starts |
 | G-41 | Self-changes only partly audited outside AOC: the external log records blocked attempts, not merged Tier-1 changes; AOC's own promotion gate does not refuse Tier-1 changes traced to managed sessions (O-10) | S13-j, S13-k, R14 | **Unassigned** | Append an external-log line for every promotion touching `protectedPaths` in an AOC repo; refuse such promotions when any commit traces to a managed session | A promotion whose commits touch `packages/kernel/` from a managed session is refused and logged externally |
-| G-46 | KEK and secrets handling in production (O-13): the KEK may come from `AOC_MASTER_KEY` (`packages/kernel/src/crypto.ts:39`); the git wrapper passes all of `process.env` to child processes (`packages/kernel/src/git.ts:11`) | R6 | **Unassigned** | Production mode refuses an env KEK (file only, mode 0400); scrub the env of git / child processes to an allowlist | Production start with `AOC_MASTER_KEY` fails; a git child sees no `AOC_*` / API keys |
+| G-46 | **Closed for the kernel** (evidence in the Resolved table). `"mode": "production"` takes the KEK only from an existing `keys.masterKeyFile` outside `dataDir`, mode 0400/0600, owned by aocd's user (or a systemd credential): `AOC_MASTER_KEY` and generation are refused. Kernel-spawned git gets an allowlisted env (`childEnv`). **Residual:** development still accepts `AOC_MASTER_KEY`, and children spawned outside the kernel still inherit all of `process.env`: mod-audit's anchor git (`packages/mod-audit/src/anchor/git.ts:79`) and the claude CLI LLM adapter (`packages/llm/src/claude-cli.ts:155`) | R6 | **Unassigned** (mod-audit, llm owners) | Use the kernel's `childEnv` there (the anchor push may need `SSH_AUTH_SOCK` / `GIT_SSH_COMMAND` added explicitly) | An anchor git child and the LLM CLI child see no `AOC_*` |
 | G-12 | Default malware scanner is a heuristic | S7-j, R4 | New agent (assigned) | ClamAV by default where present; refuse attachments in production without an AV engine; report it in health / `aoc doctor` | `scanner: 'clamav'` without the binary → 503 and a health warning |
 | G-21 | No automated off-host backup / restore drill | R6 | New agent (assigned) | Nightly online backup of both DBs + blobs, encrypted, off-host, never with the KEK; restore command and drill | Backup → wipe → restore → chain verifies, bodies decrypt with the separately held KEK |
 
@@ -122,12 +138,12 @@ still read agent repositories as aocd (hardened flags, not yet as the session us
 | P-05 | **Compliance-lead review of the ISO/IEC 42001 mapping** (`docs/compliance/iso42001-annex-a.md` is input), then the stamp via `POST /api/compliance/mapping/stamp` by a named person holding the `complianceLead` flag. Until then every pack says "Provisional — do not cite" | §13, §14, R3 | Compliance lead | Open |
 | P-06 | **Human review of the AI-built governance core** (`docs/compliance/self-modification-boundary.md` §5 checklist: kernel, contracts, mod-audit, mod-credits, mod-decisions, mod-identity, hooks, config, plus the supervisor and change-control paths it lists); CODEOWNERS with required human review | §13, R14 | CEO / Governance | Open |
 | P-07 | **Ship the external self-modification log off-host** as it is written (central log, append-only bucket or anchor repo) and name its reviewer | §13, R14 | CEO / Governance | Open |
-| P-08 | **Per-stage CEO sign-off** (§15). Stage 1 is functionally complete; sign-off should wait for G-01 and G-04 | §15, R5 | CEO | Open |
+| P-08 | **Per-stage CEO sign-off** (§15). Stage 1 is functionally complete; sign-off should wait for G-04 and for the P-13 host setup that G-01 (closed in software) depends on | §15, R5 | CEO | Open |
 | P-09 | Approve the static mock | §12, §15 | CEO | **Done 2026-10-09** (recorded in `mocks/README.md`) |
 | P-10 | **Enablement gates** (O-21): keep the intake portal and Builder surfaces off in production until the identity stage is signed off — the portal API was merged before identity | §6, §15, R5 | CEO | Open |
 | P-11 | **Separation of duties with one Approver** (O-8): the fallback is now off (CEO, 2026-10-09), so the only Approver's own requests have no eligible resolver — appoint a deputy Approver with a passkey | §6 | CEO | Decision made; deputy Approver open |
 | P-12 | **Malware scanning in production**: provision ClamAV on the portal host | §7, R4 | CEO / CX lead | Open |
-| P-13 | **Credential profiles file and OS users**: least-privilege `git-feature`, `uat-deploy`, `promotion` profiles; aocd service user and a separate session user (prerequisite of G-01); no process type may name `promotion` | §3, R1 | Platform Architect | Open |
+| P-13 | **Credential profiles file and OS users**: least-privilege `git-feature`, `uat-deploy`, `promotion` profiles, key files declared under `files` (`{{file:<name>}}`); aocd run as root (reduced capability set) with two session users, `aoc-agent` and `aoc-reader`, each with its own group; `"mode": "production"`; file ownership per `docs/runbooks/credential-isolation.md` §4; no process type may name `promotion` | §3, R1 | Platform Architect | Open (G-01 software done; host setup outstanding) |
 | P-14 | **Observed-session coverage**: observed hooks with each developer's own observer token, quarterly `aoc doctor` checklist (`docs/runbooks/credential-isolation.md` §5) | §2, R1 | CEO / DevEx | Open |
 | P-15 | Discovery-class build stages on Opus | §15 | CEO | Process |
 | P-16 | Credit policy: allocations, exemptions, top-up approvers | §10 | CEO / FinOps | Open |

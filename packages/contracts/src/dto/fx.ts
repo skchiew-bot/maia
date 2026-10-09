@@ -87,7 +87,7 @@ export interface FxStatusDTO {
   retryAtLocalTimes: string[];
   todayRecord: FxRateDTO | null;
   /** Rate in effect today (carried forward from the latest prior day when today has no record). */
-  current: { rate: number; status: FxRateStatus; sourceDate: string } | null;
+  current: { rate: number; status: FxRateStatus; sourceDate: string; session: FxSession | null } | null;
   lastLive: { date: string; rate: number } | null;
   /**
    * Weekdays in a row without a live rate, up to the latest recorded day: carried-forward weekdays (holidays

@@ -1,0 +1,32 @@
+{
+  "name": "demo-deep-think",
+  "description": "Demo \"Thinking\": a discovery run (OCR fallback for handwritten claim forms) dominated by long streaming thinking pauses of 2-5 minutes, with occasional reads; declares 2 phases / 3 tasks and closes them with diff and test evidence (~28 minutes).",
+  "steps": [
+    {"kind":"think","ms":150000,"outputTokens":2400,"thinking":"Handwritten claim forms defeat the printed-text OCR engine. Before planning: how is OCR routed today, what confidence do we get on handwriting, and what is the cheapest safe fallback?"},
+    {"kind":"text","text":"Reading how OCR is routed today before I plan anything."},
+    {"kind":"tool","name":"Read","input":{"file_path":"src/ocr/router.ts"}},
+    {"kind":"think","ms":120000,"outputTokens":1900},
+    {"kind":"tool","name":"Read","input":{"file_path":"src/ocr/engines.ts"}},
+    {"kind":"think","ms":180000,"outputTokens":2800,"thinking":"Two options: always run both engines (double cost), or gate the handwriting engine on low printed-text confidence. Gating is cheaper and keeps latency for printed forms."},
+    {"kind":"mcp","server":"aoc","tool":"declare_plan","args":{"summary":"Confidence-gated OCR fallback for handwritten claim forms.","phases":[{"id":"discovery","name":"Discovery","tasks":[{"id":"t1","title":"Compare OCR engines on handwritten samples","size":"m"},{"id":"t2","title":"Write the fallback design note","size":"m"}]},{"id":"prototype","name":"Prototype","tasks":[{"id":"t3","title":"Prototype the confidence-gated fallback router","size":"l","acceptance":"Forms below 0.6 printed-text confidence go to the handwriting engine"}]}]}},
+    {"kind":"think","ms":240000,"outputTokens":3600},
+    {"kind":"tool","name":"Read","input":{"file_path":"docs/ocr/engine-comparison.md"}},
+    {"kind":"think","ms":60000,"outputTokens":900},
+    {"kind":"tool","name":"Write","input":{"file_path":"docs/ocr/engine-comparison.md","content":"# OCR engines on handwritten claim forms\n\n<!-- build {{sim.sessionId}} -->\n\n| Engine | Printed forms | Handwritten forms | p95 latency |\n| --- | --- | --- | --- |\n| print-ocr | 0.97 | 0.41 | 0.8 s |\n| hand-ocr | 0.88 | 0.83 | 2.9 s |\n\nHandwriting accuracy needs the second engine; printed forms do not.\n"}},
+    {"kind":"mcp","server":"aoc","tool":"task_done","args":{"task_id":"t1","evidence":{"kind":"diff","ref":"docs/ocr/engine-comparison.md"}}},
+    {"kind":"think","ms":300000,"outputTokens":4500,"thinking":"Threshold choice: 0.6 keeps 92% of printed forms on the fast path in the sample set while catching every handwritten form below 0.5."},
+    {"kind":"tool","name":"Grep","input":{"pattern":"confidence","path":"src/ocr"}},
+    {"kind":"think","ms":200000,"outputTokens":3000},
+    {"kind":"tool","name":"Read","input":{"file_path":"docs/ocr/fallback.md"}},
+    {"kind":"tool","name":"Write","input":{"file_path":"docs/ocr/fallback.md","content":"# Confidence-gated OCR fallback\n\n<!-- build {{sim.sessionId}} -->\n\n- Run print-ocr first (fast path).\n- Below 0.6 page confidence, re-run the page on hand-ocr and keep the higher-confidence result.\n- Record which engine produced every field so adjusters can see it.\n- Cost: +18% OCR spend on the sample mix, versus +100% for always running both.\n"}},
+    {"kind":"mcp","server":"aoc","tool":"task_done","args":{"task_id":"t2","evidence":{"kind":"diff","ref":"docs/ocr/fallback.md"}}},
+    {"kind":"think","ms":280000,"outputTokens":4200},
+    {"kind":"tool","name":"Read","input":{"file_path":"src/ocr/router.ts"}},
+    {"kind":"tool","name":"Write","input":{"file_path":"src/ocr/router.ts","content":"// OCR router with a confidence-gated handwriting fallback\n// build {{sim.sessionId}}\nimport { handOcr, printOcr, type OcrResult } from './engines';\n\nexport const FALLBACK_BELOW = 0.6;\n\nexport async function recognise(page: Uint8Array): Promise<OcrResult> {\n  const printed = await printOcr(page);\n  if (printed.confidence >= FALLBACK_BELOW) return printed;\n  const hand = await handOcr(page);\n  return hand.confidence > printed.confidence ? hand : printed;\n}\n"}},
+    {"kind":"think","ms":120000,"outputTokens":1800},
+    {"kind":"tool","name":"Write","input":{"file_path":"test/ocr/router.test.ts","content":"// OCR router tests\n// build {{sim.sessionId}}\nimport { expect, it } from 'vitest';\nimport { FALLBACK_BELOW } from '../../src/ocr/router';\n\nit('falls back to the handwriting engine below 0.6 confidence', () => {\n  expect(FALLBACK_BELOW).toBe(0.6);\n});\n"}},
+    {"kind":"mcp","server":"aoc","tool":"task_done","args":{"task_id":"t3","evidence":{"kind":"test","ref":"test/ocr/router.test.ts > falls back to the handwriting engine below 0.6 confidence"}}},
+    {"kind":"text","text":"The OCR fallback is designed and prototyped: print-ocr first, hand-ocr below 0.6 confidence."},
+    {"kind":"endTurn","final":true}
+  ]
+}

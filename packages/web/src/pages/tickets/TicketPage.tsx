@@ -46,7 +46,6 @@ import {
   budgetsFrom,
   diagnosisOf,
   gatesOf,
-  goLiveDecisionId,
   latestPromotion,
   latestRound,
   stageSpans,
@@ -245,6 +244,79 @@ function CloseDialog({
 }
 
 /**
+ * Raises a fresh go-live decision when UAT passed but the promotion never started or did not complete. The
+ * request goes through the same provenance and UAT checks, and the person who asks becomes the decision's
+ * requester, so separation of duties keeps them from signing it.
+ */
+function RequestGoLive({
+  ticket,
+  directory,
+  onRequested,
+}: {
+  ticket: InternalTicket & { projectId: string; uatRef: string };
+  directory: Directory;
+  onRequested: () => void;
+}) {
+  const { user } = useAuth();
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  // Held after success so a second click cannot raise a duplicate promotion before the new one arrives.
+  const [sent, setSent] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  const soleApprover = user?.role === 'approver' && directory.activeApprovers === 1;
+  const request = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await apiPost('/api/promotions', {
+        projectId: ticket.projectId,
+        fromRef: ticket.uatRef,
+        ticketId: ticket.ticketId,
+      });
+      setSent(true);
+      toast.notify({
+        tone: 'ok',
+        title: 'Go-live requested',
+        body: 'A new go-live decision is open for an Approver to sign with a passkey.',
+      });
+      onRequested();
+    } catch (err) {
+      setError(err);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="tkt-retry">
+      <div className="tkt-retry__row">
+        <Button
+          icon="retry"
+          loading={busy}
+          loadingText="Requesting…"
+          disabled={soleApprover || sent}
+          aria-describedby={`tkt-retry-${ticket.ticketId}`}
+          onClick={() => void request()}
+        >
+          Request go-live again
+        </Button>
+        <p id={`tkt-retry-${ticket.ticketId}`} className="tkt-retry__hint">
+          {soleApprover
+            ? 'You are the only Approver and could not sign a request you raised (separation of duties): ask a Builder to request it.'
+            : user?.role === 'approver'
+              ? `Promotes ${ticket.uatRef} once a different Approver signs it: you will be the requester.`
+              : `Promotes ${ticket.uatRef} once the Approver signs it with a passkey. Provenance and the UAT sign-off are checked again.`}
+        </p>
+      </div>
+      {error !== null && (
+        <InlineAlert tone="danger" live title="Go-live was not requested">
+          {describeError(error)}
+        </InlineAlert>
+      )}
+    </div>
+  );
+}
+
+/**
  * One intake ticket for operators (§6, §7): where its time went, what it waits on now (with the gate decisions
  * resolvable inline), the triage diagnosis and budget, the request, attachments behind the media permission,
  * linked sessions and decisions, and the full event timeline. Refreshes on any event scoped to the ticket.
@@ -268,17 +340,18 @@ export default function TicketPage() {
     refreshOn: (m) => isDecisionEvent(m) && scoped(m),
   });
   const evts: AuditEventHeaderDTO[] = events.data?.events ?? [];
-  // The go-live decision is about the promotion, not the ticket, so it is found through ticket.golive_requested.
-  const goLiveId = useMemo(() => goLiveDecisionId(evts), [evts]);
-  const goLive = useResource<DecisionCardView>(
-    goLiveId ? `/api/decisions/${encodeURIComponent(goLiveId)}` : null,
-    {
-      refreshOn: (m) => isDecisionEvent(m) && m.kind === 'aoc' && m.event.meta.decisionId === goLiveId,
-    },
-  );
+  const promotion = useMemo(() => latestPromotion(evts), [evts]);
+  // A go-live decision is about the promotion, not the ticket, so it is listed by the latest promotion: the one
+  // intake raised after UAT, or one an operator requested again.
+  const goLive = useResource<DecisionListResponse>(promotion ? '/api/decisions' : null, {
+    query: promotion ? { subjectId: promotion.promotionId, limit: 10 } : undefined,
+    // Withdrawn, expired and escalated events carry no kind, so those refetch whichever decision they name.
+    refreshOn: (m) =>
+      isDecisionEvent(m) && m.kind === 'aoc' && (m.event.meta.kind ?? 'go_live') === 'go_live',
+  });
   const allDecisions = useMemo(() => {
     const list = [...(decisions.data?.decisions ?? [])];
-    if (goLive.data && !list.some((d) => d.id === goLive.data!.id)) list.push(goLive.data);
+    for (const d of goLive.data?.decisions ?? []) if (!list.some((x) => x.id === d.id)) list.push(d);
     return list;
   }, [decisions.data, goLive.data]);
   const openCards = allDecisions.filter((d) => d.status === 'open');
@@ -300,7 +373,6 @@ export default function TicketPage() {
   const budget = useMemo(() => budgetsFrom(evts).get(id), [evts, id]);
   const decisionMap = useMemo(() => new Map(allDecisions.map((d) => [d.id, d])), [allDecisions]);
   const timeline = useMemo(() => timelineEvents(evts).reverse(), [evts]);
-  const promotion = useMemo(() => latestPromotion(evts), [evts]);
 
   if (ticket.data === undefined) {
     const notFound = ticket.error instanceof ApiError && ticket.error.status === 404;
@@ -410,10 +482,14 @@ export default function TicketPage() {
           <div className="tkt-next">
             <p className="tkt-next__hint">
               {gates.goLive === 'failed'
-                ? 'Go-live was approved, but promoting the change to main did not complete.'
+                ? promotion?.status === 'refused'
+                  ? 'The platform refused to promote the change to main, so no go-live decision was raised.'
+                  : 'Go-live was approved, but promoting the change to main did not complete.'
                 : gates.goLive === 'rejected'
-                  ? 'The Approver rejected go-live: nothing reached main. Close the ticket or send it back through triage.'
-                  : STAGE_HINT[t.stage]}
+                  ? 'The Approver rejected go-live: nothing reached main. Close the ticket if the fix is not going ahead.'
+                  : gates.goLive === 'blocked'
+                    ? 'The requester passed UAT, but go-live never started.'
+                    : STAGE_HINT[t.stage]}
             </p>
             <GateTrail gates={gates} />
             {promotion && gates.goLive === 'failed' && (
@@ -427,8 +503,15 @@ export default function TicketPage() {
             {gates.goLive === 'blocked' && (
               <InlineAlert tone="danger" title="UAT passed, but go-live did not start">
                 The requester signed off UAT and no go-live decision or promotion was recorded, so nothing
-                will promote this fix. It needs a platform fix; there is no operator action that restarts it.
+                will promote this fix until go-live is requested again.
               </InlineAlert>
+            )}
+            {(gates.goLive === 'blocked' || gates.goLive === 'failed') && t.projectId && t.uatRef && (
+              <RequestGoLive
+                ticket={{ ...t, projectId: t.projectId, uatRef: t.uatRef }}
+                directory={directory}
+                onRequested={reloadAll}
+              />
             )}
             {openCards.map((card) => (
               <OpenDecision

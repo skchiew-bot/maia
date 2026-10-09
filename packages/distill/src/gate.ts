@@ -56,10 +56,11 @@ export type GateVerdict = 'approved' | 'rejected' | 'withdrawn';
 /**
  * How a decision event settles a proposal waiting at this gate, or null when it is not this gate's
  * event. Binding needs a person: a policy (machine) resolution, or any non-human actor, never approves,
- * whatever option it picked. decision.withdrawn carries no kind, so callers match it by decision id.
+ * whatever option it picked. A card withdrawn or expired unanswered settles as 'withdrawn'; neither event
+ * carries a kind, so callers match them by decision id.
  */
 export function gateVerdict(gate: ApproverGate, e: StoredEvent): GateVerdict | null {
-  if (e.type === 'decision.withdrawn') return 'withdrawn';
+  if (e.type === 'decision.withdrawn' || e.type === 'decision.expired') return 'withdrawn';
   if (e.type !== 'decision.resolved') return null;
   const m = e.meta as MetaOf<'decision.resolved'>;
   if (m.kind !== gate.kind) return null;

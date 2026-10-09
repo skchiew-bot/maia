@@ -1,9 +1,78 @@
 import { createHash } from 'node:crypto';
 import { strFromU8, unzipSync } from 'fflate';
-import type { EventType, StoredEvent } from '@aoc/contracts';
-import type { NewEvent, TestRuntime, TestUser } from '@aoc/kernel';
+import type { AnchorCheckDTO, AuditService, EventType, MetaOf, StoredEvent } from '@aoc/contracts';
+import type { EventStore, NewEvent, TestRuntime, TestUser } from '@aoc/kernel';
 
 export const sha256 = (b: Uint8Array | string) => createHash('sha256').update(b).digest('hex');
+
+/**
+ * Stand-in for mod-audit's `audit` service: its off-host anchor store holds exactly the hash each anchor.created row
+ * recorded (git, pushed and seen on the remote), or — with `record: 'store_unavailable'` — cannot be read.
+ */
+export function offHostAudit(
+  store: () => EventStore,
+  opts: { record?: 'found' | 'store_unavailable' } = {},
+): AuditService {
+  const record = opts.record ?? 'found';
+  return {
+    async verify() {
+      const s = store();
+      const events = s.list({ types: ['anchor.created'], limit: 100_000 });
+      const v = await s.verifyChainAsync({ atSeqs: events.map((e) => (e.meta as MetaOf<'anchor.created'>).seq) });
+      const anchors: AnchorCheckDTO[] = events.map((e) => {
+        const m = e.meta as MetaOf<'anchor.created'>;
+        const recomputed = v.hashesAt[m.seq] ?? null;
+        const matched = recomputed === m.hash;
+        return {
+          anchorId: m.anchorId,
+          provider: m.provider,
+          seq: m.seq,
+          anchoredHash: m.hash,
+          chainHash: m.hash,
+          record,
+          recomputedHash: recomputed,
+          matched,
+          proofOk: record === 'found',
+          anchoredAt: e.ts,
+          proofRef: m.proofRef,
+          signed: false,
+          offHost: record === 'found' ? true : null,
+          problems: matched ? [] : [`recomputed chain hash at seq ${m.seq} differs from the off-host anchor`],
+        };
+      });
+      const problems = [
+        ...v.problems,
+        ...anchors.flatMap((a) => a.problems),
+        ...(record === 'found' ? [] : ['git anchor store unreadable']),
+      ];
+      return {
+        ok: problems.length === 0,
+        chainOk: v.ok,
+        chainFirstBadSeq: v.firstBadSeq,
+        chainProblems: v.problems,
+        chainId: v.chainId,
+        headSeq: v.headSeq,
+        headHash: v.headHash,
+        checked: v.checked,
+        anchors,
+        firstBadSeq: v.firstBadSeq,
+        unanchoredTail: 0,
+        lastAnchorSeq: anchors.at(-1)?.seq ?? null,
+        lastAnchorAt: anchors.at(-1)?.anchoredAt ?? null,
+        remoteChecked: record === 'found' ? true : null,
+        problems,
+        warnings: [],
+        verifiedAt: '2026-10-09T02:00:00.000Z',
+        eventSeq: null,
+      };
+    },
+    lastAnchor: () => null,
+    lastBackup: () => null,
+    health: () => {
+      throw new Error('not used by mod-evidence');
+    },
+  };
+}
 
 /** Range used by the pack tests: 2026-10-03..2026-10-05 in Asia/Kuala_Lumpur (UTC+8). */
 export const RANGE = { from: '2026-10-03', to: '2026-10-05' } as const;

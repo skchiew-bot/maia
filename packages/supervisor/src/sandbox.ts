@@ -4,8 +4,7 @@
  * repository). They inherit almost nothing from aocd, and untrusted code runs as the unprivileged session user
  * (G-01) when one is configured — never with a credential.
  */
-import { spawnSync } from 'node:child_process';
-import { lchownSync, lstatSync, readdirSync, readFileSync } from 'node:fs';
+import { lchownSync, lstatSync, readdirSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 
 /** What an isolated run inherits from aocd: path, locale and proxy / CA settings. Never HOME, AOC_* or Claude credentials. */
@@ -44,35 +43,13 @@ export function isolatedRunEnv(i: {
   return env;
 }
 
-export interface SandboxUser {
-  name: string;
-  uid: number;
-  gid: number;
-}
+/** Profile variables whose names say they hold a secret: their values are kept out of run output. */
+const SECRET_NAME = /TOKEN|SECRET|PASSWORD|PASSWD|AUTH|CREDENTIAL|KEY$|_KEY_/i;
 
-const USER_NAME = /^[A-Za-z_][A-Za-z0-9_.-]{0,63}\$?$/;
-
-/** The passwd entry of the sandbox user (getent, so NSS users work). Never root, never aocd's own user. */
-export function lookupSandboxUser(name: string, euid: number = process.geteuid?.() ?? -1): SandboxUser {
-  if (!USER_NAME.test(name)) throw new Error(`"${name}" is not a valid OS user name`);
-  const r = spawnSync('getent', ['passwd', name], { encoding: 'utf8', timeout: 10_000 });
-  let line = !r.error && r.status === 0 ? r.stdout.split('\n')[0] : undefined;
-  if (r.error) {
-    try {
-      line = readFileSync('/etc/passwd', 'utf8')
-        .split('\n')
-        .find((l) => l.startsWith(`${name}:`));
-    } catch {
-      line = undefined;
-    }
-  }
-  const [n, , uid, gid] = (line ?? '').split(':');
-  if (n !== name || !/^\d+$/.test(uid ?? '') || !/^\d+$/.test(gid ?? ''))
-    throw new Error(`sandbox user "${name}" does not exist`);
-  const user = { name, uid: Number(uid), gid: Number(gid) };
-  if (user.uid === 0 || user.uid === euid)
-    throw new Error(`sandbox user ${name} must be neither root nor aocd's own user`);
-  return user;
+export function secretValues(credentials: Record<string, string>): string[] {
+  return Object.entries(credentials)
+    .filter(([k]) => SECRET_NAME.test(k))
+    .map(([, v]) => v);
 }
 
 /**
@@ -81,7 +58,7 @@ export function lookupSandboxUser(name: string, euid: number = process.geteuid?.
  * the directory itself last, so the sandbox user can change nothing while the walk runs, and each entry is
  * re-owned with lchown, so a symlink in the tree is re-owned itself and never followed.
  */
-export function handOver(dirs: readonly string[], user: SandboxUser): void {
+export function handOver(dirs: readonly string[], user: { uid: number; gid: number }): void {
   for (const dir of dirs) {
     if (!isAbsolute(dir)) throw new Error(`hand-over needs an absolute directory (${dir})`);
     if (!lstatSync(dir).isDirectory()) throw new Error(`hand-over needs a directory, not a link or a file (${dir})`);
@@ -89,7 +66,7 @@ export function handOver(dirs: readonly string[], user: SandboxUser): void {
   }
 }
 
-function reown(path: string, user: SandboxUser): void {
+function reown(path: string, user: { uid: number; gid: number }): void {
   if (lstatSync(path).isDirectory()) for (const name of readdirSync(path)) reown(join(path, name), user);
   lchownSync(path, user.uid, user.gid);
 }

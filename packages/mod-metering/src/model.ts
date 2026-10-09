@@ -2,6 +2,8 @@
 import type { DatabaseSync } from 'node:sqlite';
 import type {
   Actor,
+  FxService,
+  FxSession,
   MeteringFxStamp,
   MeteringGroupBy,
   ModelTier,
@@ -97,6 +99,7 @@ interface RollupDbRow {
   fx_rate: number;
   fx_status: MeteringFxStamp['status'];
   fx_source_date: string | null;
+  fx_session: FxSession | null;
   rate_card_version: number;
   input_tokens: number;
   output_tokens: number;
@@ -118,7 +121,12 @@ function toRollup(r: RollupDbRow): RollupRecord {
     closedAt: r.closed_at,
     usd: r.usd,
     rm: missing ? null : r.rm,
-    fx: { rate: missing ? null : r.fx_rate, status: r.fx_status, sourceDate: r.fx_source_date },
+    fx: {
+      rate: missing ? null : r.fx_rate,
+      status: r.fx_status,
+      sourceDate: r.fx_source_date,
+      session: r.fx_session,
+    },
     rateCardVersion: r.rate_card_version,
     inputTokens: r.input_tokens,
     outputTokens: r.output_tokens,
@@ -315,15 +323,15 @@ export class MeteringModel {
   // ── FX ───────────────────────────────────────────────────────────────────
   /** Today's view of a date's USD→MYR from the fx service (absent service or no rate → missing). */
   liveFx(date: string): MeteringFxStamp {
-    let r: { rate: number; status: 'live' | 'inherited'; sourceDate: string } | null = null;
+    let r: ReturnType<FxService['rateFor']> = null;
     try {
       r = this.ctx.services.maybe('fx')?.rateFor(date) ?? null;
     } catch (err) {
       this.ctx.log.warn('fx lookup failed', { date, err: String(err) });
     }
     return r && Number.isFinite(r.rate) && r.rate > 0
-      ? { rate: r.rate, status: r.status, sourceDate: r.sourceDate }
-      : { rate: null, status: 'missing', sourceDate: null };
+      ? { rate: r.rate, status: r.status, sourceDate: r.sourceDate, session: r.session ?? null }
+      : { rate: null, status: 'missing', sourceDate: null, session: null };
   }
 
   /** Closed days keep the FX stamped at close; open days ask the fx service. */

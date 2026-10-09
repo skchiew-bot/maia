@@ -11,6 +11,8 @@ export const auditProjector: Projector = {
     'aud_config',
     'aud_erasures',
     'aud_selfmod',
+    'aud_backups',
+    'aud_backup_failures',
   ],
   ddl: [
     `CREATE TABLE IF NOT EXISTS aud_anchors (
@@ -26,6 +28,10 @@ export const auditProjector: Projector = {
       event_seq INTEGER PRIMARY KEY, scope_id TEXT NOT NULL, reason TEXT NOT NULL, erased_by TEXT NOT NULL, body_count INTEGER NOT NULL,
       decision_id TEXT, at TEXT NOT NULL)`,
     'CREATE TABLE IF NOT EXISTS aud_selfmod (event_seq INTEGER PRIMARY KEY, session_id TEXT NOT NULL, rule TEXT NOT NULL, path_hash TEXT NOT NULL, at TEXT NOT NULL)',
+    `CREATE TABLE IF NOT EXISTS aud_backups (
+      event_seq INTEGER PRIMARY KEY, backup_id TEXT NOT NULL, at TEXT NOT NULL, file TEXT NOT NULL, bytes INTEGER NOT NULL,
+      sha256 TEXT NOT NULL, key_id TEXT NOT NULL, head_seq INTEGER NOT NULL, head_hash TEXT NOT NULL, copied INTEGER)`,
+    'CREATE TABLE IF NOT EXISTS aud_backup_failures (event_seq INTEGER PRIMARY KEY, backup_id TEXT, stage TEXT NOT NULL, reason TEXT NOT NULL, at TEXT NOT NULL)',
   ],
   handles: [
     'anchor.created',
@@ -34,6 +40,8 @@ export const auditProjector: Projector = {
     'config.changed',
     'body.erased',
     'selfmod.blocked',
+    'backup.completed',
+    'backup.failed',
   ],
   apply({ db }, e: StoredEvent) {
     const m = e.meta as Record<string, unknown>;
@@ -101,6 +109,29 @@ export const auditProjector: Projector = {
           m.sessionId as string,
           m.rule as string,
           m.pathHash as string,
+          e.ts,
+        );
+        break;
+      case 'backup.completed':
+        db.prepare('INSERT OR IGNORE INTO aud_backups VALUES (?,?,?,?,?,?,?,?,?,?)').run(
+          e.seq,
+          m.backupId as string,
+          e.ts,
+          m.file as string,
+          m.bytes as number,
+          m.sha256 as string,
+          m.keyId as string,
+          m.headSeq as number,
+          m.headHash as string,
+          bool(m.copied),
+        );
+        break;
+      case 'backup.failed':
+        db.prepare('INSERT OR IGNORE INTO aud_backup_failures VALUES (?,?,?,?,?)').run(
+          e.seq,
+          (m.backupId as string | null) ?? null,
+          m.stage as string,
+          m.reason as string,
           e.ts,
         );
         break;

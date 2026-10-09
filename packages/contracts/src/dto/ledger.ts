@@ -147,6 +147,86 @@ export interface EnhancementDTO {
   detail: string | null;
 }
 
+// ── Projects list roll-up and project history (console read models, §9) ─────
+export interface ProjectPhaseRollup {
+  phaseId: string;
+  name: string;
+  order: number;
+  doneTasks: number;
+  totalTasks: number;
+  doneWeight: number;
+  totalWeight: number;
+  /** Done tasks closed with no file change or unverified evidence: they count until reviewed, shown flagged. */
+  flaggedTasks: number;
+  flaggedWeight: number;
+  completedAt: string | null;
+  pinnedTag: string | null;
+  pinnedSha: string | null;
+}
+/** `GET /api/projects/rollup`: the master timeline of every project in one row each (Projects list). */
+export interface ProjectRollup {
+  projectId: string;
+  phases: ProjectPhaseRollup[];
+  /** First phase in manifest order with unfinished work; null when nothing is open. */
+  currentPhaseId: string | null;
+  drift: { total: number; last7d: number; highLast7d: number; lastAt: string | null };
+  amendments: { count: number; last7d: number; lastAt: string | null };
+}
+
+/** One change to the project's denominator: a plan declared into the master timeline, or an amendment. */
+export interface ScopeChangeDTO {
+  seq: number;
+  at: string;
+  kind: 'declared' | 'amended';
+  sessionId: string;
+  /** Developer the work is attributed to (the session owner), when known. */
+  ownerId: string | null;
+  ownerName: string | null;
+  manifestVersion: number;
+  /** Tasks declared (declared) or added (amended). */
+  added: number;
+  removed: number;
+  resized: number;
+  /** Open tasks taken over from a previous writer of the thread: already counted, so not new scope (§5). */
+  carriedOver: number;
+  /** Change to the project's declared weight. */
+  weightDelta: number;
+  projectWeightBefore: number;
+  projectWeightAfter: number;
+  /** Amendment reason ("[erased]" once crypto-shredded); null for declarations. */
+  reason: string | null;
+}
+export interface ProjectDriftDTO {
+  seq: number;
+  at: string;
+  sessionId: string;
+  kind: 'off_plan_change' | 'playbook_deviation' | 'scope_growth' | 'overrun';
+  severity: 'low' | 'medium' | 'high';
+  taskId: string | null;
+  /** "[erased]" once crypto-shredded. */
+  detail: string;
+}
+/** An immutable rollback point recorded by a phase completion (§8). */
+export interface PhasePinDTO {
+  phaseId: string;
+  sessionId: string;
+  tag: string | null;
+  sha: string | null;
+  at: string;
+}
+/** An enhancement with its recorder's display name (null when `by` is not a known user). */
+export interface ProjectEnhancementDTO extends EnhancementDTO {
+  byName: string | null;
+}
+/** `GET /api/projects/:id/history`: the marks behind the master timeline, oldest first. */
+export interface ProjectHistory {
+  projectId: string;
+  scope: ScopeChangeDTO[];
+  drift: ProjectDriftDTO[];
+  enhancements: ProjectEnhancementDTO[];
+  pins: PhasePinDTO[];
+}
+
 // ── MCP results the contracts do not define yet (candidates for mcp.ts) ──────
 export interface DeclarePlanLedgerResult extends DeclarePlanResult {
   /** Open tasks of the previous writer in this thread taken over by re-declaring their ids. */

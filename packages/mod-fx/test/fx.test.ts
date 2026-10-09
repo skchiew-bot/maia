@@ -89,7 +89,12 @@ describe('daily FX run (session 1700: page scrape, BNM Open API cross-check)', (
     ]);
     expect(t.llm.calls.map((c) => [c.model, c.purpose])).toEqual([['haiku', 'fx.extract']]);
     const fx = t.rt.services.get('fx');
-    expect(fx.rateFor('2026-10-08')).toEqual({ rate: 4.09, status: 'live', sourceDate: '2026-10-08' });
+    expect(fx.rateFor('2026-10-08')).toEqual({
+      rate: 4.09,
+      status: 'live',
+      sourceDate: '2026-10-08',
+      session: '1700',
+    });
     expect(fx.rateFor('2026-10-07')).toBeNull();
 
     const dto = await rateOn(t, '2026-10-08');
@@ -147,6 +152,7 @@ describe('daily FX run (session 1700: page scrape, BNM Open API cross-check)', (
       rate: 4.0905,
       status: 'inherited',
       sourceDate: '2026-10-09',
+      session: '1700',
     });
     await t.close();
   });
@@ -531,6 +537,7 @@ describe('BNM Open API cross-check', () => {
       rate: 4.15,
       status: 'live',
       sourceDate: '2026-10-09',
+      session: '1700',
     });
     expect(
       (await t.json<FxStatusDTO>('GET', '/api/fx/status', { headers: builder.headers })).openDiscrepancy,
@@ -837,6 +844,85 @@ describe('schedule: 18:00 MYT, retries at 18:30 and 21:00', () => {
   });
 });
 
+describe('re-check of the previous weekday at the first run', () => {
+  it('re-runs a previous weekday stamped as a holiday once BNM has published it, while metering has not closed it', async () => {
+    const t = await fxRuntime();
+    const friday = bnmPage({ date: '2026-10-09', mid: 4.0905, earlier: OCTOBER_1700 });
+    t.http
+      .page(octoberPage('2026-10-07'), octoberPage('2026-10-07'), friday)
+      .api('2026-10-07', bnmApi({ date: '2026-10-07', mid: 4.088 }))
+      .api('2026-10-08', notPublished(), bnmApi({ date: '2026-10-08', mid: 4.09 }))
+      .api('2026-10-09', bnmApi({ date: '2026-10-09', mid: 4.0905 }));
+    t.llm.on('fx.extract@haiku', honestModel);
+    await runDaily(t, '2026-10-07');
+    await runDaily(t, '2026-10-08'); // nothing published by the last attempt: a holiday stamp
+    expect(recorded(t)[1]).toMatchObject({
+      date: '2026-10-08',
+      status: 'inherited',
+      sourceDate: '2026-10-07',
+      reason: 'weekend_or_holiday',
+    });
+
+    expect(await tick(t, '2026-10-09', '18:00')).toEqual(['fx.daily']);
+    expect(recorded(t).slice(2)).toEqual([live('2026-10-08', 4.09), live('2026-10-09', 4.0905)]);
+    expect(await rateOn(t, '2026-10-08')).toMatchObject({ revisions: 2, official: 4.09, flagged: false });
+    // Thursday's own attempt, Friday's re-check, then the re-run of Thursday.
+    expect(t.http.count(apiUrl('2026-10-08'))).toBe(3);
+    await t.close();
+  });
+
+  it('never restates a previous weekday that metering has closed: the late figure is only reported', async () => {
+    const t = await fxRuntime();
+    t.http
+      .page(octoberPage('2026-10-07'))
+      .api('2026-10-07', bnmApi({ date: '2026-10-07', mid: 4.088 }))
+      .api('2026-10-08', notPublished(), bnmApi({ date: '2026-10-08', mid: 4.09 }))
+      .api('2026-10-09', notPublished());
+    t.llm.on('fx.extract@haiku', honestModel);
+    const notes = notifications(t);
+    await runDaily(t, '2026-10-07');
+    await runDaily(t, '2026-10-08');
+    at(t, '2026-10-09', '00:15');
+    closeDay(t, '2026-10-08');
+
+    expect(await tick(t, '2026-10-09', '18:00')).toEqual(['fx.daily']);
+    expect(recorded(t).filter((m) => m.date === '2026-10-08')).toHaveLength(1);
+    expect(notes).toContainEqual(
+      expect.objectContaining({
+        kind: 'fx.alert',
+        severity: 'info',
+        refs: { date: '2026-10-08' },
+        title:
+          'BNM published USD/MYR 4.0900 for 2026-10-08 (session 1700) after it was carried forward; metering has closed 2026-10-08, so it keeps 4.0880 from 2026-10-07',
+      }),
+    );
+    // Retries and manual runs do not re-check.
+    expect(await tick(t, '2026-10-09', '18:30')).toEqual(['fx.retry@18:30']);
+    await t.json('POST', '/api/fx/run', { headers: t.user('approver').headers });
+    expect(t.http.count(apiUrl('2026-10-08'))).toBe(2);
+    await t.close();
+  });
+
+  it('looks back past the weekend to Friday, leaves a real holiday alone, and can be switched off', async () => {
+    for (const recheckPreviousWeekday of [true, false]) {
+      const t = await fxRuntime({ recheckPreviousWeekday });
+      t.http
+        .page(octoberPage('2026-10-08'))
+        .api('2026-10-08', bnmApi({ date: '2026-10-08', mid: 4.09 }))
+        .api('2026-10-09', notPublished())
+        .api('2026-10-12', notPublished());
+      t.llm.on('fx.extract@haiku', honestModel);
+      for (const d of ['2026-10-08', '2026-10-09', '2026-10-10', '2026-10-11', '2026-10-12'])
+        await runDaily(t, d);
+      expect(recorded(t).filter((m) => m.date === '2026-10-09')).toHaveLength(1);
+      // Friday (a holiday) is re-checked once, at Saturday's first run, with one API call; the weekend is never fetched.
+      expect(t.http.count(apiUrl('2026-10-09'))).toBe(recheckPreviousWeekday ? 2 : 1);
+      expect([apiUrl('2026-10-10'), apiUrl('2026-10-11')].map((u) => t.http.count(u))).toEqual([0, 0]);
+      await t.close();
+    }
+  });
+});
+
 describe('session 1200 (API figure only)', () => {
   it('carries forward (flagged) when the API is unreadable or its figure fails the sanity bounds', async () => {
     const t = await fxRuntime({
@@ -968,6 +1054,7 @@ describe('forward-only rates', () => {
       rate: 4.2,
       status: 'live',
       sourceDate: '2026-10-08',
+      session: '1700',
     });
     expect((await ratesApi(t, builder.headers, '2026-10-08', '2026-10-08'))[0]).toMatchObject({
       closed: true,
@@ -1067,6 +1154,7 @@ describe('forward-only rates', () => {
       rate: 4.25,
       status: 'inherited',
       sourceDate: '2026-10-12',
+      session: '1700',
     });
 
     const counts = Object.fromEntries(
@@ -1142,6 +1230,7 @@ describe('config', () => {
       session: '1700',
       runAtLocalTime: '18:00',
       retryAtLocalTimes: ['18:30', '21:00'],
+      recheckPreviousWeekday: true,
       pageUrl: 'https://www.bnm.gov.my/exchange-rates',
       apiUrl: 'https://api.bnm.gov.my/public/exchange-rate/USD',
       extractor: 'claude-cli',

@@ -49,6 +49,17 @@ describe('managed mode: the daemon decides, the hook relays', () => {
     expect(Number.isNaN(Date.parse(req!.body.sentAt))).toBe(false);
   });
 
+  it('relays as usual when AOC_INTERNAL_LLM is set (it only silences observed hooks)', async () => {
+    daemon = await startFakeDaemon(() => ({ status: 200, json: { exitCode: 2, stderr: 'no' } }));
+    const run = await runHookBinary(
+      'PreToolUse',
+      preToolUse(),
+      managedEnv(tmp(), daemon.url, { AOC_INTERNAL_LLM: '1' }),
+    );
+    expect(run).toMatchObject({ code: 2, stderr: 'no' });
+    expect(daemon.requests.map((r) => r.body.mode)).toEqual(['managed']);
+  });
+
   it('relays decisions the contract types do not know yet (permissionDecision "defer") verbatim', async () => {
     const defer = {
       hookSpecificOutput: {
