@@ -1,11 +1,11 @@
 /**
  * Pure rules behind the Cost per outcome panel (§14.4): spend tied to the ticket fixed, the change shipped and the
  * phase completed. A portfolio lens only: nothing here knows a person, and nothing ranks outcomes by cost. Types
- * only from `@aoc/contracts`; the figures are the daemon's notional US$ (never a bill).
+ * only from `@aoc/contracts`. Every figure, US$ and RM, is the daemon's (notional, never a bill; RM converted per
+ * usage day at that day's stamped rate): this file only picks, groups and adds up those figures, it never converts.
  */
 import type {
   CostPerOutcomeDTO,
-  MeteringCostRow,
   OutcomeCostClassDTO,
   OutcomeCostItemDTO,
   OutcomeCostStatsDTO,
@@ -58,6 +58,8 @@ export interface OutcomeClassView {
   items: readonly OutcomeCostItemDTO[];
   /** Outcomes whose spend includes usage no rate priced (counted at US$0, so the cost is understated). */
   unpriced: number;
+  /** Outcomes with usage on a day that had no stamped FX rate: their RM is left out of the kind's RM figures. */
+  rmIncomplete: number;
 }
 
 /** The kinds with their figures, in display order. */
@@ -69,6 +71,7 @@ export function outcomeClasses(dto: CostPerOutcomeDTO): OutcomeClassView[] {
       stats: cls.stats,
       items: cls.items,
       unpriced: cls.items.filter((i) => i.unpriced).length,
+      rmIncomplete: cls.items.filter((i) => !i.rmComplete).length,
     };
   });
 }
@@ -83,32 +86,9 @@ export function outcomeUsd(usd: number): string {
   return usd > 0 && usd < 0.005 ? '<US$0.01' : formatUsd(usd);
 }
 
-/** Ringgit alongside, `≈` because the daemon prices outcomes in US$ only (see `blendedRate`). */
-export function outcomeRm(usd: number, rate: number | null): string | null {
-  if (rate === null) return null;
-  const rm = usd * rate;
-  return `≈ ${rm > 0 && rm < 0.005 ? '<RM 0.01' : formatMyr(rm)}`;
-}
-
-export interface RateBasis {
-  /** RM per US$. */
-  rate: number;
-  /** The rollup figures it comes from, printed with it so the rate can be checked. */
-  usd: number;
-  rm: number;
-}
-
-/**
- * RM per US$ for the range, from the daemon's own rollups: the days' RM (each at its stamped BNM rate) over their
- * US$. Outcome costs come from the API in US$ only, so their RM is this blend: indicative, and exact for the whole
- * portfolio (total × blend = the rollups' RM). Null when some day with usage had no rate, or nothing was metered.
- * Never today's rate alone (the approved FX rule: closed days keep the rate they were stamped with).
- */
-export function blendedRate(
-  totals: Pick<MeteringCostRow, 'notionalUsd' | 'notionalRm' | 'rmComplete'> | undefined,
-): RateBasis | null {
-  if (!totals || !totals.rmComplete || totals.notionalRm === null || !(totals.notionalUsd > 0)) return null;
-  return { rate: totals.notionalRm / totals.notionalUsd, usd: totals.notionalUsd, rm: totals.notionalRm };
+/** The daemon's RM as text, the same way. */
+export function outcomeMyr(rm: number): string {
+  return rm > 0 && rm < 0.005 ? `<${formatMyr(0.01)}` : formatMyr(rm);
 }
 
 /** Linear interpolation between closest ranks (type 7), as the daemon computes the median and p90. */
@@ -118,6 +98,87 @@ export function percentile(sorted: readonly number[], p: number): number | null 
   const lo = Math.floor(rank);
   const hi = Math.ceil(rank);
   return sorted[lo]! + (sorted[hi]! - sorted[lo]!) * (rank - lo);
+}
+
+type Costed = Pick<OutcomeCostItemDTO, 'notionalUsd' | 'notionalRm' | 'rmComplete'>;
+
+function spread(values: readonly number[]) {
+  const sorted = [...values].sort((a, b) => a - b);
+  const total = sorted.reduce((sum, v) => sum + v, 0);
+  return {
+    total,
+    mean: sorted.length ? total / sorted.length : null,
+    median: percentile(sorted, 0.5),
+    p90: percentile(sorted, 0.9),
+    min: sorted[0] ?? null,
+    max: sorted[sorted.length - 1] ?? null,
+  };
+}
+
+/**
+ * The figures of some outcomes of a kind, worked out the way the daemon does it over all of them: US$ over every
+ * outcome, RM over those whose RM is complete only. Adds up and orders the daemon's own per-outcome figures.
+ */
+export function statsOf(items: readonly Costed[]): OutcomeCostStatsDTO {
+  const rmValues = items.flatMap((i) => (i.rmComplete && i.notionalRm !== null ? [i.notionalRm] : []));
+  const usd = spread(items.map((i) => i.notionalUsd));
+  const rm = spread(rmValues);
+  return {
+    count: items.length,
+    totalUsd: usd.total,
+    meanUsd: usd.mean,
+    medianUsd: usd.median,
+    p90Usd: usd.p90,
+    minUsd: usd.min,
+    maxUsd: usd.max,
+    totalRm: rmValues.length ? rm.total : null,
+    meanRm: rm.mean,
+    medianRm: rm.median,
+    p90Rm: rm.p90,
+    minRm: rm.min,
+    maxRm: rm.max,
+    rmComplete: rmValues.length === items.length,
+  };
+}
+
+export interface ProcessTypeCount {
+  processType: string;
+  /** Outcomes of every kind whose spend is mostly this process type. */
+  count: number;
+}
+
+/** The process types the outcomes name, in name order (never by cost). Outcomes with no single type are in none. */
+export function processTypes(dto: CostPerOutcomeDTO): ProcessTypeCount[] {
+  const counts = new Map<string, number>();
+  for (const k of OUTCOME_KINDS)
+    for (const { processType } of dto[k.key].items)
+      if (processType !== null) counts.set(processType, (counts.get(processType) ?? 0) + 1);
+  return [...counts]
+    .map(([processType, count]) => ({ processType, count }))
+    .sort((a, b) => a.processType.localeCompare(b.processType));
+}
+
+/**
+ * The process type to filter by: the chosen one while it is still on offer. The chips exist only when two or more
+ * types are present, and a chosen type can drop out of the data (a new range, a refetch).
+ */
+export function activeProcessType(picked: string | null, types: readonly ProcessTypeCount[]): string | null {
+  return types.length > 1 && types.some((t) => t.processType === picked) ? picked : null;
+}
+
+/** The outcomes of one process type with each kind's figures worked out from them; `dto` itself when none is chosen. */
+export function withProcessType(dto: CostPerOutcomeDTO, processType: string | null): CostPerOutcomeDTO {
+  if (processType === null) return dto;
+  const only = (cls: OutcomeCostClassDTO): OutcomeCostClassDTO => {
+    const items = cls.items.filter((i) => i.processType === processType);
+    return { ...cls, items, stats: statsOf(items) };
+  };
+  return {
+    ...dto,
+    ticketsFixed: only(dto.ticketsFixed),
+    changesShipped: only(dto.changesShipped),
+    phasesCompleted: only(dto.phasesCompleted),
+  };
 }
 
 export interface OutcomeAxis {
@@ -159,57 +220,42 @@ export function phaseIdOf(item: Pick<OutcomeCostItemDTO, 'refId'>): string {
   return item.refId.slice(item.refId.indexOf('/') + 1);
 }
 
-export interface KindFigures {
-  count: number;
-  medianUsd: number | null;
-  totalUsd: number;
-}
-
 export interface ProjectOutcomes {
   /** Null: outcomes whose sessions spanned several projects (or none). */
   projectId: string | null;
   name: string;
-  byKind: Record<OutcomeClassKey, KindFigures>;
-  count: number;
-  totalUsd: number;
+  byKind: Record<OutcomeClassKey, OutcomeCostStatsDTO>;
+  /** Every kind together; its count and totals are the ones shown. */
+  total: OutcomeCostStatsDTO;
 }
 
 const NO_PROJECT = 'Several projects';
 
 /**
  * Outcomes grouped by project, in name order (never by cost: ranking corrupts behaviour toward cheap, easy wins).
- * Medians use the daemon's method, so a project with one kind of outcome matches that kind's own figure.
+ * Figures use the daemon's method, so a project with one kind of outcome matches that kind's own figure.
  */
 export function byProject(
   dto: CostPerOutcomeDTO,
   nameOf: (projectId: string) => string | null,
 ): ProjectOutcomes[] {
-  const groups = new Map<string | null, Record<OutcomeClassKey, number[]>>();
+  const groups = new Map<string | null, Record<OutcomeClassKey, OutcomeCostItemDTO[]>>();
   for (const k of OUTCOME_KINDS)
     for (const item of dto[k.key].items) {
       const g = groups.get(item.projectId) ?? { ticketsFixed: [], changesShipped: [], phasesCompleted: [] };
-      g[k.key].push(item.notionalUsd);
+      g[k.key].push(item);
       groups.set(item.projectId, g);
     }
-  const rows = [...groups].map(([projectId, costs]): ProjectOutcomes => {
-    const byKind = Object.fromEntries(
-      OUTCOME_KINDS.map((k): [OutcomeClassKey, KindFigures] => {
-        const sorted = [...costs[k.key]].sort((a, b) => a - b);
-        return [
-          k.key,
-          { count: sorted.length, medianUsd: percentile(sorted, 0.5), totalUsd: sorted.reduce((s, c) => s + c, 0) },
-        ];
-      }),
-    ) as Record<OutcomeClassKey, KindFigures>;
-    const all = Object.values(byKind);
-    return {
+  const rows = [...groups].map(
+    ([projectId, items]): ProjectOutcomes => ({
       projectId,
       name: projectId === null ? NO_PROJECT : (nameOf(projectId) ?? projectId),
-      byKind,
-      count: all.reduce((s, f) => s + f.count, 0),
-      totalUsd: all.reduce((s, f) => s + f.totalUsd, 0),
-    };
-  });
+      byKind: Object.fromEntries(
+        OUTCOME_KINDS.map((k): [OutcomeClassKey, OutcomeCostStatsDTO] => [k.key, statsOf(items[k.key])]),
+      ) as Record<OutcomeClassKey, OutcomeCostStatsDTO>,
+      total: statsOf(Object.values(items).flat()),
+    }),
+  );
   return rows.sort(
     (a, b) => Number(a.projectId === null) - Number(b.projectId === null) || a.name.localeCompare(b.name),
   );
@@ -237,8 +283,23 @@ export function outcomeRows(dto: CostPerOutcomeDTO): OutcomeRow[] {
 /** `2 outcomes`, `1 outcome`. */
 export const outcomeCount = (n: number): string => `${n} outcome${n === 1 ? '' : 's'}`;
 
+function span(lo: number | null, hi: number | null, text: (n: number) => string): string | null {
+  if (lo === null || hi === null) return null;
+  return lo === hi ? text(lo) : `${text(lo)} – ${text(hi)}`;
+}
+
 /** Lowest to highest cost of a kind; one figure when there is only one cost. */
 export function rangeText(s: Pick<OutcomeCostStatsDTO, 'minUsd' | 'maxUsd'>): string {
-  if (s.minUsd === null || s.maxUsd === null) return '—';
-  return s.minUsd === s.maxUsd ? outcomeUsd(s.minUsd) : `${outcomeUsd(s.minUsd)} – ${outcomeUsd(s.maxUsd)}`;
+  return span(s.minUsd, s.maxUsd, outcomeUsd) ?? '—';
+}
+
+/** The same in ringgit; null when no outcome of the kind has a complete RM. */
+export function rangeMyrText(s: Pick<OutcomeCostStatsDTO, 'minRm' | 'maxRm'>): string | null {
+  return span(s.minRm, s.maxRm, outcomeMyr);
+}
+
+/** Why `left` of `of` outcomes are missing from the RM figures: said the same way in the rows and the footnote. */
+export function rmIncompleteText(left: number, of: number): string {
+  const [has, are] = left === 1 ? ['has', 'is'] : ['have', 'are'];
+  return `${left} of ${of} ${has} usage on a day with no stamped FX rate, so ${are} left out of the RM figures`;
 }

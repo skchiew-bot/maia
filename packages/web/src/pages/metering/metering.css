@@ -734,6 +734,21 @@
   gap: 4px;
   margin-bottom: var(--sp-3);
 }
+.met-out__filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-1) var(--sp-2);
+  margin-bottom: var(--sp-3);
+}
+.met-out__filter-label {
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+.met-out__filter-note {
+  flex-basis: 100%;
+}
 .met-out__rows {
   display: flex;
   flex-direction: column;
