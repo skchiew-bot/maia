@@ -13,10 +13,15 @@ export interface LoadedScenario {
 }
 
 const MARKER = /\[\[scenario:([^\]\s]+)\]\]/;
+/** AOC fences untrusted data (ticket text, a rollover's handoff brief) as `<<<TAG_<hex> … TAG_<hex>>>>`. */
+const FENCED_DATA = /<<<([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*_[0-9a-f]{6,})[\s\S]*?\1>>>/g;
 
-/** The `[[scenario:<name>]]` marker in a prompt, if any. */
+/**
+ * The `[[scenario:<name>]]` marker in a prompt, if any. A marker inside fenced data does not count: a handoff brief
+ * quotes the thread's title, which is the predecessor's launch prompt, and a successor must not replay its scenario.
+ */
 export function scenarioMarker(prompt: string): string | undefined {
-  return MARKER.exec(prompt)?.[1];
+  return MARKER.exec(prompt.replace(FENCED_DATA, ''))?.[1];
 }
 
 /** A built-in name, or a path to a scenario JSON file (relative paths resolve against `cwd`). */

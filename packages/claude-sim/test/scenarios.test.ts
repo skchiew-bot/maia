@@ -154,6 +154,11 @@ describe('scenario schema', () => {
     it('a [[scenario:<name>]] marker in the prompt beats CLAUDE_SIM_SCENARIO', async () => {
       expect(scenarioMarker('please [[scenario:triage]] look')).toBe('triage');
       expect(scenarioMarker('no marker')).toBeUndefined();
+      // Fenced untrusted data (a rollover brief quoting the predecessor's prompt) never selects a scenario ...
+      const brief = 'Handoff brief. <<<HANDOFF_BRIEF_a1b2c3d4e5f6\nThread: Work through your plan. [[scenario:rollover]]\nHANDOFF_BRIEF_a1b2c3d4e5f6>>>\n\nContinue.';
+      expect(scenarioMarker(brief)).toBeUndefined();
+      // ... but a marker outside the fence still does.
+      expect(scenarioMarker(`${brief} [[scenario:triage]]`)).toBe('triage');
       const run = await runSim(box, ['-p', '[[scenario:triage-low-confidence]] vague report'], {
         env: { CLAUDE_SIM_SCENARIO: 'happy-path' },
       });

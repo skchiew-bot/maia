@@ -9,7 +9,7 @@ import { gotoIndex, type LoadedScenario } from './scenario';
 import { ScenarioError, type ScenarioStep, type StepOf } from './scenario-schema';
 import { saveState, type SimState } from './state';
 import { renderDeep, renderText, type TemplateContext } from './template';
-import type { Pacer } from './time';
+import { SimAbortError, type Pacer } from './time';
 import {
   absolutizePaths,
   runBash,
@@ -130,6 +130,9 @@ class TurnStop extends Error {
 }
 
 const MAX_STEPS_PER_TURN = 10_000;
+/** The tool_result of a call that was pending when the user interrupted (observed on 2.1.295). */
+const REJECTED_TOOL_USE_TEXT =
+  "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.";
 /** Consecutive Stop-hook blocks honoured before the turn ends regardless (Claude Code relies on stop_hook_active). */
 const MAX_STOP_HOOK_CONTINUATIONS = 3;
 /** Observed on 2.1.295 (research §4.2): lifecycle events (SessionStart/End, compaction, subagent start) carry neither field. */
@@ -210,11 +213,13 @@ export class SimSession {
   private stepsThisTurn = 0;
   private stopHookActive = false;
   private stopContinuations = 0;
+  /** The tool call whose result has not been written yet (what SIGINT rejects). */
+  private pendingTool: { toolUseId: string; sourceUuid: string } | null = null;
 
   constructor(private readonly deps: SessionDeps) {
     this.startedAt = deps.now();
     this.ledger = new CostLedger(deps.restoredCost);
-    this.toolContext = { cwd: deps.cwd, env: deps.childEnv, execAllowed: deps.execAllowed };
+    this.toolContext = { cwd: deps.cwd, env: deps.childEnv, execAllowed: deps.execAllowed, signal: deps.signal };
   }
 
   /** SessionStart hooks, then the stream-json init message. Returns a result if a hook stopped the session. */
@@ -338,7 +343,53 @@ export class SimSession {
     await this.sessionEnd();
   }
 
-  /** SIGTERM / SIGINT: SessionEnd still fires, but there is no result and no cost-state line. */
+  /**
+   * SIGINT (observed on 2.1.295): the turn ends cleanly, unlike SIGTERM. A pending tool call is rejected, the
+   * interruption is written as a user message, a `result` of subtype error_during_execution is printed (terminal
+   * reason aborted_tools, or aborted_streaming when no tool was pending), the cost state is saved, SessionEnd fires
+   * and the process exits 0. No Stop hook runs. The response being generated is dropped.
+   */
+  async interrupted(): Promise<number> {
+    const pending = this.pendingTool;
+    this.open = null;
+    if (pending) {
+      this.writeToolResult(pending.toolUseId, pending.sourceUuid, {
+        content: REJECTED_TOOL_USE_TEXT,
+        isError: true,
+        toolUseResult: 'User rejected tool use',
+      });
+    }
+    const message = {
+      role: 'user',
+      content: [{ type: 'text', text: pending ? '[Request interrupted by user for tool use]' : '[Request interrupted by user]' }],
+    };
+    const uuid = this.deps.ids.uuid();
+    const timestamp = this.timestamp();
+    this.deps.transcript.chained(uuid, timestamp, { promptId: this.promptId, type: 'user', message }, {});
+    this.deps.out.emit({
+      type: 'user',
+      message,
+      parent_tool_use_id: null,
+      session_id: this.deps.sessionId,
+      uuid,
+      timestamp,
+      tool_use_result: '',
+    });
+    const result: TurnResult = {
+      kind: 'result',
+      subtype: 'error_during_execution',
+      isError: true,
+      errors: ['[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=tool_use'],
+      stopReason: 'tool_use',
+      terminalReason: pending ? 'aborted_tools' : 'aborted_streaming',
+      exitCode: 0,
+    };
+    this.emitResult(result);
+    await this.end(result);
+    return result.exitCode;
+  }
+
+  /** SIGTERM: SessionEnd still fires, but there is no result and no cost-state line. */
   async sessionEnd(): Promise<void> {
     await this.runHooks('SessionEnd', { reason: 'other' }, 'other');
   }
@@ -802,6 +853,7 @@ export class SimSession {
       input: call.input,
     });
     this.closeResponse('tool_use');
+    this.pendingTool = { toolUseId, sourceUuid: toolUseBlock.uuid };
 
     const batchEntry: Record<string, unknown> = {
       tool_name: call.name,
@@ -870,6 +922,8 @@ export class SimSession {
     } catch (error) {
       outcome = toolError((error as Error).message);
     }
+    // SIGINT during the call rejects it instead of reporting how it ended (SIGTERM reports the killed command's status).
+    if (this.deps.signal?.aborted && this.deps.signal.reason === 'SIGINT') throw new SimAbortError('SIGINT');
     const durationMs = Math.max(0, this.deps.now() - started);
     this.ledger.addTool(durationMs, outcome.linesAdded, outcome.linesRemoved);
     this.writeToolResult(toolUseId, toolUseBlock.uuid, outcome);
@@ -992,6 +1046,7 @@ export class SimSession {
   }
 
   private writeToolResult(toolUseId: string, sourceUuid: string, outcome: ToolOutcome): void {
+    if (this.pendingTool?.toolUseId === toolUseId) this.pendingTool = null;
     const uuid = this.deps.ids.uuid();
     const timestamp = this.timestamp();
     const message = {

@@ -25,6 +25,8 @@ export interface ToolContext {
   env: Readonly<Record<string, string>>;
   /** CLAUDE_SIM_EXEC=1: bash steps marked `exec: true` really run. */
   execAllowed: boolean;
+  /** Aborting the run (SIGINT, SIGTERM) kills a command that is still running, as the real CLI does. */
+  signal?: AbortSignal;
 }
 
 export interface BashScript {
@@ -442,10 +444,13 @@ function execShell(command: string, ctx: ToolContext, timeoutMs: number, shell =
     let stdout = '';
     let stderr = '';
     let interrupted = false;
-    const timer = setTimeout(() => {
+    const stop = () => {
       interrupted = true;
       killGroup(child, 'SIGTERM');
-    }, timeoutMs);
+    };
+    const timer = setTimeout(stop, timeoutMs);
+    if (ctx.signal?.aborted) stop();
+    else ctx.signal?.addEventListener('abort', stop, { once: true });
     child.stdout.setEncoding('utf8').on('data', (chunk: string) => (stdout += chunk));
     child.stderr.setEncoding('utf8').on('data', (chunk: string) => (stderr += chunk));
     child.on('error', (error: NodeJS.ErrnoException) => {
@@ -456,6 +461,7 @@ function execShell(command: string, ctx: ToolContext, timeoutMs: number, shell =
     });
     child.on('close', (code) => {
       clearTimeout(timer);
+      ctx.signal?.removeEventListener('abort', stop);
       resolve({ stdout, stderr, exitCode: code ?? (interrupted ? 143 : 1), interrupted });
     });
   });
