@@ -1,4 +1,7 @@
 import { randomBytes } from 'node:crypto';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { createTestRuntime, EventStore, EventValidationError, FakeClock, MAX_BODY_BYTES, silentLogger, type AocModule } from '../src';
 
@@ -30,6 +33,45 @@ describe('chained header fields are bounded like meta', () => {
     expect(() => s.append({ ...nudge('ses_a', 'x'), idempotencyKey: 'key\nwith-newline' })).toThrow(EventValidationError);
     expect(s.head().seq).toBe(0);
     expect(s.append({ ...nudge('ses_a', 'x'), idempotencyKey: 'crd:cap:["2026-10","ses_a",null,0]' }).idempotencyKey).toBe('crd:cap:["2026-10","ses_a",null,0]');
+  });
+});
+
+describe('blob storage paths', () => {
+  const erase = (s: EventStore, scopeId: string) => s.eraseScope(scopeId, { actor: { kind: 'human', id: 'usr_approver' }, reason: 'pdpa_request' });
+
+  it('never lets an erasure scope id escape the blob directory', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'aoc-blobs-'));
+    const s = mk(dir);
+    s.append(nudge('ses_a', 'kept'));
+    s.bodies.putBlob('att_1', 'tkt_1', Buffer.from('media'), '2026-10-09T00:00:00.000Z');
+    for (const scope of ['..', '.', '', '../..']) erase(s, scope);
+    expect(existsSync(join(dir, 'aoc.db'))).toBe(true);
+    expect(existsSync(join(dir, 'bodies.db'))).toBe(true);
+    expect(s.bodies.getBlob('att_1')?.toString()).toBe('media');
+    s.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('keeps distinct scopes in distinct directories (erasing one never shreds another)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'aoc-blobs-'));
+    const s = mk(dir);
+    s.bodies.putBlob('att_1', 'tkt/1', Buffer.from('slash'), '2026-10-09T00:00:00.000Z');
+    s.bodies.putBlob('att_2', 'tkt_1', Buffer.from('underscore'), '2026-10-09T00:00:00.000Z');
+    erase(s, 'tkt_1');
+    expect(s.bodies.getBlob('att_2')).toBeNull();
+    expect(s.bodies.getBlob('att_1')?.toString()).toBe('slash');
+    s.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('never writes a blob outside the blob directory', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'aoc-blobs-'));
+    const s = mk(dir);
+    s.bodies.putBlob('escaped.bin', '..', Buffer.from('media'), '2026-10-09T00:00:00.000Z');
+    expect(existsSync(join(dir, 'escaped.bin'))).toBe(false);
+    expect(s.bodies.getBlob('escaped.bin')?.toString()).toBe('media');
+    s.close();
+    rmSync(dir, { recursive: true, force: true });
   });
 });
 
