@@ -64,7 +64,8 @@ packages/demo        demo seeder + `live` launcher (real sessions on claude-sim;
 - Compact, high-density, keyboard accessible, WCAG AA, works at 360px wide.
 
 ## Lessons from past mistakes (binding; add one whenever a mistake is found)
-Each rule names the mistake it prevents. `node scripts/check-docs.mjs` (also in `scripts/check.sh`) enforces 1–3.
+Each rule names the mistake it prevents. `node scripts/check-docs.mjs` enforces 1–3; it runs in `scripts/check.sh` and as a
+Claude Code Stop hook (`.claude/settings.json`), which will not let a session finish while it fails.
 1. **Gap list drifted from the code** (17 gaps closed in code were still "open", so work was re-planned). Name the gap
    at the start of every commit subject that works on it (`G-nn: …`). The commit that closes a gap moves its row to a
    Resolved table in `docs/compliance/gaps.md`, with the commit and the proving tests, and updates `traceability.md`.
