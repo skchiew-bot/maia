@@ -26,6 +26,7 @@ import {
   IsolationError,
   NO_ISOLATION_WARNING,
   lookupOsUser,
+  removeStaleSessionFiles,
   resolveIsolation,
   sessionDirs,
   turnSpawn,
@@ -140,6 +141,22 @@ describe('isolation settings', () => {
     await h.launch('second', { threadId: 'thr_2' });
     expect(lines.filter((l) => l.includes('supervisor.isolation is \\"none\\"')).length).toBe(1);
     expect(lines.filter((l) => l.includes('ISOLATION OFF')).length).toBe(2);
+  });
+});
+
+describe('startup cleanup', () => {
+  it('removes every key copy and throwaway directory a crash left behind, and nothing else', () => {
+    const homes = temp('aoc-homes-');
+    for (const p of ['ses_a/credentials', 'ses_a/home/.claude', 'ses_b/home', 'aoc-run-x/home', 'aoc-selfcheck-u/tmp'])
+      mkdirSync(join(homes, p), { recursive: true });
+    writeFileSync(join(homes, 'ses_a/credentials/ssh-key'), 'k');
+    expect(removeStaleSessionFiles(homes)).toBe(1);
+    expect(['ses_a/credentials', 'aoc-run-x', 'aoc-selfcheck-u'].map((p) => existsSync(join(homes, p)))).toEqual([
+      false,
+      false,
+      false,
+    ]);
+    expect(existsSync(join(homes, 'ses_a/home/.claude')) && existsSync(join(homes, 'ses_b/home'))).toBe(true);
   });
 });
 
@@ -306,9 +323,14 @@ const canCreateUsers =
   process.getuid?.() === 0 && spawnSync('useradd', ['--help'], { stdio: 'ignore' }).status === 0;
 const hasSetpriv = spawnSync('setpriv', ['--version'], { stdio: 'ignore' }).status === 0;
 
-function run(cmd: string, args: string[]): void {
-  const r = spawnSync(cmd, args, { encoding: 'utf8' });
-  if (r.status !== 0) throw new Error(`${cmd} ${args.join(' ')} failed: ${r.stderr || r.error}`);
+/** useradd fails while another process holds the passwd lock, so it is retried briefly. */
+async function run(cmd: string, args: string[]): Promise<void> {
+  for (let attempt = 1; ; attempt++) {
+    const r = spawnSync(cmd, args, { encoding: 'utf8' });
+    if (r.status === 0) return;
+    if (attempt === 10) throw new Error(`${cmd} ${args.join(' ')} failed: ${r.stderr || r.error}`);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  }
 }
 
 interface World {
@@ -452,18 +474,19 @@ describe.skipIf(!canCreateUsers)('OS-level isolation end to end (needs root to c
   let writer: OsUser;
   let reader: OsUser;
 
-  beforeAll(() => {
+  beforeAll(async () => {
     for (const name of [WRITER, READER])
-      run('useradd', ['--system', '--no-create-home', '--home-dir', '/nonexistent', '--shell', '/usr/sbin/nologin', '--user-group', name]);
+      await run('useradd', ['--system', '--no-create-home', '--home-dir', '/nonexistent', '--shell', '/usr/sbin/nologin', '--user-group', name]);
     writer = lookupOsUser(WRITER);
     reader = lookupOsUser(READER);
-  });
-  afterAll(() => {
+  }, 30_000);
+  afterAll(async () => {
     for (const name of [WRITER, READER]) {
-      spawnSync('userdel', [name]);
+      await run('userdel', [name]).catch(() => undefined);
+      // userdel normally removes the user's own group as well.
       spawnSync('groupdel', [name], { stdio: 'ignore' });
     }
-  });
+  }, 30_000);
 
   const harness = (w: World, o: HarnessOptions = {}) =>
     createHarness({

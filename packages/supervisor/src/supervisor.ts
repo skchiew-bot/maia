@@ -48,7 +48,7 @@ import {
   prepareHomesRoot,
   prepareSessionDirs,
   profileKeyFiles,
-  removeAllKeyFiles,
+  removeStaleSessionFiles,
   removeKeyFiles,
   resolveIsolation,
   selfCheck,
@@ -283,7 +283,7 @@ export class Supervisor implements SupervisorService {
       commands: [[sup.claudeBin, ...sup.claudeArgsPrefix], sup.hookCommand, sup.mcpCommand].filter((c) => c.length),
       path: this.sourceEnv().PATH ?? '/usr/local/bin:/usr/bin:/bin',
     });
-    const stale = removeAllKeyFiles(iso.homesRoot);
+    const stale = removeStaleSessionFiles(iso.homesRoot);
     this.log.info('session isolation verified', {
       sessionUser: iso.writer.name,
       readOnlySessionUser: iso.reader.name,

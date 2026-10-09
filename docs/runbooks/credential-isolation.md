@@ -51,6 +51,10 @@ Two facts to keep in mind:
   user as aocd, the agent can simply read the 0600 profiles file, the KEK and the database. aocd now enforces the
   separation when `supervisor.isolation` is `"user"` (§4), and `"mode": "production"` refuses to start without it
   (threat model O-1, gap G-01).
+- **With isolation off they do not.** `"isolation": "none"` (the development default) spawns `claude` as aocd's
+  own OS user with aocd's `HOME`: every session, including a read-only triage session through its `Read` tool, can
+  read the profiles file, every key file a profile names, the KEK, both databases and whatever the service user's
+  home holds. On such a host, treat every credential as readable by every session.
 
 ## 3. GitHub: protect `main` and `release/*`
 
@@ -147,6 +151,7 @@ The host that runs aocd and the supervisor. Items 1–3 are enforced by aocd whe
    NoNewPrivileges=yes
    CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_CHOWN CAP_FOWNER CAP_KILL CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH
    ProtectSystem=strict
+   PrivateTmp=yes
    ReadWritePaths=/var/lib/aoc /var/lib/aoc-sessions /srv/aoc/workspaces
    ```
 
@@ -172,7 +177,10 @@ The host that runs aocd and the supervisor. Items 1–3 are enforced by aocd whe
    Naming `sessionUser` turns isolation on (`supervisor.isolation` defaults to `"user"` then, and always in
    production). `"isolation": "none"` is the development default: sessions run as aocd's own user and **can read
    the KEK, both databases and the credential profiles**. aocd logs a warning at startup and on every launch while
-   it is on, and production mode refuses it.
+   it is on, and production mode refuses it. On such a host keep aocd's home free of SSH keys, git credential
+   helpers, `gh` logins and cloud CLI profiles, and remember that the anchor deploy key kept there is readable by
+   sessions ([anchoring §2](anchoring.md#2-git-anchor-provider-git)); with isolation on, root's home is out of their
+   reach.
 
 2. **File ownership.**
 
@@ -282,9 +290,11 @@ The host that runs aocd and the supervisor. Items 1–3 are enforced by aocd whe
    [T-2](../security/threat-model.md#t-2-code-execution-through-git-configuration-in-agent-workspaces)). At this
    commit, `mod-change` promotes from the **project's repository path**, without fetching into a separate clone,
    and lets that repository's `pre-push` hook run with the promotion credential. If any session can write that
-   repository, or a worktree that shares its `.git` directory, this is exploitable. **Do not give the promotion
-   profile a real credential until threat model O-2 is done.** As a stopgap before each promotion, compare the
-   repository's `.git/config` and `.git/hooks/` with a known-good checksum kept off the host.
+   repository, or a worktree that shares its `.git` directory, this is exploitable. Managed sessions work in that
+   very repository by default. **Do not give the promotion profile a real credential until threat model O-2 is
+   done** (gap G-04); with isolation off (O-1) any session can also read the key file directly. How `main` moves in
+   the meantime is a CEO decision; record it. If a credential is ever used before then, compare the repository's
+   `.git/config` and `.git/hooks/` with a known-good checksum kept off the host before each promotion.
 
    With isolation on, aocd is root, so this matters more, and two things change until gap G-04 lands:
    - `runIsolated` commands **without** a credential profile (acceptance tests for rollback verification, git
@@ -321,7 +331,8 @@ Every Builder, before getting access, and then every quarter:
 AOC ships the guard in `packages/hooks/git/pre-push`. It carries the marker `aoc:pre-push-guard`. It refuses any
 push that updates or deletes `main`, `master`, `production` or `release/*` unless `AOC_SUPERVISOR_PUSH=1`, which
 only the supervisor's promotion executor sets. Next to it is `prepare-commit-msg`, which adds the `AOC-Session`,
-`AOC-Change` and `AOC-Ticket` trailers inside managed sessions and does nothing elsewhere.
+`AOC-Change` and `AOC-Ticket` trailers inside managed sessions and does nothing elsewhere. The supervisor does not
+install either hook in managed workspaces yet (gap G-37).
 
 Install it for every repository on a developer machine:
 
@@ -374,13 +385,14 @@ Use a disposable branch and record the results as an AOC change record (or attac
 5. **Triage sessions hold nothing.** Launch a `bug-triage` session on `claude-sim` and check that its environment
    holds no credential variables (`session.launch_requested.meta.credentialProfile` is `null`) and that it ran as
    the read-only session user (`session.launched.payload.runAs` is `aoc-reader`).
-6. **Sessions cannot read aocd's secrets.** Restart aocd and confirm the log says `session isolation verified`. Then
-   check by hand, as each session user:
+6. **Sessions cannot read AOC's secrets.** Restart aocd and confirm the log says `session isolation verified`. Then
+   run a `claude-sim` session, or a shell as each session user, that tries to read the credential profiles file, a
+   profile key file, the KEK, `aoc.db` and aocd's `~/.ssh`, for example
    `sudo -u aoc-agent cat /etc/aoc/credential-profiles.json /etc/aoc/kek /etc/aoc/keys/git-feature` and
-   `sudo -u aoc-reader ls /var/lib/aoc/data` → every one `Permission denied`. While a build turn runs,
+   `sudo -u aoc-reader ls /var/lib/aoc/data` → every read `Permission denied`. While a build turn runs,
    `sudo -u aoc-reader cat /proc/<its pid>/environ` → `Permission denied`; once it ends,
    `ls /var/lib/aoc-sessions/<session id>/credentials` → no such directory. The automated version of this drill
-   is `packages/supervisor/test/isolation.test.ts` (it needs root).
+   is `packages/supervisor/test/isolation.test.ts` (it needs root). With isolation off every read succeeds.
 7. **Provenance gate.** Push a commit with no change record to a feature branch, then request promotion → expect
    `promotion.refused {reason: provenance_gap, orphanShas: [...]}`. Then repeat with a commit made on a laptop
    whose message carries a copied `AOC-Change: <approved change id>` trailer. Today that commit **passes** (threat

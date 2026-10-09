@@ -347,8 +347,14 @@ export function removeKeyFiles(dirs: SessionDirs): void {
   rmSync(dirs.credentials, { recursive: true, force: true });
 }
 
-/** Startup: no turn is running, so no key copy may exist (a crash can leave one behind). */
-export function removeAllKeyFiles(homesRoot: string): number {
+/** Directories of one supervisor command or one self-check probe, removed when it ends. */
+const THROWAWAY_DIR = /^aoc-(run|selfcheck)-/;
+
+/**
+ * Startup: no turn is running, so no key copy may exist, nor a throwaway directory (a crash can leave either
+ * behind). Returns how many key copies were removed.
+ */
+export function removeStaleSessionFiles(homesRoot: string): number {
   let removed = 0;
   let entries: string[];
   try {
@@ -357,6 +363,10 @@ export function removeAllKeyFiles(homesRoot: string): number {
     return 0;
   }
   for (const id of entries) {
+    if (THROWAWAY_DIR.test(id)) {
+      rmSync(join(homesRoot, id), { recursive: true, force: true });
+      continue;
+    }
     const dir = join(homesRoot, id, 'credentials');
     if (existsSync(dir)) {
       rmSync(dir, { recursive: true, force: true });
