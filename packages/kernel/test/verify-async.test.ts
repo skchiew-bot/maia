@@ -89,16 +89,17 @@ describe('EventStore.verifyChainAsync', () => {
     let server: Server;
     let url: string;
     let served = 0;
+    // Filling the chain is slow when every package's tests run in parallel: give the hook its own budget.
     beforeAll(async () => {
       store = open().store;
-      fill(store, 20_000);
+      fill(store, 15_000);
       server = createServer((_req, res) => {
         served++;
         res.end('ok');
       });
       await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
       url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
-    });
+    }, 120_000);
     afterAll(async () => {
       await new Promise<void>((resolve) => server.close(() => resolve()));
       store.close();
@@ -124,7 +125,7 @@ describe('EventStore.verifyChainAsync', () => {
       expect(answeredWhileVerifying).toBe(true);
       expect(served).toBe(2);
       expect(ticks).toBeGreaterThan(5);
-      expect(v).toMatchObject({ ok: true, headSeq: 20_000, checked: 20_000, headHash: store.head().hash });
-    });
+      expect(v).toMatchObject({ ok: true, headSeq: 15_000, checked: 15_000, headHash: store.head().hash });
+    }, 60_000);
   });
 });

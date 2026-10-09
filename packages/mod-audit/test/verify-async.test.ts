@@ -61,7 +61,7 @@ describe('verification never stalls the sole writer', () => {
       ok: true,
       checked: report.headSeq + 1,
     });
-  });
+  }, 60_000);
 
   it('appends made while a verify runs are not reported as a head mismatch, and anchoring still anchors the verified head', async () => {
     a = await auditRuntime();
@@ -82,5 +82,5 @@ describe('verification never stalls the sole writer', () => {
     const r = await anchoring;
     expect(r).toMatchObject({ ok: true, anchor: { seq: head.seq, hash: head.hash } });
     expect((await a.mod.service().computeVerify()).ok).toBe(true);
-  });
+  }, 60_000);
 });
