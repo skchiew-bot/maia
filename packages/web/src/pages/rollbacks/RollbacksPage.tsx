@@ -327,7 +327,7 @@ function RollbacksView() {
           info="No orphan commits reach main (§14): each promotion traces every commit through an approved change record or fix plan, a UAT sign-off and a gate, or it is refused. Break-glass is the sole exception and says so. Select a promotion to see each commit's trace."
         >
           {promotions.data ? (
-            <PromotionsTable promotions={pr} projectName={projects.nameOf} />
+            <PromotionsTable promotions={pr} projectName={projects.nameOf} focusId={params.get('promotionId') ?? undefined} />
           ) : promotions.error ? (
             <LoadFailed what="promotions" error={promotions.error} onRetry={promotions.reload} />
           ) : (

@@ -242,6 +242,16 @@ describe('the async twins keep the kernel git rules (T-2, G-04)', () => {
   });
 });
 
+describe('every git the kernel runs for a caller', () => {
+  it('never lazily fetches a missing object: a planted promisor remote must not be contacted (sync and async)', async () => {
+    shim('echo "lazy=$GIT_NO_LAZY_FETCH prompt=$GIT_TERMINAL_PROMPT"');
+    const git = createGitService();
+    const dir = temp();
+    expect(git.run(dir, ['status']).stdout).toBe('lazy=1 prompt=0\n');
+    expect((await git.runAsync(dir, ['status'])).stdout).toBe('lazy=1 prompt=0\n');
+  });
+});
+
 const NOBODY = (() => {
   const line = spawnSync('getent', ['passwd', 'nobody'], { encoding: 'utf8' }).stdout.split('\n')[0] ?? '';
   const [, , uid, gid] = line.split(':');
