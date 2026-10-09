@@ -211,6 +211,40 @@ export class HookDispatcher {
         this.d.engine.toolFinished(s.sessionId, now);
         return { exitCode: 0 };
       }
+      case 'PostToolUseFailure': {
+        const f = h as Extract<HookInput, { hook_event_name: 'PostToolUseFailure' }>;
+        const input = (f.tool_input ?? {}) as Record<string, unknown>;
+        this.ctx.store.append({
+          type: 'tool.used',
+          actor: this.agent(s.sessionId),
+          scope,
+          meta: { sessionId: s.sessionId, toolName: f.tool_name.slice(0, 128), fileChanging: false, ok: false, toolUseId: f.tool_use_id?.slice(0, 128) ?? null },
+          payload: { inputSummary: summarize(input), outputSummary: summarize(f.error ?? 'tool failed'), filePaths: filePathsOf(input) },
+          source: 'hook',
+          sourceTs: req.sentAt,
+          idempotencyKey: `${key}:tool`,
+        });
+        this.d.engine.toolFinished(s.sessionId, now);
+        return { exitCode: 0 };
+      }
+      case 'StopFailure': {
+        const f = h as Extract<HookInput, { hook_event_name: 'StopFailure' }>;
+        const row = this.d.engine.row(s.sessionId);
+        if (/rate_limit/i.test(f.error ?? '') && row && !row.throttle_started_at) {
+          this.ctx.store.append({
+            type: 'throttle.hit',
+            actor: this.agent(s.sessionId),
+            scope,
+            meta: { sessionId: s.sessionId, resetAt: null, source: 'exit' },
+            payload: { message: summarize(f.last_assistant_message ?? f.error, 500) },
+            source: 'hook',
+            idempotencyKey: `${key}:throttle`,
+          });
+          if (s.mode === 'observed') this.setLifecycle(s, 'throttled', 'plan_limit', `${key}:lc`);
+        }
+        this.d.engine.recordActivity(s.sessionId, 'stream', now);
+        return { exitCode: 0 };
+      }
       case 'Stop':
       case 'SubagentStop':
         if (s.mode === 'observed' && h.hook_event_name === 'Stop') this.setLifecycle(s, 'idle', 'turn_ended', `${key}:lc`);

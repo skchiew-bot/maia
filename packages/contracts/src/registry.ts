@@ -17,6 +17,8 @@ export const ProcessTypeSchema = z
     credentialProfile: z.string().nullable().default(null),
     permissionMode: z.enum(['acceptEdits', 'dontAsk', 'bypassPermissions', 'default', 'plan']).default('acceptEdits'),
     tools: z.object({ allow: z.array(z.string()).optional(), deny: z.array(z.string()).optional() }).default({}),
+    /** Restrict the built-in tool set (`--tools`), e.g. ["Read","Glob","Grep"] for read-only triage. Omit for the default set. */
+    builtinTools: z.array(z.string()).optional(),
     requiresPlan: z.boolean().default(true),
     /** Rollover when context use crosses this % of the window (only at a clean task boundary). */
     rolloverContextPct: z.number().min(10).max(95).default(70),

@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { appendFileSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -62,6 +62,15 @@ describe('TranscriptTailer', () => {
 
 describe('parseThrottle', () => {
   const now = new Date('2026-10-09T10:00:00');
+  it('parses the 2.x message family with zones and ignores warnings', () => {
+    const at = new Date('2026-10-09T02:00:00Z'); // 10:00 in Kuala Lumpur
+    expect(parseThrottle("You've hit your session limit · resets 3pm (Asia/Kuala_Lumpur)", at)!.resetAt).toBe('2026-10-09T07:00:00.000Z');
+    expect(parseThrottle("You've hit your weekly limit · resets Oct 14, 3pm (Asia/Kuala_Lumpur)", at)!.resetAt).toBe('2026-10-14T07:00:00.000Z');
+    expect(parseThrottle("You've hit your session limit · resets 12:50am (America/Los_Angeles)", at)!.resetAt).toBe('2026-10-09T07:50:00.000Z');
+    expect(parseThrottle("You've used 90% of your session limit · resets 3pm (Asia/Kuala_Lumpur)", at)).toBeNull();
+    expect(parseThrottle('API Error: Rate limit reached', at)).toEqual({ resetAt: null });
+  });
+
   it('parses the known usage-limit variants', () => {
     expect(parseThrottle('Claude AI usage limit reached|1791522000', now)!.resetAt).toBe(new Date(1791522000 * 1000).toISOString());
     expect(parseThrottle('5-hour limit reached ∙ resets 3pm', now)!.resetAt).toBe(new Date('2026-10-09T15:00:00').toISOString());
@@ -91,6 +100,8 @@ describe('Sidecar end to end', () => {
     const dir = mkdtempSync(join(tmpdir(), 'aoc-sc-'));
     const transcript = join(dir, 'session.jsonl');
     writeFileSync(transcript, [asst('msg_1', 'thinking', U), asst('msg_1', 'tool_use', U)].join('\n') + '\n');
+    mkdirSync(join(dir, 'session', 'subagents'), { recursive: true });
+    writeFileSync(join(dir, 'session', 'subagents', 'agent-1.jsonl'), asst('msg_sub', 'text', { input_tokens: 1, output_tokens: 11 }, { isSidechain: true }) + '\n');
     const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)']);
     const sc = new Sidecar({ sessionId: 'ses_X', pid: child.pid!, transcriptPath: transcript, daemonUrl: url, token: 'tok', stateDir: join(dir, 'state'), intervalMs: 100, flushEveryMs: 100 });
     await sc.start();
@@ -104,7 +115,7 @@ describe('Sidecar end to end', () => {
     expect(paths.at(-1)).toBe('/ingest/process');
     const usage = posts.filter((p) => p.path === '/ingest/usage');
     const totalOut = usage.flatMap((p) => p.body.batches as { outputTokens: number }[]).reduce((n, b) => n + b.outputTokens, 0);
-    expect(totalOut).toBe(100); // msg_1 counted once
+    expect(totalOut).toBe(111); // msg_1 counted once + the subagent transcript
     expect(posts.find((p) => p.path === '/ingest/throttle')!.body.resetAt).toBe(new Date(1791522000 * 1000).toISOString());
 
     // restart with the same state dir must not double count

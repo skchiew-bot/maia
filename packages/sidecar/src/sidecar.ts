@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { INGEST_PATHS, type HeartbeatRequest, type UsageRequest } from '@aoc/contracts';
 import { createClient, type AocClient } from '@aoc/client';
@@ -23,6 +23,7 @@ export interface SidecarOptions {
 
 interface PersistedState {
   offset: number;
+  subOffsets?: Record<string, number>;
   counted: ReturnType<UsageAggregator['snapshot']>;
   throttleActive: boolean;
 }
@@ -44,6 +45,9 @@ export class Sidecar {
   readonly client: AocClient;
   private readonly agg: UsageAggregator;
   private readonly tailer: TranscriptTailer;
+  /** Subagent transcripts live in separate files: <transcript without .jsonl>/subagents/agent-*.jsonl. */
+  private readonly subTailers = new Map<string, TranscriptTailer>();
+  private readonly subOffsets: Record<string, number>;
   private hbTimer: NodeJS.Timeout | null = null;
   private flushTimer: NodeJS.Timeout | null = null;
   private lastActivityPost = 0;
@@ -62,6 +66,7 @@ export class Sidecar {
     this.throttleActive = st?.throttleActive ?? false;
     this.client = o.client ?? createClient({ daemonUrl: o.daemonUrl, token: o.token, spoolDir: o.spoolDir ?? join(o.stateDir, 'spool'), timeoutMs: 4000 });
     this.tailer = new TranscriptTailer(o.transcriptPath, (l) => this.onLine(l), { offset: st?.offset ?? 0 });
+    this.subOffsets = st?.subOffsets ?? {};
     this.isAlive = o.isAlive ?? pidAlive;
     this.now = o.now ?? (() => new Date());
   }
@@ -76,7 +81,8 @@ export class Sidecar {
 
   private saveState(): void {
     const tmp = `${this.stateFile}.tmp`;
-    const st: PersistedState = { offset: this.tailer.committedOffset, counted: this.agg.snapshot(), throttleActive: this.throttleActive };
+    for (const [f, t] of this.subTailers) this.subOffsets[f] = t.committedOffset;
+    const st: PersistedState = { offset: this.tailer.committedOffset, subOffsets: this.subOffsets, counted: this.agg.snapshot(), throttleActive: this.throttleActive };
     writeFileSync(tmp, JSON.stringify(st), { mode: 0o600 });
     renameSync(tmp, this.stateFile);
   }
@@ -114,8 +120,24 @@ export class Sidecar {
     return alive;
   }
 
+  /** Discover and read subagent transcripts (their usage never appears in the main file). */
+  pollSubagents(): void {
+    const dir = this.o.transcriptPath.replace(/\.jsonl$/, '') + '/subagents';
+    if (!existsSync(dir)) return;
+    for (const f of readdirSync(dir)) {
+      if (!f.endsWith('.jsonl')) continue;
+      let t = this.subTailers.get(f);
+      if (!t) {
+        t = new TranscriptTailer(`${dir}/${f}`, (l) => this.onLine(l), { offset: this.subOffsets[f] ?? 0 });
+        this.subTailers.set(f, t);
+      }
+      t.poll();
+    }
+  }
+
   async flush(): Promise<number> {
     this.tailer.poll();
+    this.pollSubagents();
     const batches = this.agg.drain();
     this.saveState();
     if (!batches.length) return 0;
