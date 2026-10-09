@@ -482,7 +482,7 @@ Table `events` in `aoc.db` (kernel [`event-store.ts`](../packages/kernel/src/sto
 | `type` | A catalog event type, e.g. `task.done` |
 | `actor` (`actor_kind`, `actor_id`) | `human` (`usr_…`), `agent` (an AOC session id `ses_…`) or `system` (a component name such as `supervisor` or `scheduler:fx`) |
 | `scope` (+ indexed columns `project_id`, `thread_id`, `session_id`, `task_id`, `ticket_id`, `change_id`, `decision_id`, `user_id`) | Ids only, never text |
-| `meta` | Chained **in clear**. Ids, enums, numbers, booleans, hashes and short machine labels only. Each type's meta schema is `strict`, so unknown keys are rejected and free text cannot leak into the clear-text chain |
+| `meta` | Chained **in clear**. Ids, enums, numbers, booleans, hashes and short machine labels only. Each type's meta schema is `strict`, so unknown keys are rejected and free text cannot leak into the clear-text chain. A lint in `packages/daemon/test/event-meta.test.ts` walks every meta schema of the catalog and fails on a field that could hold text of any length; its list of known exceptions is empty |
 | `payload_hash` | The **blinded** hash of the body (§5.3), or null for header-only events |
 | `body_scope` | The encryption-key scope of the body (§5.4) |
 | `source` | `hook`, `mcp`, `sidecar`, `supervisor`, `api`, `scheduler`, `cli`, `intake` or `system` |
@@ -580,7 +580,9 @@ before anything is shredded, so a failing record never leaves shredded bodies wi
    in the unallocated gap of a reused page, outside every table, so only a `VACUUM` removes them. It runs in the
    daemon's thread for as long as it takes to rewrite `aoc.db`. A reader that holds an older snapshot (the backup's
    copy of the database) keeps the WAL from being truncated: aocd logs a warning, and the pre-erasure pages go with
-   the next checkpoint. A `VACUUM` that cannot run is logged, not thrown.
+   the next checkpoint. A `VACUUM` that cannot run is logged (`VACUUM after an erasure failed`), not thrown, because
+   the scrub and the shred are done by then: the erasure is still reported as done, and the operator runs the
+   `VACUUM` by hand ([key custody §6](runbooks/key-custody.md#6-crypto-shred)).
 
 A crash between steps 3 and 4 leaves the bodies recoverable with the record chained; the operator runs the erasure
 again (gap G-57).

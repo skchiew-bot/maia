@@ -18,7 +18,7 @@ Merged as `9c69286`; the lead branch at `b4fdf57` contains it. Finding ids are `
 | W4-03 | `packages/kernel/src/store/event-store.ts`, `body-store.ts` | `eraseScope` shredded the bodies before the `body.erased` record was validated and appended, so a failing record left shredded bodies with no record in the chain. Now it is write-ahead: the record is validated and appended first | `87eccbd` |
 | W4-04 | `packages/kernel/src/store/event-store.ts` | A projection rebuild stopped at the first event a projector threw on, so one accepted poison event could stop aocd from starting. Now each projector is isolated with savepoints and marked `degraded`, as on the live path | `659d098` |
 | W4-05 | `packages/kernel/src/store/event-store.ts` | `write()` gave projectors, listeners and callers the caller's own objects, while a rebuild reads canonical JSON, so live and rebuilt state differed (key order, `undefined` members, wide actor objects). `write()` now normalises first. Found through `mtr_ratecards.rates_json` and `mtr_rollups.breakdown_json` | `4bdd9a8` |
-| W4-06 | `packages/kernel/src/store/event-store.ts` | SQLite's `secure_delete` leaves cells that a b-tree rebalance moved in the unallocated gap of reused pages, so erased text (message ids) stayed in raw `aoc.db` outside every table and the WAL (reproduced in a standalone SQLite script at about 0.7 % of layouts). `eraseScope` now runs `VACUUM` after the shred, then truncates the WAL. A `VACUUM` runs in the daemon's thread for as long as it takes to rewrite `aoc.db` | `004bbf9` |
+| W4-06 | `packages/kernel/src/store/event-store.ts` | SQLite's `secure_delete` leaves cells that a b-tree rebalance moved in the unallocated gap of reused pages, so erased text (message ids) stayed in raw `aoc.db` outside every table and the WAL (reproduced in a standalone SQLite script at about 0.7 % of layouts). `eraseScope` now runs `VACUUM` after the shred, then truncates the WAL. A `VACUUM` runs in the daemon's thread for as long as it takes to rewrite `aoc.db`; one that fails is logged, not thrown | `004bbf9` |
 | W4-07 | `packages/kernel/src/store/event-store.ts` | `wal_checkpoint(TRUNCATE)` returns busy while a reader holds a snapshot (the backup's `VACUUM INTO` worker), which left pre-erasure pages on disk without a signal. Now a warning is logged | `33dec29` |
 | W4-08 | `packages/mod-identity/src/projector.ts` | Erasing a person left passkey `transports`, `device_type`, `backed_up` and the registration counter, which a rebuild clears. Now the live scrub empties every passkey column | `c29c55c` |
 | W4-09 | `packages/supervisor/src/routes.ts` | Prompt, nudge, restart, stop and rollover looked the session up before authenticating, so 404 against 401 told an unauthenticated caller which session and thread ids exist (and a requester got 404, not 403). `requireDriverRole` now runs first | `7f1816d` |
@@ -68,8 +68,21 @@ These are recorded in the [gap list](../compliance/gaps.md) (G-57 and the residu
   the record chained; the operator re-runs the erasure. An automatic reconcile at start is unsafe as written, because
   later bodies in the scope reuse the old data key.
 - **Erase and backup are not serialised.** With a backup reading, the erasure cannot truncate the WAL (now logged).
+- **A failed `VACUUM` does not fail the erasure.** It is logged (`VACUUM after an erasure failed`) and the erasure is
+  reported as done, because the scrub and the shred cannot be undone; the operator runs the `VACUUM` by hand.
 - `dec_notices` (decision alert dedupe) lives outside the log by design; `GET /api/audit/verify` appends an event;
   decision-card flooding by a session (O-16, T-17) is not addressed; truncating the tail of the chain is visible only
   against the off-host anchors; the push gateway's positive path is covered only by the supervisor tests.
-- A doc nit in `OutcomeCostItemDTO.notionalRm` was fixed in the contract (`b4fdf57`): null when priced usage has no
-  rate, 0 when the usage cost US$0.
+
+## Contract changes that followed (`b4fdf57`)
+
+The invariants review asked for these, and the lead made them. They are in `packages/contracts`, which the lead owns.
+
+- `session.rollover_started.briefHash` was an unbounded string in the clear-text chain. It is now a 64-hex hash
+  (`zHash`), which is what the supervisor always put there (the SHA-256 of the handoff brief). The `event-meta` lint
+  of the daemon's tests, which fails on any `meta` field that could hold text of any length, has an empty list of
+  known exceptions.
+- `zIso`, the catalog's timestamp type, checked only the length. It now has to parse as an instant, so a value such as
+  `not-a-date` is refused by the catalog as well as by the ingest (W4-11).
+- `OutcomeCostItemDTO.notionalRm` (cost per outcome) says what it is for usage that cost US$0: null when the outcome
+  has priced usage and no usage day has a rate, 0 when its usage cost US$0, which needs no rate.

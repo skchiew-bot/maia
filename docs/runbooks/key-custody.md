@@ -177,8 +177,10 @@ Approver-only.
    The API accepts an erasure without one, and checks only that a given decision is resolved, not that it
    approved this erasure (threat model O-28): the procedure, not the code, ties the two together.
 6. **The `aoc.db` gap is closed in code** (threat model O-24, gap G-39): `aoc.db` runs with `secure_delete`, and
-   `eraseScope` itself runs the `VACUUM` and truncates the WAL (step 5). Only for an erasure made by an earlier
-   build, run `PRAGMA wal_checkpoint(TRUNCATE)` and then `VACUUM` on `aoc.db` once, with aocd stopped.
+   `eraseScope` itself runs the `VACUUM` and truncates the WAL (step 5). Do it by hand only for an erasure made by an
+   earlier build, or when aocd logged `VACUUM after an erasure failed` (the erasure is still reported as done, for
+   example when the disk was too full for the `VACUUM`): stop aocd, run `PRAGMA wal_checkpoint(TRUNCATE)` and then
+   `VACUUM` on `aoc.db` once, with free disk space of about the size of the file.
 7. **Verify:** the events of the scope read back with `payload: null`; the affected views show `[erased]`; the
    scope's blob directory is gone; Verify still passes.
 8. **Backups.** The erasure is complete only when every backup taken before step 5 has expired. Put that date in
