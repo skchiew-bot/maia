@@ -20,7 +20,8 @@ export function usePasskeys(enabled: boolean): PasskeyState {
   return { hasPasskey: r.data ? r.data.passkeys.length > 0 : null, reload: r.reload };
 }
 
-export type BusyAction = { kind: 'resolve'; optionId: string } | { kind: 'register' } | { kind: 'withdraw' } | { kind: 'escalate' };
+export type BusyAction =
+  { kind: 'resolve'; optionId: string } | { kind: 'register' } | { kind: 'withdraw' } | { kind: 'escalate' };
 
 export interface DecisionActions {
   busy: BusyAction | null;
@@ -34,33 +35,34 @@ export interface DecisionActions {
   clearProblem(): void;
 }
 
-const path = (card: DecisionCardView, action: string) => `/api/decisions/${encodeURIComponent(card.id)}/${action}`;
+const path = (card: DecisionCardView, action: string) =>
+  `/api/decisions/${encodeURIComponent(card.id)}/${action}`;
 
 /**
  * Resolve (button or passkey), register a passkey, withdraw or escalate. Errors become a plain-language problem
  * for the caller to show; success is announced and handed back so the caller can move selection on.
  */
-export function useDecisionActions(onChanged?: (card: DecisionCardView) => void, passkeys?: PasskeyState): DecisionActions {
+export function useDecisionActions(
+  onChanged?: (card: DecisionCardView) => void,
+  passkeys?: PasskeyState,
+): DecisionActions {
   const toast = useToast();
   const [busy, setBusy] = useState<BusyAction | null>(null);
   const [problem, setProblem] = useState<PasskeyProblem | null>(null);
   const [signedHash, setSignedHash] = useState<string | null>(null);
 
-  const run = useCallback(
-    async <T,>(action: BusyAction, work: () => Promise<T>): Promise<T | null> => {
-      setBusy(action);
-      setProblem(null);
-      try {
-        return await work();
-      } catch (err) {
-        setProblem(describePasskeyError(err));
-        return null;
-      } finally {
-        setBusy(null);
-      }
-    },
-    [],
-  );
+  const run = useCallback(async <T>(action: BusyAction, work: () => Promise<T>): Promise<T | null> => {
+    setBusy(action);
+    setProblem(null);
+    try {
+      return await work();
+    } catch (err) {
+      setProblem(describePasskeyError(err));
+      return null;
+    } finally {
+      setBusy(null);
+    }
+  }, []);
 
   const resolve = useCallback(
     (card: DecisionCardView, optionId: string, comment: string | null) =>
@@ -87,7 +89,11 @@ export function useDecisionActions(onChanged?: (card: DecisionCardView) => void,
   const register = useCallback(async () => {
     const ok = await run({ kind: 'register' }, async () => {
       await registerPasskey('AOC console');
-      toast.notify({ tone: 'ok', title: 'Passkey registered', body: 'You can now sign go-live, rollback and break-glass decisions.' });
+      toast.notify({
+        tone: 'ok',
+        title: 'Passkey registered',
+        body: 'You can now sign go-live, rollback and break-glass decisions.',
+      });
       return true;
     });
     passkeys?.reload();
@@ -97,7 +103,10 @@ export function useDecisionActions(onChanged?: (card: DecisionCardView) => void,
   const withdraw = useCallback(
     (card: DecisionCardView, reason: string, note: string | null) =>
       run({ kind: 'withdraw' }, async () => {
-        const updated = await apiPost<DecisionCardView>(path(card, 'withdraw'), { reason, ...(note ? { note } : {}) });
+        const updated = await apiPost<DecisionCardView>(path(card, 'withdraw'), {
+          reason,
+          ...(note ? { note } : {}),
+        });
         toast.notify({ tone: 'info', title: 'Decision withdrawn', body: updated.title });
         onChanged?.(updated);
         return updated;

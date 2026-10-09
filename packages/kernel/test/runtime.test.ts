@@ -84,3 +84,54 @@ describe('reactor drain', () => {
     await t.close();
   });
 });
+
+describe('projection back-fill on an existing log', () => {
+  it('replays after module init, so projectors see module settings such as the configured timezone', async () => {
+    const { mkdtempSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const { randomBytes } = await import('node:crypto');
+    const { AocConfigSchema } = await import('@aoc/contracts');
+    const { AocRuntime, FakeClock, silentLogger } = await import('../src');
+    const dataDir = mkdtempSync(join(tmpdir(), 'aoc-backfill-'));
+    const masterKey = randomBytes(32);
+    const config = AocConfigSchema.parse({ dataDir, timezone: 'Asia/Kolkata' });
+    const boot = (modules: AocModule[]) =>
+      AocRuntime.create({ config, modules, clock: new FakeClock('2026-10-09T00:00:00.000Z'), log: silentLogger, masterKey });
+
+    const first = await boot([]);
+    first.store.append({
+      type: 'session.nudged',
+      actor: { kind: 'human', id: 'usr_1' },
+      scope: { sessionId: 'ses_1' },
+      meta: { sessionId: 'ses_1' },
+      payload: { text: 'hello' },
+      source: 'api',
+    });
+    await first.stop();
+
+    let tz = 'unset';
+    const zoned: AocModule = {
+      name: 'zoned',
+      projectors: [
+        {
+          name: 'zoned',
+          tables: ['t_zoned'],
+          ddl: ['CREATE TABLE IF NOT EXISTS t_zoned (session_id TEXT, tz TEXT)'],
+          handles: ['session.nudged'],
+          apply({ db }, e) {
+            db.prepare('INSERT INTO t_zoned VALUES (?, ?)').run(e.scope.sessionId ?? '', tz);
+          },
+        },
+      ],
+      init(ctx) {
+        tz = ctx.config.timezone;
+      },
+    };
+    const second = await boot([zoned]);
+    expect(second.store.db.prepare('SELECT session_id, tz FROM t_zoned').all()).toEqual([
+      { session_id: 'ses_1', tz: 'Asia/Kolkata' },
+    ]);
+    await second.stop();
+  });
+});
