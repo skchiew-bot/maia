@@ -88,6 +88,8 @@
     "session": "1700",
     "runAtLocalTime": "18:00",
     "retryAtLocalTimes": ["18:30", "21:00"],
+    "//recheckPreviousWeekday": "The first run of a day re-checks the previous weekday if it was stamped a holiday or its page was unreadable: if BNM has since published it, that day is attempted again. Metering closes each day at 00:15 and a closed day is never restated, so a late figure for a closed day is only reported (fx.alert).",
+    "recheckPreviousWeekday": true,
     "pageUrl": "https://www.bnm.gov.my/exchange-rates",
     "apiUrl": "https://api.bnm.gov.my/public/exchange-rate/USD",
     "extractor": "claude-cli",

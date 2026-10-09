@@ -18,8 +18,8 @@ const live = (date: string, rate: number) => ({ rate, status: 'live' as const, s
 describe('daily close', () => {
   it('runs after the configured local time, closes every unclosed day before today once, and stamps FX live / inherited / missing', async () => {
     const fx = new StubFx({
-      '2026-10-09': live('2026-10-09', 4.2),
-      '2026-10-10': { rate: 4.2, status: 'inherited', sourceDate: '2026-10-09' },
+      '2026-10-09': { ...live('2026-10-09', 4.2), session: '1700' },
+      '2026-10-10': { rate: 4.2, status: 'inherited', sourceDate: '2026-10-09', session: '1700' },
     });
     const t = await meteringRuntime({ fx });
     const approver = t.user('approver');
@@ -59,6 +59,7 @@ describe('daily close', () => {
       fxRate: 4.2,
       fxStatus: 'live',
       fxSourceDate: '2026-10-09',
+      fxSession: '1700',
       rateCardVersion: 1,
       inputTokens: 1_000_700,
       outputTokens: 1_000_000,
@@ -98,22 +99,30 @@ describe('daily close', () => {
     await closeDays(t);
     const closed = t.rt.store.list({ types: ['rollup.closed'] }).map((e) => e.meta);
     expect(
-      closed.map((m) => [m.date, m.fxStatus, m.fxSourceDate, m.usdNotional, m.rmNotional, m.throttleIdleMs]),
+      closed.map((m) => [
+        m.date,
+        m.fxStatus,
+        m.fxSourceDate,
+        m.fxSession,
+        m.usdNotional,
+        m.rmNotional,
+        m.throttleIdleMs,
+      ]),
     ).toEqual([
-      ['2026-10-09', 'live', '2026-10-09', 23.4, 98.28, HOUR],
-      ['2026-10-10', 'inherited', '2026-10-09', 0, 0, 9 * HOUR], // the rest of the 10h throttle
-      ['2026-10-11', 'missing', null, 2, 0, 0],
+      ['2026-10-09', 'live', '2026-10-09', '1700', 23.4, 98.28, HOUR],
+      ['2026-10-10', 'inherited', '2026-10-09', '1700', 0, 0, 9 * HOUR], // the rest of the 10h throttle
+      ['2026-10-11', 'missing', null, null, 2, 0, 0],
     ]);
 
     const daily = await t.json<MeteringDailyDTO>('GET', '/api/metering/daily?from=2026-10-08&to=2026-10-12', {
       headers: approver.headers,
     });
-    expect(daily.days.map((d) => [d.date, d.status, d.fx.status, d.notionalRm])).toEqual([
-      ['2026-10-08', 'unmetered', 'missing', 0],
-      ['2026-10-09', 'closed', 'live', 98.28],
-      ['2026-10-10', 'closed', 'inherited', 0],
-      ['2026-10-11', 'closed', 'missing', null],
-      ['2026-10-12', 'open', 'missing', 0],
+    expect(daily.days.map((d) => [d.date, d.status, d.fx.status, d.fx.session, d.notionalRm])).toEqual([
+      ['2026-10-08', 'unmetered', 'missing', null, 0],
+      ['2026-10-09', 'closed', 'live', '1700', 98.28],
+      ['2026-10-10', 'closed', 'inherited', '1700', 0],
+      ['2026-10-11', 'closed', 'missing', null, null],
+      ['2026-10-12', 'open', 'missing', null, 0],
     ]);
     expect(daily.days[1]).toMatchObject({
       closedAt: myt('2026-10-10', '00:20'),

@@ -47,13 +47,14 @@ export function createFxModule(opts: FxModuleOptions = {}): AocModule {
             {
               name: 'fx.daily',
               schedule: { dailyAt: cfg.runAtLocalTime },
-              run: async () => void (await e.run({ actor: FX_SYSTEM_ACTOR, source: 'scheduler' })),
+              run: async () =>
+                void (await e.run({ actor: FX_SYSTEM_ACTOR, source: 'scheduler', attempt: 'first' })),
             },
             ...cfg.retryAtLocalTimes.map((time) => ({
               name: `fx.retry@${time}`,
               schedule: { dailyAt: time },
               run: async () =>
-                void (await e.run({ actor: FX_SYSTEM_ACTOR, source: 'scheduler', retry: true })),
+                void (await e.run({ actor: FX_SYSTEM_ACTOR, source: 'scheduler', attempt: 'retry' })),
             })),
           ]
         : [];

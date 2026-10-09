@@ -5,6 +5,7 @@
 import type { DecisionCard, DecisionRequestInput, DecisionResolveInput } from './decisions';
 import type { ChangeScope, LivenessState, ModelTier, Role, SessionLifecycle, SessionMode } from './domain';
 import type { AnchorDTO, AuditHealthDTO, BackupDTO, VerifyReportDTO } from './dto/audit';
+import type { FxSession } from './dto/fx';
 import type { Actor, EventSource, JsonValue } from './envelope';
 import type { BoundaryInstruction } from './mcp';
 import type { Progress } from './progress';
@@ -211,7 +212,13 @@ export interface MeteringService {
 
 // ── FX (mod-fx) ────────────────────────────────────────────────────────────
 export interface FxService {
-  rateFor(date: string): { rate: number; status: 'live' | 'inherited'; sourceDate: string } | null;
+  /**
+   * USD→MYR in effect on `date`: its own record, else the latest earlier one stamped inherited. `session` is the BNM
+   * session of that rate (null on records made before sessions were stamped).
+   */
+  rateFor(
+    date: string,
+  ): { rate: number; status: 'live' | 'inherited'; sourceDate: string; session: FxSession | null } | null;
 }
 
 // ── supervisor ─────────────────────────────────────────────────────────────
