@@ -11,7 +11,6 @@ import { formatAge, formatClock, formatDateTime } from '../../lib/format';
 import type { DecisionActions, PasskeyState } from './actions';
 import type { Directory } from './directory';
 import {
-  KIND_LABEL,
   ROLE_WORD,
   TEST_LABEL,
   agingOf,
@@ -57,9 +56,13 @@ function namesOf(ids: readonly string[], directory: Directory): string {
 /** The card's lifecycle as recorded on it: requested, escalated, then resolved or withdrawn. */
 export function DecisionHistory({ card, directory }: { card: DecisionCardView; directory: Directory }) {
   const requester = requesterOf(card.requesterId, directory);
-  const items: { key: string; icon: 'decisions' | 'arrow-up' | 'ok' | 'close' | 'clock'; at: string; text: string; detail?: string | null }[] = [
-    { key: 'requested', icon: 'decisions', at: card.createdAt, text: `Requested by ${requester.name}` },
-  ];
+  const items: {
+    key: string;
+    icon: 'decisions' | 'arrow-up' | 'ok' | 'close' | 'clock';
+    at: string;
+    text: string;
+    detail?: string | null;
+  }[] = [{ key: 'requested', icon: 'decisions', at: card.createdAt, text: `Requested by ${requester.name}` }];
   if (card.escalation)
     items.push({
       key: 'escalated',
@@ -126,7 +129,14 @@ export interface DecisionDetailProps {
  * linked subject, who raised it, who may resolve it, the passkey requirement, the controls and the history.
  * All text on a card is untrusted (agents, requesters): it renders as text, never markup.
  */
-export function DecisionDetail({ card, directory, actions, passkeys, headingLevel = 2, hideTitle }: DecisionDetailProps) {
+export function DecisionDetail({
+  card,
+  directory,
+  actions,
+  passkeys,
+  headingLevel = 2,
+  hideTitle,
+}: DecisionDetailProps) {
   const now = useNow();
   const titleId = useId();
   const Heading = headingLevel === 2 ? 'h2' : 'h3';
@@ -137,6 +147,8 @@ export function DecisionDetail({ card, directory, actions, passkeys, headingLeve
   const project = directory.projectName(card.projectId);
   const requester = requesterOf(card.requesterId, directory);
   const excluded = card.excludedApproverIds.filter((id) => id !== card.requesterId);
+  // The option buttons already name every choice; list them separately only when they carry more than a label.
+  const showOptions = !open || !card.viewer.canResolve || card.options.some((o) => o.description);
 
   const facts = [
     {
@@ -152,13 +164,34 @@ export function DecisionDetail({ card, directory, actions, passkeys, headingLeve
       ),
     },
     ...(card.sessionId && card.subjectType !== 'session'
-      ? [{ term: 'Session', value: <Link to={`/sessions/${encodeURIComponent(card.sessionId)}`}>{session?.title ?? shortId(card.sessionId)}</Link> }]
+      ? [
+          {
+            term: 'Session',
+            value: (
+              <Link to={`/sessions/${encodeURIComponent(card.sessionId)}`}>
+                {session?.title ?? shortId(card.sessionId)}
+              </Link>
+            ),
+          },
+        ]
       : []),
     ...(card.subjectType === 'session' && session
-      ? [{ term: 'Session', value: <Link to={`/sessions/${encodeURIComponent(session.sessionId)}`}>{session.title}</Link> }]
+      ? [
+          {
+            term: 'Session',
+            value: <Link to={`/sessions/${encodeURIComponent(session.sessionId)}`}>{session.title}</Link>,
+          },
+        ]
       : []),
     ...(card.projectId
-      ? [{ term: 'Project', value: <Link to={`/projects/${encodeURIComponent(card.projectId)}`}>{project ?? card.projectId}</Link> }]
+      ? [
+          {
+            term: 'Project',
+            value: (
+              <Link to={`/projects/${encodeURIComponent(card.projectId)}`}>{project ?? card.projectId}</Link>
+            ),
+          },
+        ]
       : []),
     {
       term: 'Raised by',
@@ -173,7 +206,9 @@ export function DecisionDetail({ card, directory, actions, passkeys, headingLeve
       term: 'Who can resolve',
       value: (
         <span>
-          {card.eligibleUserIds ? namesOf(card.eligibleUserIds, directory) : `${ROLE_WORD[card.requiredRole]} role`}
+          {card.eligibleUserIds
+            ? namesOf(card.eligibleUserIds, directory)
+            : `${ROLE_WORD[card.requiredRole]} role`}
           {card.requiredRole === 'approver' && !card.eligibleUserIds ? ' (bounces to the CEO)' : ''}
         </span>
       ),
@@ -193,7 +228,8 @@ export function DecisionDetail({ card, directory, actions, passkeys, headingLeve
       term: 'Raised',
       value: (
         <span>
-          {formatDateTime(card.createdAt).slice(0, 16)} · <RelativeTime value={card.createdAt} suffix=" ago" />
+          {formatDateTime(card.createdAt).slice(0, 16)} ·{' '}
+          <RelativeTime value={card.createdAt} suffix=" ago" />
         </span>
       ),
     },
@@ -214,7 +250,10 @@ export function DecisionDetail({ card, directory, actions, passkeys, headingLeve
           {open ? (
             <AgingBadge aging={aging} />
           ) : (
-            <Badge tone={card.status === 'resolved' ? 'ok' : 'neutral'} icon={card.status === 'resolved' ? 'ok' : 'close'}>
+            <Badge
+              tone={card.status === 'resolved' ? 'ok' : 'neutral'}
+              icon={card.status === 'resolved' ? 'ok' : 'close'}
+            >
               {card.status === 'resolved' ? 'Resolved' : card.status === 'expired' ? 'Expired' : 'Withdrawn'}
             </Badge>
           )}
@@ -223,7 +262,9 @@ export function DecisionDetail({ card, directory, actions, passkeys, headingLeve
           {card.title}
         </Heading>
         {card.test && <p className="dec-detail__test">Decision test: {TEST_LABEL[card.test]}</p>}
-        {card.erased && <p className="dec-detail__erased">Free text on this card was erased (crypto-shredded).</p>}
+        {card.erased && (
+          <p className="dec-detail__erased">Free text on this card was erased (crypto-shredded).</p>
+        )}
       </header>
 
       <section className="dec-detail__section" aria-label="Question">
@@ -236,31 +277,34 @@ export function DecisionDetail({ card, directory, actions, passkeys, headingLeve
         )}
       </section>
 
-      <section className="dec-detail__section" aria-label="Options">
-        <h3 className="dec-detail__h">Options</h3>
-        <ul className="dec-options">
-          {card.options.map((o) => {
-            const isRec = card.recommendation?.optionId === o.id;
-            const chosen = card.resolution?.optionId === o.id;
-            return (
-              <li key={o.id} className={cx('dec-option', isRec && 'is-recommended', chosen && 'is-chosen')}>
-                <span className="dec-option__label">{o.label}</span>
-                {isRec && <Badge tone="accent">Recommended</Badge>}
-                {chosen && (
-                  <Badge tone="ok" icon="ok">
-                    Chosen
-                  </Badge>
-                )}
-                {o.description && <p className="dec-option__desc">{o.description}</p>}
-              </li>
-            );
-          })}
-        </ul>
-        <RecommendationBox card={card} directory={directory} />
-      </section>
+      {showOptions && (
+        <section className="dec-detail__section" aria-label="Options">
+          <h3 className="dec-detail__h">Options</h3>
+          <ul className="dec-options">
+            {card.options.map((o) => {
+              const isRec = card.recommendation?.optionId === o.id;
+              const chosen = card.resolution?.optionId === o.id;
+              return (
+                <li key={o.id} className={cx('dec-option', isRec && 'is-recommended', chosen && 'is-chosen')}>
+                  <span className="dec-option__label">{o.label}</span>
+                  {isRec && <Badge tone="accent">Recommended</Badge>}
+                  {chosen && (
+                    <Badge tone="ok" icon="ok">
+                      Chosen
+                    </Badge>
+                  )}
+                  {o.description && <p className="dec-option__desc">{o.description}</p>}
+                </li>
+              );
+            })}
+          </ul>
+          <RecommendationBox card={card} directory={directory} />
+        </section>
+      )}
+      {!showOptions && <RecommendationBox card={card} directory={directory} />}
 
       <section className="dec-detail__section" aria-label="Facts">
-        <DescriptionList columns={1} items={facts} className="dec-facts" />
+        <DescriptionList columns={2} items={facts} className="dec-facts" />
       </section>
 
       {open && (

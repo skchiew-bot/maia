@@ -26,9 +26,9 @@
 1. **The hook is a relay.** It sends `{mode, aocSessionId, hook stdin, sentAt, idempotencyKey}` to `/ingest/hook` and
    applies the `HookIngestResponse` (exit code, stdout JSON, stderr) unchanged. It holds no policy.
 2. **Guards live in the daemon.** Modules register `PreToolGuard`s with the kernel's `GuardPolicy`. Guards run in
-   `order`, the first non-allow result wins, and **a guard that throws counts as a deny** (it fails closed). Current
-   and contracted guards: `read-only` (`mod-sessions`), `no-manifest` (`mod-ledger`), `protected-op`
-   (`mod-change`), all built, and `self-modification` (`mod-audit`, contracted).
+   `order`, the first non-allow result wins, and **a guard that throws counts as a deny** (it fails closed). The
+   guards, all built, in order: `self-modification` (`mod-audit`, 5), `no-manifest` (`mod-ledger`, 10),
+   `read-only` (`mod-sessions`, 20) and `protected-op` (`mod-change`, 30).
 3. **Denials become decision cards.** A guard can return `raiseDecision`. The daemon then raises the card
    (`protected_operation`), appends `tool.denied` and `session.blocked`, and returns a JSON deny whose reason tells
    the agent which card was raised and to end its turn.
@@ -54,8 +54,9 @@
 - **Bad: forgeable events.** The ingest token reaches the hook through the `claude` environment, so the model can
   reach it too. Hook-relayed events are agent-asserted claims, and gates must not trust them alone
   ([threat model T-3](../security/threat-model.md#t-3-the-model-reads-its-own-environment)).
-- **Required launch checks** (supervisor): validate the generated settings before launch; treat a missing
-  `SessionStart` hook event within N seconds as a failed launch; abort if the `aoc` MCP server is not `connected`.
+- **Launch checks** (supervisor): the generated settings are validated before launch, and the session is aborted if
+  the `aoc` MCP server is not `connected` (both built). A missing `SessionStart` hook event within N seconds should
+  also fail the launch; that check does not exist yet (threat model O-15).
 
 ## Alternatives rejected
 
