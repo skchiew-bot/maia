@@ -69,6 +69,9 @@ export interface IsolatedRun {
   env: Record<string, string>;
   timeoutMs: number;
   maxOutputBytes?: number;
+  /** Run as this user (aocd must be root). */
+  uid?: number;
+  gid?: number;
 }
 
 /** Run a command (never through a shell) with exactly `env`; exit 124 on timeout, 127 when it cannot start. */
@@ -100,6 +103,7 @@ export function runCommand(i: IsolatedRun): Promise<{ exitCode: number; stdout: 
       env: i.env,
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: true,
+      ...(i.uid !== undefined ? { uid: i.uid, gid: i.gid } : {}),
     });
     const timer = setTimeout(() => {
       timedOut = true;

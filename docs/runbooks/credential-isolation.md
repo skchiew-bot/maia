@@ -48,8 +48,9 @@ Two facts to keep in mind:
   ([research](../research/claude-code-integration.md) §8). That is acceptable only because each session credential
   can do no more than that session type may do. Rulesets (§3) make sure no session credential can move `main`.
 - **The profiles file only protects anything if agents run as a different OS user.** If `claude` runs as the same
-  user as aocd, the agent can simply read the 0600 profiles file, the KEK and the database. Run sessions as a
-  separate unprivileged user (threat model O-1).
+  user as aocd, the agent can simply read the 0600 profiles file, the KEK and the database. aocd now enforces the
+  separation when `supervisor.isolation` is `"user"` (§4), and `"mode": "production"` refuses to start without it
+  (threat model O-1, gap G-01).
 
 ## 3. GitHub: protect `main` and `release/*`
 
@@ -119,34 +120,164 @@ gh api repos/$OWNER/$REPO/keys | jq '.[] | {title, read_only}'
 
 ## 4. The supervisor host
 
-The host that runs aocd and the supervisor:
+The host that runs aocd and the supervisor. Items 1–3 are enforced by aocd when `supervisor.isolation` is `"user"`
+(gap G-01); `"mode": "production"` refuses to start without them.
 
-1. **Users.** aocd runs as a service user (for example `aoc`). Managed sessions run as a separate, unprivileged
-   user (for example `aoc-agent`) or in a per-session container (threat model O-1). `aoc-agent` must not be able
-   to read anything owned by `aoc`.
-2. **Credential profiles file.** Path set by `supervisor.credentialProfilesFile` (for example
-   `/etc/aoc/credential-profiles.json`). Owned by `aoc`, mode `0600`. Format:
+1. **Users.** Every managed turn — `claude`, its hooks, its MCP server and every tool the model runs — runs as an
+   unprivileged **session user**, never as aocd's user (threat model O-1). Read-only types (bug triage) run as a
+   **second** session user, so a triage session, which reads untrusted intake text, can neither open a build
+   session's key copy nor read a running build session's environment through `/proc`. The sidecar stays with aocd:
+   it reads the session's transcript, which Claude Code writes with mode 0600.
+
+   ```bash
+   useradd --system --user-group --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin aoc-agent
+   useradd --system --user-group --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin aoc-reader
+   ```
+
+   Each needs its own uid **and** its own primary group (aocd refuses otherwise). Neither may be in any group that
+   can read AOC's files, and neither may have `sudo` rights.
+
+   **aocd runs as root.** Only root can start a turn as another user, stop it (SIGKILL across users), prepare its
+   private directories and read its 0600 transcript; with `isolation: "user"` aocd refuses to start as any other
+   user. Keep root's reach small in the unit, for example (guidance, not tested here):
+
+   ```ini
+   [Service]
+   User=root
+   NoNewPrivileges=yes
+   CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_CHOWN CAP_FOWNER CAP_KILL CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH
+   ProtectSystem=strict
+   ReadWritePaths=/var/lib/aoc /var/lib/aoc-sessions /srv/aoc/workspaces
+   ```
+
+   `NoNewPrivileges=yes` is inherited by sessions, so no setuid binary (`sudo`, `su`) can raise an agent's rights.
+
+   Configuration:
 
    ```json
    {
-     "profiles": {
-       "git-feature": { "env": { "GIT_SSH_COMMAND": "ssh -i /etc/aoc/keys/git-feature -o IdentitiesOnly=yes" } },
-       "uat-deploy": { "env": { "GIT_SSH_COMMAND": "ssh -i /etc/aoc/keys/uat-deploy -o IdentitiesOnly=yes" } },
-       "promotion": { "env": { "GIT_SSH_COMMAND": "ssh -i /etc/aoc/keys/promotion -o IdentitiesOnly=yes" } }
+     "mode": "production",
+     "dataDir": "/var/lib/aoc/data",
+     "keys": { "masterKeyFile": "/etc/aoc/kek" },
+     "supervisor": {
+       "sessionUser": "aoc-agent",
+       "readOnlySessionUser": "aoc-reader",
+       "sessionHomesDir": "/var/lib/aoc-sessions",
+       "workspacesDir": "/srv/aoc/workspaces",
+       "credentialProfilesFile": "/etc/aoc/credential-profiles.json"
      }
    }
    ```
 
-   The key files are owned by `aoc`, mode `0600`. The supervisor hands a session key to the sandbox user only for
-   that session (for example a per-session copy, deleted when the session ends). The `promotion` key never leaves
-   the `aoc` user.
-3. **No process type names the promotion profile.** Check:
+   Naming `sessionUser` turns isolation on (`supervisor.isolation` defaults to `"user"` then, and always in
+   production). `"isolation": "none"` is the development default: sessions run as aocd's own user and **can read
+   the KEK, both databases and the credential profiles**. aocd logs a warning at startup and on every launch while
+   it is on, and production mode refuses it.
+
+2. **File ownership.**
+
+   | Path | Owner | Mode | Why |
+   | --- | --- | --- | --- |
+   | `dataDir` (`aoc.db`, `bodies.db`, `blobs/`) | root | `0700` (aocd creates it so) | The chain, decrypted read models, encrypted bodies |
+   | KEK (`keys.masterKeyFile`) | root | `0400` | Outside `dataDir`; see [key custody](key-custody.md) |
+   | Credential profiles file | root | `0600` | Names every deploy credential |
+   | Key files the profiles name | root | `0600` | Sessions get private copies, never these |
+   | aocd's private session files (`<dataDir>/sessions`) | root | inside `dataDir` | System prompts, sidecar state |
+   | `supervisor.sessionHomesDir` | root (aocd creates it) | `0711` | Session users reach their own directory, cannot list others; no directory above it may be writable by a session user |
+   | `supervisor.workspacesDir` | root | `0755` | aocd creates each new project workspace for `aoc-agent` (`0755`, so `aoc-reader` can read it) |
+   | Project repositories registered for a project | `aoc-agent` | `0755` | Builds write them; triage reads them |
+   | `claude`, `node`, the AOC hook and MCP bundles | root | readable and executable by all | Session users run them; install `claude` system-wide, not under `/root` |
+
+   Existing workspaces created before isolation belong to root: `chown -R aoc-agent: <workspace>`. Because
+   repositories belong to `aoc-agent`, root's git refuses to run in them ("dubious ownership"). That is git's
+   protection against threat model T-2 doing its job; **never** set `safe.directory=*` to silence it (see item 9).
+
+3. **Startup self-check.** With isolation on, aocd refuses to start, listing every problem, unless — tested as each
+   session user, through the same spawn path as a turn —
+   - the session user can read **none** of: `dataDir`, `aoc.db`, `bodies.db`, `blobs/`, the KEK file, the
+     credential profiles file, any key file a profile names, aocd's private session files;
+   - the session user **can** reach `sessionHomesDir` and `workspacesDir`, and run `claudeBin` (with its prefix),
+     the hook command and the MCP command;
+   - the probe really ran as the session user's uid (this catches a runner that does not switch users);
+   - `sessionHomesDir` is owned by root and no directory above it is writable by a session user.
+
+   Key copies left behind by a crash are deleted at the same time.
+
+4. **What a session gets.** Each session has a directory `<sessionHomesDir>/<sessionId>/`, owned by root and its
+   session user's group (`0750`):
+   - `home/` (`0700`, the session user's): `HOME`, with `home/.claude` as `CLAUDE_CONFIG_DIR` (transcripts);
+   - `tmp/` (`0700`, the session user's): `TMPDIR`;
+   - `mcp.json` and `settings.json` (`0640`, root's): readable by the session, never writable by it, so the
+     hooks cannot be edited away during a turn;
+   - `credentials/` (root's, `0750`) with a copy of each key file of the session's credential profile, owned by
+     the session user, mode `0400`. Copies exist **only while a turn runs**: they are written when the turn starts
+     and deleted when it ends, when the session ends, and at every aocd start.
+
+   The session's environment replaces aocd's `HOME`, `USER`, `LOGNAME`, `TMPDIR`, `CLAUDE_CONFIG_DIR`, `XDG_*`,
+   `SSH_AUTH_SOCK` and `GNUPGHOME` with its own, and sets `GIT_CONFIG_GLOBAL=/dev/null` and
+   `GIT_CONFIG_NOSYSTEM=1` (no credential helper, include or hook path from the host) and `GIT_TERMINAL_PROMPT=0`.
+   Without a global config git has no identity, so commits are by `AOC agent <aoc-agent@localhost>` unless the
+   credential profile sets `GIT_AUTHOR_NAME` / `GIT_AUTHOR_EMAIL` (for example to its machine user).
+   `session.launched` records who each turn ran as (`payload.runAs`).
+
+   **Claude credentials.** A fresh `CLAUDE_CONFIG_DIR` holds no login, so give sessions a token through
+   `supervisor.envAllowlist`: `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) or `ANTHROPIC_API_KEY`. The
+   model can read it (threat model O-14).
+
+5. **Credential profiles file.** Path set by `supervisor.credentialProfilesFile`. Declare each key file under
+   `files` and refer to it as `{{file:<name>}}`: an isolated session gets a private copy at that place, aocd's own
+   commands (promotion) the original.
+
+   ```json
+   {
+     "profiles": {
+       "git-feature": {
+         "env": { "GIT_SSH_COMMAND": "ssh -i {{file:ssh-key}} -o IdentitiesOnly=yes -o UserKnownHostsFile={{file:known-hosts}}" },
+         "files": { "ssh-key": "/etc/aoc/keys/git-feature", "known-hosts": "/etc/aoc/keys/known_hosts" }
+       },
+       "uat-deploy": {
+         "env": { "GIT_SSH_COMMAND": "ssh -i {{file:ssh-key}} -o IdentitiesOnly=yes" },
+         "files": { "ssh-key": "/etc/aoc/keys/uat-deploy" }
+       },
+       "promotion": {
+         "env": { "GIT_SSH_COMMAND": "ssh -i {{file:ssh-key}} -o IdentitiesOnly=yes" },
+         "files": { "ssh-key": "/etc/aoc/keys/promotion" }
+       }
+     }
+   }
+   ```
+
+   A key path written straight into an env value (the old format) still works for aocd's own commands, but an
+   isolated session cannot read it. The `promotion` profile is used only by `runIsolated`, as aocd; its key never
+   reaches a session user.
+
+6. **A per-session container instead of a uid switch.** Set `supervisor.runner` to an argv prefix that starts the
+   command in a per-session container (or any other wrapper). aocd still runs as root, prepares the session
+   directory and reads the transcript; the runner must run the command as the session user's uid, with the
+   environment it is given, the workspace and the session directory mounted at the same paths, and forward
+   SIGINT/SIGTERM/SIGKILL. Placeholders: `{user}` `{uid}` `{gid}` `{sessionId}` `{sessionDir}` `{cwd}`. An example
+   wrapper (a sketch, not shipped or tested), configured as
+   `["/usr/local/bin/aoc-container-run", "{uid}", "{gid}", "{sessionDir}", "{cwd}", "--"]`:
+
+   ```bash
+   #!/bin/bash
+   uid=$1 gid=$2 dir=$3 cwd=$4; shift 5   # the rest is the claude command line
+   exec podman run --rm -i --init --user "$uid:$gid" --network aoc-egress \
+     -v "$dir:$dir" -v "$cwd:$cwd" -w "$cwd" --env-file <(env) aoc-session-image "$@"
+   ```
+
+   The startup self-check runs through the runner too, so a runner that does not switch users is refused. A plain
+   uid switch through a runner: `["setpriv", "--reuid={uid}", "--regid={gid}", "--clear-groups", "--"]` (the same as
+   aocd does by itself when no runner is set).
+
+7. **No process type names the promotion profile.** Check:
    `jq -r '.types[].credentialProfile' config/process-types.json | sort -u` must not list `promotion`.
    `config/` is a protected path, and every edit is audited (`registry.changed`).
-4. **Environment allowlist.** Review `supervisor.envAllowlist`. Everything not on it is dropped from session
+8. **Environment allowlist.** Review `supervisor.envAllowlist`. Everything not on it is dropped from session
    environments. Remove what you do not need. The Claude credentials on the default list are readable by the model
-   (threat model O-14).
-5. **Privileged git.** Promotion, tagging and rollback run from a **service-owned clone** that fetches candidate
+   (threat model O-14). Helpers aocd starts itself (git) get a fixed allowlist of their own: never `AOC_*`, API keys
+   or tokens (gap G-46).
+9. **Privileged git.** Promotion, tagging and rollback run from a **service-owned clone** that fetches candidate
    commits by SHA, never in an agent's workspace. An agent can plant git hooks and config there (threat model
    [T-2](../security/threat-model.md#t-2-code-execution-through-git-configuration-in-agent-workspaces)). At this
    commit, `mod-change` promotes from the **project's repository path**, without fetching into a separate clone,
@@ -154,7 +285,15 @@ The host that runs aocd and the supervisor:
    repository, or a worktree that shares its `.git` directory, this is exploitable. **Do not give the promotion
    profile a real credential until threat model O-2 is done.** As a stopgap before each promotion, compare the
    repository's `.git/config` and `.git/hooks/` with a known-good checksum kept off the host.
-6. **Read-only types** never receive credentials. The registry schema refuses a read-only type with a
+
+   With isolation on, aocd is root, so this matters more, and two things change until gap G-04 lands:
+   - `runIsolated` commands **without** a credential profile (acceptance tests for rollback verification, git
+     reads) run as `aoc-agent` with a throwaway `HOME`, never as root;
+   - root's git refuses repositories owned by `aoc-agent` (dubious ownership), so promotion pushes, pin tags,
+     rollback checkouts and the ledger's commit-evidence check **fail closed** on them. Do not "fix" this with
+     `safe.directory`: that would run agent-planted hooks and `core.fsmonitor` as root. G-04 (a service-owned
+     clone, inspection as the session user) is the fix.
+10. **Read-only types** never receive credentials. The registry schema refuses a read-only type with a
    `credentialProfile`. Do not work around it.
 
 ## 5. Developer machines
@@ -233,8 +372,16 @@ Use a disposable branch and record the results as an AOC change record (or attac
    `git push --force origin HEAD~1:main` → rejected by ruleset A.
 4. **Pinned tags are immutable.** Try to delete or move an `aoc/*` tag with any identity → rejected.
 5. **Triage sessions hold nothing.** Launch a `bug-triage` session on `claude-sim` and check that its environment
-   holds no credential variables (`session.launch_requested.meta.credentialProfile` is `null`).
-6. **Provenance gate.** Push a commit with no change record to a feature branch, then request promotion → expect
+   holds no credential variables (`session.launch_requested.meta.credentialProfile` is `null`) and that it ran as
+   the read-only session user (`session.launched.payload.runAs` is `aoc-reader`).
+6. **Sessions cannot read aocd's secrets.** Restart aocd and confirm the log says `session isolation verified`. Then
+   check by hand, as each session user:
+   `sudo -u aoc-agent cat /etc/aoc/credential-profiles.json /etc/aoc/kek /etc/aoc/keys/git-feature` and
+   `sudo -u aoc-reader ls /var/lib/aoc/data` → every one `Permission denied`. While a build turn runs,
+   `sudo -u aoc-reader cat /proc/<its pid>/environ` → `Permission denied`; once it ends,
+   `ls /var/lib/aoc-sessions/<session id>/credentials` → no such directory. The automated version of this drill
+   is `packages/supervisor/test/isolation.test.ts` (it needs root).
+7. **Provenance gate.** Push a commit with no change record to a feature branch, then request promotion → expect
    `promotion.refused {reason: provenance_gap, orphanShas: [...]}`. Then repeat with a commit made on a laptop
    whose message carries a copied `AOC-Change: <approved change id>` trailer. Today that commit **passes** (threat
    model [T-22](../security/threat-model.md#t-22-forged-provenance-trailers)). Record the result until O-27 closes

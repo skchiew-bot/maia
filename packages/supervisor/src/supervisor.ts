@@ -429,6 +429,9 @@ export class Supervisor implements SupervisorService {
       }
       credentials = readCredentialProfile(resolve(sup.credentialProfilesFile), input.credentialProfile);
     }
+    // Isolation means aocd runs as root: commands without credentials (acceptance tests, git reads) execute code an
+    // agent may have written (threat model T-2), so they run as the session user, never as root.
+    if (this.isolation && !credentials) return this.runAsSessionUser(this.isolation, input);
     const env = buildSessionEnv({
       source: this.sourceEnv(),
       allowlist: sup.envAllowlist,
@@ -438,6 +441,39 @@ export class Supervisor implements SupervisorService {
       timezone: this.ctx.config.timezone,
     });
     return runCommand({ cwd: input.cwd, command: input.command, env, timeoutMs: input.timeoutMs });
+  }
+
+  /** One isolated command as the credentialed session user, with a throwaway HOME and TMPDIR and no credentials. */
+  private async runAsSessionUser(
+    iso: SessionIsolation,
+    input: { cwd: string; command: string[]; timeoutMs: number },
+  ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+    const [bin, ...args] = input.command;
+    if (!bin) throw new Error('runIsolated: command is required');
+    const id = `aoc-run-${randomUUID()}`;
+    const dirs = prepareSessionDirs(iso, iso.writer, id);
+    try {
+      const env = buildSessionEnv({
+        source: this.sourceEnv(),
+        allowlist: this.ctx.config.supervisor.envAllowlist,
+        credentials: null,
+        readOnly: true,
+        aoc: {},
+        timezone: this.ctx.config.timezone,
+        isolated: { user: iso.writer.name, home: dirs.home, claudeConfigDir: dirs.claudeConfigDir, tmpDir: dirs.tmp },
+      });
+      const s = turnSpawn(iso, iso.writer, { sessionId: id, sessionDir: dirs.dir, cwd: input.cwd }, bin, args);
+      return await runCommand({
+        cwd: input.cwd,
+        command: [s.command, ...s.args],
+        env,
+        timeoutMs: input.timeoutMs,
+        uid: s.uid,
+        gid: s.gid,
+      });
+    } finally {
+      rmSync(dirs.dir, { recursive: true, force: true });
+    }
   }
 
   // ── read side (routes) ────────────────────────────────────────────────────
@@ -702,16 +738,11 @@ export class Supervisor implements SupervisorService {
       if (!type.readOnly) ledger?.releaseWriter(thread.threadId, sessionId, 'failed', actor);
       throw err;
     }
-    if (!this.isolation) {
+    if (!this.isolation)
       this.log.warn(
         'ISOLATION OFF: this managed session runs as the aocd OS user and can read the KEK, both databases and the credential profiles (supervisor.isolation "none", development only)',
         { sessionId },
       );
-      this.pushOutput(sessionId, {
-        kind: 'system',
-        text: 'Development mode: this session runs as the aocd OS user and can read AOC’s keys and databases (supervisor.isolation "none").',
-      });
-    }
     try {
       const s = this.mustGet(sessionId);
       this.claudeIds.set(sessionId, randomUUID());

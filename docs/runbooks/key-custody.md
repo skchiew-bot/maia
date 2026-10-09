@@ -22,7 +22,10 @@ flowchart LR
   text (ticket descriptions, session titles, decision text). Treat `aoc.db` backups as personal data.
 - **Load order** (kernel `loadOrCreateMasterKey`): the `AOC_MASTER_KEY` environment variable, then the file at
   `keys.masterKeyFile`, and otherwise a **newly generated** key written to that path, or to `dataDir/master.key`
-  when no path is set (mode 0600).
+  when no path is set (mode 0600, parent directory 0700). **With `"mode": "production"`** aocd refuses to start
+  unless the KEK comes from an existing `keys.masterKeyFile` outside `dataDir`, mode 0400 or 0600, owned by aocd's
+  user — or a systemd credential in `$CREDENTIALS_DIRECTORY` (option 2 below). It refuses `AOC_MASTER_KEY` and never
+  generates a key.
 
 > **The generated key is a development convenience. It is never acceptable in production.** It sits next to the
 > data it protects, so any copy of the data directory carries its own key. And if a configured path is mistyped,
@@ -36,11 +39,13 @@ On the AOC host, as root or the service user, with nothing else logging the term
 ```bash
 umask 077
 openssl rand -hex 32 > /etc/aoc/kek          # 64 hex characters = 32 bytes
-chown aoc:aoc /etc/aoc/kek && chmod 0400 /etc/aoc/kek
+chown root:root /etc/aoc/kek && chmod 0400 /etc/aoc/kek   # owner = the user aocd runs as
 test "$(tr -d '\n' < /etc/aoc/kek | wc -c)" -eq 64 && echo ok
 ```
 
-The kernel accepts 64 hex characters or the base64 form of 32 bytes. Then set `keys.masterKeyFile` in the aocd
+With session isolation (credential-isolation runbook §4) aocd runs as root, so root owns the KEK; production mode
+refuses a KEK file owned by anyone but aocd's user. The kernel accepts 64 hex characters or the base64 form of 32
+bytes. Then set `keys.masterKeyFile` in the aocd
 config to the chosen location (§3).
 
 **Escrow** before first use: make one offline copy under two-person control. Either a sealed printout in the
@@ -56,11 +61,13 @@ manager's audit log), so that the record does not depend on the system the key p
 | **2. An OS secret store** | **Linux/systemd:** seal it with `systemd-creds encrypt --name=aoc-kek /etc/aoc/kek /etc/credstore.encrypted/aoc-kek` (bound to the TPM2 or host key), shred the plaintext, and add `LoadCredentialEncrypted=aoc-kek:/etc/credstore.encrypted/aoc-kek` to the unit. Set `keys.masterKeyFile` to `/run/credentials/aocd.service/aoc-kek` (`$CREDENTIALS_DIRECTORY/aoc-kek`) | The plaintext lives only in a non-swappable, service-private mount. Recommended default for Linux production hosts |
 | **3. KMS or HSM** | Keep only a KMS-wrapped copy of the KEK (AWS KMS, Google Cloud KMS, Azure Key Vault, or an HSM). An `ExecStartPre` step decrypts it into `/run/aoc/kek` (tmpfs, mode 0400, owner `aoc`). The host identity is the only principal allowed to decrypt | Every decrypt is logged by the KMS: an independent trail of key use. Keeping the KEK inside the HSM for every unwrap would need kernel support that does not exist |
 
-**Do not use `AOC_MASTER_KEY` in production.** Child processes inherit aocd's environment. The kernel's git
-wrapper passes the whole environment to `git`, and scanners get it too, so an environment-borne KEK can leak into
-any of them (threat model O-13). Keep it in a file.
+**Do not use `AOC_MASTER_KEY` in production** — `"mode": "production"` refuses it. Child processes inherit
+aocd's environment: the kernel's git wrapper now passes only an allowlist, but other helpers (the anchor git push,
+the claude CLI LLM adapter) still get the whole environment, so an environment-borne KEK can leak into them (threat
+model O-13, gap G-46). Keep it in a file.
 
-Pre-start check, so aocd never generates a fresh key in production (systemd unit drop-in):
+Production mode already refuses to generate a key. An extra pre-start check in the unit (systemd drop-in) makes a
+missing credential fail before aocd starts:
 
 ```ini
 [Service]

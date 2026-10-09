@@ -102,6 +102,8 @@ describe('loadConfig', () => {
         hookCommand: ['node', './dist/bin/aoc-hook.mjs', '--flag'],
         credentialProfilesFile: 'secrets/profiles.json',
         workspacesDir: '/abs/workspaces',
+        sessionHomesDir: 'session-homes',
+        runner: ['./bin/aoc-container-run', '{sessionId}', '--'],
       },
       metering: { rateCardFile: 'rates.json' },
       audit: { anchorRepoPath: '~/anchors' },
@@ -129,6 +131,8 @@ describe('loadConfig', () => {
     ]);
     expect(config.supervisor.credentialProfilesFile).toBe(join(confDir, 'secrets', 'profiles.json'));
     expect(config.supervisor.workspacesDir).toBe('/abs/workspaces');
+    expect(config.supervisor.sessionHomesDir).toBe(join(confDir, 'session-homes'));
+    expect(config.supervisor.runner).toEqual([join(confDir, 'bin', 'aoc-container-run'), '{sessionId}', '--']);
     expect(config.metering.rateCardFile).toBe(join(confDir, 'rates.json'));
     expect(config.audit.anchorRepoPath).toBe(join(homedir(), 'anchors'));
     expect(config.selfModification.aocRepoPaths).toEqual([cwd]);
