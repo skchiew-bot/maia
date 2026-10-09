@@ -5,6 +5,9 @@ import {
   diagnosisOf,
   funnelOf,
   gatesOf,
+  goLiveDecisionId,
+  latestPromotion,
+  latestRound,
   stageSpans,
   timelineEvents,
 } from '../../src/pages/tickets/model';
@@ -63,6 +66,16 @@ describe('gates', () => {
     expect(gatesOf(ticket({ ticketId: 't', stage: 'uat', openDecisionIds: ['dec_uat'] })).uat).toBe(
       'waiting',
     );
+  });
+
+  it('reads a failed, refused or rejected promotion at the go-live gate from its outcome', () => {
+    const atGate = ticket({ ticketId: 't', stage: 'go_live_gate', openDecisionIds: [] });
+    expect(gatesOf(atGate, { status: 'failed' }).goLive).toBe('failed');
+    expect(gatesOf(atGate, { status: 'refused' }).goLive).toBe('failed');
+    expect(gatesOf(atGate, { status: 'rejected' }).goLive).toBe('rejected');
+    expect(gatesOf(atGate, { status: 'requested' }).goLive).toBe('waiting');
+    // A completed ticket stays passed whatever an older promotion recorded.
+    expect(gatesOf(ticket({ ticketId: 't', stage: 'completed' }), { status: 'failed' }).goLive).toBe('passed');
   });
 });
 
@@ -123,5 +136,45 @@ describe('ticket history', () => {
       new Map(),
     );
     expect(signed.text).toBe('Go-live resolved: approve — by Chiew Sin Kwang, signed (passkey)');
+  });
+});
+
+describe('go-live and triage rounds', () => {
+  it('finds the go-live decision through ticket.golive_requested and the latest promotion outcome', () => {
+    const evts = [
+      ...history(),
+      event('ticket.golive_requested', NOW - 5 * MIN, { decisionId: 'dec_go', promotionId: 'prm_1' }),
+      event('promotion.requested', NOW - 5 * MIN, { promotionId: 'prm_1' }),
+      event('promotion.failed', NOW - 4 * MIN, { promotionId: 'prm_1', reason: 'execution_error' }),
+    ];
+    expect(goLiveDecisionId(evts)).toBe('dec_go');
+    expect(latestPromotion(evts)).toMatchObject({
+      promotionId: 'prm_1',
+      status: 'failed',
+      reason: 'execution_error',
+    });
+    expect(
+      goLiveDecisionId([event('ticket.golive_requested', NOW, { decisionId: 'none', promotionId: null })]),
+    ).toBeNull();
+  });
+
+  it('summarises the latest triage round only', () => {
+    const t = ticket({
+      ticketId: 'tkt_x',
+      diagnoses: [
+        diagnosis('old_a', { rootCauseClass: 'unknown', confidence: 0.3 }),
+        diagnosis('new_a'),
+        diagnosis('new_b'),
+      ],
+    });
+    const round = latestRound(t.diagnoses, {
+      tokens: 400_000,
+      minutes: 30,
+      sessionIds: ['new_a', 'new_b'],
+      startedAt: '',
+    });
+    expect(round.map((d) => d.sessionId)).toEqual(['new_a', 'new_b']);
+    expect(diagnosisOf(round)).toMatchObject({ reported: 2, agree: true });
+    expect(latestRound(t.diagnoses, undefined)).toHaveLength(3);
   });
 });

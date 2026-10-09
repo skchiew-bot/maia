@@ -136,7 +136,18 @@ export class SessionsEngine implements SessionDirectory {
     return { ...this.sig(sessionId) };
   }
 
+  /**
+   * The supervisor starts a sidecar per turn, and one can outlive its process by a few seconds: a report about a
+   * pid that is not the session's current process (latest session.launched) says nothing about the session.
+   */
+  private stale(sessionId: string, pid: number | null): boolean {
+    if (pid === null) return false;
+    const current = this.row(sessionId)?.pid ?? null;
+    return current !== null && current !== pid;
+  }
+
   heartbeat(sessionId: string, atMs: number, alive: boolean, pid: number | null): void {
+    if (this.stale(sessionId, pid)) return;
     const s = this.sig(sessionId);
     s.lastHeartbeatAt = atMs;
     s.processAlive = alive;
@@ -175,6 +186,12 @@ export class SessionsEngine implements SessionDirectory {
     if (alive) s.lastHeartbeatAt = this.ctx.clock.now();
     else s.toolInFlightSince = null;
     this.refresh(sessionId);
+  }
+
+  /** A sidecar saw its watched process exit (`pid` null: the report did not say which process). */
+  processExited(sessionId: string, pid: number | null): void {
+    if (this.stale(sessionId, pid)) return;
+    this.recordProcess(sessionId, false, null);
   }
 
   /** Observed sessions have no sidecar: any hook event is proof of activity (but never of process liveness). */

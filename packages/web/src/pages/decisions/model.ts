@@ -204,6 +204,11 @@ export function explainBlock(
     }
     case 'not_eligible': {
       const names = (card.eligibleUserIds ?? []).map((id) => people.nameOf(id) ?? 'a named person');
+      if (card.kind === 'uat_signoff')
+        return {
+          title: "Waiting on the requester's UAT",
+          body: `Only ${names.join(', ') || 'the ticket requester'} can sign off UAT; nobody on the operator side can answer it for them.`,
+        };
       return {
         title: 'Only named people can resolve this',
         body: names.length ? `It is routed to ${names.join(', ')}.` : 'It is routed to specific people.',

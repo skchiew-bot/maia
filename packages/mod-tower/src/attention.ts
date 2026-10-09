@@ -18,13 +18,16 @@ import { localPeriod } from '@aoc/kernel';
 import { all, iso, one, projectName, type ReadCtx } from './read';
 import {
   ANCHOR_MAX_AGE_MS,
-  BASE,
-  TICKET_BASE,
+  ATTENTION_SCALE_MS,
+  DECISION_SLA_MS,
+  IMPACT,
   TICKET_BLAST,
+  TICKET_IMPACT,
   TICKET_SLA_MS,
   cleanTitle,
   costOfDelay,
-  decisionBase,
+  decisionDueMs,
+  decisionImpact,
   decisionSlaMs,
   displayScore,
   formatDuration,
@@ -81,6 +84,36 @@ const plural = (n: number, word: string) => `${n.toLocaleString('en-US')} ${word
 const usd = (n: number) => `$${n.toFixed(2)}`;
 const decisionHref = (id: string) => `/decisions?id=${encodeURIComponent(id)}`;
 
+type Action = TowerAttentionItem['action'];
+/** A non-decision action: nothing to apply inline. */
+const go = (kind: 'open' | 'nudge' | 'restart', label: string, href: string, sessionId?: string): Action => ({
+  kind,
+  label,
+  href,
+  ...(sessionId ? { sessionId } : {}),
+  recommendedOptionId: null,
+});
+/**
+ * Inline resolution. Approve applies the decision's recommended option (approved default), so without one — or for a
+ * judgement call that needs reading — the action opens the card for review instead.
+ */
+function resolve(
+  decisionId: string,
+  passkey: boolean,
+  recommended: string | null,
+  approveLabel = passkey ? 'Approve with passkey' : 'Approve',
+  reviewLabel = 'Review',
+): Action {
+  return {
+    kind: 'resolve_decision',
+    label: recommended ? approveLabel : reviewLabel,
+    href: decisionHref(decisionId),
+    decisionId,
+    requiresPasskey: passkey,
+    recommendedOptionId: recommended,
+  };
+}
+
 interface Draft {
   id: string;
   kind: AttentionKind;
@@ -88,12 +121,16 @@ interface Draft {
   detail: string | null;
   projectId: string | null;
   since: number;
-  base: number;
+  /** Where ageing starts when it is not `since` (a ticket ages from its SLA breach, shown from submission). */
+  ageFrom?: number;
+  impact: number;
+  /** Time scale the age is measured against: the approved SLA where there is one. */
+  scaleMs: number;
   /** Multiplier ≥ 1: how much else this item holds up (customer tickets, UAT-signed fixes). */
   blast: number;
   /** Score basis in words, given the formatted age: kind · age · what the delay is blocking. */
   basis: (age: string) => string[];
-  action: TowerAttentionItem['action'];
+  action: Action;
   chips: string[];
 }
 
@@ -104,7 +141,9 @@ interface DecisionRow {
   project_id: string | null;
   requester_id: string | null;
   requires_passkey: number;
+  recommended_option_id: string | null;
   requested_ms: number;
+  due_ms: number | null;
   ticket_id: string | null;
   session_ticket_id: string | null;
   session_type: string | null;
@@ -164,8 +203,8 @@ export function buildAttention(r: ReadCtx, integrity: IntegrityFacts): TowerAtte
   const creditDecisions: DecisionRow[] = [];
   for (const d of all<DecisionRow>(
     r,
-    `SELECT d.decision_id, d.kind, d.test, d.project_id, d.requester_id, d.requires_passkey, d.requested_ms,
-       COALESCE(l.ticket_id, CASE WHEN d.subject_type = 'ticket' THEN d.subject_id END) AS ticket_id,
+    `SELECT d.decision_id, d.kind, d.test, d.project_id, d.requester_id, d.requires_passkey, d.recommended_option_id,
+       d.requested_ms, d.due_ms, COALESCE(l.ticket_id, CASE WHEN d.subject_type = 'ticket' THEN d.subject_id END) AS ticket_id,
        s.ticket_id AS session_ticket_id, s.process_type AS session_type
      FROM twr_decisions d
      LEFT JOIN twr_ticket_links l ON l.decision_id = d.decision_id
@@ -180,41 +219,43 @@ export function buildAttention(r: ReadCtx, integrity: IntegrityFacts): TowerAtte
     if (d.kind === 'fx_discrepancy' && fxDecisionIds.has(d.decision_id)) continue; // listed from the FX events
     const ticket = tickets.get(d.ticket_id ?? d.session_ticket_id ?? '');
     if (ticket) ticketsCarried.add(ticket.ticket_id);
-    const impact = ticketImpact(r, ticket, d.kind);
+    const customer = customerStake(r, ticket, d.kind);
     const passkey = d.requires_passkey === 1 || PASSKEY_KINDS.has(d.kind);
     const testInfo = d.kind === 'agent_decision' && d.test ? DECISION_TEST_INFO[d.test] : null;
     const label = testInfo ? `Agent decision (test ${testInfo.no}: ${d.test})` : DECISION_LABEL[d.kind];
-    const sla = decisionSlaMs(d.kind);
-    const pastSla = r.now - d.requested_ms > sla;
+    const due = decisionDueMs(d.kind, d.requested_ms, d.due_ms);
+    const pastSla = due !== null && r.now > due;
+    const sla = DECISION_SLA_MS[d.kind];
     const title = r.svc.decisionTitle(d.decision_id);
     drafts.push({
       id: `decision:${d.decision_id}`,
       kind: d.kind === 'fx_discrepancy' ? 'fx_discrepancy' : 'decision',
       title: title ? cleanTitle(title) || label : label,
-      detail: [testInfo?.label ?? null, impact.detail].filter(Boolean).join(' · ') || null,
+      detail: [testInfo?.label ?? null, customer.detail].filter(Boolean).join(' · ') || null,
       projectId: d.project_id ?? ticket?.project_id ?? null,
       since: d.requested_ms,
-      base: decisionBase(d.kind, d.test)!,
-      blast: 1 + impact.blast,
+      impact: decisionImpact(d.kind, d.test)!,
+      scaleMs: decisionSlaMs(d.kind),
+      blast: 1 + customer.blast,
       basis: (age) => [
         label,
         age,
-        ...impact.blocks,
+        ...customer.blocks,
         ...(d.session_type ? [`holds a ${d.session_type} session`] : []),
-        ...impact.extras,
-        ...(pastSla ? [`past the ${formatDuration(sla)} SLA`] : []),
+        ...customer.extras,
+        ...(pastSla
+          ? [
+              d.due_ms === null && sla !== undefined
+                ? `past the ${formatDuration(sla)} SLA`
+                : 'past its due time',
+            ]
+          : []),
       ],
-      action: {
-        kind: 'resolve_decision',
-        label: passkey ? 'Approve with passkey' : REVIEW_KINDS.has(d.kind) ? 'Review' : 'Approve',
-        href: decisionHref(d.decision_id),
-        decisionId: d.decision_id,
-        requiresPasskey: passkey,
-      },
+      action: resolve(d.decision_id, passkey, REVIEW_KINDS.has(d.kind) ? null : d.recommended_option_id),
       chips: [
         ...(passkey ? ['Passkey'] : []),
         ...(d.test ? [`test ${d.test}`] : []),
-        ...impact.chips,
+        ...customer.chips,
         ...(pastSla ? ['Past SLA'] : []),
       ],
     });
@@ -239,16 +280,11 @@ export function buildAttention(r: ReadCtx, integrity: IntegrityFacts): TowerAtte
       detail: 'Production is down; emergency promotion requested',
       projectId: b.project_id,
       since: b.invoked_ms,
-      base: BASE.breakglass_open,
+      impact: IMPACT.breakglass_open,
+      scaleMs: ATTENTION_SCALE_MS.breakglass_open,
       blast: 1,
       basis: (age) => ['Break-glass promotion', age, 'production down'],
-      action: {
-        kind: 'resolve_decision',
-        label: 'Approve with passkey',
-        href: decisionHref(b.decision_id),
-        decisionId: b.decision_id,
-        requiresPasskey: true,
-      },
+      action: resolve(b.decision_id, true, null),
       chips: ['Passkey', 'Production'],
     });
   }
@@ -273,19 +309,20 @@ export function buildAttention(r: ReadCtx, integrity: IntegrityFacts): TowerAtte
         : 'Due within 24h of the break-glass',
       projectId: b.project_id,
       since: b.due_ms ?? b.overdue_ms,
-      base: BASE.post_incident_overdue,
+      impact: IMPACT.post_incident_overdue,
+      scaleMs: ATTENTION_SCALE_MS.post_incident_overdue,
       blast: 1,
       basis: (age) => ['Post-incident record', `${age} overdue`, 'open audit finding until filed'],
-      action: {
-        kind: 'open',
-        label: 'Open record',
-        href: b.change_id ? `/changes?id=${encodeURIComponent(b.change_id)}` : '/changes',
-      },
+      action: go(
+        'open',
+        'Open record',
+        b.change_id ? `/changes?id=${encodeURIComponent(b.change_id)}` : '/changes',
+      ),
       chips: ['Break-glass'],
     });
   }
 
-  // ── credit caps (top-up decisions fold in here: 45 + 10 per blocked session) ─
+  // ── credit caps (top-up decisions fold in here: 25 + 6 per blocked session) ─
   drafts.push(...creditItems(r, creditDecisions));
 
   // ── managed sessions (observed ones are read-only: nothing to intervene on) ─
@@ -297,10 +334,10 @@ export function buildAttention(r: ReadCtx, integrity: IntegrityFacts): TowerAtte
   )) {
     const ticket = tickets.get(s.ticket_id ?? '');
     if (ticket) ticketsCarried.add(ticket.ticket_id);
-    const impact = ticketImpact(r, ticket, null);
+    const customer = customerStake(r, ticket, null);
     const type = s.process_type ?? 'unknown type';
     const href = `/sessions/${encodeURIComponent(s.session_id)}`;
-    const detail = [`Session ${s.session_id}`, impact.detail].filter(Boolean).join(' · ');
+    const detail = [`Session ${s.session_id}`, customer.detail].filter(Boolean).join(' · ');
     if (s.liveness === 'throttled') {
       const resetMs = s.throttle_reset_at ? Date.parse(s.throttle_reset_at) : NaN;
       const reset = Number.isNaN(resetMs) ? null : `resets ${localClock(resetMs, r.tz)}`;
@@ -311,11 +348,12 @@ export function buildAttention(r: ReadCtx, integrity: IntegrityFacts): TowerAtte
         detail,
         projectId: s.project_id,
         since: s.throttle_started_ms ?? s.liveness_since_ms ?? s.launched_ms,
-        base: BASE.session_throttled,
-        blast: 1 + impact.blast,
-        basis: (age) => ['Plan limit', `idle ${age}`, reset ?? 'reset time unknown', ...impact.extras],
-        action: { kind: 'open', label: 'Open', href, sessionId: s.session_id },
-        chips: [...(reset ? [capital(reset)] : []), ...impact.chips],
+        impact: IMPACT.session_throttled,
+        scaleMs: ATTENTION_SCALE_MS.session_throttled,
+        blast: 1 + customer.blast,
+        basis: (age) => ['Plan limit', `idle ${age}`, reset ?? 'reset time unknown', ...customer.extras],
+        action: go('open', 'Open', href, s.session_id),
+        chips: [...(reset ? [capital(reset)] : []), ...customer.chips],
       });
       continue;
     }
@@ -328,18 +366,17 @@ export function buildAttention(r: ReadCtx, integrity: IntegrityFacts): TowerAtte
       detail,
       projectId: s.project_id,
       since: s.liveness_since_ms ?? s.launched_ms,
-      base: dead ? BASE.session_dead : BASE.session_stalled,
-      blast: 1 + impact.blast,
+      impact: dead ? IMPACT.session_dead : IMPACT.session_stalled,
+      scaleMs: dead ? ATTENTION_SCALE_MS.session_dead : ATTENTION_SCALE_MS.session_stalled,
+      blast: 1 + customer.blast,
       basis: (age) => [
         dead ? 'Dead session' : 'Stalled session',
         age,
         ...(!dead && context !== null ? [`process alive but silent at ${context}% context`] : []),
-        ...impact.extras,
+        ...customer.extras,
       ],
-      action: dead
-        ? { kind: 'restart', label: 'Restart', href, sessionId: s.session_id }
-        : { kind: 'nudge', label: 'Nudge…', href, sessionId: s.session_id },
-      chips: impact.chips,
+      action: dead ? go('restart', 'Restart', href, s.session_id) : go('nudge', 'Nudge…', href, s.session_id),
+      chips: customer.chips,
     });
   }
 
@@ -353,13 +390,15 @@ export function buildAttention(r: ReadCtx, integrity: IntegrityFacts): TowerAtte
       id: `ticket_waiting:${t.ticket_id}`,
       kind: 'ticket_waiting',
       title: `${sev} ticket ${STAGE_LABEL[t.stage]}`,
-      detail: `Ticket ${t.ticket_id} · open ${formatDuration(r.now - t.submitted_ms)}`,
+      detail: `Ticket ${t.ticket_id}`,
       projectId: t.project_id,
-      since: t.submitted_ms + sla,
-      base: TICKET_BASE[t.severity],
+      since: t.submitted_ms,
+      ageFrom: t.submitted_ms + sla,
+      impact: TICKET_IMPACT[t.severity],
+      scaleMs: sla,
       blast: 1,
-      basis: (age) => [`${sev} ticket`, `${age} past the ${formatDuration(sla)} SLA`, STAGE_LABEL[t.stage]],
-      action: { kind: 'open', label: 'Open ticket', href: `/tickets/${encodeURIComponent(t.ticket_id)}` },
+      basis: (age) => [`${sev} ticket`, age, `past the ${formatDuration(sla)} SLA`, STAGE_LABEL[t.stage]],
+      action: go('open', 'Open ticket', `/tickets/${encodeURIComponent(t.ticket_id)}`),
       chips: [sev, 'SLA breached'],
     });
   }
@@ -373,7 +412,8 @@ export function buildAttention(r: ReadCtx, integrity: IntegrityFacts): TowerAtte
       detail: integrity.firstBadSeq !== null ? `First bad event seq ${integrity.firstBadSeq}` : null,
       projectId: null,
       since: integrity.brokenSinceMs ?? r.now,
-      base: BASE.chain_broken,
+      impact: IMPACT.chain_broken,
+      scaleMs: ATTENTION_SCALE_MS.chain_broken,
       blast: 1,
       basis: (age) => [
         'Chain broken',
@@ -382,7 +422,7 @@ export function buildAttention(r: ReadCtx, integrity: IntegrityFacts): TowerAtte
           ? [`first bad seq ${integrity.firstBadSeq.toLocaleString('en-US')}`]
           : []),
       ],
-      action: { kind: 'open', label: 'Open audit', href: '/audit' },
+      action: go('open', 'Open audit', '/audit'),
       chips: ['Integrity'],
     });
   }
@@ -397,7 +437,8 @@ export function buildAttention(r: ReadCtx, integrity: IntegrityFacts): TowerAtte
         failed && integrity.anchorFailReason ? `Last attempt failed: ${integrity.anchorFailReason}` : null,
       projectId: null,
       since: anchorRef + ANCHOR_MAX_AGE_MS,
-      base: BASE.anchor_missed,
+      impact: IMPACT.anchor_missed,
+      scaleMs: ATTENTION_SCALE_MS.anchor_missed,
       blast: 1,
       basis: () => [
         'Anchor missed',
@@ -406,7 +447,7 @@ export function buildAttention(r: ReadCtx, integrity: IntegrityFacts): TowerAtte
           : 'never anchored',
         `${plural(integrity.unanchoredEvents, 'event')} unanchored`,
       ],
-      action: { kind: 'open', label: 'Open audit', href: '/audit' },
+      action: go('open', 'Open audit', '/audit'),
       chips: ['Integrity', ...(failed ? ['Anchor failing'] : [])],
     });
   }
@@ -419,14 +460,15 @@ export function buildAttention(r: ReadCtx, integrity: IntegrityFacts): TowerAtte
       detail: 'Read model is stale until rebuilt from the log',
       projectId: null,
       since: failedTs ? Date.parse(failedTs) : r.now,
-      base: BASE.projection_degraded,
+      impact: IMPACT.projection_degraded,
+      scaleMs: ATTENTION_SCALE_MS.projection_degraded,
       blast: 1,
       basis: (age) => [
         'Projection degraded',
         age,
         ...(p.failedSeq !== null ? [`failed at seq ${p.failedSeq.toLocaleString('en-US')}`] : []),
       ],
-      action: { kind: 'open', label: 'Open audit', href: '/audit' },
+      action: go('open', 'Open audit', '/audit'),
       chips: ['Integrity'],
     });
   }
@@ -452,7 +494,8 @@ export function buildAttention(r: ReadCtx, integrity: IntegrityFacts): TowerAtte
       detail: `Promotion ${p.promotion_id}`,
       projectId: p.project_id,
       since: p.refused_ms,
-      base: BASE.provenance_refused,
+      impact: IMPACT.provenance_refused,
+      scaleMs: ATTENTION_SCALE_MS.provenance_refused,
       blast: 1,
       basis: (age) => [
         'Promotion refused',
@@ -460,11 +503,7 @@ export function buildAttention(r: ReadCtx, integrity: IntegrityFacts): TowerAtte
         reason,
         ...(p.orphan_count ? [plural(p.orphan_count, 'orphan commit')] : []),
       ],
-      action: {
-        kind: 'open',
-        label: 'Open promotion',
-        href: `/changes?promotionId=${encodeURIComponent(p.promotion_id)}`,
-      },
+      action: go('open', 'Open promotion', `/changes?promotionId=${encodeURIComponent(p.promotion_id)}`),
       chips: ['Provenance'],
     });
   }
@@ -480,16 +519,11 @@ export function buildAttention(r: ReadCtx, integrity: IntegrityFacts): TowerAtte
       detail: 'Scraped USD/MYR rate disagrees with the BNM figure',
       projectId: null,
       since: f.raised_ms,
-      base: BASE.fx_discrepancy,
+      impact: IMPACT.fx_discrepancy,
+      scaleMs: ATTENTION_SCALE_MS.fx_discrepancy,
       blast: 1,
       basis: (age) => ['FX discrepancy', age, `${f.date} RM rollups stay provisional until reviewed`],
-      action: {
-        kind: 'resolve_decision',
-        label: 'Review',
-        href: decisionHref(f.decision_id),
-        decisionId: f.decision_id,
-        requiresPasskey: false,
-      },
+      action: resolve(f.decision_id, false, null),
       chips: ['FX'],
     });
   }
@@ -507,10 +541,11 @@ export function buildAttention(r: ReadCtx, integrity: IntegrityFacts): TowerAtte
       detail: 'Manual check of the BNM rate requested',
       projectId: null,
       since: fx.fx_alert_ms,
-      base: BASE.fx_carry_forward,
+      impact: IMPACT.fx_carry_forward,
+      scaleMs: ATTENTION_SCALE_MS.fx_carry_forward,
       blast: 1,
       basis: (age) => ['FX carried forward', plural(days, 'day'), `alert ${age} old`],
-      action: { kind: 'open', label: 'Check rate', href: '/fx' },
+      action: go('open', 'Check rate', '/fx'),
       chips: ['FX'],
     });
   }
@@ -520,18 +555,18 @@ export function buildAttention(r: ReadCtx, integrity: IntegrityFacts): TowerAtte
     .map((d) => finish(r, d))
     .sort(
       (a, b) =>
-        b.raw - a.raw || a.item.since.localeCompare(b.item.since) || a.item.id.localeCompare(b.item.id),
+        b.rank - a.rank || a.item.since.localeCompare(b.item.since) || a.item.id.localeCompare(b.item.id),
     )
     .map((x) => x.item);
 }
 
-/** Ranked by the raw cost (the 0–100 display saturates); the item carries the display score. */
-function finish(r: ReadCtx, d: Draft): { raw: number; item: TowerAttentionItem } {
+/** Ranked by the unbounded rank (the published 0–100 score saturates near 100); the item carries the score. */
+function finish(r: ReadCtx, d: Draft): { rank: number; item: TowerAttentionItem } {
   const ageMs = Math.max(0, r.now - d.since);
-  const raw = costOfDelay(d.base, ageMs, d.blast);
-  const score = displayScore(raw);
+  const rank = costOfDelay(d.impact, r.now - (d.ageFrom ?? d.since), d.scaleMs, d.blast);
+  const score = displayScore(rank);
   return {
-    raw,
+    rank,
     item: {
       id: d.id,
       kind: d.kind,
@@ -557,7 +592,7 @@ function contextPct(s: SessionRow): number | null {
 }
 
 /** What an item holds up for a customer: severity, a UAT-signed fix behind a go-live gate, a breached SLA. */
-function ticketImpact(
+function customerStake(
   r: ReadCtx,
   t: TicketRow | undefined,
   kind: DecisionKind | null,
@@ -631,6 +666,12 @@ function creditItems(r: ReadCtx, openTopups: DecisionRow[]): Draft[] {
         pendingUsd: null,
       });
   }
+  const recommended = new Map(
+    all<{ decision_id: string; recommended_option_id: string | null }>(
+      r,
+      "SELECT decision_id, recommended_option_id FROM twr_decisions WHERE kind = 'credit_topup' AND status = 'open'",
+    ).map((d) => [d.decision_id, d.recommended_option_id]),
+  );
   const blocked = all<{ user_id: string; session_id: string; project_id: string | null }>(
     r,
     'SELECT b.user_id, b.session_id, s.project_id FROM twr_credit_blocked b LEFT JOIN twr_sessions s ON s.session_id = b.session_id',
@@ -661,7 +702,8 @@ function creditItems(r: ReadCtx, openTopups: DecisionRow[]): Draft[] {
           .join(' · ') || null,
       projectId,
       since: Math.min(u.capped ?? Infinity, u.pendingSince ?? Infinity),
-      base: BASE.credit_blocked + BASE.credit_blocked_per_session * n,
+      impact: IMPACT.credit_blocked + IMPACT.credit_blocked_per_session * n,
+      scaleMs: ATTENTION_SCALE_MS.credit_blocked,
       blast: 1,
       basis: (age) =>
         u.capped !== null
@@ -673,14 +715,8 @@ function creditItems(r: ReadCtx, openTopups: DecisionRow[]): Draft[] {
             ]
           : ['Credit top-up', age, 'waiting for approval'],
       action: pending
-        ? {
-            kind: 'resolve_decision',
-            label: 'Approve top-up',
-            href: decisionHref(pending),
-            decisionId: pending,
-            requiresPasskey: false,
-          }
-        : { kind: 'open', label: 'Open credits', href: `/credits?userId=${encodeURIComponent(userId)}` },
+        ? resolve(pending, false, recommended.get(pending) ?? null, 'Approve top-up', 'Review top-up')
+        : go('open', 'Open credits', `/credits?userId=${encodeURIComponent(userId)}`),
       chips: [...(n ? [`${n} blocked`] : []), ...(pending ? ['Top-up pending'] : [])],
     });
   }

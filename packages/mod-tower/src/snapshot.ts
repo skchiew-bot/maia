@@ -54,6 +54,7 @@ export class TowerReadModel {
       gateLatencyP50Ms: flow.gateLatencyP50Ms,
       gateLatencyP90Ms: flow.gateLatencyP90Ms,
       gateSlaMs: GATE_SLA_MS,
+      openPastSla: flow.openPastSla,
       openTickets: flow.openTickets,
       oldestTicketSince: flow.oldestTicketSince,
       chainOk: integrity.chainOk,

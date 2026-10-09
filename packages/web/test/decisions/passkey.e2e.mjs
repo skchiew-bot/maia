@@ -49,7 +49,13 @@ page.on('response', (r) => {
 const cdp = await context.newCDPSession(page);
 await cdp.send('WebAuthn.enable');
 await cdp.send('WebAuthn.addVirtualAuthenticator', {
-  options: { protocol: 'ctap2', transport: 'internal', hasResidentKey: true, hasUserVerification: true, isUserVerified: true },
+  options: {
+    protocol: 'ctap2',
+    transport: 'internal',
+    hasResidentKey: true,
+    hasUserVerification: true,
+    isUserVerified: true,
+  },
 });
 
 const api = async (path) => (await page.request.get(`${BASE}${path}`)).json();
@@ -59,13 +65,19 @@ const ceo = (await api('/api/auth/me')).user;
 
 // Start from "no passkey" so the inline registration path is exercised (credentials from earlier runs live in
 // a virtual authenticator that no longer exists).
-for (const pk of (await api('/api/passkeys')).passkeys) await page.request.delete(`${BASE}/api/passkeys/${pk.id}`);
+for (const pk of (await api('/api/passkeys')).passkeys)
+  await page.request.delete(`${BASE}/api/passkeys/${pk.id}`);
 
 const open = (await api('/api/decisions?status=open&limit=500')).decisions;
 const signable = open.find((d) => d.requiresPasskey && d.viewer.canResolve);
 const own = open.find((d) => d.requesterId === ceo.id && d.viewer.reason === 'separation_of_duties');
-const buttonCard = open.find((d) => !d.requiresPasskey && d.viewer.canResolve && d.recommendation && d.subjectType !== 'ticket');
-check(signable, `a passkey-gated decision raised by someone else is open (${signable?.kind} ${signable?.id})`);
+const buttonCard = open.find(
+  (d) => !d.requiresPasskey && d.viewer.canResolve && d.recommendation && d.subjectType !== 'ticket',
+);
+check(
+  signable,
+  `a passkey-gated decision raised by someone else is open (${signable?.kind} ${signable?.id})`,
+);
 
 console.log('Step 1: register a passkey inline and sign the decision');
 await page.goto(`${BASE}/decisions?focus=${signable.id}`);
@@ -80,11 +92,17 @@ const signed = await until(async () => {
   const d = await api(`/api/decisions/${signable.id}`);
   return d.status === 'resolved' ? d : null;
 }, 'decision resolved');
-check(signed.resolution.method === 'passkey' && signed.resolution.passkeyVerified, 'resolved with method passkey, verified');
-check(signed.resolution.resolvedBy === ceo.id, 'resolved under the CEO\'s name');
-const asserted = (await api(`/api/audit/events?type=passkey.asserted&actorId=${ceo.id}&order=desc&limit=20`)).events;
 check(
-  asserted.some((e) => e.meta.decisionId === signable.id && e.meta.optionId === 'approve' && e.meta.userVerified === true),
+  signed.resolution.method === 'passkey' && signed.resolution.passkeyVerified,
+  'resolved with method passkey, verified',
+);
+check(signed.resolution.resolvedBy === ceo.id, "resolved under the CEO's name");
+const asserted = (await api(`/api/audit/events?type=passkey.asserted&actorId=${ceo.id}&order=desc&limit=20`))
+  .events;
+check(
+  asserted.some(
+    (e) => e.meta.decisionId === signable.id && e.meta.optionId === 'approve' && e.meta.userVerified === true,
+  ),
   'passkey.asserted evidence bound to the decision and option is in the audit log',
 );
 await panel.getByText('Signed (passkey)', { exact: false }).first().waitFor();
@@ -100,7 +118,10 @@ if (buttonCard) {
     return d.status === 'resolved' ? d : null;
   }, 'button decision resolved');
   check(r.resolution.optionId === buttonCard.recommendation.optionId, 'the recommended option was applied');
-  check(r.resolution.method === 'button' && !r.resolution.passkeyVerified, 'recorded as attribution (bearer token)');
+  check(
+    r.resolution.method === 'button' && !r.resolution.passkeyVerified,
+    'recorded as attribution (bearer token)',
+  );
 }
 
 if (own) {
@@ -108,7 +129,10 @@ if (own) {
   await page.goto(`${BASE}/decisions?focus=${own.id}`);
   await panel.getByText('a second Approver is needed', { exact: false }).waitFor();
   check(true, 'separation-of-duties reason shown');
-  check((await panel.getByRole('button', { name: /with passkey/ }).count()) === 0, 'no sign buttons for the requester');
+  check(
+    (await panel.getByRole('button', { name: /with passkey/ }).count()) === 0,
+    'no sign buttons for the requester',
+  );
 }
 
 await sleep(500);

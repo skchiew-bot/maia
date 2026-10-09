@@ -73,15 +73,21 @@
   },
 
   "fx": {
-    "//": "Daily USD→MYR from BNM: extract with Haiku, escalate once to Sonnet, else carry forward (flagged). extractor: claude-cli | anthropic-sdk (needs ANTHROPIC_API_KEY) | fake.",
+    "//": "Daily USD→MYR = BNM Kuala Lumpur interbank middle rate for `session`, RM per 1 USD, for the local date (docs/research/bnm-fx.md). Session 1700: the page (its default view) is extracted with Haiku, escalating once to Sonnet, else carried forward (flagged), then cross-checked with the BNM Open API at <apiUrl>/date/<date>?session=<session>. BNM publishes a session about 40 minutes after its time; each retry time is another attempt while the day's rate is unpublished or the page unreadable, and the last attempt decides (holiday or flagged carry-forward). Rate changes apply forward only. extractor: claude-cli | anthropic-sdk (needs ANTHROPIC_API_KEY) | fake.",
+    "//session": "0900 | 1200 | 1700. For the noon rate set session 1200, runAtLocalTime 13:00 and retryAtLocalTimes [\"13:30\", \"15:00\"]: the page cannot show 1200 without a form POST, so the rate is the API figure alone (extractor api, no page cross-check).",
     "enabled": true,
-    "runAtLocalTime": "12:30",
+    "session": "1700",
+    "runAtLocalTime": "18:00",
+    "retryAtLocalTimes": ["18:30", "21:00"],
     "pageUrl": "https://www.bnm.gov.my/exchange-rates",
     "apiUrl": "https://api.bnm.gov.my/public/exchange-rate/USD",
     "extractor": "claude-cli",
-    "sanity": { "min": 3.5, "max": 5.5, "maxDailyChangePct": 3 },
-    "reconcileTolerance": 0.005,
-    "carryForwardAlertDays": 4
+    "//sanity": "Outside min–max or more than maxDailyChangePct from the previous rate: rejected. Above softFlagPct: accepted only if the API agrees exactly at 4 dp.",
+    "sanity": { "min": 3.5, "max": 5.5, "maxDailyChangePct": 3, "softFlagPct": 1.25 },
+    "//reconcileTolerance": "Largest page-vs-API difference after rounding both to 4 dp; larger is a mismatch (re-fetch once, then a discrepancy decision).",
+    "reconcileTolerance": 0.0001,
+    "//carryForwardAlertWeekdays": "Weekdays in a row without a live rate (holidays count, weekends do not) before a manual check is requested; BNM's longest holiday run in 2025–26 was 2 weekdays.",
+    "carryForwardAlertWeekdays": 3
   },
 
   "audit": {

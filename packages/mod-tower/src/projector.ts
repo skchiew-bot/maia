@@ -136,9 +136,11 @@ const DDL = [
   `CREATE INDEX IF NOT EXISTS twr_usage_session ON twr_usage(session_id)`,
   `CREATE TABLE IF NOT EXISTS twr_throttle_idle (seq INTEGER PRIMARY KEY, session_id TEXT NOT NULL, ts_ms INTEGER NOT NULL, idle_ms INTEGER NOT NULL)`,
   `CREATE INDEX IF NOT EXISTS twr_throttle_idle_ts ON twr_throttle_idle(ts_ms)`,
+  // The recommendation's option id and the due time come from meta, so they survive crypto-shredding of the body.
   `CREATE TABLE IF NOT EXISTS twr_decisions (
     decision_id TEXT PRIMARY KEY, kind TEXT NOT NULL, test TEXT, project_id TEXT, session_id TEXT,
     subject_type TEXT, subject_id TEXT, requester_id TEXT, requires_passkey INTEGER NOT NULL,
+    recommended_option_id TEXT, due_ms INTEGER,
     requested_ms INTEGER NOT NULL, status TEXT NOT NULL, resolved_ms INTEGER, method TEXT)`,
   `CREATE INDEX IF NOT EXISTS twr_decisions_status ON twr_decisions(status)`,
   `CREATE INDEX IF NOT EXISTS twr_decisions_resolved ON twr_decisions(resolved_ms)`,
@@ -447,9 +449,11 @@ function apply(db: DatabaseSync, e: StoredEvent, p: Payload): void {
     // ── decisions ───────────────────────────────────────────────────────────
     case 'decision.requested': {
       const m = metaOf(e, 'decision.requested');
+      const due = m.dueAt ? Date.parse(m.dueAt) : NaN;
       run(
-        `INSERT OR IGNORE INTO twr_decisions (decision_id, kind, test, project_id, session_id, subject_type, subject_id, requester_id, requires_passkey, requested_ms, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open')`,
+        `INSERT OR IGNORE INTO twr_decisions (decision_id, kind, test, project_id, session_id, subject_type, subject_id, requester_id, requires_passkey,
+           recommended_option_id, due_ms, requested_ms, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open')`,
         m.decisionId,
         m.kind,
         m.test,
@@ -459,6 +463,8 @@ function apply(db: DatabaseSync, e: StoredEvent, p: Payload): void {
         m.subjectId,
         m.requesterId,
         m.requiresPasskey ? 1 : 0,
+        m.recommendedOptionId ?? null,
+        Number.isNaN(due) ? null : due,
         ts,
       );
       if (m.subjectType === 'ticket') linkTicket(m.decisionId, m.subjectId);

@@ -75,8 +75,8 @@ describe('integrity', () => {
         kind: 'chain_broken',
         severity: 'critical',
         since: iso(ago(h, hours(2))),
-        costOfDelay: { score: 98.5, basis: 'Chain broken · 2h · first bad seq 42' }, // raw 332.2
-        action: { kind: 'open', label: 'Open audit', href: '/audit' },
+        costOfDelay: { score: 97.8, basis: 'Chain broken · 2h · first bad seq 42' }, // 80 + 20·log2(1 + 2h/1h) = 111.7, on the tail
+        action: { kind: 'open', label: 'Open audit', href: '/audit', recommendedOptionId: null },
       }),
     ]);
     expect(s.summary).toContain('Audit chain verification failed.');
@@ -119,8 +119,9 @@ describe('integrity', () => {
         id: 'anchor_missed',
         since: iso(ago(h, hours(1))), // 26h after the last anchor
         detail: 'Last attempt failed: tsa_timeout',
+        severity: 'high',
         costOfDelay: {
-          score: 93.5,
+          score: 51.2, // 50 + 20·log2(1 + 1h/1d)
           basis: `Anchor missed · last anchor 27h ago · ${h.t.rt.store.head().seq - 1} events unanchored`,
         },
         chips: ['Integrity', 'Anchor failing'],
@@ -136,7 +137,7 @@ describe('integrity', () => {
       expect.objectContaining({
         id: 'anchor_missed',
         since: '2026-10-08T02:00:00.000Z',
-        costOfDelay: { score: 99.9, basis: 'Anchor missed · never anchored · 1 event unanchored' },
+        costOfDelay: { score: 72.3, basis: 'Anchor missed · never anchored · 1 event unanchored' }, // missed for 28h
       }),
     ]);
   });
@@ -227,8 +228,13 @@ describe('integrity', () => {
         id: 'provenance_refused:prm_1',
         title: 'Promotion refused: provenance gap',
         projectId: 'prj_a',
-        costOfDelay: { score: 93.7, basis: 'Promotion refused · 3h · provenance gap · 2 orphan commits' }, // raw 55 × 3.81
-        action: { kind: 'open', label: 'Open promotion', href: '/changes?promotionId=prm_1' },
+        costOfDelay: { score: 51.1, basis: 'Promotion refused · 3h · provenance gap · 2 orphan commits' }, // 35 + 20·log2(1 + 3h/4h)
+        action: {
+          kind: 'open',
+          label: 'Open promotion',
+          href: '/changes?promotionId=prm_1',
+          recommendedOptionId: null,
+        },
       }),
     ]);
     promotion('prm_2', ago(h, hours(1)));
@@ -303,10 +309,10 @@ describe('integrity', () => {
         projectId: 'prj_a',
         since: iso(ago(h, hours(2) + minutes(20))),
         costOfDelay: {
-          score: 97.7,
+          score: 64.7,
           basis: 'Post-incident record · 2h 20m overdue · open audit finding until filed',
-        }, // raw 85 × 3.50
-        action: { kind: 'open', label: 'Open record', href: '/changes?id=chg_pi' },
+        }, // 62 + 20·log2(1 + 2h 20m/1d)
+        action: { kind: 'open', label: 'Open record', href: '/changes?id=chg_pi', recommendedOptionId: null },
       }),
     ]);
     changeCompleted(h, 'chg_pi');
@@ -393,13 +399,16 @@ describe('integrity', () => {
       expect.objectContaining({
         id: 'breakglass_open:brk_2',
         kind: 'breakglass_open',
-        costOfDelay: { score: 82.8, basis: 'Break-glass promotion · 5m · production down' },
+        severity: 'critical',
+        costOfDelay: { score: 88.3, basis: 'Break-glass promotion · 5m · production down' },
+        // Its options never reached the tower, so there is no recommendation to apply inline: review it.
         action: {
           kind: 'resolve_decision',
-          label: 'Approve with passkey',
+          label: 'Review',
           href: '/decisions?id=dec_lost',
           decisionId: 'dec_lost',
           requiresPasskey: true,
+          recommendedOptionId: null,
         },
       }),
     ]);
@@ -440,7 +449,7 @@ describe('integrity', () => {
         id: 'projection_degraded:broken',
         title: 'Projection degraded: broken',
         since: iso(ago(h, minutes(10))),
-        costOfDelay: { score: 70.8, basis: `Projection degraded · 10m · failed at seq ${seq}` },
+        costOfDelay: { score: 41.2, basis: `Projection degraded · 10m · failed at seq ${seq}` },
       }),
     ]);
     h.t.clock.advance(25 * 3_600_000);
@@ -472,8 +481,8 @@ describe('integrity', () => {
     );
     let s = await h.snap();
     expect(s.attention.map((a) => [a.id, a.kind, a.costOfDelay.score, a.action.kind])).toEqual([
-      ['fx_discrepancy:dec_fx', 'fx_discrepancy', 55.4, 'resolve_decision'],
-      ['fx_carry_forward', 'fx_carry_forward', 32.3, 'open'],
+      ['fx_discrepancy:dec_fx', 'fx_discrepancy', 13.3, 'resolve_decision'],
+      ['fx_carry_forward', 'fx_carry_forward', 9.2, 'open'],
     ]);
     h.emit({
       type: 'fx.discrepancy_resolved',

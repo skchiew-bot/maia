@@ -155,6 +155,28 @@ describe('managed mode: the daemon decides, the hook relays', () => {
     expect(readSpool(spoolDir)).toEqual([]);
   });
 
+  it('keeps each session in its own default spool: a replay never carries another session’s events', async () => {
+    // A replay is authorised by one session's token; the daemon rejects any other session's items and the
+    // client then drops them, so two managed sessions under one HOME must not share a spool.
+    const home = tmp();
+    const other = 'ses_01JOTHER000000000000000000';
+    const dead = await deadUrl();
+    await runHookBinary('PostToolUse', postToolUse('toolu_A'), managedEnv(home, dead));
+    await runHookBinary('PostToolUse', postToolUse('toolu_B'), managedEnv(home, dead, { AOC_SESSION_ID: other }));
+    expect(readSpool(join(home, '.aoc', 'spool', 'managed', AOC_SESSION))).toHaveLength(1);
+    expect(readSpool(join(home, '.aoc', 'spool', 'managed', other))).toHaveLength(1);
+
+    daemon = await startFakeDaemon((r) =>
+      r.path === '/ingest/spool'
+        ? { status: 200, json: { accepted: r.body.items.length, duplicates: 0, rejected: 0 } }
+        : { status: 200, json: { exitCode: 0 } },
+    );
+    await runHookBinary('Stop', stop('/tmp/none.jsonl'), managedEnv(home, daemon.url));
+    const replayed = daemon.requests.filter((r) => r.path === '/ingest/spool').flatMap((r) => r.body.items);
+    expect(replayed.map((i: { body: { aocSessionId: string } }) => i.body.aocSessionId)).toEqual([AOC_SESSION]);
+    expect(readSpool(join(home, '.aoc', 'spool', 'managed', other))).toHaveLength(1);
+  });
+
   it('fails closed when the daemon rejects the call; other events warn without spooling', async () => {
     daemon = await startFakeDaemon(() => ({ status: 401, json: { error: { message: 'bad ingest token' } } }));
     const home = tmp();

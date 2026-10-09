@@ -196,6 +196,42 @@ importers:
         specifier: workspace:*
         version: link:../kernel
 
+  packages/e2e:
+    dependencies:
+      '@aoc/claude-sim':
+        specifier: workspace:*
+        version: link:../claude-sim
+      '@aoc/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@aoc/daemon':
+        specifier: workspace:*
+        version: link:../daemon
+      '@aoc/kernel':
+        specifier: workspace:*
+        version: link:../kernel
+      '@aoc/mod-identity':
+        specifier: workspace:*
+        version: link:../mod-identity
+      '@aoc/mod-sessions':
+        specifier: workspace:*
+        version: link:../mod-sessions
+      '@aoc/supervisor':
+        specifier: workspace:*
+        version: link:../supervisor
+      '@hono/node-server':
+        specifier: 1.19.17
+        version: 1.19.17(hono@4.13.13)
+      '@modelcontextprotocol/sdk':
+        specifier: 1.32.1
+        version: 1.32.1(zod@3.25.76)
+      fflate:
+        specifier: 0.8.3
+        version: 0.8.3
+      hono:
+        specifier: 4.13.13
+        version: 4.13.13
+
   packages/hooks:
     dependencies:
       '@aoc/client':
