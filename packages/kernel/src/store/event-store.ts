@@ -93,6 +93,14 @@ interface EventRow {
   actor_kind: string;
   actor_id: string;
   scope_json: string;
+  project_id: string | null;
+  thread_id: string | null;
+  session_id: string | null;
+  task_id: string | null;
+  ticket_id: string | null;
+  change_id: string | null;
+  decision_id: string | null;
+  user_id: string | null;
   meta: string;
   payload_hash: string | null;
   body_scope: string | null;
@@ -103,6 +111,17 @@ interface EventRow {
   prev_hash: string;
   hash: string;
 }
+
+const SCOPE_COLUMNS = [
+  ['projectId', 'project_id'],
+  ['threadId', 'thread_id'],
+  ['sessionId', 'session_id'],
+  ['taskId', 'task_id'],
+  ['ticketId', 'ticket_id'],
+  ['changeId', 'change_id'],
+  ['decisionId', 'decision_id'],
+  ['userId', 'user_id'],
+] as const satisfies readonly (readonly [keyof Scope, keyof EventRow])[];
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS chain_info (k TEXT PRIMARY KEY, v TEXT NOT NULL);
@@ -255,7 +274,7 @@ export class EventStore {
             continue;
           }
         }
-        const problems = validateEvent(input.type, input.meta, input.payload ?? null);
+        const problems = [...validateEvent(input.type, input.meta, input.payload ?? null), ...headerProblems(input as NewEventInput)];
         if (problems.length) throw new EventValidationError(input.type, problems);
         const e = this.write(input as NewEventInput, writtenBodies);
         out.push(e);
@@ -519,6 +538,11 @@ export class EventStore {
           problems.push(`seq ${e.seq}: hash mismatch`);
           firstBad ??= e.seq;
         }
+        // Queries filter on the indexed copies of the scope, which the hash does not cover: they must agree with it.
+        if (SCOPE_COLUMNS.some(([k, col]) => ((e.scope as Record<string, string | undefined>)[k] ?? null) !== (r[col] ?? null))) {
+          problems.push(`seq ${e.seq}: indexed scope columns disagree with the chained scope`);
+          firstBad ??= e.seq;
+        }
         if (want.has(e.seq)) hashesAt[e.seq] = recomputed;
         prev = e.hash;
         expectSeq = e.seq + 1;
@@ -597,6 +621,26 @@ export class EventStore {
 
 function projectorFingerprint(p: Projector): string {
   return sha256hex(canonicalJson({ tables: p.tables, ddl: p.ddl, handles: p.handles ?? null, version: p.version ?? 0 }));
+}
+
+const MAX_IDEMPOTENCY_KEY = 512;
+const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
+
+/**
+ * sourceTs and idempotencyKey are chained in clear (and exported in evidence packs) like meta, but the catalog
+ * does not cover them: bound them here so no writer can chain free text or bulk data that can never be erased.
+ */
+function headerProblems(input: NewEventInput): string[] {
+  const problems: string[] = [];
+  const ts = input.sourceTs;
+  if (ts !== undefined && ts !== null && !(typeof ts === 'string' && ts.length >= 10 && ts.length <= 40 && !Number.isNaN(Date.parse(ts)))) {
+    problems.push('sourceTs: must be an ISO-8601 timestamp');
+  }
+  const key = input.idempotencyKey;
+  if (key !== undefined && key !== null && !(typeof key === 'string' && key.length >= 1 && key.length <= MAX_IDEMPOTENCY_KEY && !CONTROL_CHARS.test(key))) {
+    problems.push(`idempotencyKey: must be 1–${MAX_IDEMPOTENCY_KEY} characters without control characters`);
+  }
+  return problems;
 }
 
 function cleanScope(s: Scope): Scope {

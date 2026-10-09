@@ -169,5 +169,9 @@ export const intakeProjector: Projector = {
   onErase(db, scopeId) {
     db.prepare("UPDATE itk_tickets SET title = '[erased]', description = '[erased]', comment = NULL, fix_plan = CASE WHEN fix_plan IS NULL THEN NULL ELSE '[erased]' END WHERE ticket_id = ?").run(scopeId);
     db.prepare("UPDATE itk_attachments SET file_name = '[erased]' WHERE ticket_id = ?").run(scopeId);
+    // Diagnoses are written under the ticket's key scope and routinely quote the ticket's personal data.
+    db.prepare(
+      "UPDATE itk_sessions SET root_cause = CASE WHEN root_cause IS NULL THEN NULL ELSE '[erased]' END, fix_plan = CASE WHEN fix_plan IS NULL THEN NULL ELSE '[erased]' END WHERE ticket_id = ?",
+    ).run(scopeId);
   },
 };
