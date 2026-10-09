@@ -1,16 +1,31 @@
 /**
  * Demo history seeder — `pnpm --filter @aoc/demo seed -- --data-dir <abs dir> [--days 14] [--reset]`
  *
- * Builds a realistic, catalog-valid history (users, projects, sessions with manifests/evidence/usage, decisions,
- * change control, rollbacks, credits, FX, error-learning, playbooks, tickets) by driving the REAL runtime with a
- * moving fake clock, so every module's projections, the hash chain and anchors are genuine. Then start aocd on the
- * same data dir. Deterministic (seeded PRNG). Never use against a production data dir.
+ * Builds a realistic, catalog-valid history (users, projects with git repos, sessions with manifests/evidence/
+ * usage, decisions, playbooks, credits, FX, error-learning, intake tickets) by driving the REAL runtime with a
+ * moving fake clock, so every module's projections, the hash chain and anchors are genuine. Deterministic
+ * (seeded PRNG). Never use against a production data dir. Layout of the directory: ./layout.ts.
+ *
+ * "Now" has one session per liveness state. Working, Thinking and Stalled are queued launches: aocd's supervisor
+ * starts them on claude-sim when it boots, so everything they show comes from a real managed process. Waiting on
+ * you, Throttled and Dead are seeded states (no process) whose next turn — the decision answer, the limit reset,
+ * an operator Restart — runs on claude-sim through the supervisor like any other.
  */
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { Hono } from 'hono';
-import { AocConfigSchema, MODEL_ID_BY_TIER, newId, TASK_SIZE_WEIGHT, type Actor, type TaskSize } from '@aoc/contracts';
+import {
+  AocConfigSchema,
+  MODEL_ID_BY_TIER,
+  TASK_SIZE_WEIGHT,
+  defaultConfig,
+  newId,
+  transcriptPathFor,
+  type Actor,
+  type TaskSize,
+} from '@aoc/contracts';
+import { simStatePathFor, type SimState } from '@aoc/claude-sim';
 import { AocRuntime, FakeClock, createLogger, initRepo, localDate, type AocModule, type AppEnv } from '@aoc/kernel';
 import { createAuditModule } from '@aoc/mod-audit';
 import { createChangeModule } from '@aoc/mod-change';
@@ -25,6 +40,10 @@ import { createLedgerModule } from '@aoc/mod-ledger';
 import { createMeteringModule } from '@aoc/mod-metering';
 import { createRegistryModule } from '@aoc/mod-registry';
 import { createSessionsModule } from '@aoc/mod-sessions';
+import { demoLayout, resetDemoDir, type DemoTokens, type LiveKind } from './layout';
+import { PROJECT_FILES } from './repos';
+import { simPrompt } from './scenarios';
+import { CLAUDE_SIM_BIN } from './sim-guard';
 
 // ── deterministic randomness ──────────────────────────────────────────────────
 let seed = 20261009;
@@ -36,45 +55,55 @@ const arg = (n: string, d: string) => {
   const i = process.argv.indexOf(`--${n}`);
   return i >= 0 ? process.argv[i + 1]! : d;
 };
-const repoDir = resolve(new URL('../../..', import.meta.url).pathname);
-const dataDir = resolve(arg('data-dir', join(repoDir, '.aoc/demo')));
+const repoDir = new URL('../../..', import.meta.url).pathname.replace(/\/+$/, '');
+const layout = demoLayout(arg('data-dir', join(repoDir, '.aoc/demo')));
 const days = Number(arg('days', '14'));
 const TZ = 'Asia/Kuala_Lumpur';
 
-if (existsSync(dataDir) && process.argv.includes('--reset')) rmSync(dataDir, { recursive: true, force: true });
-if (existsSync(join(dataDir, 'aoc.db'))) {
-  console.error(`${dataDir} already has data. Re-run with --reset to rebuild the demo.`);
+if (process.argv.includes('--reset')) resetDemoDir(layout);
+if (existsSync(join(layout.root, 'aoc.db'))) {
+  console.error(`${layout.root} holds a demo in the old layout (AOC data at the top level). Re-run with --reset.`);
   process.exit(1);
 }
-mkdirSync(dataDir, { recursive: true });
-const repoRoot = join(dataDir, 'repos');
+if (existsSync(join(layout.aocData, 'aoc.db'))) {
+  console.error(`${layout.root} already has data. Re-run with --reset to rebuild the demo.`);
+  process.exit(1);
+}
+mkdirSync(layout.aocData, { recursive: true });
 
 const now = Date.now();
 const clock = new FakeClock(now - days * 86_400_000);
+// Credentials never reach sim sessions; the scenario variables do (the live launcher sets them).
+const SECRET_ENV = new Set(['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN']);
 /**
- * The daemon config for this demo data dir (written to <dataDir>/aoc.config.json). Managed sessions run on
- * claude-sim, never the real `claude` CLI, and LLM-backed jobs use the fake extractor: clicking Nudge or Restart
- * in a demo must not spend plan quota or touch real repositories.
+ * The daemon config for this demo (written to <dir>/aoc.config.json). Managed sessions run on claude-sim, never the
+ * real `claude` CLI, and LLM-backed jobs use the fake extractor: a demo must not spend plan quota or touch real
+ * repositories. Run aocd with CLAUDE_CONFIG_DIR=<dir>/claude so sim transcripts stay inside the demo.
  */
 const demoConfig = {
-  dataDir,
+  dataDir: layout.aocData,
   timezone: TZ,
   registryFile: join(repoDir, 'config/process-types.json'),
   metering: { rateCardFile: join(repoDir, 'config/rate-card.json') },
   compliance: { mappingFile: join(repoDir, 'config/iso42001-mapping.json') },
   fx: { enabled: false, extractor: 'fake' as const },
-  audit: { anchorProvider: 'git' as const, anchorRepoPath: join(dataDir, 'anchor-repo') },
+  audit: { anchorProvider: 'git' as const, anchorRepoPath: join(layout.aocData, 'anchor-repo') },
   supervisor: {
     claudeBin: process.execPath,
-    claudeArgsPrefix: [join(repoDir, 'packages/claude-sim/bin/claude-sim.mjs')],
-    workspacesDir: join(dataDir, 'workspaces'),
+    claudeArgsPrefix: [CLAUDE_SIM_BIN],
+    workspacesDir: layout.workspaces,
+    // Seven demo slots plus rollover successors and resumed seeded sessions run side by side.
+    maxConcurrentSessions: 12,
+    envAllowlist: [
+      ...defaultConfig().supervisor.envAllowlist.filter((k) => !SECRET_ENV.has(k)),
+      'CLAUDE_SIM_SCENARIO',
+      'CLAUDE_SIM_SPEED',
+    ],
   },
-  selfModification: { externalAuditLog: join(dataDir, 'selfmod-audit.log') },
+  selfModification: { externalAuditLog: join(layout.aocData, 'selfmod-audit.log') },
   credits: { defaultMonthlyAllocationUsd: 300 },
 };
-const config = AocConfigSchema.parse({
-  ...demoConfig,
-});
+const config = AocConfigSchema.parse(demoConfig);
 
 const modules: AocModule[] = [
   createIdentityModule(),
@@ -92,9 +121,11 @@ const modules: AocModule[] = [
   createIntakeModule(),
 ];
 
-const rt = await AocRuntime.create({ config, modules, clock, log: createLogger({ level: 'warn' }) });
+// 'error': the seeder runs without a supervisor, so intake's "cannot start triage" warning is expected noise.
+const rt = await AocRuntime.create({ config, modules, clock, log: createLogger({ level: 'error' }) });
 const app = rt.mount(new Hono<AppEnv>());
 const store = rt.store;
+const registry = rt.services.get('registry');
 const sys = (id: string): Actor => ({ kind: 'system', id });
 const human = (id: string): Actor => ({ kind: 'human', id });
 const agent = (id: string): Actor => ({ kind: 'agent', id });
@@ -102,28 +133,30 @@ const at = (ms: number) => clock.set(ms);
 const t0 = clock.now();
 const DAY = 86_400_000;
 
-// ── users & tokens (through the identity API when available) ─────────────────
-const tokens: Record<string, { userId: string; role: string; token: string }> = {};
+// ── users & tokens (through the identity API) ─────────────────────────────────
+type PersonKey = keyof DemoTokens['tokens'];
+const tokens = {} as Record<PersonKey, { userId: string; role: string; token: string }>;
 async function api<T>(method: string, path: string, token: string | null, body?: unknown): Promise<{ status: number; data: T }> {
+  const form = body instanceof FormData;
   const res = await app.request(path, {
     method,
-    headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
-    body: body === undefined ? undefined : JSON.stringify(body),
+    headers: { ...(form ? {} : { 'content-type': 'application/json' }), ...(token ? { authorization: `Bearer ${token}` } : {}) },
+    body: body === undefined ? undefined : form ? body : JSON.stringify(body),
   });
   const text = await res.text();
   return { status: res.status, data: (text ? JSON.parse(text) : null) as T };
 }
 
-const bootstrapFile = join(dataDir, 'bootstrap-token');
+const bootstrapFile = join(layout.aocData, 'bootstrap-token');
 let ownerToken = existsSync(bootstrapFile) ? readFileSync(bootstrapFile, 'utf8').trim() : null;
-const people = [
+const people: { key: PersonKey; name: string; role: string; complianceLead: boolean }[] = [
   { key: 'ceo', name: 'Chiew Sin Kwang', role: 'approver', complianceLead: false },
   { key: 'aisyah', name: 'Aisyah Rahman', role: 'builder', complianceLead: false },
   { key: 'weijie', name: 'Tan Wei Jie', role: 'builder', complianceLead: false },
   { key: 'priya', name: 'Priya Nair', role: 'builder', complianceLead: true },
   { key: 'daniel', name: 'Daniel Lim', role: 'requester', complianceLead: false },
   { key: 'nur', name: 'Nur Hidayah', role: 'requester', complianceLead: false },
-] as const;
+];
 
 for (const p of people) {
   if (p.key === 'ceo' && ownerToken) {
@@ -145,21 +178,23 @@ for (const p of people) {
   } else {
     throw new Error(`identity API refused user ${p.key}: HTTP ${created.status} ${JSON.stringify(created.data)} (is the bootstrap token present?)`);
   }
-  if (p.key === 'ceo') ownerToken = tokens.ceo!.token;
+  if (p.key === 'ceo') ownerToken = tokens.ceo.token;
 }
-const U = (k: keyof typeof tokens) => tokens[k]!.userId;
+const U = (k: PersonKey) => tokens[k].userId;
 const builders = ['aisyah', 'weijie', 'priya'] as const;
 
-// ── projects with real git repos (phase pins and provenance need commits) ────
-const projects = [
-  { id: 'prj_cxcopilot', slug: 'cx-copilot', name: 'CX Copilot', description: 'Agent-assist copilot for the Daythree contact centre' },
-  { id: 'prj_claims', slug: 'claims-bot', name: 'Claims Intake Bot', description: 'Insurance claims intake and triage assistant' },
-  { id: 'prj_aoc', slug: 'aoc-platform', name: 'AOC Platform', description: 'This console — features only; the governance core is human-built' },
-];
-for (const p of projects) {
-  const repo = join(repoRoot, p.slug);
-  initRepo(repo, { files: { 'README.md': `# ${p.name}\n`, 'src/index.ts': 'export const ready = true;\n', 'package.json': '{"name":"demo","scripts":{"test":"node -e \\"process.exit(0)\\""}}\n' } });
-  store.append({ type: 'project.created', actor: human(U('ceo')), scope: { projectId: p.id }, meta: { projectId: p.id, slug: p.slug }, payload: { name: p.name, description: p.description, repoPath: repo, defaultBranch: 'main' }, source: 'cli' });
+// ── projects with real git repos (phase pins, provenance and evidence need commits) ──
+const projects = {
+  cx: { id: 'prj_cxcopilot', slug: 'cx-copilot', name: 'CX Copilot', description: 'Agent-assist copilot for the Daythree contact centre' },
+  claims: { id: 'prj_claims', slug: 'claims-bot', name: 'Claims Intake Bot', description: 'Insurance claims intake and triage assistant' },
+  aoc: { id: 'prj_aoc', slug: 'aoc-platform', name: 'AOC Platform', description: 'This console — features only; the governance core is human-built' },
+} as const;
+type Project = (typeof projects)[keyof typeof projects];
+const allProjects = Object.values(projects);
+const repoOf = (p: Project) => join(layout.repos, p.slug);
+for (const p of allProjects) {
+  initRepo(repoOf(p), { files: PROJECT_FILES[p.slug] });
+  store.append({ type: 'project.created', actor: human(U('ceo')), scope: { projectId: p.id }, meta: { projectId: p.id, slug: p.slug }, payload: { name: p.name, description: p.description, repoPath: repoOf(p), defaultBranch: 'main' }, source: 'cli' });
 }
 
 // ── FX history: live weekdays, inherited weekends ─────────────────────────────
@@ -201,29 +236,47 @@ const planFor = (kind: string): Plan => {
   return libs[kind]!;
 };
 
-interface SimSession { sessionId: string; claude: string; owner: string; project: (typeof projects)[number]; type: string; model: string; plan: Plan; thread: string }
-let turnSeq = 0;
-function launch(owner: string, project: (typeof projects)[number], type: string, prompt: string, extra: { ticketId?: string; readOnly?: boolean } = {}): SimSession {
+const threads = new Set<string>();
+/** Launch request as the supervisor records it: the registry decides model and credential profile (§2.2, §3). */
+function requestLaunch(owner: string, project: Project, type: string, prompt: string, threadId: string) {
+  const t = registry.getType(type);
+  if (!t) throw new Error(`process type ${type} is not in the registry`);
+  const model = MODEL_ID_BY_TIER[registry.modelFor(type)];
   const sessionId = newId('session', clock.now());
-  const claude = randomUUID();
-  const thread = `thr_${project.slug}_main`;
-  if (!store.list({ types: ['thread.created'], projectId: project.id, limit: 1 }).length) {
-    store.append({ type: 'thread.created', actor: human(owner), scope: { projectId: project.id, threadId: thread }, meta: { threadId: thread, projectId: project.id }, payload: { title: `${project.name} — main thread` }, source: 'api' });
+  if (!threads.has(threadId)) {
+    threads.add(threadId);
+    store.append({ type: 'thread.created', actor: human(owner), scope: { projectId: project.id, threadId }, meta: { threadId, projectId: project.id }, payload: { title: prompt.split('\n')[0]!.slice(0, 80) }, source: 'api' });
   }
-  const tier = type === 'discovery' || type === 'migration' || type === 'bug-triage' ? 'opus' : type === 'docs' || type === 'test-repair' ? 'haiku' : 'sonnet';
-  const model = MODEL_ID_BY_TIER[tier];
   store.append({
     type: 'session.launch_requested',
     actor: human(owner),
-    scope: { sessionId, projectId: project.id, threadId: thread, ticketId: extra.ticketId },
-    meta: { sessionId, projectId: project.id, threadId: thread, processType: type, model, readOnly: !!extra.readOnly, credentialProfile: extra.readOnly ? null : 'git-feature', ticketId: extra.ticketId ?? null, parentSessionId: null, phaseId: null },
-    payload: { prompt, cwd: join(repoRoot, project.slug) },
+    scope: { sessionId, projectId: project.id, threadId },
+    meta: { sessionId, projectId: project.id, threadId, processType: type, model, readOnly: t.readOnly, credentialProfile: t.readOnly ? null : t.credentialProfile, ticketId: null, parentSessionId: null, phaseId: null },
+    payload: { prompt, cwd: repoOf(project) },
     source: 'supervisor',
   });
-  store.append({ type: 'session.launched', actor: sys('supervisor'), scope: { sessionId }, meta: { sessionId, claudeSessionId: claude, pid: 40000 + (++turnSeq), model, turn: 1 }, payload: { cwd: join(repoRoot, project.slug), argv: ['claude', '-p', '…'], transcriptPath: `/home/aoc/.claude/projects/x/${claude}.jsonl` }, source: 'supervisor' });
+  return { sessionId, model };
+}
+
+interface SimSession { sessionId: string; claude: string; owner: string; project: Project; type: string; model: string; plan: Plan; thread: string }
+let turnSeq = 0;
+function launch(owner: string, project: Project, type: string, prompt: string, threadId = `thr_${project.slug}_main`): SimSession {
+  const { sessionId, model } = requestLaunch(owner, project, type, prompt, threadId);
+  const claude = randomUUID();
+  store.append({ type: 'session.launched', actor: sys('supervisor'), scope: { sessionId }, meta: { sessionId, claudeSessionId: claude, pid: 40000 + ++turnSeq, model, turn: 1 }, payload: { cwd: repoOf(project), argv: [process.execPath, CLAUDE_SIM_BIN, '-p', '@prompt'], transcriptPath: transcriptPathFor(repoOf(project), claude, layout.claudeConfig) }, source: 'supervisor' });
   store.append({ type: 'session.turn_started', actor: sys('supervisor'), scope: { sessionId }, meta: { sessionId, turn: 1, reason: 'launch' }, payload: {}, source: 'supervisor' });
   store.append({ type: 'session.lifecycle_changed', actor: sys('supervisor'), scope: { sessionId }, meta: { sessionId, from: 'launching', to: 'running', reason: 'launched' }, source: 'supervisor' });
-  return { sessionId, claude, owner, project, type, model, plan: planFor(type === 'docs' ? 'docs' : type.includes('fix') || type === 'test-repair' ? 'fix' : 'feature'), thread };
+  return { sessionId, claude, owner, project, type, model, plan: planFor(type === 'docs' ? 'docs' : type.includes('fix') || type === 'test-repair' ? 'fix' : 'feature'), thread: threadId };
+}
+
+/**
+ * A launch requested while aocd was down: lifecycle 'launching', no turn yet. The supervisor's startup recovery
+ * starts it on claude-sim, so the session's liveness comes from a real process.
+ */
+function queue(owner: string, project: Project, type: string, prompt: string, threadId: string): string {
+  const { sessionId } = requestLaunch(owner, project, type, prompt, threadId);
+  store.append({ type: 'session.lifecycle_changed', actor: human(owner), scope: { sessionId, projectId: project.id, threadId }, meta: { sessionId, from: null, to: 'launching', reason: 'launch_requested' }, source: 'supervisor' });
+  return sessionId;
 }
 
 function declare(s: SimSession) {
@@ -284,7 +337,6 @@ function usage(s: SimSession, messages: number, contextTokens: number) {
 }
 
 function done(s: SimSession, taskId: string, phaseId: string, size: TaskSize, opts: { flag?: 'no_file_change' | null; kind?: 'commit' | 'test' | 'diff' } = {}) {
-  const repo = join(repoRoot, s.project.slug);
   const kind = opts.kind ?? pick(['commit', 'test', 'diff'] as const);
   const sha = createHash('sha1').update(`${s.sessionId}${taskId}`).digest('hex');
   store.append({
@@ -292,7 +344,7 @@ function done(s: SimSession, taskId: string, phaseId: string, size: TaskSize, op
     actor: agent(s.sessionId),
     scope: { sessionId: s.sessionId, projectId: s.project.id, taskId },
     meta: { sessionId: s.sessionId, projectId: s.project.id, taskId, phaseId, weight: TASK_SIZE_WEIGHT[size], evidenceKind: kind, evidenceVerified: opts.flag ? false : true, flag: opts.flag ?? null, fileChangesSinceLast: opts.flag ? 0 : between(1, 9) },
-    payload: { evidence: { kind, ref: kind === 'commit' ? sha : kind === 'test' ? `api/${taskId}.test.ts > passes` : `diff:${sha.slice(0, 12)}`, detail: repo ? undefined : undefined } },
+    payload: { evidence: { kind, ref: kind === 'commit' ? sha : kind === 'test' ? `api/${taskId}.test.ts > passes` : `diff:${sha.slice(0, 12)}` } },
     source: 'mcp',
   });
 }
@@ -332,30 +384,48 @@ function decision(input: { kind: string; test?: string | null; title: string; qu
   );
 }
 
-async function resolve_(id: string, option: string, userKey: string, comment?: string) {
+async function resolve_(id: string, option: string, userKey: PersonKey, comment?: string) {
   const d = rt.services.get('decisions');
   const user = rt.services.get('identity').getUser(U(userKey));
   if (!user) return;
   const card = d.get(id);
   if (card?.requiresPasskey) {
     d.resolveByPolicy?.call(d, id, option, human(user.id), comment); // demo only: passkey ceremonies cannot be scripted
-    return;
+  } else {
+    await d.resolve(id, { optionId: option, comment: comment ?? null }, user);
   }
-  await d.resolve(id, { optionId: option, comment: comment ?? null }, user);
+  // Reactors (e.g. the registry approving a playbook) record their follow-ups at the fake clock's current time.
+  await rt.drain();
+}
+
+/** Playbooks distilled from discovery runs; once approved, feature-build and test-repair run on the cheaper model. */
+async function approvePlaybooks(): Promise<void> {
+  for (const [type, title] of [['feature-build', 'Feature build playbook v1'], ['test-repair', 'Flaky test repair playbook']] as const) {
+    const playbookId = newId('playbook', clock.now());
+    const dec = decision({ kind: 'playbook_approval', title: `Approve playbook: ${title}`, question: `Bind "${title}" so ${type} runs execute on the cheaper model?`, options: [{ id: 'approve', label: 'Approve' }, { id: 'reject', label: 'Reject' }], rec: 'approve', subjectType: 'playbook', subjectId: playbookId, requesterId: U('priya') });
+    store.append({ type: 'playbook.proposed', actor: human(U('priya')), scope: {}, meta: { playbookId, processType: type, sourceSessionId: null, version: 1, stepCount: 4, decisionId: dec.id, method: 'llm' }, payload: { title, steps: [{ id: 's1', title: 'Reproduce / map the change surface' }, { id: 's2', title: 'Write the acceptance test first' }, { id: 's3', title: 'Implement the smallest change' }, { id: 's4', title: 'Run the full suite and close tasks with evidence' }] }, source: 'api' });
+    at(clock.now() + 3 * 3600_000);
+    await resolve_(dec.id, 'approve', 'ceo', 'Approved for execution runs.');
+  }
 }
 
 // History: completed sessions spread across the days
 const featureTypes = ['discovery', 'feature-build', 'feature-build', 'bug-fix', 'test-repair', 'docs'] as const;
 for (let d = 0; d < days; d++) {
+  if (d === 5) {
+    // The evening before day 5: later feature-build and test-repair runs are routed to the execution model.
+    at(t0 + 5 * DAY - 7 * 3600_000);
+    await approvePlaybooks();
+  }
   const dayStart = t0 + d * DAY + 1.5 * 3600_000; // 09:30 local
   const wd = new Date(`${localDate(dayStart, TZ)}T00:00:00Z`).getUTCDay();
   if (wd === 0 || wd === 6) continue;
   for (let k = 0; k < between(2, 4); k++) {
     at(dayStart + k * 2.2 * 3600_000 + between(0, 1800_000));
-    const owner = U(pick(builders));
-    const project = pick(projects);
+    const owner = pick(builders);
+    const project = pick(allProjects);
     const type = pick(featureTypes);
-    const s = launch(owner, project, type, `${pick(['Add', 'Fix', 'Refactor', 'Instrument'])} ${pick(['agent handover summary', 'claims OCR fallback', 'SLA breach alerting', 'queue rebalancer', 'CSAT survey hook', 'PDPA export'])} for ${project.name}`);
+    const s = launch(U(owner), project, type, `${pick(['Add', 'Fix', 'Refactor', 'Instrument'])} ${pick(['agent handover summary', 'claims OCR fallback', 'SLA breach alerting', 'queue rebalancer', 'CSAT survey hook', 'PDPA export'])} for ${project.name}`);
     tools(s, between(4, 8), between(60_000, 300_000));
     declare(s);
     let ctx = 24_000;
@@ -373,20 +443,10 @@ for (let d = 0; d < days; d++) {
       const dec = decision({ kind: 'agent_decision', test, title: 'Pick a persistence strategy', question: 'Event table or document store for the handover summaries?', options: [{ id: 'events', label: 'Append-only event table' }, { id: 'docs', label: 'Document store' }], rec: 'events', subjectType: 'session', subjectId: s.sessionId, sessionId: s.sessionId, projectId: project.id, requesterId: `session:${s.sessionId}` });
       at(clock.now() + between(10, 90) * 60_000);
       // Irreversible choices bounce to the Approver; ambiguity is answered by a Builder (§6).
-      await resolve_(dec.id, 'events', test === 'irreversible' ? 'ceo' : pick(builders.filter((b) => U(b) !== owner)), 'Keep it append-only; we need the audit trail.');
+      await resolve_(dec.id, 'events', test === 'irreversible' ? 'ceo' : pick(builders.filter((b) => b !== owner)), 'Keep it append-only; we need the audit trail.');
     }
     end(s);
   }
-}
-
-// ── registry: playbooks distilled from discovery runs ────────────────────────
-at(t0 + 5 * DAY);
-for (const [type, title] of [['feature-build', 'Feature build playbook v1'], ['test-repair', 'Flaky test repair playbook']] as const) {
-  const playbookId = newId('playbook', clock.now());
-  const dec = decision({ kind: 'playbook_approval', title: `Approve playbook: ${title}`, question: `Bind "${title}" so ${type} runs execute on the cheaper model?`, options: [{ id: 'approve', label: 'Approve' }, { id: 'reject', label: 'Reject' }], rec: 'approve', subjectType: 'playbook', subjectId: playbookId, requesterId: U('priya') });
-  store.append({ type: 'playbook.proposed', actor: human(U('priya')), scope: {}, meta: { playbookId, processType: type, sourceSessionId: null, version: 1, stepCount: 4, decisionId: dec.id, method: 'llm' }, payload: { title, steps: [{ id: 's1', title: 'Reproduce / map the change surface' }, { id: 's2', title: 'Write the acceptance test first' }, { id: 's3', title: 'Implement the smallest change' }, { id: 's4', title: 'Run the full suite and close tasks with evidence' }] }, source: 'api' });
-  at(clock.now() + 3 * 3600_000);
-  await resolve_(dec.id, 'approve', 'ceo', 'Approved for execution runs.');
 }
 
 // ── error learning: classes, occurrences, offences, lessons ──────────────────
@@ -404,7 +464,7 @@ for (const c of classes) {
     store.append({
       type: 'error.observed',
       actor: sys('learning'),
-      scope: { projectId: pick(projects).id },
+      scope: { projectId: pick(allProjects).id },
       meta: { errorId, source: pick(['tool', 'test', 'uat'] as const), sessionId: null, projectId: null, processType: pick(['feature-build', 'test-repair', 'migration']), model: c.dimension === 'model_capability' ? MODEL_ID_BY_TIER.haiku : pick([MODEL_ID_BY_TIER.sonnet, MODEL_ID_BY_TIER.opus]), signature: createHash('sha256').update(c.classId).digest('hex').slice(0, 32), codeArea: 'src/config', priority: rnd() < 0.2 ? 'high' : 'normal', costUsd: Math.round(rnd() * 400) / 100, costMs: between(60_000, 1_800_000) },
       payload: { message: `${c.name} (occurrence ${i + 1})` },
       source: 'system',
@@ -413,66 +473,120 @@ for (const c of classes) {
   }
 }
 
-// ── credits: allocations, an auto-grant, a pending top-up ────────────────────
+// ── credits: allocations ──────────────────────────────────────────────────────
 const period = localDate(now, TZ).slice(0, 7);
 at(t0 + DAY);
 for (const b of builders) store.append({ type: 'credit.allocated', actor: human(U('ceo')), scope: { userId: U(b) }, meta: { userId: U(b), period, amountUsd: 300, allocatedBy: U('ceo') }, source: 'api' });
 
-// ── live sessions "now": one per liveness state ──────────────────────────────
+// ── intake tickets, filed by the requesters through the portal API ────────────
+const ticketSpecs = [
+  { key: 'receipts', by: 'daniel', project: projects.claims, ago: 2.2 * DAY, severity: 'medium', title: 'Receipt photos come out sideways', description: 'When I photograph a receipt in portrait on my phone and attach it to a claim, the uploaded image shows up rotated 90 degrees. The adjuster asked me to send it again twice.', comment: 'iPhone 15, latest app version.' },
+  { key: 'duplicate', by: 'nur', project: projects.claims, ago: 1.4 * DAY, severity: 'high', title: 'My claim was submitted twice', description: 'The app froze after I pressed Submit, so I pressed it again. Now I have two identical claims and two confirmation emails for the same accident.', comment: null },
+] as const;
+const tickets: DemoTokens['tickets'] = [];
+for (const t of ticketSpecs) {
+  at(now - t.ago);
+  const form = new FormData();
+  form.set('title', t.title);
+  form.set('description', t.description);
+  if (t.comment) form.set('comment', t.comment);
+  form.set('severity', t.severity);
+  form.set('projectId', t.project.id);
+  const r = await api<{ ticketId: string }>('POST', '/portal/api/intakes', tokens[t.by].token, form);
+  if (r.status !== 201 || !r.data?.ticketId) throw new Error(`intake refused ticket ${t.key}: HTTP ${r.status} ${JSON.stringify(r.data)}`);
+  tickets.push({ ticketId: r.data.ticketId, key: t.key, projectId: t.project.id });
+}
+
+// ── "now": one session per liveness state ─────────────────────────────────────
+// Waiting on you / Throttled / Dead: seeded states with history. Their next turn runs on claude-sim: the scenario
+// marker in each prompt (or the resumable conversation written below for the waiting one) continues the plan.
 at(now - 50 * 60_000);
-const live: Record<string, SimSession> = {};
-const mk = (key: string, owner: string, project: (typeof projects)[number], type: string, prompt: string) => (live[key] = launch(owner, project, type, prompt));
-mk('working', U('aisyah'), projects[0], 'feature-build', 'Add supervisor whisper suggestions to the agent desktop');
-mk('thinking', U('weijie'), projects[1], 'discovery', 'Design OCR fallback for handwritten claim forms');
-mk('stalled', U('priya'), projects[0], 'migration', 'Migrate interaction history to the partitioned table');
-mk('waiting', U('aisyah'), projects[1], 'bug-fix', 'Fix duplicate claim submissions on retry');
-mk('throttled', U('weijie'), projects[0], 'feature-build', 'Real-time CSAT sentiment overlay');
-mk('dead', U('priya'), projects[2], 'docs', 'Document the rollback runbook');
-for (const s of Object.values(live)) {
+const seeded = {
+  waiting: launch(U('aisyah'), projects.claims, 'bug-fix', simPrompt('Fix duplicate claim submissions on retry', 'Mobile retries after a slow response create a second claim (ticket "My claim was submitted twice"). Make submission idempotent and add a regression test.', 'demo-dedupe-resume'), 'thr_claims-bot_dedupe'),
+  throttled: launch(U('weijie'), projects.cx, 'feature-build', simPrompt('Real-time CSAT sentiment overlay', 'Show a rolling sentiment colour on the agent desktop while the call is live.', 'demo-csat-resume'), 'thr_cx-copilot_csat'),
+  dead: launch(U('priya'), projects.aoc, 'docs', simPrompt('Document the rollback runbook', 'Add the rollback flow diagram and check every link in docs/runbooks/rollback.md.', 'demo-runbook-restart'), 'thr_aoc-platform_rollback-docs'),
+};
+const seededContext: Record<keyof typeof seeded, number> = { waiting: 0, throttled: 0, dead: 0 };
+for (const [k, s] of Object.entries(seeded) as [keyof typeof seeded, SimSession][]) {
   tools(s, 5, 120_000);
   declare(s);
   tools(s, between(10, 25), between(10, 25) * 60_000);
-  usage(s, between(10, 30), between(60_000, 420_000));
+  seededContext[k] = between(60_000, 420_000);
+  usage(s, between(10, 30), seededContext[k]);
   const t = s.plan.phases[0]!.tasks[0]!;
-  done(s, t.id, s.plan.phases[0]!.id, t.size);
+  done(s, t.id, s.plan.phases[0]!.id, t.size, { kind: 'diff' });
 }
 // Waiting on you: main-branch merge decision (test 1 → Approver)
 at(now - 34 * 60_000);
-const mainDecision = decision({
+decision({
   kind: 'agent_decision',
   test: 'main',
   title: 'Merge the retry-dedupe fix to main?',
   question: 'The fix for duplicate claim submissions is ready on fix/claims-dedupe with a regression test. Merge to main now or hold for UAT?',
   options: [{ id: 'merge', label: 'Merge to main' }, { id: 'uat', label: 'Hold for UAT first' }],
   rec: 'uat',
-  context: '3 files changed, regression test api/claims.dedupe.test.ts passing.',
+  context: '3 files changed, regression test test/claims/dedupe.test.ts passing.',
   subjectType: 'session',
-  subjectId: live.waiting!.sessionId,
-  sessionId: live.waiting!.sessionId,
-  projectId: projects[1].id,
-  requesterId: `session:${live.waiting!.sessionId}`,
+  subjectId: seeded.waiting.sessionId,
+  sessionId: seeded.waiting.sessionId,
+  projectId: projects.claims.id,
+  requesterId: `session:${seeded.waiting.sessionId}`,
 });
-store.append({ type: 'session.turn_ended', actor: sys('supervisor'), scope: { sessionId: live.waiting!.sessionId }, meta: { sessionId: live.waiting!.sessionId, turn: 1, outcome: 'decision', exitCode: 0, durationMs: 1000 }, payload: {}, source: 'supervisor' });
-store.append({ type: 'session.lifecycle_changed', actor: sys('supervisor'), scope: { sessionId: live.waiting!.sessionId }, meta: { sessionId: live.waiting!.sessionId, from: 'running', to: 'waiting_decision', reason: 'open_decision' }, source: 'supervisor' });
-// Throttled: plan limit with a reset time
+store.append({ type: 'session.turn_ended', actor: sys('supervisor'), scope: { sessionId: seeded.waiting.sessionId }, meta: { sessionId: seeded.waiting.sessionId, turn: 1, outcome: 'decision', exitCode: 0, durationMs: 1000 }, payload: {}, source: 'supervisor' });
+store.append({ type: 'session.lifecycle_changed', actor: sys('supervisor'), scope: { sessionId: seeded.waiting.sessionId }, meta: { sessionId: seeded.waiting.sessionId, from: 'running', to: 'waiting_decision', reason: 'open_decision' }, source: 'supervisor' });
+// Throttled: plan limit with a reset time; the supervisor resumes it on claude-sim once the limit resets.
 at(now - 22 * 60_000);
-store.append({ type: 'throttle.hit', actor: agent(live.throttled!.sessionId), scope: { sessionId: live.throttled!.sessionId }, meta: { sessionId: live.throttled!.sessionId, resetAt: new Date(now + 95 * 60_000).toISOString(), source: 'stream' }, payload: { message: "You've hit your session limit · resets 2:05pm (Asia/Kuala_Lumpur)" }, source: 'supervisor' });
-store.append({ type: 'session.lifecycle_changed', actor: sys('supervisor'), scope: { sessionId: live.throttled!.sessionId }, meta: { sessionId: live.throttled!.sessionId, from: 'running', to: 'throttled', reason: 'plan_limit' }, source: 'supervisor' });
-// Dead: crashed process
+store.append({ type: 'throttle.hit', actor: agent(seeded.throttled.sessionId), scope: { sessionId: seeded.throttled.sessionId }, meta: { sessionId: seeded.throttled.sessionId, resetAt: new Date(now + 95 * 60_000).toISOString(), source: 'stream' }, payload: { message: "You've hit your session limit · resets 2:05pm (Asia/Kuala_Lumpur)" }, source: 'supervisor' });
+store.append({ type: 'session.turn_ended', actor: sys('supervisor'), scope: { sessionId: seeded.throttled.sessionId }, meta: { sessionId: seeded.throttled.sessionId, turn: 1, outcome: 'throttled', exitCode: 1, durationMs: 1000 }, payload: {}, source: 'supervisor' });
+store.append({ type: 'session.lifecycle_changed', actor: sys('supervisor'), scope: { sessionId: seeded.throttled.sessionId }, meta: { sessionId: seeded.throttled.sessionId, from: 'running', to: 'throttled', reason: 'plan_limit' }, source: 'supervisor' });
+// Dead: crashed process; Restart starts a fresh conversation from its launch prompt.
 at(now - 12 * 60_000);
-store.append({ type: 'session.turn_ended', actor: sys('supervisor'), scope: { sessionId: live.dead!.sessionId }, meta: { sessionId: live.dead!.sessionId, turn: 1, outcome: 'crashed', exitCode: 143, durationMs: 1000 }, payload: {}, source: 'supervisor' });
-store.append({ type: 'session.lifecycle_changed', actor: sys('supervisor'), scope: { sessionId: live.dead!.sessionId }, meta: { sessionId: live.dead!.sessionId, from: 'running', to: 'failed', reason: 'exit_143_no_result' }, source: 'supervisor' });
+store.append({ type: 'session.turn_ended', actor: sys('supervisor'), scope: { sessionId: seeded.dead.sessionId }, meta: { sessionId: seeded.dead.sessionId, turn: 1, outcome: 'crashed', exitCode: 143, durationMs: 1000 }, payload: {}, source: 'supervisor' });
+store.append({ type: 'session.lifecycle_changed', actor: sys('supervisor'), scope: { sessionId: seeded.dead.sessionId }, meta: { sessionId: seeded.dead.sessionId, from: 'running', to: 'failed', reason: 'exit_143_no_result' }, source: 'supervisor' });
+
+// The waiting session's turn ended on a decision, so the supervisor resumes its conversation (`--resume`) when the
+// decision is answered: give claude-sim that conversation (an empty transcript plus the scenario cursor).
+{
+  const s = seeded.waiting;
+  const transcript = transcriptPathFor(realpathSync(repoOf(s.project)), s.claude, layout.claudeConfig);
+  mkdirSync(dirname(transcript), { recursive: true });
+  writeFileSync(transcript, '');
+  const iso = new Date(now - 34 * 60_000).toISOString();
+  const state: SimState = {
+    version: 1,
+    sessionId: s.claude,
+    scenario: { kind: 'builtin', name: 'demo-dedupe-resume' },
+    cursor: 0,
+    saved: {},
+    context: { cachedPrefix: seededContext.waiting, uncached: 0, lastRequestAt: null },
+    idCounter: 0,
+    turns: 1,
+    createdAt: iso,
+    updatedAt: iso,
+  };
+  const file = simStatePathFor(s.claude, layout.claudeConfig);
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, `${JSON.stringify(state, null, 2)}\n`);
+}
+
+// Working / Thinking / Stalled: queued launches that aocd's supervisor starts on claude-sim at boot.
+at(now - 3 * 60_000);
+const queued = {
+  working: queue(U('aisyah'), projects.cx, 'feature-build', simPrompt('Add supervisor whisper suggestions to the agent desktop', 'Rank reply suggestions by live intent confidence, show at most three cards in the agent panel and emit whisper telemetry.', 'demo-feature-build'), 'thr_cx-copilot_whisper'),
+  thinking: queue(U('weijie'), projects.claims, 'discovery', simPrompt('Design an OCR fallback for handwritten claim forms', 'Handwritten claim forms fail the printed-text OCR engine. Find the cheapest safe fallback and prototype it.', 'demo-deep-think'), 'thr_claims-bot_ocr'),
+  stalled: queue(U('priya'), projects.cx, 'migration', simPrompt('Migrate interaction history to the partitioned table', 'Move interaction history to monthly partitions without downtime: migration, resumable backfill, dual-write, read switch.', 'demo-stall'), 'thr_cx-copilot_history'),
+};
+
+// Observed session (a developer terminal, read-only): its hooks went quiet 12 minutes ago, so it reads Stalled.
+at(now - 12 * 60_000);
+const obsId = newId('session', clock.now());
+store.append({ type: 'session.observed', actor: sys('sessions'), scope: { sessionId: obsId }, meta: { sessionId: obsId, claudeSessionId: randomUUID(), projectId: projects.aoc.id }, payload: { cwd: repoOf(projects.aoc), transcriptPath: '' }, source: 'hook' });
 
 // More open decisions for the inbox
 at(now - 3 * 3600_000);
 decision({ kind: 'credit_topup', title: 'Top-up request: Tan Wei Jie (+US$100)', question: 'Wei Jie hit the monthly cap after the 25% auto-grant. Approve a US$100 top-up for the CSAT overlay work?', options: [{ id: 'approve', label: 'Approve US$100' }, { id: 'deny', label: 'Deny' }], subjectType: 'credit_request', subjectId: 'tpu_demo1', requesterId: U('weijie') });
 at(now - 26 * 3600_000);
 decision({ kind: 'lesson_binding', title: 'Bind lesson: guard required env vars', question: 'Bind "Config loaders must fail fast on missing env vars with a named error" for code area src/config?', options: [{ id: 'bind', label: 'Bind lesson' }, { id: 'reject', label: 'Reject' }], rec: 'bind', subjectType: 'lesson', subjectId: 'les_demo1', requesterId: U('priya') });
-
-// Observed session (developer terminal, read-only)
-at(now - 8 * 60_000);
-const obsId = newId('session', clock.now());
-store.append({ type: 'session.observed', actor: sys('sessions'), scope: { sessionId: obsId }, meta: { sessionId: obsId, claudeSessionId: randomUUID(), projectId: projects[2].id }, payload: { cwd: join(repoRoot, 'aoc-platform'), transcriptPath: '' }, source: 'hook' });
 
 // Final liveness sweep + anchor + daily close at the real "now"
 at(now);
@@ -481,22 +595,27 @@ sessions.refreshAll?.();
 await rt.tickJobs().catch((e) => console.warn('jobs:', String(e)));
 await rt.drain();
 
-// Per-session ingest tokens so the demo pulse can keep live sessions genuinely alive through the real ingest API.
-const identity = rt.services.get('identity');
-const liveTokens = Object.fromEntries(
-  Object.entries(live).map(([k, s]) => [k, { sessionId: s.sessionId, claudeSessionId: s.claude, token: identity.issueIngestToken(s.sessionId, sys('demo')) }]),
-);
-const out = {
-  dataDir,
+const sessionIds: Record<LiveKind, string> = {
+  ...queued,
+  waiting: seeded.waiting.sessionId,
+  throttled: seeded.throttled.sessionId,
+  dead: seeded.dead.sessionId,
+  observed: obsId,
+};
+const out: DemoTokens = {
+  dataDir: layout.root,
   console: config.publicUrl,
-  live: liveTokens,
-  tokens: Object.fromEntries(Object.entries(tokens).map(([k, v]) => [k, { userId: v.userId, role: v.role, token: v.token }])),
+  tokens,
+  sessions: sessionIds,
+  tickets,
+  projects: { cx: projects.cx.id, claims: projects.claims.id, aoc: projects.aoc.id },
   head: store.head(),
 };
-writeFileSync(join(dataDir, 'demo-tokens.json'), JSON.stringify(out, null, 2), { mode: 0o600 });
-writeFileSync(join(dataDir, 'aoc.config.json'), JSON.stringify(demoConfig, null, 2));
+writeFileSync(layout.tokens, JSON.stringify(out, null, 2), { mode: 0o600 });
+writeFileSync(layout.config, JSON.stringify(demoConfig, null, 2));
 await rt.stop();
-console.log(`Seeded ${out.head.seq} events into ${dataDir}`);
-console.log(`Tokens: ${join(dataDir, 'demo-tokens.json')} (CEO token logs you in as the Approver)`);
-console.log(`Run:   AOC_CONFIG=${join(dataDir, 'aoc.config.json')} node --import tsx packages/daemon/src/main.ts`);
-console.log('       (the config runs managed sessions on claude-sim, never the real claude CLI)');
+console.log(`Seeded ${out.head.seq} events into ${layout.root}`);
+console.log(`Tokens: ${layout.tokens} (the "ceo" token signs you in as the Approver)`);
+console.log(`Live:  pnpm --filter @aoc/demo live -- --data-dir ${layout.root}`);
+console.log(`  or:  AOC_CONFIG=${layout.config} CLAUDE_CONFIG_DIR=${layout.claudeConfig} node --import tsx packages/daemon/src/main.ts`);
+console.log('       (managed sessions run on claude-sim, never the real claude CLI)');

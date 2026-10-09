@@ -1,0 +1,21 @@
+{
+  "name": "demo-triage",
+  "description": "Demo read-only triage of the \"receipt photos come out sideways\" intake ticket: declares a short diagnosis plan, inspects the code with Glob, Grep and Read only, reports a diagnosis with confidence 0.86 and closes its plan without touching a file.",
+  "steps": [
+    {"kind":"think","ms":5000,"outputTokens":833},
+    {"kind":"text","text":"Triaging the ticket read-only."},
+    {"kind":"mcp","server":"aoc","tool":"declare_plan","args":{"summary":"Diagnose rotated receipt photos (read-only).","phases":[{"id":"diagnose","name":"Diagnose","tasks":[{"id":"t1","title":"Trace how receipt uploads are normalised","size":"s"},{"id":"t2","title":"Confirm the root cause against the upload tests","size":"s"}]}]}},
+    {"kind":"tool","name":"Glob","input":{"pattern":"src/uploads/**/*.ts"}},
+    {"kind":"think","ms":6000,"outputTokens":1000},
+    {"kind":"tool","name":"Read","input":{"file_path":"src/uploads/normalize.ts"}},
+    {"kind":"think","ms":9000,"outputTokens":1500,"thinking":"normalizeImage re-encodes to JPEG and strips metadata, but never applies the EXIF orientation first."},
+    {"kind":"tool","name":"Grep","input":{"pattern":"orientation|exif|rotate","path":"src","-i":true}},
+    {"kind":"tool","name":"Read","input":{"file_path":"test/uploads/normalize.test.ts"}},
+    {"kind":"mcp","server":"aoc","tool":"task_done","args":{"task_id":"t1","evidence":{"kind":"test","ref":"test/uploads/normalize.test.ts > strips metadata from uploads"}}},
+    {"kind":"think","ms":10000,"outputTokens":1667},
+    {"kind":"mcp","server":"aoc","tool":"report_diagnosis","args":{"root_cause":"normalizeImage() re-encodes uploads and strips all metadata without applying the EXIF orientation tag first, so portrait photos taken on phones are stored rotated 90 degrees.","confidence":0.86,"fix_plan":"Apply the EXIF orientation before stripping metadata in src/uploads/normalize.ts, add a regression test with a rotated fixture, then verify on UAT with the reporter's receipt.","affected_areas":["src/uploads/normalize.ts","test/uploads/normalize.test.ts"],"root_cause_class":"exif-orientation-dropped"}},
+    {"kind":"mcp","server":"aoc","tool":"task_done","args":{"task_id":"t2","evidence":{"kind":"test","ref":"test/uploads/normalize.test.ts > strips metadata from uploads","detail":"The existing test covers metadata stripping but no rotated input: the gap that let this through"}}},
+    {"kind":"text","text":"Diagnosis reported (confidence 0.86). No file was changed."},
+    {"kind":"endTurn","final":true}
+  ]
+}
