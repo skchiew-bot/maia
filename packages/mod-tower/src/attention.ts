@@ -504,7 +504,7 @@ export function buildAttention(r: ReadCtx, integrity: IntegrityFacts): TowerAtte
         reason,
         ...(p.orphan_count ? [plural(p.orphan_count, 'orphan commit')] : []),
       ],
-      action: go('open', 'Open promotion', `/changes?promotionId=${encodeURIComponent(p.promotion_id)}`),
+      action: go('open', 'Open promotion', `/rollbacks?promotionId=${encodeURIComponent(p.promotion_id)}`),
       chips: ['Provenance'],
     });
   }
