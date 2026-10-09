@@ -283,7 +283,8 @@ Jobs must be idempotent: a daily job forced by hand runs again even if it alread
 4. **Claude Code.** A new Claude Code version can change hook events, stream-json lines, flags or usage-limit
    messages. Before upgrading `claude` on the host, re-run the captures in the
    [research note](../research/claude-code-integration.md) §11, update `@aoc/claude-sim` if anything changed, and
-   run the end-to-end tests.
+   run the end-to-end tests. `AOC_REAL_CLI=1 pnpm --filter @aoc/e2e real-cli` drives the new `claude` through AOC
+   itself (a few cents of Haiku; [§13.8](../research/claude-code-integration.md#138-re-running-and-refreshing)).
 5. **Deploy:** stop at boundaries (§2); `pnpm install --frozen-lockfile && pnpm build`; restart.
 6. **After start:** check that `registry.changed` and `config.changed` appear only if expected; read the
    `projections rebuilt from the log` line (changed projectors rebuild by themselves, §4); check

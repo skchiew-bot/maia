@@ -46,7 +46,7 @@ export interface SimIO {
   stdin?: NodeJS.ReadableStream | string;
   stdout: Writer;
   stderr: Writer;
-  /** Aborting stops the run like SIGTERM would (exit 143, or 130 when the reason is "SIGINT"). */
+  /** Aborting stops the run like SIGTERM would (exit 143); with the reason "SIGINT" it ends the turn cleanly, like Ctrl-C. */
   signal?: AbortSignal;
   /** Clock for timestamps and rate-limit reset times (default: Date.now). */
   now?: () => number;
@@ -492,9 +492,11 @@ export async function runClaudeSim(argv: readonly string[], env: SimEnv, io: Sim
     return result!.exitCode;
   } catch (error) {
     if (error instanceof SimAbortError) {
-      // Killed: no result and no cost-state line, but SessionEnd still fires.
+      // SIGINT ends the turn cleanly (result, cost state, exit 0); SIGTERM kills it: no result and no cost-state
+      // line, SessionEnd still fires, exit 143 (both observed on 2.1.295).
+      if (error.reason === 'SIGINT' && session) return session.interrupted();
       await session?.sessionEnd();
-      return error.reason === 'SIGINT' ? 130 : 143;
+      return 143;
     }
     const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
     writeErr(`claude-sim: internal error: ${message}`);
