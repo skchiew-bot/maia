@@ -8,13 +8,28 @@ export const REGISTRY_EVENTS = [
     owner: 'registry',
     description: 'The fixed process-type registry file changed (detected at startup; audited, §2.2).',
     meta: meta({ versionHash: z.string().max(64), previousHash: z.string().max(64).nullable(), typeCount: z.number().int().min(0) }),
-    payload: payload({ diffSummary: z.string() }),
+    payload: payload({
+      diffSummary: z.string(),
+      /** `version` field of the registry file. */
+      registryVersion: z.string().optional(),
+      /** The validated registry as loaded — the audit trail of what the fixed list was, and the base of the next diff. */
+      snapshot: z.unknown().optional(),
+    }),
   }),
   defineEvent({
     type: 'playbook.proposed',
     owner: 'registry',
     description: 'Distilled playbook proposed from a successful discovery run; needs Approver sign-off.',
-    meta: meta({ playbookId: zId, processType: zLabel, sourceSessionId: zId.nullable(), version: z.number().int().min(1), stepCount: z.number().int().min(1), decisionId: zId }),
+    meta: meta({
+      playbookId: zId,
+      processType: zLabel,
+      sourceSessionId: zId.nullable(),
+      version: z.number().int().min(1),
+      stepCount: z.number().int().min(1),
+      decisionId: zId,
+      /** llm = refined by the distillation model; fallback = deterministic ordered task titles. */
+      method: z.enum(['llm', 'fallback']),
+    }),
     payload: payload({ title: z.string(), steps: z.array(z.object({ id: zId, title: z.string(), detail: z.string().optional() })), rationale: z.string().optional() }),
   }),
   defineEvent({
@@ -34,7 +49,7 @@ export const REGISTRY_EVENTS = [
   defineEvent({
     type: 'playbook.retired',
     owner: 'registry',
-    description: 'Playbook retired.',
+    description: 'Playbook retired (manual / obsolete / quality, superseded by a newer approved version, or its approval decision withdrawn).',
     meta: meta({ playbookId: zId, reason: zLabel }),
     payload: null,
   }),
