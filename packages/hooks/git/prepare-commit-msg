@@ -1,0 +1,24 @@
+#!/bin/sh
+# AOC provenance trailers for commits made in managed workspaces (AOC-SPEC-003 §14: every line on main must trace back
+# to the session, change record and ticket that produced it).
+#
+# Appends "AOC-Session: $AOC_SESSION_ID", plus "AOC-Change: $AOC_CHANGE_ID" and "AOC-Ticket: $AOC_TICKET_ID" when those
+# are set. Does nothing outside managed sessions (no AOC_SESSION_ID). Idempotent: an identical trailer is never added
+# twice, and amending another session's commit adds this session alongside the original one.
+#
+# Git passes "<message file> [<source> [<sha>]]".
+
+[ -n "${AOC_SESSION_ID:-}" ] || exit 0
+msg_file=$1
+[ -f "$msg_file" ] || exit 0
+
+# A comment-only message makes git abort the commit; adding trailers would turn that abort into a real commit.
+grep -v '^#' "$msg_file" | grep -q '[^[:space:]]' || exit 0
+
+one_line() { printf '%s' "$1" | tr -d '\r\n'; }
+
+set -- --trailer "AOC-Session: $(one_line "$AOC_SESSION_ID")"
+if [ -n "${AOC_CHANGE_ID:-}" ]; then set -- "$@" --trailer "AOC-Change: $(one_line "$AOC_CHANGE_ID")"; fi
+if [ -n "${AOC_TICKET_ID:-}" ]; then set -- "$@" --trailer "AOC-Ticket: $(one_line "$AOC_TICKET_ID")"; fi
+
+exec git interpret-trailers --in-place --if-exists addIfDifferent "$@" "$msg_file"
