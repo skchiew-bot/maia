@@ -147,9 +147,10 @@ aocd's parts:
 - **Ingest** (`INGEST_PATHS` in [`ingest.ts`](../packages/contracts/src/ingest.ts)): `/ingest/hook`,
   `/ingest/spool`, `/ingest/heartbeat`, `/ingest/activity`, `/ingest/usage`, `/ingest/throttle`,
   `/ingest/process` and `/ingest/mcp/<tool>`. Ingest uses separate principals (§15): per-session tokens (valid only
-  for their own session), an observer token (observed events only) and system tokens. A request without a valid
-  ingest token is refused (401) **before any body is parsed**, and observed-mode events can never target a managed
-  session.
+  for their own session), a per-session sidecar token (the only principal that reports a managed session's
+  heartbeats, activity, usage, throttles and process exit), an observer token (observed events only) and system
+  tokens. A request without a valid ingest token is refused (401) **before any body is parsed**, and observed-mode
+  events can never target a managed session.
 - **Request limits.** Every body is capped before authentication or parsing: 64 MiB for the spool, 16 MiB for
   other ingest, 4 MiB for the API, and the attachment allowance plus 1 MiB for the portal. A larger body gets 413.
   A single huge request therefore cannot stall the sole writer, and with it every managed session's hooks.
@@ -1003,6 +1004,7 @@ Identity is done properly before any non-CEO surface ships (§6, §15.3). Implem
 | First Approver | — | A one-time bootstrap token from `AOC_BOOTSTRAP_TOKEN`, or generated into `identity.bootstrapTokenFile` (default `<dataDir>/bootstrap-token`, mode 0600; the path is logged, never the token) | Bootstrapping runs only while no user exists. Log in, create a personal token and a passkey, then revoke the bootstrap token and delete the file |
 | Passkey | credential id hash | A WebAuthn assertion over a challenge that is the SHA-256 of a binding: user, decision, option, a hash of the card as shown, a nonce and an expiry | Required for `go_live`, `rollback` and `break_glass`. `passkey.asserted` keeps the signed assertion and its binding, so the approval can be re-verified independently later. The signature counter is tracked |
 | Managed session | `ses_…` (actor kind `agent`) | A per-session ingest token (`aoc_i_…`) | Issued at launch and revoked when the session ends. **Visible to the model** (it is in the claude environment), so it is scoped to its own session and is append-only (threat model T-3) |
+| Session sidecar | `ses_…` (actor kind `agent`) | A per-session sidecar token (`aoc_c_…`) | Issued by the supervisor and passed only in the sidecar's environment, never the `claude` one; revoked once the session's last sidecar has exited. Valid for the five sidecar report routes of its own session and nothing else (threat model T-4) |
 | Observer | — | An observer ingest token (`aoc_o_…`), issued by the Approver with a label and an expiry | Observed events only. It can never post managed events or block |
 | System component | name (`supervisor`, `scheduler:fx`) | A system token (`aoc_s_…`) or in-process | Reactors and jobs act as `system` actors |
 
