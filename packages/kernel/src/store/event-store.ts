@@ -38,6 +38,8 @@ export interface Projector {
   ddl: string[];
   /** Event types handled; omit for all. */
   handles?: readonly string[];
+  /** Bump when apply() semantics change without a DDL change, to force a rebuild from the log on next start. */
+  version?: number;
   apply(ctx: ProjectionContext, e: StoredEvent, payload: JsonValue | null): void;
   /** Scrub free text belonging to an erased body scope (crypto-shred, §13). */
   onErase?(db: DatabaseSync, scopeId: string): void;
@@ -132,6 +134,7 @@ CREATE INDEX IF NOT EXISTS events_causation ON events(causation_id);
 CREATE TRIGGER IF NOT EXISTS events_append_only_u BEFORE UPDATE ON events BEGIN SELECT RAISE(ABORT, 'events are append-only'); END;
 CREATE TRIGGER IF NOT EXISTS events_append_only_d BEFORE DELETE ON events BEGIN SELECT RAISE(ABORT, 'events are append-only'); END;
 CREATE TABLE IF NOT EXISTS projection_health (name TEXT PRIMARY KEY, status TEXT NOT NULL, last_error TEXT, failed_seq INTEGER, updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS projection_state (name TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, rebuilt_at TEXT NOT NULL);
 `;
 
 export interface EventStoreOptions {
@@ -151,6 +154,7 @@ export class EventStore {
   readonly bodies: BodyStore;
   readonly chainId: string;
   private readonly projectors: Projector[] = [];
+  private readonly stale = new Set<string>();
   private readonly listeners = new Set<CommitListener>();
   private headSeq = 0;
   private headHash: string;
@@ -180,8 +184,49 @@ export class EventStore {
   // ── projectors & listeners ────────────────────────────────────────────────
   registerProjector(p: Projector): void {
     if (this.projectors.some((x) => x.name === p.name)) throw new Error(`duplicate projector ${p.name}`);
-    for (const ddl of p.ddl) this.db.exec(ddl);
+    const fingerprint = projectorFingerprint(p);
+    const known = this.db.prepare('SELECT fingerprint FROM projection_state WHERE name = ?').get(p.name) as
+      | { fingerprint: string }
+      | undefined;
+    if (known?.fingerprint === fingerprint) {
+      for (const ddl of p.ddl) this.db.exec(ddl);
+    } else if (!known && this.headSeq === 0) {
+      // Fresh log: nothing to replay.
+      for (const ddl of p.ddl) this.db.exec(ddl);
+      this.markProjectionCurrent(p.name, fingerprint);
+    } else {
+      // New module on an existing log, or its schema/semantics changed: its tables are rebuilt from the log
+      // (rebuildStaleProjections) before anything reads or appends. Old tables may lack new columns, so drop first.
+      for (const t of p.tables) this.db.exec(`DROP TABLE IF EXISTS ${t}`);
+      for (const ddl of p.ddl) this.db.exec(ddl);
+      this.stale.add(p.name);
+    }
     this.projectors.push(p);
+  }
+
+  /**
+   * Rebuild every projector registered as stale (new on an existing log, or changed) plus any marked degraded by
+   * a failed apply. Called once at startup after all projectors are registered. Returns the rebuilt names.
+   */
+  rebuildStaleProjections(): string[] {
+    const degraded = this.projectionHealth()
+      .filter((h) => h.status === 'degraded')
+      .map((h) => h.name);
+    const names = [...new Set([...this.stale, ...degraded])].filter((n) => this.projectors.some((p) => p.name === n));
+    if (!names.length) return [];
+    this.rebuildProjections(names);
+    for (const n of names) this.markProjectionCurrent(n, projectorFingerprint(this.projectors.find((p) => p.name === n)!));
+    this.stale.clear();
+    return names;
+  }
+
+  private markProjectionCurrent(name: string, fingerprint: string): void {
+    this.db
+      .prepare(
+        `INSERT INTO projection_state (name, fingerprint, rebuilt_at) VALUES (?, ?, ?)
+         ON CONFLICT(name) DO UPDATE SET fingerprint = excluded.fingerprint, rebuilt_at = excluded.rebuilt_at`,
+      )
+      .run(name, fingerprint, this.opts.clock.iso());
   }
 
   /** Post-commit listener (SSE, reactors). Called synchronously after COMMIT, in seq order. */
@@ -548,6 +593,10 @@ export class EventStore {
     this.db.close();
     this.bodies.close();
   }
+}
+
+function projectorFingerprint(p: Projector): string {
+  return sha256hex(canonicalJson({ tables: p.tables, ddl: p.ddl, handles: p.handles ?? null, version: p.version ?? 0 }));
 }
 
 function cleanScope(s: Scope): Scope {

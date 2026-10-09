@@ -107,6 +107,73 @@ describe('EventStore', () => {
   });
 });
 
+describe('projection back-fill', () => {
+  const counter = (version = 0, extraDdl: string[] = []): Projector => ({
+    name: 'count',
+    tables: ['t_count'],
+    ddl: ['CREATE TABLE IF NOT EXISTS t_count (session_id TEXT PRIMARY KEY, n INTEGER NOT NULL)', ...extraDdl],
+    handles: ['session.nudged'],
+    version,
+    apply({ db }, e) {
+      db.prepare('INSERT INTO t_count VALUES (?, 1) ON CONFLICT(session_id) DO UPDATE SET n = n + 1').run(e.scope.sessionId ?? '');
+    },
+  });
+  const rows = (s: EventStore) => s.db.prepare('SELECT session_id, n FROM t_count ORDER BY session_id').all();
+  const reopen = (dir: string, key: Parameters<typeof mk>[1], p: Projector) => {
+    const s = mk(dir, key);
+    s.registerProjector(p);
+    return { s, rebuilt: s.rebuildStaleProjections() };
+  };
+
+  it('back-fills a projector added to an existing log, once', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'aoc-proj-'));
+    const key = randomBytes(32);
+    const first = mk(dir, key);
+    first.append(nudge('ses_a', 'one'));
+    first.append(nudge('ses_a', 'two'));
+    first.append(nudge('ses_b', 'three'));
+    first.close();
+
+    const a = reopen(dir, key, counter());
+    expect(a.rebuilt).toEqual(['count']);
+    expect(rows(a.s)).toEqual([{ session_id: 'ses_a', n: 2 }, { session_id: 'ses_b', n: 1 }]);
+    a.s.append(nudge('ses_b', 'four'));
+    a.s.close();
+
+    // Unchanged on the next start: no rebuild, nothing double-counted.
+    const b = reopen(dir, key, counter());
+    expect(b.rebuilt).toEqual([]);
+    expect(rows(b.s)).toEqual([{ session_id: 'ses_a', n: 2 }, { session_id: 'ses_b', n: 2 }]);
+    b.s.close();
+
+    // A schema or version change rebuilds it from the log (old tables dropped first, so new indexes apply).
+    const c = reopen(dir, key, counter(1, ['CREATE INDEX IF NOT EXISTS t_count_n ON t_count(n)']));
+    expect(c.rebuilt).toEqual(['count']);
+    expect(rows(c.s)).toEqual([{ session_id: 'ses_a', n: 2 }, { session_id: 'ses_b', n: 2 }]);
+    c.s.close();
+  });
+
+  it('needs no rebuild on a fresh log, and heals degraded projectors at startup', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'aoc-proj-'));
+    const key = randomBytes(32);
+    let broken = true;
+    const flaky: Projector = { ...counter(), apply(ctx, e, p) { if (broken) throw new Error('bug'); counter().apply(ctx, e, p); } };
+    const s = mk(dir, key);
+    s.registerProjector(flaky);
+    expect(s.rebuildStaleProjections()).toEqual([]);
+    s.append(nudge('ses_a', 'x'));
+    expect(s.projectionHealth()[0]).toMatchObject({ name: 'count', status: 'degraded' });
+    s.close();
+
+    broken = false;
+    const again = reopen(dir, key, flaky);
+    expect(again.rebuilt).toEqual(['count']);
+    expect(rows(again.s)).toEqual([{ session_id: 'ses_a', n: 1 }]);
+    expect(again.s.projectionHealth()).toEqual([]);
+    again.s.close();
+  });
+});
+
 describe('BodyStore blobs', () => {
   it('stores encrypted blobs and shreds them with the scope', () => {
     const s = mk();
