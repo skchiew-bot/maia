@@ -60,7 +60,8 @@ const BUILDER: Permission[] = [
 ];
 
 export const ROLE_PERMISSIONS: Record<Role, ReadonlySet<Permission>> = {
-  approver: new Set<Permission>(PERMISSIONS.filter((p) => p !== 'uat.signoff_own')),
+  // mapping.stamp is never granted by role: only the compliance-lead flag can stamp (R3).
+  approver: new Set<Permission>(PERMISSIONS.filter((p) => p !== 'uat.signoff_own' && p !== 'mapping.stamp')),
   builder: new Set<Permission>(BUILDER),
   requester: new Set<Permission>(['intake.submit', 'intake.view_own', 'uat.signoff_own']),
 };
@@ -70,6 +71,6 @@ export interface UserFlags {
 }
 
 export function hasPermission(role: Role, perm: Permission, flags: UserFlags = {}): boolean {
-  if (perm === 'mapping.stamp') return ROLE_PERMISSIONS[role].has(perm) || flags.complianceLead === true;
+  if (perm === 'mapping.stamp') return flags.complianceLead === true && role !== 'requester';
   return ROLE_PERMISSIONS[role].has(perm);
 }

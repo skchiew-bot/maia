@@ -77,6 +77,8 @@ describe('roles & decisions (§6)', () => {
     expect(roleSatisfies('approver', 'requester')).toBe(false);
     expect(hasPermission('requester', 'session.view')).toBe(false);
     expect(hasPermission('builder', 'mapping.stamp', { complianceLead: true })).toBe(true);
+    expect(hasPermission('approver', 'mapping.stamp')).toBe(false);
+    expect(hasPermission('requester', 'mapping.stamp', { complianceLead: true })).toBe(false);
   });
 });
 

@@ -116,6 +116,12 @@ export const AocConfigSchema = z.object({
       externalAuditLog: z.string().default('.aoc/selfmod-audit.log'),
     })
     .default({}),
+  compliance: z
+    .object({
+      /** ISO/IEC 42001 control mapping (provisional until stamped by the compliance lead). */
+      mappingFile: z.string().default('config/iso42001-mapping.json'),
+    })
+    .default({}),
   learning: z
     .object({
       retireAfterUnusedRuns: z.number().int().positive().default(20),

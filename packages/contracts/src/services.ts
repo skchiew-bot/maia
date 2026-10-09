@@ -341,7 +341,7 @@ export interface LlmService {
 
 // ── notifications ──────────────────────────────────────────────────────────
 export interface Notification {
-  kind: 'decision.new' | 'decision.aging' | 'decision.escalated' | 'session.attention' | 'fx.alert' | 'breakglass' | 'anchor.missed' | 'credit.topup' | 'info';
+  kind: 'decision.new' | 'decision.aging' | 'decision.escalated' | 'evidence.integrity' | 'session.attention' | 'fx.alert' | 'breakglass' | 'anchor.missed' | 'credit.topup' | 'info';
   title: string;
   /** Roles that should see it (requesters never see internal notifications). */
   audience: Role[];

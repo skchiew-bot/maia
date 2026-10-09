@@ -246,7 +246,7 @@ export function createEvidenceModule(opts: EvidenceModuleOptions = {}): AocModul
     name: 'evidence',
     init(c) {
       ctx = c;
-      loaded = loadMapping(opts.mappingFile === undefined ? DEFAULT_MAPPING_FILE : opts.mappingFile);
+      loaded = loadMapping(opts.mappingFile === undefined ? (c.config.compliance?.mappingFile ?? DEFAULT_MAPPING_FILE) : opts.mappingFile);
       if (loaded.warnings.length)
         c.log.warn('compliance mapping warnings', { source: loaded.source, warnings: loaded.warnings });
     },
