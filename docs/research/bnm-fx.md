@@ -1,16 +1,16 @@
 # BNM USD/MYR rate: source, semantics, bounds and recommended pipeline
 
-Research note for `mod-fx` (spec §10, risk R13). Live captures were taken 2026-10-09 between 00:04 and 01:50 UTC
-(08:04–09:50 MYT), through the agent proxy, from `www.bnm.gov.my` and `api.bnm.gov.my`. Fixtures are in
+Research note for `mod-fx` (spec §10, risk R13). Live captures were taken 2026-10-09 between 00:04 and 01:42 UTC
+(08:04–09:42 MYT), through the agent proxy, from `www.bnm.gov.my` and `api.bnm.gov.my`. Fixtures are in
 [`fixtures/bnm/`](fixtures/bnm/). Evidence tags: **OBS** = observed live; **DOC** = official page text;
 **NEWS** = press; **INF** = inference.
 
-## 0. Corrections to the Wave 0 FX config defaults (`packages/contracts/src/config.ts`, `fx`)
+## 0. Corrections to the Wave 0 FX config defaults (`packages/contracts/src/config.ts` at commit 3f585b8, `fx` block)
 
 | Default today | Problem (evidence) | Recommended |
 | --- | --- | --- |
 | `apiUrl: https://api.bnm.gov.my/public/exchange-rate/USD` (no query) | With no `session` param the API returns **session 1130**. Those are best counter rates of selected commercial banks: `middle_rate: null`, a wide spread (4.069 / 4.094 on 2026-10-08) (OBS). Comparing a scraped interbank middle rate against it gives a false discrepancy every day. | Always pass the session explicitly: `…/exchange-rate/USD?session=1700` (or `1200`, §3). Add `fx.session` to the config and stamp it on every record. |
-| `pageUrl: https://www.bnm.gov.my/exchange-rates` + `runAtLocalTime: '12:30'` | The page's default view is **session 1700, Middle Rate, RM per unit** (OBS: `sessionTime=1700 selected`). At 12:30 MYT the newest 1700 row is **yesterday's**. Switching the page to 1200 by GET query string renders an empty table (OBS). The form needs a real POST. | Use **1700 middle** and run at **17:45 MYT**, retrying at 18:30 and 21:00. If the 1200 noon rate is mandated, use the API (`?session=1200`) for the value and scrape a POSTed page for the cross-check. See §5 for the intraday timing observation. |
+| `pageUrl: https://www.bnm.gov.my/exchange-rates` + `runAtLocalTime: '12:30'` | The page's default view is **session 1700, Middle Rate, RM per unit** (OBS: `sessionTime=1700 selected`). At 12:30 MYT the newest 1700 row is **yesterday's**. Even the 1200 rate is not out by 12:30: each session is published about 40 minutes after its time (OBS, §5). Switching the page to 1200 by GET query string renders an empty table (OBS); the form needs a real POST. | Use **1700 middle** and run at **18:00 MYT**, retrying at 18:30 and 21:00. If the 1200 noon rate is mandated, run at 13:00 or later, use the API (`?session=1200`) for the value and scrape a POSTed page for the cross-check. |
 | `reconcileTolerance: 0.005` | The page shows 4 decimals and the API float rounds to exactly the same 4-dp value for the same date and session (OBS: 1700 series equal on all 6 October days). A 0.005 tolerance hides real extraction errors, e.g. 4.0900 (1700) vs 4.0870 (1200) differ by 0.003. | Compare at 4 dp after rounding; tolerance `0.0001`. |
 | `sanity: {min: 3.5, max: 5.5, maxDailyChangePct: 3}` | The band is sane (2025–26 range 3.8845–4.5130). The largest day-over-day move in 22 months was 2.235% (OBS). | Keep the hard reject at 3%. Add a soft flag above 1.25% (p99 = 1.15%) that requires API corroboration before acceptance (§6). |
 | `carryForwardAlertDays: 4` | A legitimate holiday gap is up to **4 consecutive calendar days** without publication (Hari Raya 2025-03-29..04-01, OBS), so a calendar-day count of 4 alerts on a normal holiday. | Count **weekdays** without a live rate and alert at **3**. The observed maximum is 2 weekdays in 22 months. |
@@ -118,18 +118,24 @@ day:
   row for a past weekday is the holiday signal.
 - Longest run without publication: 4 calendar days (2025-03-29 → 04-01). Longest weekday run: 2. Hence the
   alert rule in §0.
-- Same-day availability: see §5.
+- Same-day availability: each session is published about 40 minutes after its time (§5).
 
 ## 5. Intraday availability (OBS)
 
-Polling `GET /exchange-rate/USD?session=0900` from 00:30 UTC (08:30 MYT) onwards:
+`GET /exchange-rate/USD?session=0900` was polled every 2 minutes from 08:30 MYT (fixture
+`api-USD-session-0900-publication-poll-2026-10-09.txt`, 37 polls):
 
-- 08:30–08:35 MYT: the API still served 2026-10-08 for every session, with
-  `last_updated: "2026-10-08 23:01:23"`. The previous day's data set was last refreshed at about 23:00 MYT.
-- Pending: whether today's 0900 record appears intraday (shortly after 09:00 MYT) or only after the nightly refresh.
-  Until this is settled, schedule the API cross-check for day D **after 23:30 MYT**. Record the scraped rate as
-  `live` at 17:45 and attach the API reconciliation as a follow-up (a discrepancy then raises
-  `fx.discrepancy_raised`).
+- Until 09:37:36 MYT the API served 2026-10-08, with `last_updated: "2026-10-08 23:01:23"`.
+- At **09:41:39 MYT** it served **2026-10-09**: buying 4.0880, selling 4.0930, middle 4.0905, with
+  `last_updated: "2026-10-09 09:41:20"`.
+- The API is therefore **updated intraday, about 40 minutes after the session time**, and `last_updated` is MYT.
+  The data.gov.my mirror shows the same lag: 0900 data last updated 09:40, 1200 at 12:30, 1700 at 17:30 (DOC).
+- `last_updated` had also moved to 23:01 the previous evening, so there is a later refresh. Whether it ever
+  changes published values is unknown. A next-morning re-check of yesterday's figure is cheap (one call) and
+  catches late revisions.
+
+Implication: for session 1700, run at **18:00 MYT** (the 1700 rate should land around 17:40 by analogy; INF).
+Retry at 18:30 and 21:00. The API cross-check can run in the same job.
 
 ## 6. Recent levels and bounds
 
@@ -169,7 +175,7 @@ Recommended validation for a candidate rate `r` for date `D`:
 ## 7. Recommended pipeline (implements spec §10)
 
 ```text
-daily @ 17:45 MYT (retry 18:30, 21:00) for date D (MYT):
+daily @ 18:00 MYT (retry 18:30, 21:00) for date D (MYT):
   if D is Sat/Sun → fx.rate_recorded{status: inherited, reason: weekend_or_holiday, sourceDate: last live}
   html  = GET pageUrl (default view = 1700 / MR / rm)          # can't read → carry forward
   rows  = deterministic HTML→text table rows (date + USD column) # small excerpt, no LLM yet
@@ -185,6 +191,7 @@ daily @ 17:45 MYT (retry 18:30, 21:00) for date D (MYT):
         fx.discrepancy_raised{date: D, scraped, official} → human decision; record status per decision
   else  fx.rate_recorded{status: live, rate, extractor: haiku|sonnet, validation: pass, reason: fetched}
   after the 3rd consecutive weekday without a live rate → fx.carry_forward_alert
+next morning: re-read API for D-1 (same session); if round4 changed vs the recorded live rate → fx.discrepancy_raised
 ```
 
 Notes:
@@ -207,6 +214,7 @@ Notes:
 | File | Content |
 | --- | --- |
 | `api-USD-session-{0900,1130,1200,1700}.json` | Latest USD rate per session (2026-10-08) |
+| `api-USD-session-0900-publication-poll-2026-10-09.txt` | 37 timestamped polls (UTC) showing the 0900 record for 2026-10-09 appearing at 09:41 MYT |
 | `api-USD-no-session-param.json` | No `session` query → 1130 (middle null) |
 | `api-USD-date-2026-10-07-session-1200.json` | Date endpoint, weekday |
 | `api-USD-date-2026-10-04-sunday-404.json`, `api-USD-date-2026-09-16-holiday-404.json` | No publication → 404 JSON |
