@@ -49,6 +49,9 @@ export class UsageAggregator {
   /** Returns true when the line contributed new usage. */
   add(line: TranscriptLine): boolean {
     if (line.type !== 'assistant' || !line.message?.usage) return false;
+    // Claude Code writes failed API calls (e.g. a plan limit) as synthetic messages with zero usage: no API
+    // response happened, so they are neither metered nor the latest context size.
+    if (isSynthetic(line)) return false;
     const id = line.message.id ?? line.requestId ?? line.uuid;
     if (!id) return false;
     const cur = usageOf(line.message.usage);
@@ -283,11 +286,15 @@ export function parseThrottle(text: string, now: Date = new Date()): { resetAt: 
   return { resetAt: null };
 }
 
+/** An assistant line Claude Code made up itself (API error message), not a model response. */
+function isSynthetic(line: TranscriptLine): boolean {
+  return (line as { isApiErrorMessage?: boolean }).isApiErrorMessage === true || line.message?.model === '<synthetic>';
+}
+
 export function detectThrottle(line: TranscriptLine, now?: Date): { resetAt: string | null; message: string } | null {
   if (line.type !== 'assistant' && line.type !== 'system') return null;
   // Real assistant answers that merely mention limits are not throttles; API-error messages are synthetic.
-  const synthetic = (line as { isApiErrorMessage?: boolean }).isApiErrorMessage === true || line.message?.model === '<synthetic>';
-  if (line.type === 'assistant' && line.message?.usage && !synthetic) return null;
+  if (line.type === 'assistant' && line.message?.usage && !isSynthetic(line)) return null;
   const text = textOf(line);
   if (!text) return null;
   const r = parseThrottle(text, now);
