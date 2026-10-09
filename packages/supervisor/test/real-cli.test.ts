@@ -27,6 +27,7 @@ const STREAMS = [
   'aoc-triage.stream-json.jsonl',
   'aoc-boundary-ignored.stream-json.jsonl',
   'aoc-boundary-obeyed.stream-json.jsonl',
+  'aoc-gateway.stream-json.jsonl',
 ];
 
 describe('stream-json as a real managed session printed it', () => {

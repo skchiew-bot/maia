@@ -30,6 +30,18 @@ afterEach(async () => {
 });
 
 describe('managed hook on real Claude Code input', () => {
+  it.each(['aoc-gateway.hooks.jsonl'])('relays every invocation of a real session (%s) unchanged, each with its own key', async (file) => {
+    const runs = captured(file);
+    daemon = await startFakeDaemon();
+    const home = tmp();
+    for (const run of runs) {
+      const result = await runHook({ event: run.event, stdin: JSON.stringify(run.input), env: managedEnv(home, daemon.url), homeDir: home });
+      expect(result, run.event).toEqual({ exitCode: 0 });
+    }
+    expect(daemon.requests.map((r) => r.body.hook)).toEqual(runs.map((r) => r.input));
+    expect(new Set(daemon.requests.map((r) => r.body.idempotencyKey as string)).size).toBe(runs.length);
+  });
+
   it('relays every invocation of a real turn unchanged — fields the contract does not list included — each with its own key', async () => {
     const runs = captured('aoc-happy.hooks.jsonl');
     daemon = await startFakeDaemon();
