@@ -16,7 +16,7 @@ const USAGE = `Usage: aocd [--config <file>] [--version]
 Config file: --config <file>, else $AOC_CONFIG, else ./aoc.config.json, else built-in defaults.
 Env overrides: AOC_PORT, AOC_HOST, AOC_DATA_DIR, AOC_PUBLIC_URL; AOC_LOG_LEVEL=debug|info|warn|error.
 Secrets never go in the config file: AOC_BOOTSTRAP_TOKEN and ANTHROPIC_API_KEY come from the environment, the KEK
-from keys.masterKeyFile (AOC_MASTER_KEY is accepted in development only): see .env.example.
+from keys.masterKeyFile (AOC_MASTER_KEY is accepted in development only, with a warning): see .env.example.
 `;
 
 /** Intake videos (up to intake.maxVideoBytes) on slow links need longer than Node's 5-minute default. */

@@ -20,6 +20,8 @@ export interface RuntimeOptions {
   log: Logger;
   /** Overrides the KEK (tests). */
   masterKey?: Buffer;
+  /** The environment the KEK may be read from (AOC_MASTER_KEY, development only). Defaults to process.env. */
+  env?: Record<string, string | undefined>;
   /** ':memory:' for tests. Defaults to config.dataDir. */
   dataDir?: string;
   /** How long stop() waits for job ticks still running after the modules stopped (default 10 s). */
@@ -27,6 +29,26 @@ export interface RuntimeOptions {
 }
 
 const JOB_STOP_GRACE_MS = 10_000;
+
+/**
+ * The KEK: the explicit override, else loaded per docs/runbooks/key-custody.md. A development KEK taken from the
+ * environment still works, with a loud warning (production refuses it).
+ */
+function resolveMasterKey(opts: RuntimeOptions, dataDir: string): Buffer {
+  if (opts.masterKey) return opts.masterKey;
+  const { key, source } = loadOrCreateMasterKey(
+    opts.config.keys.masterKeyFile ?? join(dataDir, 'master.key'),
+    opts.env ?? process.env,
+    { production: opts.config.mode === 'production', dataDir },
+  );
+  if (source === 'env')
+    opts.log.warn(
+      'The KEK is taken from AOC_MASTER_KEY: development only. The variable sits in the process environment, ' +
+        'where child processes, crash dumps and /proc/<pid>/environ can reach it, and "mode": "production" ' +
+        'refuses it. Keep the key in keys.masterKeyFile (docs/runbooks/key-custody.md §2-§3)',
+    );
+  return key;
+}
 
 interface QueuedReaction {
   reactor: Reactor;
@@ -59,12 +81,7 @@ export class AocRuntime {
 
   private constructor(private readonly opts: RuntimeOptions) {
     const dataDir = opts.dataDir ?? opts.config.dataDir;
-    const masterKey =
-      opts.masterKey ??
-      loadOrCreateMasterKey(opts.config.keys.masterKeyFile ?? join(dataDir, 'master.key'), process.env, {
-        production: opts.config.mode === 'production',
-        dataDir,
-      }).key;
+    const masterKey = resolveMasterKey(opts, dataDir);
     this.store = new EventStore({ dataDir, clock: opts.clock, log: opts.log, masterKey });
     this.broadcaster = new Broadcaster(() => opts.clock.iso());
     this.store.db.exec(`

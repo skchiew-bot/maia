@@ -20,7 +20,8 @@ flowchart LR
   unreadable for good. Leak it together with `bodies.db`, and every such body is exposed.
 - **`aoc.db` is sensitive too.** The chain itself is metadata only, but read models hold decrypted copies of some
   text (ticket descriptions, session titles, decision text). Treat `aoc.db` backups as personal data.
-- **Load order** (kernel `loadOrCreateMasterKey`): the `AOC_MASTER_KEY` environment variable, then the file at
+- **Load order** (kernel `loadOrCreateMasterKey`): the `AOC_MASTER_KEY` environment variable (development only: aocd
+  logs a warning at every start while the KEK comes from it), then the file at
   `keys.masterKeyFile`, and otherwise a **newly generated** key written to that path, or to `dataDir/master.key`
   when no path is set (mode 0600, parent directory 0700) — but **only for a data directory that holds no data**.
   If `aoc.db` has events or `bodies.db` has wrapped data keys (or either file cannot be read), aocd stops at

@@ -23,6 +23,7 @@ import {
   initRepo,
   loadOrCreateMasterKey,
   silentLogger,
+  type Logger,
 } from '../src';
 
 const dirs: string[] = [];
@@ -250,6 +251,62 @@ describe('KEK custody (R6)', () => {
       ).rejects.toThrow(/refusing to generate a new KEK.*docs\/runbooks\/key-custody\.md/s);
       expect(existsSync(file)).toBe(false);
       expect(existsSync(join(dataDir, 'master.key'))).toBe(false);
+    });
+  });
+
+  describe('development: a KEK from AOC_MASTER_KEY is accepted, and warned about at startup', () => {
+    /** Starts a runtime on a fresh data dir with `env`, returning every warning it logged. */
+    async function startWith(env: Record<string, string>, masterKeyFile?: string): Promise<string[]> {
+      const warnings: string[] = [];
+      const log: Logger = {
+        ...silentLogger,
+        warn: (msg, fields) => void warnings.push(`${msg} ${JSON.stringify(fields ?? {})}`),
+        child: () => log,
+      };
+      const config = AocConfigSchema.parse({
+        dataDir: join(temp(), 'data'),
+        keys: masterKeyFile ? { masterKeyFile } : {},
+      });
+      const rt = await AocRuntime.create({ config, modules: [], clock: new FakeClock(), log, env });
+      await rt.stop();
+      return warnings;
+    }
+
+    it('logs a warning that names the variable and the runbook, and never the key itself', async () => {
+      const key = hex();
+      const warnings = await startWith({ AOC_MASTER_KEY: key });
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toContain('AOC_MASTER_KEY');
+      expect(warnings[0]).toContain('development only');
+      expect(warnings[0]).toContain('docs/runbooks/key-custody.md');
+      expect(warnings.join('\n')).not.toContain(key);
+    });
+
+    it('is quiet when the KEK comes from a file, generated or provided', async () => {
+      expect(await startWith({})).toEqual([]);
+      const file = join(temp(), 'kek');
+      writeFileSync(file, `${hex()}\n`, { mode: 0o600 });
+      expect(await startWith({}, file)).toEqual([]);
+    });
+
+    it('production still refuses it', async () => {
+      const dir = temp();
+      const kek = join(dir, 'kek');
+      writeFileSync(kek, `${hex()}\n`, { mode: 0o400 });
+      const config = AocConfigSchema.parse({
+        mode: 'production',
+        dataDir: join(dir, 'data'),
+        keys: { masterKeyFile: kek },
+      });
+      await expect(
+        AocRuntime.create({
+          config,
+          modules: [],
+          clock: new FakeClock(),
+          log: silentLogger,
+          env: { AOC_MASTER_KEY: hex() },
+        }),
+      ).rejects.toThrow(/AOC_MASTER_KEY is refused/);
     });
   });
 
