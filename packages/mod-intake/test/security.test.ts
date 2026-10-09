@@ -15,8 +15,15 @@ import { builtinScanner, createIntakeModule } from '../src';
 let t: TestRuntime;
 afterEach(async () => t?.close());
 
-async function setup() {
+/**
+ * A supervisor that honours idempotency keys like the real one. `crashOnce` makes one matching launch fail right
+ * after it was recorded, as when the daemon dies between a reactor's launch and its follow-up event: the reaction
+ * is then redelivered (the runtime retries it, as it replays it after a restart).
+ */
+async function setup(o: { triageAgents?: number; crashOnce?: (req: LaunchRequest) => boolean } = {}) {
   const launches: (LaunchRequest & { sessionId: string; actor: Actor })[] = [];
+  const byKey = new Map<string, string>();
+  let crashed = false;
   const sessions: Partial<SessionDirectory> = {
     get(sessionId: string) {
       const l = launches.find((x) => x.sessionId === sessionId);
@@ -25,7 +32,11 @@ async function setup() {
   };
   const supervisor: Partial<SupervisorService> = {
     async launch(req: LaunchRequest, actor: Actor) {
+      const key = req.idempotencyKey ? `${actor.kind}:${actor.id}:${req.idempotencyKey}` : null;
+      const known = key ? byKey.get(key) : undefined;
+      if (known) return { sessionId: known };
       const sessionId = newId('session');
+      if (key) byKey.set(key, sessionId);
       launches.push({ ...req, sessionId, actor });
       const readOnly = req.processType === 'bug-triage';
       t.rt.store.append({
@@ -36,6 +47,10 @@ async function setup() {
         payload: { prompt: req.prompt, cwd: '/tmp/repo' },
         source: 'supervisor',
       });
+      if (!crashed && o.crashOnce?.(req)) {
+        crashed = true;
+        throw new Error('the daemon died right after recording this launch');
+      }
       return { sessionId };
     },
     async stop() {},
@@ -43,7 +58,7 @@ async function setup() {
   t = await createTestRuntime({
     modules: [createIntakeModule({ scanner: builtinScanner })],
     services: { supervisor: supervisor as SupervisorService, sessions: sessions as SessionDirectory },
-    config: { intake: { triageAgents: 1 } },
+    config: { intake: { triageAgents: o.triageAgents ?? 1 } },
   });
   t.rt.store.append({ type: 'project.created', actor: { kind: 'system', id: 'test' }, scope: { projectId: 'prj_1' }, meta: { projectId: 'prj_1', slug: 'claims' }, payload: { name: 'Claims' }, source: 'system' });
   return { launches, supervisor: supervisor as SupervisorService };
@@ -173,5 +188,43 @@ describe('closing a ticket (R-11)', () => {
       [a.ticketId, 'duplicate', worker.user.id],
       [b.ticketId, 'withdrawn', approver.user.id],
     ]);
+  });
+});
+
+describe('a redelivered intake reaction never launches a session twice (R-07)', () => {
+  const sessionsOf = (type: string) => t.rt.store.list({ types: ['session.launch_requested'] }).filter((e) => e.meta.processType === type);
+
+  it('completes a half-started triage with the sessions already launched', async () => {
+    let n = 0;
+    const { launches } = await setup({ triageAgents: 2, crashOnce: (req) => req.processType === 'bug-triage' && ++n === 2 });
+    const requester = t.user('requester', 'Nur');
+    const { ticketId } = await submit(requester.headers, { title: 'Claim form crashes', description: 'The page goes blank after upload', severity: 'high' });
+    await t.drain();
+    expect(sessionsOf('bug-triage')).toHaveLength(2);
+    const started = t.rt.store.list({ types: ['ticket.triage_started'] });
+    expect(started).toHaveLength(1);
+    expect(started[0]!.meta.sessionIds).toEqual(launches.map((l) => l.sessionId));
+    expect(t.rt.store.list({ types: ['ticket.triage_started'] })[0]!.meta.ticketId).toBe(ticketId);
+  });
+
+  it('records the build it already launched instead of starting a second writer on uat/<ticket>', async () => {
+    const { launches } = await setup({ crashOnce: (req) => req.processType === 'bug-fix' });
+    const requester = t.user('requester', 'Nur');
+    const approver = t.user('approver');
+    const { ticketId } = await submit(requester.headers, { title: 'Claim form crashes', description: 'The page goes blank after upload', severity: 'high' });
+    await t.drain();
+    const triage = launches[0]!.sessionId;
+    await t.json('POST', '/ingest/mcp/report_diagnosis', {
+      headers: t.ingestHeaders(triage),
+      body: { sessionId: triage, input: { root_cause: 'Null check missing', confidence: 0.9, fix_plan: 'Add a guard', root_cause_class: 'null-check' } },
+    });
+    await t.drain();
+    const fixPlan = t.decisions!.list({ subjectId: ticketId }).find((d) => d.kind === 'fix_plan')!;
+    await t.decisions!.resolve(fixPlan.id, { optionId: 'approve' }, approver.user);
+    await t.drain();
+    expect(sessionsOf('bug-fix')).toHaveLength(1);
+    const build = t.rt.store.list({ types: ['ticket.build_started'] });
+    expect(build).toHaveLength(1);
+    expect(build[0]!.meta.sessionId).toBe(sessionsOf('bug-fix')[0]!.meta.sessionId);
   });
 });

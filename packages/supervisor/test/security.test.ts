@@ -65,6 +65,29 @@ describe('a managed session works only in its own project (R-09)', () => {
   });
 });
 
+describe('a redelivered launch never starts a second process (R-07)', () => {
+  it('returns the session its idempotency key already launched, per caller, and only for internal callers', async () => {
+    h = await createHarness();
+    const intake = { kind: 'system', id: 'intake' } as const;
+    const req = { processType: 'bug-triage', projectId: 'prj_demo', prompt: 'Diagnose ticket 9', ticketId: 'tkt_9', idempotencyKey: 'intake.triage:evt_1:0' };
+    const first = await h.sup.launch(req, intake);
+    const again = await h.sup.launch(req, intake);
+    expect(again.sessionId).toBe(first.sessionId);
+    await h.waitLifecycle(first.sessionId, 'idle');
+    expect(h.events('session.launch_requested')).toHaveLength(1);
+    expect(h.calls()).toHaveLength(1);
+    // the chained key is a hash bound to the caller: another caller's identical key cannot claim the session
+    expect(h.events('session.launch_requested')[0]!.idempotencyKey).toMatch(/^launch:[0-9a-f]{64}$/);
+    const other = await h.sup.launch(req, h.ownerActor);
+    expect(other.sessionId).not.toBe(first.sessionId);
+    const res = await h.t.request('POST', '/api/sessions', {
+      headers: h.owner.headers,
+      body: { processType: 'feature-build', projectId: 'prj_demo', prompt: 'Build it', idempotencyKey: 'intake.triage:evt_1:0' },
+    });
+    expect(res.status).toBe(422);
+  });
+});
+
 describe('managed turns never start with workspace settings that subvert AOC (§2, §3)', () => {
   const subversions: [string, Record<string, string>][] = [
     ['hooks switched off', { 'settings.local.json': JSON.stringify({ disableAllHooks: true }) }],

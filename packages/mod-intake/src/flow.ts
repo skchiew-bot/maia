@@ -127,8 +127,10 @@ export class IntakeFlow {
     const cfg = this.ctx.config.intake;
     const ids: string[] = [];
     for (let i = 0; i < cfg.triageAgents; i++) {
+      // Keyed on the cause: a redelivered reaction gets the sessions already launched, and launches only the rest.
+      const idempotencyKey = causationId ? `intake.triage:${causationId}:${i}` : null;
       const { sessionId } = await supervisor.launch(
-        { processType: cfg.triageProcessType, projectId: t.project_id, prompt: this.triagePrompt(t), ticketId },
+        { processType: cfg.triageProcessType, projectId: t.project_id, prompt: this.triagePrompt(t), ticketId, idempotencyKey },
         INTAKE_ACTOR,
       );
       ids.push(sessionId);
@@ -270,7 +272,8 @@ export class IntakeFlow {
     ]
       .filter(Boolean)
       .join('\n\n');
-    const { sessionId } = await supervisor.launch({ processType: this.ctx.config.intake.buildProcessType, projectId: t.project_id, prompt, ticketId }, INTAKE_ACTOR);
+    const idempotencyKey = causationId ? `intake.build:${causationId}` : null; // never two writers on uat/<ticket>
+    const { sessionId } = await supervisor.launch({ processType: this.ctx.config.intake.buildProcessType, projectId: t.project_id, prompt, ticketId, idempotencyKey }, INTAKE_ACTOR);
     this.ctx.store.append({
       type: 'ticket.build_started',
       actor: INTAKE_ACTOR,

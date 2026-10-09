@@ -41,7 +41,7 @@ import {
   type StoredEvent,
   type SupervisorService,
 } from '@aoc/contracts';
-import { HttpError, type Logger, type ModuleContext, type NewEvent } from '@aoc/kernel';
+import { HttpError, sha256hex, type Logger, type ModuleContext, type NewEvent } from '@aoc/kernel';
 import {
   MAX_ARG_BYTES,
   buildClaudeArgs,
@@ -111,9 +111,19 @@ export const LaunchRequestSchema = z.object({
   ticketId: zIdent.nullish(),
   parentSessionId: zIdent.nullish(),
   brief: z.string().max(200_000).nullish(),
+  idempotencyKey: z
+    .string()
+    .min(1)
+    .max(256)
+    .regex(/^[\x21-\x7e]+$/, 'a printable machine label')
+    .nullish(),
 });
-/** The HTTP launch body: briefs and lineage only come from the supervisor's own rollover. */
-export const LaunchBodySchema = LaunchRequestSchema.omit({ brief: true, parentSessionId: true }).strict();
+/** The HTTP launch body: briefs, lineage and idempotency keys only come from the supervisor and reactors. */
+export const LaunchBodySchema = LaunchRequestSchema.omit({
+  brief: true,
+  parentSessionId: true,
+  idempotencyKey: true,
+}).strict();
 
 type TurnReason = MetaOf<'session.turn_started'>['reason'];
 type TurnOutcome = MetaOf<'session.turn_ended'>['outcome'];
@@ -568,6 +578,14 @@ export class Supervisor implements SupervisorService {
       throw new HttpError(422, 'invalid', 'Invalid launch request', details);
     }
     const r = parsed.data;
+    // A redelivered launch (reactor replay, retry) gets the session the key already started: never a second process.
+    // The chained key is bound to the actor, so one caller can never pre-claim another's.
+    const launchKey = r.idempotencyKey
+      ? `launch:${sha256hex([actor.kind, actor.id, r.idempotencyKey].join('\n'))}`
+      : undefined;
+    const prior = launchKey ? this.ctx.store.findByIdempotencyKey(launchKey) : null;
+    if (prior?.type === 'session.launch_requested')
+      return { sessionId: String(prior.meta.sessionId), started: Promise.resolve() };
     // The first turn carries a rollover brief as fenced data (R-10); it is the launch prompt replayed on recovery.
     const prompt = r.brief ? withHandoffBrief(r.prompt, r.brief, r.parentSessionId ?? null) : r.prompt;
     checkText(prompt);
@@ -634,6 +652,7 @@ export class Supervisor implements SupervisorService {
           payload: { prompt, cwd },
           source: 'supervisor',
           causationId: o.causationId,
+          idempotencyKey: launchKey,
         }),
         ev({
           type: 'session.lifecycle_changed',
@@ -1495,6 +1514,7 @@ export class Supervisor implements SupervisorService {
             ticketId: s.ticketId,
             parentSessionId: s.sessionId,
             brief: brief.text,
+            idempotencyKey: `rollover:${startedEvent.id}`,
           },
           SYSTEM,
           { reason: 'rollover', causationId: startedEvent.id, priority: true },

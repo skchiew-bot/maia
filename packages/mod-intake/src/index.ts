@@ -98,7 +98,7 @@ export function createIntakeModule(opts: IntakeModuleOptions = {}): AocModule {
         async react(e, _p, ctx) {
           const ticketId = (e.meta as { ticketId: string }).ticketId;
           if (ctx.store.findByCausation(e.id, 'ticket.triage_started').length) return;
-          if (flow.sessions(ticketId, 'triage').length) return;
+          // Launches are keyed on this event, so a redelivery after a partial start completes it instead of stalling.
           await flow.startTriage(ticketId, e.id);
         },
       },
