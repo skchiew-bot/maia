@@ -99,7 +99,8 @@ export function isReadOnlyBash(command: string): boolean {
   if (/[>|;&`$]|\b(rm|mv|cp|tee|sed\s+-i|chmod|chown|mkdir|touch|dd|truncate|git\s+(commit|push|checkout|reset|merge|rebase|apply|stash|tag))\b/.test(command)) {
     return false;
   }
-  if (/\bfind\b.*\s-(delete|exec|execdir|ok)\b/.test(command)) return false;
+  // Two independent tests rather than `find.*-exec`: that backtracks quadratically, on the daemon thread.
+  if (/\bfind\b/.test(command) && /\s-(delete|exec|execdir|ok)\b/.test(command)) return false;
   return READ_ONLY_PREFIX.test(command);
 }
 
