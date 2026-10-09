@@ -51,6 +51,7 @@ import {
   readCredentialProfile,
   redactArgv,
   toolPolicy,
+  workspaceSettingsProblems,
 } from './launch-config';
 import { processMatches, runCommand, signalProcess, signalTree } from './process-utils';
 import { SupervisorView, TERMINAL_LIFECYCLES, type SupervisedSession } from './projection';
@@ -920,6 +921,14 @@ export class Supervisor implements SupervisorService {
       );
     const sup = this.ctx.config.supervisor;
     const cwd = s.cwd ?? this.resolveCwd(null, s.projectId);
+    const overrides = workspaceSettingsProblems(cwd);
+    if (overrides.length)
+      throw new HttpError(
+        409,
+        'workspace_settings_override',
+        `The workspace's Claude Code settings would bypass AOC (${overrides.join('; ')}). Remove them, then restart the session.`,
+        { problems: overrides },
+      );
     const token = this.tokenFor(s.sessionId, req.actor);
     const dir = this.ensureSessionDir(s.sessionId);
     const aoc: Record<string, string> = {
