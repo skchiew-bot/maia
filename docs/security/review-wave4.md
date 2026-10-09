@@ -3,8 +3,8 @@
 Not a reading review: a hunt with tests. An agent wrote seeded property, concurrency and authorization tests against
 the invariants this platform promises (the chain verifies, a rebuild equals the live state, erasure leaves no
 plaintext, every route checks who is calling), and fixed what failed. Every defect below has a test that failed first.
-Like the other waves, it was done by an agent and has not been reviewed by a human; three of the files it changed are
-governance core (see the end), so [gap P-06](../compliance/gaps.md) applies to them.
+Like the other waves, it was done by an agent and has not been reviewed by a human; the kernel and `mod-identity`
+files it changed are governance core (listed at the end), so [gap P-06](../compliance/gaps.md) applies to them.
 
 Merged as `9c69286`; the lead branch at `b4fdf57` contains it. Finding ids are `W4-n`. The earlier waves are
 [wave 1](review-wave1.md), [wave 2](review-wave2.md) and [wave 3](review-wave3.md).

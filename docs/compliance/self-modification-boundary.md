@@ -191,12 +191,15 @@ the chain is part of what is being protected. Three external records:
 **Scope:** every Tier 1 path at the commit proposed for go-live. Minimum checklist:
 
 - [ ] **Event store:** header fields and hash computation; canonical JSON; genesis; atomicity of `appendMany`
-      (including the rollback path and the clean-up of body rows); idempotency; `verifyChain`.
+      (including the rollback path and the clean-up of body rows); idempotency; `verifyChain` and `verifyBody`, which
+      report a corrupt row instead of throwing (W4-01, W4-02); the projection rebuild, which isolates a projector
+      that throws (W4-04); `write()` handing projectors the canonical form, so live equals rebuilt (W4-05); the
+      write-ahead order of an erasure (W4-03). Wave 4 changed these ([review](../security/review-wave4.md)).
 - [ ] **Body store and crypto:**
   - AES-256-GCM with random 96-bit nonces and AAD binding;
   - DEK wrapping;
-  - erasure completeness (`bodies.db`, blobs, read models, `aoc.db` with `secure_delete` and a WAL truncate, the
-    FTS5 index; threat model O-24);
+  - erasure completeness (`bodies.db`, blobs, read models, `aoc.db` with `secure_delete`, a `VACUUM` and a WAL
+    truncate, the FTS5 index; threat model O-24, W4-06, W4-07);
   - KEK loading (no environment KEK in production, O-13).
 - [ ] **Strict meta** across the whole event catalog: nothing personal or free-text in clear.
 - [ ] **Ingest authentication:** session-token scoping, observer restrictions, fail-closed paths, system tokens.
