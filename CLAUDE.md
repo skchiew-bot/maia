@@ -86,3 +86,7 @@ Claude Code Stop hook (`.claude/settings.json`), which will not let a session fi
    prompt right after `-p`.
 9. **A new reactor or job that appends events changes other tests' counts.** Run every suite that loads the
    module (daemon, e2e included); tests that drive the mechanism by hand switch the new behaviour off explicitly.
+10. **Validated where CI does not run** (green on Node 22.22 as root, red in CI on the `engines` minimum as a normal
+    user). Before pushing, run `scripts/check.sh` with the Node version CI uses (the `engines` minimum, which CI
+    tests), `GIT_CONFIG_GLOBAL=/dev/null`, and run tests that touch file modes or ownership as a non-root user too
+    (root ignores a read-only directory, including in cleanup).
