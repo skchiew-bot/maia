@@ -1,6 +1,7 @@
 import {
   DECISION_KIND_LABEL,
   DECISION_TEST_INFO,
+  TESTED_DECISION_KINDS,
   type DecisionCard,
   type DecisionWebhookPayload,
   type Notification,
@@ -34,9 +35,7 @@ function audienceFor(role: Role): Role[] {
 /** Fixed labels only — notifications never carry decision text. */
 function headline(card: DecisionCard): string {
   const kind = DECISION_KIND_LABEL[card.kind];
-  return card.kind === 'agent_decision' && card.test
-    ? `${kind} — ${DECISION_TEST_INFO[card.test].label}`
-    : kind;
+  return card.test && TESTED_DECISION_KINDS.has(card.kind) ? `${kind} — ${DECISION_TEST_INFO[card.test].label}` : kind;
 }
 
 function refsOf(card: DecisionCard): Record<string, string> {

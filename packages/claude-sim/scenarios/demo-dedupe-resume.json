@@ -1,6 +1,6 @@
 {
   "name": "demo-dedupe-resume",
-  "description": "Continuation of the seeded \"duplicate claim submissions\" bug fix (plan t1 done; t2, t3 open) after its main-branch decision is answered: branches on \"Hold for UAT first\" versus \"Merge to main\" and closes t2 and t3 with evidence.",
+  "description": "Continuation of the seeded \"duplicate claim submissions\" build (intake ticket, bug-fix; plan dedupe-1 done; dedupe-2 and dedupe-3 open) after its main-branch decision is answered: branches on \"Hold for UAT first\" versus \"Merge to main\", closes dedupe-2 with a diff and commits the fix and its regression test to uat/<ticket> (the AOC-Ticket and AOC-Session trailers, scoped git only) as the evidence for dedupe-3. The build never touches main: the ticket then goes to UAT.",
   "steps": [
     {"kind":"think","ms":4000,"outputTokens":667},
     {"kind":"branch","onResumeTextIncludes":["Hold for UAT"],"goto":"uat"},
@@ -9,11 +9,16 @@
     {"kind":"text","text":"Holding for UAT as decided: finishing the guard on the fix branch.","label":"uat"},
     {"kind":"tool","name":"Read","input":{"file_path":"src/claims/submit.ts"},"label":"work"},
     {"kind":"tool","name":"Write","input":{"file_path":"src/claims/idempotency.ts","content":"// Idempotency keys for claim submission\n// build {{sim.sessionId}}\nconst seen = new Map<string, string>();\n\nexport function claimOnce(key: string, claimId: string): string {\n  const prior = seen.get(key);\n  if (prior) return prior;\n  seen.set(key, claimId);\n  return claimId;\n}\n"}},
-    {"kind":"mcp","server":"aoc","tool":"task_done","args":{"task_id":"t2","evidence":{"kind":"diff","ref":"src/claims/idempotency.ts","detail":"Retries reuse the first claim id for the same idempotency key"}}},
+    {"kind":"mcp","server":"aoc","tool":"task_done","args":{"task_id":"dedupe-2","evidence":{"kind":"diff","ref":"src/claims/idempotency.ts","detail":"Retries reuse the first claim id for the same idempotency key"}}},
     {"kind":"tool","name":"Read","input":{"file_path":"test/claims/dedupe.test.ts"}},
     {"kind":"tool","name":"Write","input":{"file_path":"test/claims/dedupe.test.ts","content":"// Duplicate submission regression test\n// build {{sim.sessionId}}\nimport { expect, it } from 'vitest';\nimport { claimOnce } from '../../src/claims/idempotency';\n\nit('rejects a duplicate submission on retry', () => {\n  expect(claimOnce('k1', 'CLM-1')).toBe('CLM-1');\n  expect(claimOnce('k1', 'CLM-2')).toBe('CLM-1');\n});\n"}},
-    {"kind":"mcp","server":"aoc","tool":"task_done","args":{"task_id":"t3","evidence":{"kind":"test","ref":"test/claims/dedupe.test.ts > rejects a duplicate submission on retry"}}},
-    {"kind":"text","text":"The retry-dedupe fix is complete with its regression test."},
+    {"kind":"bash","command":"git switch -c uat/$AOC_TICKET_ID || git switch uat/$AOC_TICKET_ID","exec":true,"description":"Branch for UAT"},
+    {"kind":"bash","command":"git add src/claims/idempotency.ts test/claims/dedupe.test.ts","exec":true,"description":"Stage the guard and its test"},
+    {"kind":"bash","command":"git commit -m \"Make claim submission idempotent on retry\" -m \"AOC-Ticket: $AOC_TICKET_ID\" -m \"AOC-Session: $AOC_SESSION_ID\"","exec":true,"description":"Commit with the AOC trailers"},
+    {"kind":"bash","command":"git rev-parse --short HEAD","exec":true,"description":"The UAT commit","stdout":"0000000","saveAs":"fix"},
+    {"kind":"mcp","server":"aoc","tool":"task_done","args":{"task_id":"dedupe-3","evidence":{"kind":"commit","ref":"{{fix.stdout}}","detail":"Guard and regression test committed to the UAT branch"}}},
+    {"kind":"bash","command":"git switch -","exec":true,"description":"Leave the shared working copy where it was"},
+    {"kind":"text","text":"The retry-dedupe fix is committed to its UAT branch with its regression test."},
     {"kind":"endTurn","final":true}
   ]
 }

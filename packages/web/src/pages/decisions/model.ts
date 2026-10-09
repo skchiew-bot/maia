@@ -52,11 +52,13 @@ export const ROLE_WORD: Record<Role, string> = {
 
 /**
  * Decision SLAs approved by the CEO with the mock (mocks/README.md "Approval", 2026-10-09). Kinds without an
- * agreed SLA age without a due time rather than against an invented one.
+ * agreed SLA age without a due time rather than against an invented one. A protected operation (an agent's attempt
+ * turned into a card by a guard) keeps the agent decision's SLA: it was one until it got a kind of its own.
  */
 export const DECISION_SLA_MS: Partial<Record<DecisionKind, number>> = {
   rollback: 30 * MIN,
   agent_decision: HOUR,
+  protected_operation: HOUR,
   credit_topup: HOUR,
   go_live: 2 * HOUR,
   fix_plan: 4 * HOUR,

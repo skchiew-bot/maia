@@ -16,6 +16,12 @@ export const DECISION_TEST_INFO: Record<DecisionTest, { no: number; label: strin
 
 export const PASSKEY_KINDS: ReadonlySet<DecisionKind> = new Set<DecisionKind>(['go_live', 'rollback', 'break_glass']);
 
+/** Kinds whose card carries one of the five tests: an agent's own request, or a guard's card for an attempt. */
+export const TESTED_DECISION_KINDS: ReadonlySet<DecisionKind> = new Set<DecisionKind>([
+  'agent_decision',
+  'protected_operation',
+]);
+
 export interface DecisionRoutingInput {
   kind: DecisionKind;
   test?: DecisionTest | null;
@@ -27,6 +33,9 @@ export function requiredRoleFor(i: DecisionRoutingInput): Role {
   switch (i.kind) {
     case 'agent_decision':
       return i.test && DECISION_TEST_INFO[i.test].bouncesToApprover ? 'approver' : 'builder';
+    case 'protected_operation':
+      // Raised by a guard from tool-boundary tests only (main, production, data): all three bounce to the Approver.
+      return 'approver';
     case 'change_request':
       return i.changeScope === 'reversible_off_main' ? 'builder' : 'approver';
     case 'triage_reconciliation':
@@ -135,7 +144,8 @@ export interface DecisionRequestInput {
   /** Override computed role (only to escalate, never to lower). */
   requiredRole?: Role;
   /**
-   * Body scope for the card's free text (e.g. a ticket id, so erasing the ticket also erases the decision text).
+   * Body scope for the card's free text (e.g. a ticket id, so erasing the ticket also erases the decision text; change
+   * control uses the change record's id, else the project's).
    * Default: the ticket when the subject is a ticket, else the store default (session → ticket → project → global).
    */
   bodyScope?: string;

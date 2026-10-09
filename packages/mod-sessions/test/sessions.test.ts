@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { ConsoleSnapshot, HookIngestResponse, SessionDetail, SessionSummary } from '@aoc/contracts';
+import type { ConsoleSnapshot, HookIngestResponse, ProcessEventRequest, SessionDetail, SessionSummary } from '@aoc/contracts';
 import { createTestRuntime, type AocModule, type TestRuntime, type TestUser } from '@aoc/kernel';
 import { createSessionsModule, isReadOnlyBash, SessionsEngine } from '../src';
 
@@ -299,8 +299,10 @@ describe('per-turn sidecars', () => {
     const headers = t.sidecarHeaders('ses_A');
     const heartbeat = (pid: number, alive: boolean) =>
       t.json('POST', '/ingest/heartbeat', { headers, body: { sessionId: 'ses_A', pid, alive, at: t.clock.iso(), transcriptBytes: 0, lastTranscriptWriteAt: null } });
-    const exited = (pid?: number) =>
-      t.json('POST', '/ingest/process', { headers, body: { sessionId: 'ses_A', event: 'exited', exitCode: 0, signal: null, at: t.clock.iso(), ...(pid ? { pid } : {}) } });
+    const exited = (pid: number) => {
+      const body: ProcessEventRequest = { sessionId: 'ses_A', event: 'exited', exitCode: 0, signal: null, at: t.clock.iso(), pid };
+      return t.json('POST', '/ingest/process', { headers, body });
+    };
     await heartbeat(4242, true);
     expect(engine().row('ses_A')!.liveness).toBe('thinking');
     t.rt.store.append({
@@ -314,9 +316,47 @@ describe('per-turn sidecars', () => {
     await heartbeat(4242, false);
     await exited(4242);
     expect(engine().row('ses_A')!.liveness).toBe('thinking');
-    // The current process's own sidecar still counts; so does a report that names no pid.
+    // The current process's own sidecar still counts.
     await heartbeat(5151, true);
     await exited(5151);
+    expect(engine().row('ses_A')!.liveness).toBe('dead');
+  });
+
+  it('takes an exit report that names no process (absent or null pid) as the current one, and refuses a pid that is not a whole number', async () => {
+    await setup();
+    const owner = t.user('builder');
+    launch(owner);
+    const headers = t.sidecarHeaders('ses_A');
+    const report = (more: Partial<ProcessEventRequest> | { pid: string }) => ({
+      sessionId: 'ses_A', event: 'exited' as const, exitCode: 0, signal: null, at: t.clock.iso(), ...more,
+    });
+    const send = (body: object) => t.request('POST', '/ingest/process', { headers, body });
+    expect((await send(report({ pid: '4242' }))).status).toBe(422);
+    expect((await send(report({ pid: 42.5 }))).status).toBe(422);
+    expect(engine().row('ses_A')!.liveness).not.toBe('dead');
+
+    expect((await send(report({ pid: null }))).status).toBe(200);
+    expect(engine().row('ses_A')!.liveness).toBe('dead');
+
+    t.rt.store.append({
+      type: 'session.turn_started',
+      actor: { kind: 'system', id: 'supervisor' },
+      scope: { sessionId: 'ses_A' },
+      meta: { sessionId: 'ses_A', turn: 2, reason: 'resume' },
+      payload: { injectedText: 'go on' },
+      source: 'supervisor',
+    });
+    t.rt.store.append({
+      type: 'session.launched',
+      actor: { kind: 'system', id: 'supervisor' },
+      scope: { sessionId: 'ses_A' },
+      meta: { sessionId: 'ses_A', claudeSessionId: CLAUDE_A, pid: 5151, model: 'claude-opus-5-5', turn: 2 },
+      payload: { cwd: '/tmp/repo', argv: [], transcriptPath: '/tmp/t.jsonl' },
+      source: 'supervisor',
+    });
+    await t.json('POST', '/ingest/heartbeat', { headers, body: { sessionId: 'ses_A', pid: 5151, alive: true, at: t.clock.iso(), transcriptBytes: 0, lastTranscriptWriteAt: null } });
+    expect(engine().row('ses_A')!.liveness).not.toBe('dead');
+    expect((await send(report({}))).status).toBe(200); // no pid at all (an older sidecar, a spooled report)
     expect(engine().row('ses_A')!.liveness).toBe('dead');
   });
 });

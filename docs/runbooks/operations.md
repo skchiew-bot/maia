@@ -56,6 +56,12 @@ built-in default is, which is not a governed mapping. A minimal production confi
 }
 ```
 
+Production mode refuses to start in two more cases that this file can avoid. The credential profiles file must define
+`prod-promote`, or whichever profiles the optional `promotion` section names for the push to a protected remote
+([credential isolation](credential-isolation.md) §4 item 9). And an aocd started from a source checkout of AOC needs
+`selfModification.aocRepoPaths` (the example above names the clone; a dist install, as in the unit below, is not
+asked, so list its clones by hand: [self-modification boundary](../compliance/self-modification-boundary.md) §2).
+
 ## 2. Start and stop
 
 **Start** (development): `node dist/bin/aocd.mjs` (or `aoc serve`), after `pnpm build`.
@@ -168,7 +174,7 @@ projector that is new on an existing log, whose fingerprint changed, or that is 
 
 1. Plan a maintenance window and stop running sessions first (§2): while the rebuild runs, hooks cannot get an
    answer and fail closed.
-2. Take a backup: `aoc anchor`, then `aoc backup now` ([backup and restore](backup-restore.md)).
+2. Take a backup: `aoc anchor`, then `aoc backup now` with the Approver's token ([backup and restore](backup-restore.md)).
 3. **Make sure the right KEK is configured.** A rebuild reads every body; with a wrong KEK it fails and rolls
    back. Never let aocd start with a generated key
    ([key custody §3](key-custody.md#3-store-the-kek-options-weakest-to-strongest)).
@@ -233,7 +239,7 @@ A dead-lettered reaction means something that should have happened did not.
 
 ## 6. Backups
 
-aocd backs itself up daily once `audit.backupKeyFile` is set (`aoc backup now` / `aoc backup list`; restore with
+aocd backs itself up daily once `audit.backupKeyFile` is set (`aoc backup now` needs the Approver token, `aoc backup list` does not; restore with
 `aocd restore`): see the [backup and restore runbook](backup-restore.md). Key custody and the manual procedure are in
 [key custody §4](key-custody.md#4-backups-off-host-nightly) and the drill in
 [key custody §7](key-custody.md#7-restore-drill-quarterly). The rules that matter most:
@@ -309,23 +315,52 @@ previous release tag, and an acceptance test.
 
 ## 11. Demo and test data directories
 
-The demo seeder builds a realistic, deterministic history (users, projects, sessions, decisions, change control,
-credits, FX, error learning, tickets) by driving the real runtime with a moving fake clock, so its projections,
-hash chain and anchors are genuine:
+The demo seeder builds a realistic, deterministic history by driving the real runtime with a moving fake clock, so its
+projections, hash chain and anchors are genuine: the people and projects, about thirty finished sessions with plans,
+evidence and pinned phases, change control (change records, a gated rollback executed and one waiting, a break-glass
+closed and one still inside its 24 hours, promotions that passed provenance), eleven intake tickets in every stage of
+the funnel, credits, FX and error learning. Every event is dated at or before the seeding instant. `live` does
+everything, including the daemon and a fleet of real managed sessions:
 
 ```bash
-pnpm --filter @aoc/demo seed -- --data-dir /abs/path/to/demo [--days 14] [--reset]
-AOC_CONFIG=/abs/path/to/demo/aoc.config.json node --import tsx packages/daemon/src/main.ts
-pnpm --filter @aoc/demo pulse -- --data-dir /abs/path/to/demo   # optional: keeps the live demo sessions moving
+pnpm --filter @aoc/demo live -- --data-dir /abs/path/to/demo [--port 7420] [--reset]   # seeds if empty, starts aocd, runs the fleet
+pnpm --filter @aoc/demo seed -- --data-dir /abs/path/to/demo [--days 14] [--reset]     # the history only (14 to 60 days)
+# by hand, on a seeded directory (the seeder prints this command with the paths filled in):
+AOC_CONFIG=<dir>/aoc.config.json CLAUDE_CONFIG_DIR=<dir>/claude CLAUDE_SIM_SCENARIO=<dir>/claude/demo-default-scenario.json \
+  CLAUDE_SIM_EXEC=1 node --import tsx packages/daemon/src/main.ts
 ```
+
+`live` replaces the old `pulse`: the sessions of a live demo are real managed processes (supervisor, hooks, AOC MCP
+server, sidecar) running a claude-sim scenario, so there is nothing left to fake. [`packages/demo/README.md`](../../packages/demo/README.md)
+describes the fleet, the tickets and the change-control history the CEO finds.
 
 - The seeder writes `<dataDir>/aoc.config.json` next to the data. It runs managed sessions on `@aoc/claude-sim`,
   turns the FX fetch off with the fake extractor, and keeps the anchor repository, workspaces and the external
-  audit log inside the demo directory. Start a demo daemon **only** with that file. Never point a demo at the real
-  `claude` CLI: Nudge and Restart would spend plan quota and touch real repositories.
+  audit log inside the demo directory. Start a demo daemon **only** with that file (`live` refuses to start unless
+  managed sessions run on claude-sim). Never point a demo at the real `claude` CLI: Nudge and Restart would spend
+  plan quota and touch real repositories.
+- **Layout** of the demo directory: `aoc/` is AOC's data directory (event log, bodies, keys, anchors, and `git/`, the
+  service-owned clones promotions run in), `repos/<project>/` the projects' repositories, `workspaces/<project id>/<name>/`
+  linked worktrees in which the live fleet's sessions edit files (so a promotion or rollback can always fast-forward
+  the checked-out `main`), `claude/` claude-sim's config directory and the generated default scenario,
+  `credential-profiles.json`, `aoc.config.json`, `demo-tokens.json`, and `logs/` and `live-fleet.json` for `live`. The
+  repositories sit **outside** the data directory on purpose: aocd protects its data directory as audit state and
+  refuses a service clone that overlaps a project.
 - `<dataDir>/demo-tokens.json` (mode 0600) holds the demo users' tokens, including an Approver's. Treat a demo
   directory as disposable, keep it off shared machines, and delete it when done.
-- **Never run the seeder against a production data directory.** It refuses a directory that already holds an
-  `aoc.db`, unless `--reset` is given, which deletes the whole directory first.
+- `<dataDir>/credential-profiles.json` (mode 0600) defines every profile the demo references, each with an **empty**
+  environment: a demo holds no real credential, and its promotions need none (the repositories have no remote, so the
+  platform updates their own `main`).
+- **`--reset` and existing data.** `seed` refuses a directory that already holds an `aoc.db`; `live` seeds an empty
+  directory and otherwise starts on the seeded one, so a restart keeps its state. `--reset` deletes the directory
+  first, and only an empty directory or one the seeder created (it holds `demo-tokens.json` or `aoc.config.json`); a
+  filesystem root, or a directory with other contents, is refused. **Never run the seeder against a production data
+  directory.**
+- The seeded history was signed with a software passkey that the seeder removes again. Passkey-gated cards (go-live,
+  rollback, break-glass) therefore need a passkey of the operator's own, registered in Admin (the WebAuthn origin
+  follows the console's port).
+- A demo daemon runs the shipped `config/process-types.json`, which grants `bug-fix` and `feature-build` a scoped
+  set of git (branch, stage, commit, and the push gateway, never merge, rebase, reset or `main`). That file is
+  governed configuration: mod-audit records a changed hash at the first start after it changes.
 - A demo directory uses the development defaults: a generated KEK in `<dataDir>/master.key`, a local-only anchor
   repository, and the built-in malware heuristic. None of that is acceptable in production.

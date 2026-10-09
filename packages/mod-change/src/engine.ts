@@ -18,6 +18,7 @@ import {
   type ChangeScope,
   type ChangeService,
   type DecisionOption,
+  type IsolatedRunInput,
   type JsonValue,
   type MetaOf,
   type PinDTO,
@@ -28,7 +29,6 @@ import {
   type RollbackDTO,
   type Scope,
   type StoredEvent,
-  type SupervisorService,
   type User,
 } from '@aoc/contracts';
 import {
@@ -95,14 +95,23 @@ export interface ProjectSettings {
    * can write its config.
    */
   promotionRemote?: string;
+  /** Credential profile of that push for this project; the module's own default when absent. */
+  promoteCredentialProfile?: string;
 }
 
+/**
+ * aocd's `promotion` configuration (`ctx.config.promotion`) already names a project's remote and credential profile;
+ * these options are for embedding and tests, and win over it.
+ */
 export interface ChangeModuleOptions {
-  /** Static per-project settings; they win over mod-ledger and project.created/updated records. */
+  /** Static per-project settings; they win over aocd's `promotion.projects`, mod-ledger and project.created/updated records. */
   projects?: Record<string, ProjectSettings>;
   /** Branch patterns the protected-op guard treats as protected (default main, master, production, release/*). */
   protectedBranches?: string[];
-  /** Credential profile of the push to the protected remote (promotion, rollback, break-glass): its only holder. */
+  /**
+   * Credential profile of the push to the protected remote (promotion, rollback, break-glass): its only holder.
+   * Default: `promotion.promoteCredentialProfile` of aocd's configuration (`prod-promote`).
+   */
   promoteCredentialProfile?: string;
   /** Where the per-project service clones live (default `<dataDir>/git`; a temp dir when the store is in memory). */
   serviceClonesDir?: string;
@@ -123,6 +132,11 @@ const PASSKEY_REQUIRED = 'Approval without a verified passkey is not accepted fo
 const MAX_PROVENANCE_COMMITS = 2000;
 
 const human = (u: User): Actor => ({ kind: 'human', id: u.id });
+/**
+ * Where a card's free text, and the comment typed on it, is kept: with the change record it is about, else with the
+ * project, as mod-intake keeps a ticket's cards under the ticket. Erasing that scope (PDPA) shreds the text.
+ */
+const cardScope = (projectId: string, changeId?: string | null): string => changeId ?? projectId;
 const short = (sha: string) => sha.slice(0, 12);
 const iso = (ms: number) => new Date(ms).toISOString();
 const errText = (err: unknown) => (err instanceof Error ? err.message : String(err));
@@ -138,9 +152,6 @@ function scopeOf(
     ...(ids.sessionId ? { sessionId: ids.sessionId } : {}),
   };
 }
-
-/** SupervisorService.runIsolated as the supervisor package implements it, with its `sandbox` option (G-04). */
-type IsolatedRun = Parameters<SupervisorService['runIsolated']>[0] & { sandbox?: { handOver?: string[] } };
 
 /** Where a promotion lands: the protected remote, the project's own branch (no remote anywhere), or nowhere yet. */
 type PromotionTarget =
@@ -178,7 +189,7 @@ export class ChangeEngine implements ChangeService {
   private ownsClonesRoot = false;
   private readonly o: {
     projects: Record<string, ProjectSettings>;
-    promoteCredentialProfile: string;
+    promoteCredentialProfile: string | null;
     serviceClonesDir: string | null;
     verifyTimeoutMs: number;
     gitTimeoutMs: number;
@@ -189,7 +200,7 @@ export class ChangeEngine implements ChangeService {
   constructor(opts: ChangeModuleOptions = {}) {
     this.o = {
       projects: opts.projects ?? {},
-      promoteCredentialProfile: opts.promoteCredentialProfile ?? 'prod-promote',
+      promoteCredentialProfile: opts.promoteCredentialProfile ?? null,
       serviceClonesDir: opts.serviceClonesDir ?? null,
       verifyTimeoutMs: opts.verifyTimeoutMs ?? 15 * 60_000,
       gitTimeoutMs: opts.gitTimeoutMs ?? 2 * 60_000,
@@ -244,6 +255,38 @@ export class ChangeEngine implements ChangeService {
       this.read.project(projectId)?.repo_path ??
       null
     );
+  }
+
+  /** Where the project's promotions push: the module's own settings, else aocd's `promotion` configuration. */
+  private promotionRemoteOf(projectId: string): string | undefined {
+    return (
+      this.o.projects[projectId]?.promotionRemote ??
+      this.ctx.config.promotion.projects[projectId]?.promotionRemote
+    );
+  }
+
+  /** The credential profile of the project's push to its protected remote (the only process that holds it). */
+  promoteProfileOf(projectId: string): string {
+    const configured = this.ctx.config.promotion;
+    return (
+      this.o.projects[projectId]?.promoteCredentialProfile ??
+      configured.projects[projectId]?.promoteCredentialProfile ??
+      this.o.promoteCredentialProfile ??
+      configured.promoteCredentialProfile
+    );
+  }
+
+  /** Projects the `promotion` configuration names that no project.created record has described (a typo, or early). */
+  unknownPromotionProjects(): string[] {
+    return Object.keys(this.ctx.config.promotion.projects).filter((id) => !this.read.project(id));
+  }
+
+  /** At start: an entry for a project nobody has created yet is not an error (it applies once the project exists). */
+  warnUnknownPromotionProjects(): void {
+    for (const projectId of this.unknownPromotionProjects())
+      this.ctx.log.warn('promotion configuration names a project that does not exist (yet); check the id', {
+        projectId,
+      });
   }
 
   private requireRepo(projectId: string): string {
@@ -325,7 +368,7 @@ export class ChangeEngine implements ChangeService {
    * would let an agent redirect the credentialed push. With remotes there and none configured, nothing is pushed.
    */
   private target(projectId: string, repo: string, clone: ServiceClone): PromotionTarget {
-    const url = this.o.projects[projectId]?.promotionRemote ?? clone.remoteUrl();
+    const url = this.promotionRemoteOf(projectId) ?? clone.remoteUrl();
     if (url) return { kind: 'remote', url };
     const remotes = this.ctx.services
       .get('git')
@@ -405,8 +448,7 @@ export class ChangeEngine implements ChangeService {
     };
   }
 
-  /** The supervisor's runIsolated, with its sandbox option (requested for the SupervisorService contract, G-04). */
-  private isolated(input: IsolatedRun) {
+  private isolated(input: IsolatedRunInput) {
     return this.ctx.services.get('supervisor').runIsolated(input);
   }
 
@@ -435,6 +477,7 @@ export class ChangeEngine implements ChangeService {
    * fast-forward, never a rewrite). The clone then records where the branch is.
    */
   private async pushToRemote(
+    projectId: string,
     clone: ServiceClone,
     url: string,
     branch: string,
@@ -466,7 +509,7 @@ export class ChangeEngine implements ChangeService {
             url,
             `${next}:refs/heads/${branch}`,
           ],
-          credentialProfile: this.o.promoteCredentialProfile,
+          credentialProfile: this.promoteProfileOf(projectId),
           timeoutMs: this.o.gitTimeoutMs,
           env: { ...GIT_SERVICE_ENV },
         }).then((r) => ({ code: r.exitCode, stdout: r.stdout, stderr: r.stderr })),
@@ -498,6 +541,7 @@ export class ChangeEngine implements ChangeService {
    * branch, compare-and-swapped, written as the session user.
    */
   private async publish(i: {
+    projectId: string;
     repo: string;
     clone: ServiceClone;
     target: Exclude<PromotionTarget, { kind: 'unconfigured' }>;
@@ -508,7 +552,7 @@ export class ChangeEngine implements ChangeService {
   }): Promise<PublishResult> {
     if (i.target.kind === 'local')
       return updateProjectBranch(this.sandboxedGit(i.repo), i.repo, i.branch, i.base.sha, i.next, i.restore);
-    const pushed = await this.pushToRemote(i.clone, i.target.url, i.branch, i.base, i.next);
+    const pushed = await this.pushToRemote(i.projectId, i.clone, i.target.url, i.branch, i.base, i.next);
     if (!pushed.ok) return pushed;
     const local = await updateProjectBranch(this.sandboxedGit(i.repo), i.repo, i.branch, null, i.next, i.restore).catch(
       (err): PublishResult => ({ ok: false, failed: 'local_update_failed', detail: errText(err) }),
@@ -842,6 +886,7 @@ export class ChangeEngine implements ChangeService {
         subjectId: changeId,
         projectId: c.project_id,
         requesterId: user.id,
+        bodyScope: cardScope(c.project_id, changeId),
       },
       actor,
     );
@@ -1122,6 +1167,7 @@ export class ChangeEngine implements ChangeService {
             subjectId: rollbackId,
             projectId: r.project_id,
             requesterId: r.requested_by,
+            bodyScope: cardScope(r.project_id, r.change_id),
           },
           SYSTEM,
         ).id;
@@ -1345,7 +1391,16 @@ export class ChangeEngine implements ChangeService {
         time: Date.parse(r.approved_at ?? this.ctx.clock.iso()) / 1000,
       };
       const next = clone.commit(restore);
-      const res = await this.publish({ repo, clone, target, branch, base: head, next, restore });
+      const res = await this.publish({
+        projectId: r.project_id,
+        repo,
+        clone,
+        target,
+        branch,
+        base: head,
+        next,
+        restore,
+      });
       if (!res.ok)
         return this.rollbackFailed(
           r,
@@ -1544,6 +1599,7 @@ export class ChangeEngine implements ChangeService {
         subjectId: breakglassId,
         projectId: input.projectId,
         requesterId: user.id,
+        bodyScope: cardScope(input.projectId),
       },
       actor,
     );
@@ -1904,6 +1960,7 @@ export class ChangeEngine implements ChangeService {
         subjectId: promotionId,
         projectId: input.projectId,
         requesterId: actor.id,
+        bodyScope: cardScope(input.projectId, changeId),
       },
       actor,
     );
@@ -1972,6 +2029,7 @@ export class ChangeEngine implements ChangeService {
         }
       }
       const res = await this.publish({
+        projectId: p.project_id,
         repo,
         clone,
         target,

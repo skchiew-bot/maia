@@ -4,8 +4,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AocConfigSchema, type AocConfig } from '@aoc/contracts';
-import { AocRuntime, FakeClock, sha256hex, silentLogger } from '@aoc/kernel';
+import { AocRuntime, FakeClock, canonicalJson, sha256hex, silentLogger } from '@aoc/kernel';
 import { ABSENT_HASH, createAuditModule, governedSources } from '../src';
+
+/** The governed sources a first start records, one config.changed each. */
+const BASELINE = 10;
 
 let dir: string;
 let config: AocConfig;
@@ -57,6 +60,7 @@ describe('governed config change detection', () => {
       'decisions_config',
       'iso42001_mapping',
       'liveness_config',
+      'promotion_config',
       'rate_card_file',
       'registry_file',
       'selfmod_config',
@@ -69,7 +73,7 @@ describe('governed config change detection', () => {
     );
     await first.stop();
     const second = await boot();
-    expect(second.changes).toHaveLength(9);
+    expect(second.changes).toHaveLength(BASELINE);
     await second.stop();
   });
 
@@ -78,7 +82,7 @@ describe('governed config change detection', () => {
     writeFileSync(f('rate-card.json'), '{"version":2,"rates":[]}');
     writeFileSync(f('process-types.json'), '{"version":"2","types":[]}');
     const run = await boot();
-    const latest = run.changes.slice(9);
+    const latest = run.changes.slice(BASELINE);
     expect(latest).toEqual([
       {
         key: 'registry_file',
@@ -98,21 +102,21 @@ describe('governed config change detection', () => {
     await (await boot()).stop();
     writeFileSync(f('profiles.json'), '{"profiles":{"deploy":{"env":{"TOKEN":"rotated"}}}}');
     let run = await boot();
-    expect(run.changes.slice(9)).toEqual([]);
+    expect(run.changes.slice(BASELINE)).toEqual([]);
     await run.stop();
 
     chmodSync(f('profiles.json'), 0o644);
     run = await boot();
-    expect(run.changes.slice(9).map((c) => c.key)).toEqual(['credential_profiles']);
+    expect(run.changes.slice(BASELINE).map((c) => c.key)).toEqual(['credential_profiles']);
     await run.stop();
 
     rmSync(f('profiles.json'));
     run = await boot();
-    expect(run.changes.slice(10)).toEqual([
+    expect(run.changes.slice(BASELINE + 1)).toEqual([
       {
         key: 'credential_profiles',
         versionHash: expect.any(String),
-        previousHash: run.changes[9]!.versionHash,
+        previousHash: run.changes[BASELINE]!.versionHash,
       },
     ]);
     await run.stop();
@@ -126,7 +130,7 @@ describe('governed config change detection', () => {
       selfModification: { ...config.selfModification, protectedPaths: ['packages/kernel/'] },
     };
     const run = await boot();
-    const latest = run.changes.slice(9);
+    const latest = run.changes.slice(BASELINE);
     expect(latest.map((c) => c.key)).toEqual(['iso42001_mapping', 'selfmod_config']);
     expect(latest[0]!.versionHash).toBe(ABSENT_HASH);
     await run.stop();
@@ -136,7 +140,29 @@ describe('governed config change detection', () => {
     await (await boot()).stop();
     config = { ...config, decisions: { ...config.decisions, soleApproverFallback: true } };
     const run = await boot();
-    expect(run.changes.slice(9).map((c) => c.key)).toEqual(['decisions_config']);
+    expect(run.changes.slice(BASELINE).map((c) => c.key)).toEqual(['decisions_config']);
+    await run.stop();
+  });
+
+  it('records a change of where promotions push or with which credential profile (promotion settings are governed config)', async () => {
+    await (await boot()).stop();
+    config = {
+      ...config,
+      promotion: { ...config.promotion, projects: { prj_web: { promotionRemote: '/srv/git/web.git' } } },
+    };
+    let run = await boot();
+    const [remote, ...rest] = run.changes.slice(BASELINE);
+    expect(rest).toEqual([]);
+    expect(remote).toEqual({
+      key: 'promotion_config',
+      versionHash: sha256hex(canonicalJson(config.promotion)),
+      previousHash: run.changes.find((c) => c.key === 'promotion_config')!.versionHash,
+    });
+    await run.stop();
+
+    config = { ...config, promotion: { ...config.promotion, promoteCredentialProfile: 'release-bot' } };
+    run = await boot();
+    expect(run.changes.slice(BASELINE + 1).map((c) => c.key)).toEqual(['promotion_config']);
     await run.stop();
   });
 

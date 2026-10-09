@@ -18,6 +18,7 @@ export function buildLaunchRequest(o: {
   prompt: string;
   phase?: string;
   thread?: string;
+  change?: string;
   cwd?: string | null;
 }): LaunchRequest {
   return {
@@ -27,6 +28,7 @@ export function buildLaunchRequest(o: {
     threadId: o.thread ?? null,
     cwd: o.cwd ?? null,
     prompt: o.prompt,
+    ...(o.change ? { changeId: o.change } : {}),
   };
 }
 
@@ -35,6 +37,7 @@ interface RunOpts {
   project: string;
   phase?: string;
   thread?: string;
+  change?: string;
   cwd?: string;
   follow?: boolean;
   json?: boolean;
@@ -48,6 +51,7 @@ export function registerRun(program: Command, ctx: CommandContext): void {
     .requiredOption('--project <projectId>', 'project the work belongs to')
     .option('--phase <phaseId>', 'plan phase the new tasks land in')
     .option('--thread <threadId>', 'durable project thread to continue')
+    .option('--change <changeId>', 'change record the work is done under (its commits carry the AOC-Change trailer)')
     .option('--cwd <dir>', 'working directory for the session (default: chosen by the supervisor)')
     .option('--follow', 'stream output and liveness until the session waits on you or ends')
     .option('--json', 'machine-readable output (NDJSON events with --follow)')

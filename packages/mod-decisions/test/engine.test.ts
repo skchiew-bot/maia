@@ -70,6 +70,21 @@ describe('routing matrix: role, separation of duties, eligibility (§6)', () => 
     ]);
   });
 
+  it.each(['protected_operation', 'agent_decision'] as const)(
+    'a card the protected-op guard raised as %s (the second is how earlier logs recorded it) goes to the Approver and resolves',
+    async (kind) => {
+      const { engine, approver, builderA } = (h = await harness());
+      const agent = { kind: 'agent' as const, id: 'ses_1' };
+      for (const test of ['main', 'production', 'data'] as const) {
+        const card = engine.request(decisionInput({ kind, test, requesterId: 'session:ses_1' }), agent);
+        expect(card).toMatchObject({ kind, test, requiredRole: 'approver', excludedApproverIds: ['session:ses_1'] });
+        expect(engine.canResolve(card, builderA.user)).toEqual({ ok: false, reason: 'role' });
+        const done = await engine.resolve(card.id, { optionId: 'reject', comment: 'Not now.' }, approver.user);
+        expect(done).toMatchObject({ status: 'resolved', resolution: { optionId: 'reject', resolvedBy: approver.user.id } });
+      }
+    },
+  );
+
   it('UAT sign-off is the eligible requester’s own test: not excluded, nobody else may sign', async () => {
     const { engine, approver, builderA, requester, requester2 } = (h = await harness());
     const card = engine.request(

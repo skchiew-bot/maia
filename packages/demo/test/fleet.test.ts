@@ -26,6 +26,12 @@ describe('the fleet', () => {
     expect(launchBody(FLEET.find((s) => s.key === 'triage')!, tokens)).toMatchObject({ processType: 'bug-triage', ticketId: 'tkt_2' });
   });
 
+  it('gives every slot that edits files a workspace of its own to run in, and read-only triage none', () => {
+    for (const slot of FLEET) expect(slot.workspace ?? false, slot.key).toBe(slot.processType !== 'bug-triage');
+    expect(launchBody(FLEET.find((s) => s.key === 'feature')!, tokens, '/work/space')).toMatchObject({ cwd: '/work/space' });
+    expect(launchBody(FLEET.find((s) => s.key === 'triage')!, tokens)).not.toHaveProperty('cwd');
+  });
+
   it('selects a subset of the slots for --slots, in fleet order, and refuses unknown names', () => {
     expect(selectSlots([]).map((s) => s.key)).toEqual(FLEET.map((s) => s.key));
     expect(selectSlots(['triage', 'decision']).map((s) => s.key)).toEqual(['decision', 'triage']);
@@ -38,34 +44,61 @@ describe('the fleet', () => {
 });
 
 describe('the default scenario', () => {
-  const scenario = parseScenario(defaultScenario('tkt_01ABC'), 'test');
+  const scenario = parseScenario(defaultScenario({ receipts: 'tkt_01ABC', transferBlank: 'tkt_01XYZ' }), 'test');
   const branches = scenario.steps.filter((s) => s.kind === 'branch');
 
   it('dispatches the prompts the platform writes: rollover successors, intake triage and builds', () => {
     expect(branches.map((b) => (b.kind === 'branch' ? [b.onResumeTextIncludes, b.goto] : null))).toEqual([
       [['Context rollover:'], 'rollover-successor'],
       [['diagnosing customer ticket tkt_01ABC '], 'triage-receipts'],
+      [['diagnosing customer ticket tkt_01XYZ '], 'triage-transfer'],
       [['fix plan for ticket tkt_01ABC.'], 'build-receipts'],
+      [['fix plan for ticket tkt_01XYZ.'], 'build-transfer'],
+      [['Implement the APPROVED fix plan for ticket'], 'build-generic'],
       [['diagnosing customer ticket'], 'triage-unknown'],
     ]);
   });
 
-  it("commits the ticket's build to uat/<ticketId> with the trailers provenance needs", () => {
+  it('builds any ticket, scripted or not, on its own UAT branch, named by the id the supervisor exports', () => {
     const commands = scenario.steps.flatMap((s) => (s.kind === 'bash' ? [s.command] : []));
-    expect(commands).toContain('git checkout -B uat/tkt_01ABC');
+    for (const ticket of ['tkt_01ABC', 'tkt_01XYZ', '$AOC_TICKET_ID']) {
+      expect(commands, ticket).toContain(`git switch -c uat/${ticket} || git switch uat/${ticket}`);
+      expect(commands.find((c) => c.startsWith('git commit') && c.includes(`AOC-Ticket: ${ticket}"`)), ticket).toMatch(/AOC-Session: \$AOC_SESSION_ID/);
+    }
+  });
+
+  it("commits the ticket's build to uat/<ticketId> with the trailers provenance needs, using scoped git only", () => {
+    const commands = scenario.steps.flatMap((s) => (s.kind === 'bash' ? [s.command] : []));
+    expect(commands).toContain('git switch -c uat/tkt_01ABC || git switch uat/tkt_01ABC');
     expect(commands.find((c) => c.startsWith('git commit'))).toMatch(/AOC-Ticket: tkt_01ABC.*AOC-Session: \$AOC_SESSION_ID/);
-    expect(commands.at(-1)).toBe('git checkout main');
+    expect(commands.at(-1)).toBe('git switch -');
+  });
+
+  it('carries no scenario marker: the prompts around a requester\'s text never select a scenario', () => {
+    expect(JSON.stringify(scenario)).not.toContain('[[scenario:');
   });
 
   it("closes the commit task while HEAD is the UAT commit: provenance only traces commits in a session's recorded HEADs (G-25)", () => {
     const build = scenario.steps.findIndex((s) => (s as { label?: string }).label === 'build-receipts');
     expect(build).toBeGreaterThan(-1);
     const at = (match: (s: (typeof scenario.steps)[number]) => boolean) => scenario.steps.findIndex((s, i) => i >= build && match(s));
-    const bash = (prefix: string) => at((s) => s.kind === 'bash' && s.command.startsWith(prefix));
-    const commitTask = at((s) => s.kind === 'mcp' && s.tool === 'task_done' && (s.args as { task_id?: string }).task_id === 't3');
-    expect(bash('git commit')).toBeGreaterThan(-1);
-    expect(commitTask).toBeGreaterThan(bash('git commit'));
-    expect(bash('git checkout main')).toBeGreaterThan(commitTask);
+    const commit = at((s) => s.kind === 'bash' && s.command.startsWith('git commit'));
+    const commitTask = at((s) => s.kind === 'mcp' && s.tool === 'task_done' && (s.args as { task_id?: string }).task_id === 'bd-receipts-3');
+    const leave = at((s) => s.kind === 'bash' && s.command === 'git switch -');
+    expect(commit).toBeGreaterThan(-1);
+    expect(commitTask).toBeGreaterThan(commit);
+    expect(leave).toBeGreaterThan(commitTask);
+  });
+
+  it('does the same in the dedupe continuation, which commits for the ticket whose build waited on a decision', () => {
+    const steps = builtInScenario('demo-dedupe-resume')!.steps;
+    const index = (match: (s: (typeof steps)[number]) => boolean) => steps.findIndex(match);
+    const commit = index((s) => s.kind === 'bash' && s.command.startsWith('git commit'));
+    const commitTask = index((s) => s.kind === 'mcp' && s.tool === 'task_done' && (s.args as { task_id?: string }).task_id === 'dedupe-3');
+    const leave = index((s) => s.kind === 'bash' && s.command === 'git switch -');
+    expect(commit).toBeGreaterThan(-1);
+    expect(commitTask).toBeGreaterThan(commit);
+    expect(leave).toBeGreaterThan(commitTask);
   });
 });
 

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { INGEST_PATHS, type HeartbeatRequest, type UsageRequest } from '@aoc/contracts';
+import { INGEST_PATHS, type HeartbeatRequest, type ProcessEventRequest, type UsageRequest } from '@aoc/contracts';
 import {
   createClient,
   listSubagentTranscripts,
@@ -184,7 +184,8 @@ export class Sidecar {
       this.tailer.poll();
       await this.flush();
       // The pid tells the daemon which process this was: by now the supervisor may have started the next turn.
-      await this.client.post(INGEST_PATHS.process, { sessionId: this.o.sessionId, event: 'exited', exitCode, signal, at: this.now().toISOString(), pid: this.o.pid }, { spool: true });
+      const report: ProcessEventRequest = { sessionId: this.o.sessionId, event: 'exited', exitCode, signal, at: this.now().toISOString(), pid: this.o.pid };
+      await this.client.post(INGEST_PATHS.process, report, { spool: true });
       this.tailer.stop();
     })();
     return this.exiting;

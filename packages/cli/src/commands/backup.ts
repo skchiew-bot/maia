@@ -3,6 +3,7 @@ import type { BackupDTO, BackupListDTO, BackupRunDTO } from '@aoc/contracts';
 import { objectOf, type CommandContext } from '../context';
 import { EXIT } from '../errors';
 import { renderKv, renderTable } from '../format';
+import { ApiError } from '../http';
 import { API_PATHS } from '../paths';
 
 function size(n: number): string {
@@ -13,6 +14,20 @@ function size(n: number): string {
 
 const copiedLabel = (b: BackupDTO) => (b.copied === null ? 'no copy command' : b.copied ? 'copied off-host' : 'COPY FAILED');
 
+/** A full copy of the audit state is the Approver's call: the daemon answers a Builder's token with a bare 403. */
+function approverTokenHint(err: unknown): never {
+  if (err instanceof ApiError && err.status === 403)
+    throw new ApiError(
+      err.message,
+      403,
+      err.code,
+      err.details,
+      EXIT.AUTH,
+      'an on-demand backup needs the Approver token (permission audit.backup), which a Builder token lacks; run `aoc login --token <approver token>` (or set AOC_TOKEN)',
+    );
+  throw err;
+}
+
 /** Encrypted backups (G-21). Restoring is a host operation with aocd stopped: `aocd restore` (docs/runbooks/backup-restore.md). */
 export function registerBackup(program: Command, ctx: CommandContext): void {
   const backup = program
@@ -21,10 +36,16 @@ export function registerBackup(program: Command, ctx: CommandContext): void {
 
   backup
     .command('now')
-    .description('take an encrypted backup now (after `aoc anchor`, so it is covered by an anchor)')
+    .description(
+      'take an encrypted backup now; needs the Approver token (permission audit.backup), and run `aoc anchor` first so an anchor covers it',
+    )
     .option('--json', 'machine-readable output')
     .action(async (opts: { json?: boolean }, cmd: Command) => {
-      const r = objectOf<BackupRunDTO>(await ctx.api(cmd, 30 * 60_000).post(API_PATHS.auditBackup, {}), 'backup', 'result');
+      const r = objectOf<BackupRunDTO>(
+        await ctx.api(cmd, 30 * 60_000).post(API_PATHS.auditBackup, {}).catch(approverTokenHint),
+        'backup',
+        'result',
+      );
       if (r.copyError) ctx.exitCode = EXIT.ERROR;
       if (opts.json) return ctx.json(r);
       const b = r.backup;
