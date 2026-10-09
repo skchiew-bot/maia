@@ -33,7 +33,7 @@ export interface LivenessThresholds {
 
 export const DEFAULT_LIVENESS_THRESHOLDS: LivenessThresholds = {
   workingWindowMs: 30_000,
-  stallAfterMs: 5 * 60_000,
+  stallAfterMs: 10 * 60_000,
   toolStallAfterMs: 20 * 60_000,
   deadAfterMs: 45_000,
 };

@@ -1,0 +1,41 @@
+{
+  "name": "stall",
+  "description": "Declares a plan, starts working, then goes completely silent (no output, no transcript writes) for an hour of scenario time — for stall detection.",
+  "steps": [
+    { "kind": "think", "ms": 1200, "outputTokens": 300 },
+    { "kind": "text", "text": "Declaring the plan." },
+    {
+      "kind": "mcp",
+      "server": "aoc",
+      "tool": "declare_plan",
+      "args": {
+        "phases": [
+          {
+            "id": "p1",
+            "name": "Build",
+            "tasks": [
+              { "id": "t1", "title": "Implement the importer", "size": "m" },
+              { "id": "t2", "title": "Test the importer", "size": "s" }
+            ]
+          }
+        ]
+      }
+    },
+    { "kind": "think", "ms": 900, "outputTokens": 220 },
+    {
+      "kind": "tool",
+      "name": "Write",
+      "input": { "file_path": "src/importer.ts", "content": "export function importRows(rows: string[]): number {\n  return rows.length;\n}\n" }
+    },
+    { "kind": "hang", "ms": 3600000 },
+    { "kind": "text", "text": "Back after a long pause; closing the first task." },
+    {
+      "kind": "mcp",
+      "server": "aoc",
+      "tool": "task_done",
+      "args": { "task_id": "t1", "evidence": { "kind": "diff", "ref": "src/importer.ts" } }
+    },
+    { "kind": "text", "text": "The importer is in place." },
+    { "kind": "endTurn", "final": true }
+  ]
+}

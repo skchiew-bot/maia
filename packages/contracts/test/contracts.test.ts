@@ -38,7 +38,9 @@ describe('liveness precedence (§4)', () => {
   });
   it('dead on missing heartbeat, stalled on silence, working on tools, thinking otherwise', () => {
     expect(deriveLiveness({ ...base, lastHeartbeatAt: 0 }, 100_000).state).toBe('dead');
-    expect(deriveLiveness({ ...base, lastHeartbeatAt: 400_000 }, 400_000).state).toBe('stalled');
+    // Stall threshold is 10 minutes of silence (CEO decision, 2026-10-09).
+    expect(deriveLiveness({ ...base, lastHeartbeatAt: 540_000 }, 540_000).state).toBe('thinking');
+    expect(deriveLiveness({ ...base, lastHeartbeatAt: 660_000 }, 660_000).state).toBe('stalled');
     expect(deriveLiveness({ ...base, lastToolActivityAt: 100_000 }, now).state).toBe('working');
     expect(deriveLiveness({ ...base, toolInFlightSince: 100_000 }, now).state).toBe('working');
     expect(deriveLiveness({ ...base, lastStreamActivityAt: 100_000 }, now).state).toBe('thinking');

@@ -335,9 +335,14 @@ export class DecisionEngine implements DecisionService {
       card.excludedApproverIds.includes(user.id) ||
       (card.kind !== 'uat_signoff' && card.requesterId === user.id)
     ) {
-      // Sole-Approver fallback: in an org with one active Approver, their own requests would otherwise
-      // deadlock. Allowed (and recorded selfApproved) except for credit top-ups, which never go to the requester.
-      if (!(card.requesterId === user.id && this.isSoleApprover(user) && card.kind !== 'credit_topup')) {
+      // Optional sole-Approver fallback (decisions.soleApproverFallback, off by default): the only active Approver
+      // may resolve their own request, recorded selfApproved — never a credit top-up, which never goes to the requester.
+      const fallback =
+        this.ctx.config.decisions.soleApproverFallback &&
+        card.requesterId === user.id &&
+        card.kind !== 'credit_topup' &&
+        this.isSoleApprover(user);
+      if (!fallback) {
         return no('separation_of_duties');
       }
     }

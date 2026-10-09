@@ -27,7 +27,7 @@
   /* text (AA on --surface) */
   --text: #1b1f24;
   --text-2: #48515e;
-  --text-3: #66707d;
+  --text-3: #606976;
   --text-inverse: #ffffff;
 
   /* brand */
@@ -39,7 +39,7 @@
   --brand-grey: #58595b;
 
   /* liveness (precedence: waiting > throttled > dead > stalled > thinking > working) */
-  --live-working: #17804a;
+  --live-working: #167c48;
   --live-working-soft: #e3f4ea;
   --live-thinking: #5b6675;
   --live-thinking-soft: #eceff3;
@@ -67,7 +67,7 @@
 
   /* categorical series (paired: discovery = series-1, execution = series-2) */
   --series-1: #5d3fd3;
-  --series-2: #0e7c86;
+  --series-2: #00949a;
   --series-3: #c2410c;
   --series-4: #2563eb;
   --series-5: #a21caf;
@@ -151,8 +151,8 @@
     --danger: #ff7a6e;
     --info: #72aaff;
 
-    --series-1: #a593f2;
-    --series-2: #2bb3bf;
+    --series-1: #8c79e0;
+    --series-2: #00939a;
     --series-3: #f08a4b;
     --series-4: #72aaff;
     --series-5: #e07ae6;
@@ -674,12 +674,253 @@ button { font: inherit; }
 .lockd { display: inline-flex; align-items: center; gap: 4px; font-weight: 600; }
 .lockd .i { width: 12px; height: 12px; color: var(--text-2); }
 
+/* ---- view 0: control tower ---- */
+.summary {
+  display: flex; align-items: flex-start; gap: var(--sp-2); padding: var(--sp-3) var(--sp-4);
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); font-size: var(--fs-md); color: var(--text-2);
+}
+.summary b { color: var(--text); }
+.summary > .i { width: 16px; height: 16px; margin-top: 2px; color: var(--accent); }
+.kpi__delta { display: inline-flex; align-items: center; gap: 2px; }
+.kpi__ic--ok, .i--ok, .i--okc { color: var(--ok); }
+.kpi__value--word { align-items: center; gap: 6px; font-size: var(--fs-xl); }
+.kpi__value--word .i { width: 18px; height: 18px; }
+.kpi__meta .i { vertical-align: -2px; }
+.tw-main { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: var(--sp-4); align-items: start; }
+.tw-rail { display: grid; gap: var(--sp-4); min-width: 0; }
+.queue__key { display: flex; flex-wrap: wrap; align-items: center; gap: 4px var(--sp-3); padding: var(--sp-2) var(--sp-4); border-bottom: 1px solid var(--border); font-size: var(--fs-xs); color: var(--text-2); }
+.sev { display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-xs); font-weight: 600; color: var(--text); white-space: nowrap; }
+.sev .i { width: 13px; height: 13px; }
+.sev--critical .i { color: var(--danger); }
+.sev--high .i { color: var(--warn); }
+.sev--medium .i { color: var(--text-2); }
+.sev--low .i { color: var(--text-3); }
+.qlist > li + li { border-top: 1px solid var(--border); }
+.q {
+  display: grid; grid-template-columns: 20px minmax(0, 1fr) 196px; grid-template-areas: "rank main right";
+  align-items: center; gap: var(--sp-2) var(--sp-3); padding: var(--sp-3) var(--sp-4) var(--sp-3) calc(var(--sp-4) - 4px); border-left: 4px solid transparent;
+}
+.q__right { grid-area: right; display: grid; justify-items: end; gap: var(--sp-2); }
+.q--critical { border-left-color: var(--danger); }
+.q--high { border-left-color: var(--warn); }
+.q--medium { border-left-color: var(--border-strong); }
+.q__rank { grid-area: rank; align-self: start; padding-top: 1px; font-size: var(--fs-xs); font-weight: 700; color: var(--text-2); text-align: right; }
+.q__main { grid-area: main; display: grid; gap: 3px; min-width: 0; }
+.q__meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px var(--sp-2); font-size: var(--fs-xs); color: var(--text-2); }
+.q__meta .badge { height: 20px; }
+.q__kind { font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; }
+.q__title { font-size: var(--fs-md); line-height: 1.3; }
+.q__basis { font-size: var(--fs-xs); color: var(--text-2); }
+.q__side { display: flex; align-items: center; gap: var(--sp-3); }
+.q__age { display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-xs); font-weight: 600; white-space: nowrap; }
+.cod { display: flex; align-items: center; gap: var(--sp-2); }
+.cod__bar { position: relative; width: 84px; height: 6px; border-radius: 3px; background: var(--surface-3); }
+.cod__bar span { position: absolute; inset: 0 auto 0 0; border-radius: 3px; background: var(--text-2); }
+.cod b { min-width: 2ch; font-size: var(--fs-md); text-align: right; }
+.q__act .btn { height: 28px; }
+.chip--pk, .chip--sev { background: var(--surface); color: var(--text); border-color: var(--border-strong); }
+.chip--sev { font-weight: 700; }
+.q-more { border-top: 1px solid var(--border); }
+.q-more > summary { display: flex; align-items: center; gap: 6px; padding: var(--sp-2) var(--sp-4); font-size: var(--fs-xs); font-weight: 600; color: var(--text-2); cursor: pointer; list-style: none; }
+.q-more > summary::-webkit-details-marker { display: none; }
+.q-more > summary:hover { background: var(--surface-2); }
+.q-more[open] > summary .chev { transform: rotate(90deg); }
+.q-more .qlist { border-top: 1px solid var(--border); }
+.fleet__body { display: grid; gap: var(--sp-3); }
+.mix { display: flex; gap: 2px; height: 24px; }
+.mix__seg { display: grid; place-items: center; min-width: 24px; color: var(--text-inverse); font-size: var(--fs-xs); font-weight: 700; }
+.mix__seg:first-child { border-radius: 4px 0 0 4px; }
+.mix__seg:last-child { border-radius: 0 4px 4px 0; }
+.mix__seg--waiting { background: var(--live-waiting); }
+.mix__seg--throttled { background: var(--live-throttled); }
+.mix__seg--dead { background: var(--live-dead); }
+.mix__seg--stalled { background: var(--live-stalled); }
+.mix__seg--thinking { background: var(--live-thinking); }
+.mix__seg--working { background: var(--live-working); }
+.mix__legend { display: flex; flex-wrap: wrap; gap: 6px var(--sp-3); font-size: var(--fs-xs); }
+.mix__legend li { display: inline-flex; align-items: center; gap: 6px; }
+.fm-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-3) var(--sp-5); margin-top: var(--sp-2); }
+.fm figcaption { display: flex; align-items: center; gap: 4px; font-size: var(--fs-xs); color: var(--text-2); }
+.fm figcaption b { margin-left: auto; font-size: var(--fs-sm); color: var(--text); }
+.fm__ic { display: inline-grid; }
+.fm__ic .i { width: 12px; height: 12px; }
+.fm__ic--working { color: var(--live-working); }
+.fm__ic--thinking { color: var(--live-thinking); }
+.fm__ic--stalled { color: var(--live-stalled); }
+.fm__ic--dead { color: var(--live-dead); }
+.fm__ic--throttled { color: var(--live-throttled); }
+.fm__ic--waiting { color: var(--live-waiting); }
+.fm__chart { display: block; width: 100%; height: auto; margin-top: 4px; overflow: visible; }
+.fm__chart rect { fill: var(--text-3); }
+.fm__chart rect.fm__now { fill: var(--text); }
+.fstats { display: grid; gap: var(--sp-3); padding-top: var(--sp-3); border-top: 1px solid var(--border); }
+.fst { display: grid; grid-template-columns: 156px minmax(0, 1fr); grid-template-areas: "k viz" "v viz"; align-items: center; column-gap: var(--sp-4); }
+.fst__k { grid-area: k; font-size: var(--fs-xs); color: var(--text-3); }
+.fst__v { grid-area: v; }
+.fst__v b { margin-right: 6px; font-size: var(--fs-lg); font-weight: 600; }
+.fst__v span { font-size: var(--fs-xs); color: var(--text-2); }
+.fst__viz { grid-area: viz; display: grid; gap: 4px; min-width: 0; }
+.fst__note { font-size: var(--fs-xs); color: var(--text-3); }
+.bullet--sm { height: 8px; margin-top: 0; }
+.tstrip { position: relative; height: 10px; border-radius: 2px; background: var(--surface-2); }
+.tstrip__span { position: absolute; top: 0; bottom: 0; min-width: 3px; border-radius: 2px; background: var(--live-throttled); }
+.tstrip__now { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; background: var(--text); }
+.tstrip__axis { display: flex; justify-content: space-between; font-size: var(--fs-xs); color: var(--text-3); }
+.fst__ctx { display: grid; grid-template-columns: 112px minmax(0, 1fr) 3em; align-items: center; gap: var(--sp-2); font-size: var(--fs-xs); color: var(--text-2); }
+.fst__ctx .meter { margin: 0; }
+.fst__ctx b { color: var(--text); text-align: right; }
+.wip__p { display: grid; grid-template-columns: minmax(48px, 1fr) 3em; align-items: center; gap: var(--sp-2); }
+.wip__p .meter { margin: 0; }
+.wip__p b { text-align: right; }
+.tw-flow { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--sp-4); align-items: stretch; }
+.flowp__body { display: grid; gap: var(--sp-2); }
+.flowsum { font-size: var(--fs-xs); color: var(--text-2); }
+.flowsum b { color: var(--text); }
+.hb { position: relative; height: 136px; margin: var(--sp-3) 0 0 22px; }
+.hb__grid span { position: absolute; left: 0; right: 0; top: var(--y); border-top: 1px solid var(--grid); }
+.hb__grid i { position: absolute; left: -22px; top: -8px; width: 14px; font-size: var(--fs-xs); font-style: normal; color: var(--text-3); text-align: right; }
+.hb__plot { position: absolute; inset: 0; }
+.hb__cols { position: absolute; inset: 0; display: flex; }
+.hb__col { position: relative; flex: 1 1 0; display: flex; justify-content: center; align-items: flex-end; }
+.hb__bar { display: flex; flex-direction: column; gap: 2px; width: 56%; overflow: hidden; border-radius: 3px 3px 0 0; }
+.hb__ver { background: var(--text-3); }
+.hb__flag { background: var(--warn); }
+.hb__n { position: absolute; left: 0; right: 0; margin-bottom: 2px; font-size: var(--fs-xs); color: var(--text-2); text-align: center; line-height: 1.2; }
+.hb__base { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.hb__halo { fill: none; stroke: var(--surface); stroke-width: 5; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
+.hb__line { fill: none; stroke: var(--text); stroke-width: 2; vector-effect: non-scaling-stroke; stroke-linejoin: round; stroke-linecap: round; }
+.hb__x { display: flex; margin-left: 22px; padding-top: 4px; border-top: 1px solid var(--border-strong); }
+.hb__x span { flex: 1 1 0; font-size: var(--fs-xs); color: var(--text-3); text-align: center; }
+.hb__x i { display: block; font-style: normal; font-weight: 600; color: var(--text); }
+.sw--ver { background: var(--text-3); }
+.sw--flag { background: var(--warn); }
+.lg--base { width: 18px; height: 2px; background: var(--text); }
+.funnel { width: 100%; border-collapse: collapse; }
+.funnel th, .funnel td { padding: 7px var(--sp-3); border-bottom: 1px solid var(--border); font-size: var(--fs-sm); text-align: left; vertical-align: middle; }
+.funnel thead th { font-size: var(--fs-xs); font-weight: 600; color: var(--text-3); }
+.funnel th:first-child, .funnel td:first-child { padding-left: var(--sp-4); }
+.funnel th:last-child, .funnel td:last-child { padding-right: var(--sp-4); }
+.funnel tbody th { font-weight: 600; white-space: nowrap; }
+.funnel .num { text-align: right; white-space: nowrap; }
+.fn__cell { display: flex; align-items: center; gap: var(--sp-2); min-width: 72px; }
+.fn__track { position: relative; flex: 1 1 auto; height: 8px; }
+.fn__track span { position: absolute; inset: 0 auto 0 0; border-radius: 0 3px 3px 0; background: var(--text-3); }
+.fn--wait th, .fn--wait td { background: var(--live-stalled-soft); }
+.fn--wait .fn__track span { background: var(--warn); }
+.fn__tag { display: flex; align-items: center; gap: 4px; font-size: var(--fs-xs); font-weight: 600; }
+.fn__tag .i { width: 12px; height: 12px; color: var(--warn); }
+.fn__foot { display: flex; gap: 6px; align-items: flex-start; padding: var(--sp-3) var(--sp-4); font-size: var(--fs-xs); color: var(--text-2); }
+.fn__foot b { color: var(--text); }
+.fn__foot .i { margin-top: 1px; }
+.lat__axis, .lat__row { display: grid; grid-template-columns: 104px minmax(0, 1fr) 40px; align-items: center; column-gap: var(--sp-3); }
+.lat__row { grid-template-areas: "kind track br" "kind txt br"; row-gap: 3px; }
+.lat__axis { height: 16px; }
+.lat__scale { position: relative; height: 16px; }
+.lat__scale i { position: absolute; top: 0; transform: translateX(-50%); font-size: var(--fs-xs); font-style: normal; color: var(--text-3); white-space: nowrap; }
+.lat__scale i:first-child { transform: none; }
+.lat__scale i:last-child { transform: translateX(-100%); }
+.lat { display: grid; }
+.lat__row { padding-block: 7px; border-top: 1px solid var(--border); }
+.lat__kind { grid-area: kind; font-size: var(--fs-sm); font-weight: 600; line-height: 1.25; }
+.lat__kind span { display: block; font-size: var(--fs-xs); font-weight: 400; color: var(--text-2); }
+.lat__track { grid-area: track; position: relative; height: 14px; }
+.lat__track::before { content: ""; position: absolute; left: 0; right: 0; top: 6px; height: 2px; background: var(--grid); }
+.lat__p50 { position: absolute; left: 0; top: 2px; height: 10px; border-radius: 0 3px 3px 0; background: var(--text-2); }
+.lat__p90 { position: absolute; top: 6px; height: 2px; background: var(--text-2); }
+.lat__p90::after { content: ""; position: absolute; right: -1px; top: -4px; width: 2px; height: 10px; background: var(--text-2); }
+.lat__sla { position: absolute; left: 50%; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; background: var(--danger); }
+.lat__txt { grid-area: txt; font-size: var(--fs-xs); color: var(--text-2); line-height: 1.3; }
+.lat__txt b { color: var(--text); }
+.lat__br { grid-area: br; display: inline-flex; align-items: center; justify-content: flex-end; gap: 3px; font-size: var(--fs-sm); color: var(--text-2); }
+.lat__br span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.lat__br--on { font-weight: 700; color: var(--text); }
+.sw--p50 { background: var(--text-2); }
+.lg--p90 { width: 18px; height: 2px; background: var(--text-2); }
+.lg--sla { width: 2px; height: 12px; background: var(--danger); }
+.spend { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.25fr); }
+.spend__col { display: grid; align-content: start; gap: var(--sp-4); min-width: 0; padding: var(--sp-3) var(--sp-4) var(--sp-4); }
+.spend__col + .spend__col { border-left: 1px solid var(--border); }
+.spend__vs { display: flex; align-items: center; gap: 4px; font-size: var(--fs-xs); color: var(--text-2); }
+.spend__vs .i { color: var(--text-2); }
+.spend__note { font-size: var(--fs-xs); color: var(--text-2); }
+.bullet { position: relative; height: 10px; margin-top: var(--sp-2); border-radius: 2px; background: var(--surface-3); }
+.bullet__bar { position: absolute; inset: 0 auto 0 0; border-radius: 2px 0 0 2px; background: var(--text-2); }
+.bullet__mark { position: absolute; top: -4px; bottom: -4px; width: 2px; margin-left: -1px; background: var(--text); }
+.bullet__axis { position: relative; display: flex; justify-content: space-between; margin-top: 3px; font-size: var(--fs-xs); color: var(--text-3); }
+.bullet__avg { position: absolute; transform: translateX(-50%); font-weight: 600; color: var(--text); }
+.mm { display: flex; gap: 2px; height: 14px; margin-top: var(--sp-2); }
+.mm__seg { min-width: 3px; }
+.mm__seg:first-child { border-radius: 3px 0 0 3px; }
+.mm__seg:last-child { border-radius: 0 3px 3px 0; }
+.mm__seg--opus, .sw--opus { background: var(--text); }
+.mm__seg--sonnet, .sw--sonnet { background: var(--text-3); }
+.mm__seg--haiku, .sw--haiku { background: var(--border-strong); }
+.mm__seg--disc { background: var(--series-1); }
+.mm__seg--exec { background: var(--series-2); }
+.legend--stack { display: grid; gap: 2px; margin-top: var(--sp-2); }
+.legend b { color: var(--text); }
+.hbars { display: grid; grid-template-columns: max-content minmax(0, 1fr) max-content; align-items: center; gap: var(--sp-2) var(--sp-3); margin-block: var(--sp-2); font-size: var(--fs-xs); }
+.hbars dt { color: var(--text-2); }
+.hbar { position: relative; height: 12px; }
+.hbar span { position: absolute; inset: 0 auto 0 0; min-width: 2px; border-radius: 0 3px 3px 0; background: var(--text-3); }
+.hbar__v { color: var(--text-2); text-align: right; white-space: nowrap; }
+.cap__axis, .cap { display: grid; grid-template-columns: 168px minmax(0, 1fr) 124px; align-items: center; gap: var(--sp-3); }
+.cap__scale { position: relative; height: 16px; }
+.cap__scale i { position: absolute; top: 0; font-size: var(--fs-xs); font-style: normal; color: var(--text-3); white-space: nowrap; }
+.cap__scale i + i { transform: translateX(-50%); font-weight: 600; color: var(--text); }
+.caps { display: grid; gap: var(--sp-2); }
+.cap__name b { display: block; font-size: var(--fs-sm); }
+.cap__name span { font-size: var(--fs-xs); color: var(--text-2); }
+.cap__track { position: relative; height: 10px; border-radius: 2px; background: var(--surface-2); }
+.cap__bar { position: absolute; inset: 0 auto 0 0; border-radius: 2px 0 0 2px; background: var(--text-3); }
+.cap--risk .cap__bar { background: var(--warn); }
+.cap__end { position: absolute; top: -4px; bottom: -4px; width: 2px; margin-left: -1px; background: var(--text); }
+.cap__when { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 4px; font-size: var(--fs-xs); font-weight: 600; }
+.cap__when span { flex-basis: 100%; font-weight: 400; color: var(--text-2); }
+.igs { display: flex; flex-wrap: wrap; gap: 1px; overflow: hidden; border-radius: 0 0 var(--radius) var(--radius); background: var(--border); }
+.ig { flex: 1 1 172px; display: grid; align-content: start; gap: 2px; padding: var(--sp-3) var(--sp-4); background: var(--surface); }
+.ig__t { display: flex; align-items: center; gap: 4px; font-size: var(--fs-xs); font-weight: 600; color: var(--text-2); }
+.ig__t .i { width: 13px; height: 13px; }
+.ig--ok .ig__t .i { color: var(--ok); }
+.ig--warn .ig__t .i { color: var(--warn); }
+.ig--info .ig__t .i { color: var(--info); }
+.ig__v { font-size: var(--fs-lg); font-weight: 600; }
+.ig__s { font-size: var(--fs-xs); color: var(--text-2); }
+.rads > li + li { border-top: 1px solid var(--border); }
+.rad { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr) minmax(0, 1.4fr); align-items: center; gap: var(--sp-2) var(--sp-5); padding: var(--sp-2) var(--sp-4); }
+.rad__head { display: flex; align-items: center; gap: var(--sp-3); min-width: 0; }
+.rad__name { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-weight: 600; }
+.sig { display: inline-flex; flex: none; align-items: center; gap: 4px; min-width: 70px; font-size: var(--fs-xs); font-weight: 700; }
+.sig .i { width: 13px; height: 13px; }
+.sig--normal .i { color: var(--ok); }
+.sig--watch .i { color: var(--warn); }
+.sig--alert .i { color: var(--danger); }
+.rad__viz { display: grid; gap: 3px; }
+.rad__track { position: relative; height: 10px; border-radius: 2px; background: var(--surface-2); }
+.rad__bar { position: absolute; inset: 0 auto 0 0; border-radius: 0 2px 2px 0; color: var(--text-3); background: currentColor; }
+.rad--watch .rad__bar { color: var(--warn); }
+.rad--alert .rad__bar { color: var(--danger); }
+.rad__bar--over::after { content: ""; position: absolute; right: -6px; top: -2px; border-style: solid; border-width: 7px 0 7px 6px; border-color: transparent transparent transparent currentColor; }
+.rad__base { position: absolute; left: 33.33%; top: -4px; bottom: -4px; width: 2px; margin-left: -1px; background: var(--text); }
+.rad--axis { padding-block: var(--sp-2) 0; font-size: var(--fs-xs); font-weight: 600; color: var(--text-3); }
+.rad__scale { position: relative; height: 16px; font-weight: 400; }
+.rad__scale i { position: absolute; top: 0; transform: translateX(-50%); font-style: normal; white-space: nowrap; }
+.rad__scale i:first-child { transform: none; }
+.rad__scale i:last-child { transform: translateX(-100%); }
+.rad__scale i:nth-child(2) { font-weight: 600; color: var(--text); }
+.rad__nums, .rad__why { font-size: var(--fs-xs); color: var(--text-2); }
+.rad__nums b { color: var(--text); }
+.rad__foot { display: flex; gap: 6px; align-items: flex-start; padding: var(--sp-3) var(--sp-4); border-top: 1px solid var(--border); font-size: var(--fs-xs); color: var(--text-2); }
+.rad__foot .i { margin-top: 1px; color: var(--text-2); }
+
 /* ---- responsive ---- */
-@media (max-width: 1240px) {
+@media (max-width: 1320px) {
   .appbar__meta .hide-md { display: none; }
+}
+@media (max-width: 1240px) {
   .console { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; grid-template-areas: "mult" "rail" "ended"; }
   .kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .kpi--spend { grid-column: span 2; }
+  .kpi--wide { grid-column: span 2; }
 }
 @media (min-width: 761px) and (max-width: 1240px) {
   .dlist { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -716,7 +957,7 @@ button { font: inherit; }
   .page { padding-inline: var(--sp-4); padding-block: var(--sp-4) var(--sp-6); }
   .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .kpi { padding: var(--sp-3); }
-  .kpi--spend { grid-column: 1 / -1; }
+  .kpi--wide { grid-column: 1 / -1; }
   .tiles { grid-template-columns: minmax(0, 1fr); }
   .tl__hr--odd { display: none; }
   .band__name, .band__now, .tl__thrlabel, .band--narrow .band__dur { display: none; }
@@ -791,6 +1032,16 @@ button { font: inherit; }
   .mtable td:nth-child(6) { grid-column: 4; grid-row: 1; text-align: right !important; }
   .mtable td:nth-child(n+2):nth-child(-n+5)::before { content: attr(data-label); display: block; font-size: var(--fs-xs); color: var(--text-3); }
 
+  /* work in progress: name and %, bar, then sessions and open tasks */
+  .rt.wip tr { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-areas: "name name" "prog prog" "sess tasks"; gap: 4px var(--sp-4); }
+  .rt.wip td { display: block; }
+  .rt.wip td::before { content: none; }
+  .rt.wip td:nth-child(1) { grid-area: name; }
+  .rt.wip td:nth-child(4) { grid-area: prog; }
+  .rt.wip td:nth-child(2) { grid-area: sess; }
+  .rt.wip td:nth-child(3) { grid-area: tasks; }
+  .rt.wip td:nth-child(2) .cv::after { content: " live sessions"; color: var(--text-2); }
+  .rt.wip td:nth-child(3) .cv::after { content: " open tasks"; color: var(--text-2); }
   .rt tr.grp { padding-block: var(--sp-3) 0; border-bottom: 0; }
   .rt tr.grp th { display: block; }
   .rt tr.grp th::before { content: none; }
@@ -803,6 +1054,43 @@ button { font: inherit; }
   .trend { width: 84px; }
   .trend__txt .cell-sub { white-space: normal; }
 }
+/* control tower reflow */
+@media (max-width: 1240px) {
+  .tw-main { grid-template-columns: minmax(0, 1fr); }
+  .tw-rail { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+  .tw-flow { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .tw-flow > :last-child { grid-column: 1 / -1; }
+  .spend { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .spend__col:last-child { grid-column: 1 / -1; border-left: 0; border-top: 1px solid var(--border); }
+}
+@media (max-width: 900px) {
+  .tw-rail, .tw-flow, .spend { grid-template-columns: minmax(0, 1fr); }
+  .spend__col + .spend__col { border-left: 0; border-top: 1px solid var(--border); }
+  .rad { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .rad__why { grid-column: 1 / -1; }
+  .rad--axis > span:last-child { display: none; }
+}
+@media (max-width: 760px) {
+  .tab .hide-sm { display: none; }
+  .q { grid-template-columns: 16px minmax(0, 1fr); grid-template-areas: "rank main" ". right"; padding-right: var(--sp-3); }
+  .q__right { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; }
+  .fst { grid-template-columns: minmax(0, 1fr); grid-template-areas: "k" "v" "viz"; row-gap: 4px; }
+  .lat__axis, .lat__row { grid-template-columns: 92px minmax(0, 1fr) 32px; }
+  .cap { grid-template-columns: minmax(0, 1fr) auto; }
+  .cap__axis { grid-template-columns: minmax(0, 1fr); }
+  .cap__axis > span:not(.cap__scale) { display: none; }
+  .cap { grid-template-areas: "name when" "track track"; }
+  .cap__name { grid-area: name; }
+  .cap__track { grid-area: track; }
+  .cap__when { grid-area: when; justify-content: flex-end; text-align: right; }
+  .rad { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .rad--axis > span:first-child { display: none; }
+}
+@media (max-width: 420px) {
+  .funnel th, .funnel td { padding-inline: var(--sp-2); }
+  .funnel tbody th { white-space: normal; }
+  .fn__cell { min-width: 44px; }
+}
 @media (forced-colors: active) {
   .badge, .chip, .count, .tab__count { border: 1px solid CanvasText; }
   .meter__fill, .pbar__done, .pair__bar, .mbar span { background: CanvasText; }
@@ -810,7 +1098,7 @@ button { font: inherit; }
 </style>
 </head>
 <body>
-<svg class="sprite" aria-hidden="true" focusable="false"><defs><symbol id="i-working" viewBox="0 0 16 16"><path d="M4.5 2.8v10.4L13.2 8z"/></symbol><symbol id="i-thinking" viewBox="0 0 16 16"><circle cx="3" cy="8" r="1.7"/><circle cx="8" cy="8" r="1.7"/><circle cx="13" cy="8" r="1.7"/></symbol><symbol id="i-stalled" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M8 1.3l7.2 13H.8L8 1.3zM7.1 5.6v4.6h1.8V5.6H7.1zm0 5.8v1.8h1.8v-1.8H7.1z"/></symbol><symbol id="i-dead" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M8 1a7 7 0 1 1 0 14A7 7 0 0 1 8 1zM5.4 4.2L4.2 5.4 6.8 8l-2.6 2.6 1.2 1.2L8 9.2l2.6 2.6 1.2-1.2L9.2 8l2.6-2.6-1.2-1.2L8 6.8 5.4 4.2z"/></symbol><symbol id="i-throttled" viewBox="0 0 16 16"><path d="M3.5 1.5h9V3h-1.1v1c0 1.7-1 2.9-2.5 4 1.5 1.1 2.5 2.3 2.5 4v1h1.1v1.5h-9V13h1.1v-1c0-1.7 1-2.9 2.5-4-1.5-1.1-2.5-2.3-2.5-4V3H3.5V1.5z"/></symbol><symbol id="i-waiting" viewBox="0 0 16 16"><path d="M8 1.2L14.8 8 8 14.8 1.2 8z"/></symbol><symbol id="i-clock" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M8 1a7 7 0 1 1 0 14A7 7 0 0 1 8 1zm0 1.6a5.4 5.4 0 1 0 0 10.8A5.4 5.4 0 0 0 8 2.6zM7.2 4.4h1.6v3.2l2.4 1.5-.8 1.4-3.2-2V4.4z"/></symbol><symbol id="i-key" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M10.6 1.4a4 4 0 1 1-1.4 7.8L8 10.4H6.6v1.5H5.1v1.5H2.4V11l4.2-4.2a4 4 0 0 1 4-5.4zm.9 2.1a1.2 1.2 0 1 0 0 2.4 1.2 1.2 0 0 0 0-2.4z"/></symbol><symbol id="i-check" viewBox="0 0 16 16"><path d="M6.3 11.8L2.6 8.1l1.2-1.2 2.5 2.5 5.9-5.9 1.2 1.2z"/></symbol><symbol id="i-check-circle" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M8 1a7 7 0 1 1 0 14A7 7 0 0 1 8 1zm3.2 4.1L7 9.3 4.9 7.2 3.8 8.3 7 11.5l5.3-5.3-1.1-1.1z"/></symbol><symbol id="i-half-circle" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M8 1a7 7 0 1 1 0 14A7 7 0 0 1 8 1zm0 1.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11z"/><path d="M8 4v8a4 4 0 0 0 0-8z"/></symbol><symbol id="i-circle" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M8 1a7 7 0 1 1 0 14A7 7 0 0 1 8 1zm0 1.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11z"/></symbol><symbol id="i-shield" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M8 1L2.5 3v4.3c0 3.3 2.3 6.1 5.5 7.2 3.2-1.1 5.5-3.9 5.5-7.2V3L8 1zm-.9 9.7L4.7 8.3l1.1-1.1 1.3 1.3 3.2-3.2 1.1 1.1-4.3 4.3z"/></symbol><symbol id="i-flag" viewBox="0 0 16 16"><path d="M3.2 1.5h1.6v13H3.2zM5.6 2.2h7.6L11.4 5.3l1.8 3.1H5.6z"/></symbol><symbol id="i-lock" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M4.8 6.5V4.8a3.2 3.2 0 0 1 6.4 0v1.7h1v8H3.8v-8h1zm1.6 0h3.2V4.8a1.6 1.6 0 0 0-3.2 0v1.7z"/></symbol><symbol id="i-person" viewBox="0 0 16 16"><path d="M8 8.2a3.1 3.1 0 1 0 0-6.2 3.1 3.1 0 0 0 0 6.2zM2.6 14.5c.2-2.9 2.6-5 5.4-5s5.2 2.1 5.4 5H2.6z"/></symbol><symbol id="i-rollback" viewBox="0 0 16 16"><path d="M2.6 2.2v5h5L5.7 5.3a4 4 0 1 1-1.3 5.2l-1.5.7a5.6 5.6 0 1 0 1.7-7l-2-2z"/></symbol><symbol id="i-enh" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M8 1a7 7 0 1 1 0 14A7 7 0 0 1 8 1zm-.8 3.4v2.8H4.4v1.6h2.8v2.8h1.6V8.8h2.8V7.2H8.8V4.4H7.2z"/></symbol><symbol id="i-drift" viewBox="0 0 16 16"><path d="M1.8 2.6h12.4L8 13.4z"/></symbol><symbol id="i-pencil" viewBox="0 0 16 16"><path d="M11.1 1.6l3.3 3.3-8.6 8.6-3.9.9.9-3.9z"/></symbol><symbol id="i-archive" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M1.5 2h13v3.2h-13zM2.5 6.2h11v7.8h-11zm3.3 1.6v1.5h4.4V7.8z"/></symbol><symbol id="i-eye" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M8 3c3.3 0 5.9 2.2 7 5-1.1 2.8-3.7 5-7 5S2.1 10.8 1 8c1.1-2.8 3.7-5 7-5zm0 2.2a2.8 2.8 0 1 0 0 5.6 2.8 2.8 0 0 0 0-5.6z"/></symbol><symbol id="i-info" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M8 1a7 7 0 1 1 0 14A7 7 0 0 1 8 1zm-.8 5.6V12h1.6V6.6H7.2zm0-2.6v1.6h1.6V4H7.2z"/></symbol><symbol id="i-star" viewBox="0 0 16 16"><path d="M8 1.2l2 4.3 4.7.5-3.5 3.2 1 4.6L8 11.4l-4.2 2.4 1-4.6L1.3 6l4.7-.5z"/></symbol><symbol id="i-message" viewBox="0 0 16 16"><path d="M1.8 2.2h12.4v8.9H6.6l-3.4 2.7v-2.7H1.8z"/></symbol><symbol id="i-restart" viewBox="0 0 16 16"><path d="M13.4 2.2v5h-5l1.9-1.9a4 4 0 1 0 1.3 5.2l1.5.7a5.6 5.6 0 1 1-1.7-7l2-2z"/></symbol><symbol id="i-rollover" viewBox="0 0 16 16"><path d="M1.5 7.2h7.9L6.8 4.6l1.1-1.1L12.4 8l-4.5 4.5-1.1-1.1 2.6-2.6H1.5zM12.9 2.5h1.6v11h-1.6z"/></symbol><symbol id="i-chev" viewBox="0 0 16 16"><path d="M5.6 3.2L10.4 8l-4.8 4.8-1.1-1.1L8.2 8 4.5 4.3z"/></symbol><symbol id="i-warn" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M8 1.3l7.2 13H.8L8 1.3zM7.1 5.6v4.6h1.8V5.6H7.1zm0 5.8v1.8h1.8v-1.8H7.1z"/></symbol></defs></svg>
+<svg class="sprite" aria-hidden="true" focusable="false"><defs><symbol id="i-working" viewBox="0 0 16 16"><path d="M4.5 2.8v10.4L13.2 8z"/></symbol><symbol id="i-thinking" viewBox="0 0 16 16"><circle cx="3" cy="8" r="1.7"/><circle cx="8" cy="8" r="1.7"/><circle cx="13" cy="8" r="1.7"/></symbol><symbol id="i-stalled" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M8 1.3l7.2 13H.8L8 1.3zM7.1 5.6v4.6h1.8V5.6H7.1zm0 5.8v1.8h1.8v-1.8H7.1z"/></symbol><symbol id="i-dead" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M8 1a7 7 0 1 1 0 14A7 7 0 0 1 8 1zM5.4 4.2L4.2 5.4 6.8 8l-2.6 2.6 1.2 1.2L8 9.2l2.6 2.6 1.2-1.2L9.2 8l2.6-2.6-1.2-1.2L8 6.8 5.4 4.2z"/></symbol><symbol id="i-throttled" viewBox="0 0 16 16"><path d="M3.5 1.5h9V3h-1.1v1c0 1.7-1 2.9-2.5 4 1.5 1.1 2.5 2.3 2.5 4v1h1.1v1.5h-9V13h1.1v-1c0-1.7 1-2.9 2.5-4-1.5-1.1-2.5-2.3-2.5-4V3H3.5V1.5z"/></symbol><symbol id="i-waiting" viewBox="0 0 16 16"><path d="M8 1.2L14.8 8 8 14.8 1.2 8z"/></symbol><symbol id="i-clock" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M8 1a7 7 0 1 1 0 14A7 7 0 0 1 8 1zm0 1.6a5.4 5.4 0 1 0 0 10.8A5.4 5.4 0 0 0 8 2.6zM7.2 4.4h1.6v3.2l2.4 1.5-.8 1.4-3.2-2V4.4z"/></symbol><symbol id="i-key" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M10.6 1.4a4 4 0 1 1-1.4 7.8L8 10.4H6.6v1.5H5.1v1.5H2.4V11l4.2-4.2a4 4 0 0 1 4-5.4zm.9 2.1a1.2 1.2 0 1 0 0 2.4 1.2 1.2 0 0 0 0-2.4z"/></symbol><symbol id="i-check" viewBox="0 0 16 16"><path d="M6.3 11.8L2.6 8.1l1.2-1.2 2.5 2.5 5.9-5.9 1.2 1.2z"/></symbol><symbol id="i-check-circle" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M8 1a7 7 0 1 1 0 14A7 7 0 0 1 8 1zm3.2 4.1L7 9.3 4.9 7.2 3.8 8.3 7 11.5l5.3-5.3-1.1-1.1z"/></symbol><symbol id="i-half-circle" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M8 1a7 7 0 1 1 0 14A7 7 0 0 1 8 1zm0 1.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11z"/><path d="M8 4v8a4 4 0 0 0 0-8z"/></symbol><symbol id="i-circle" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M8 1a7 7 0 1 1 0 14A7 7 0 0 1 8 1zm0 1.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11z"/></symbol><symbol id="i-shield" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M8 1L2.5 3v4.3c0 3.3 2.3 6.1 5.5 7.2 3.2-1.1 5.5-3.9 5.5-7.2V3L8 1zm-.9 9.7L4.7 8.3l1.1-1.1 1.3 1.3 3.2-3.2 1.1 1.1-4.3 4.3z"/></symbol><symbol id="i-flag" viewBox="0 0 16 16"><path d="M3.2 1.5h1.6v13H3.2zM5.6 2.2h7.6L11.4 5.3l1.8 3.1H5.6z"/></symbol><symbol id="i-lock" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M4.8 6.5V4.8a3.2 3.2 0 0 1 6.4 0v1.7h1v8H3.8v-8h1zm1.6 0h3.2V4.8a1.6 1.6 0 0 0-3.2 0v1.7z"/></symbol><symbol id="i-person" viewBox="0 0 16 16"><path d="M8 8.2a3.1 3.1 0 1 0 0-6.2 3.1 3.1 0 0 0 0 6.2zM2.6 14.5c.2-2.9 2.6-5 5.4-5s5.2 2.1 5.4 5H2.6z"/></symbol><symbol id="i-rollback" viewBox="0 0 16 16"><path d="M2.6 2.2v5h5L5.7 5.3a4 4 0 1 1-1.3 5.2l-1.5.7a5.6 5.6 0 1 0 1.7-7l-2-2z"/></symbol><symbol id="i-enh" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M8 1a7 7 0 1 1 0 14A7 7 0 0 1 8 1zm-.8 3.4v2.8H4.4v1.6h2.8v2.8h1.6V8.8h2.8V7.2H8.8V4.4H7.2z"/></symbol><symbol id="i-drift" viewBox="0 0 16 16"><path d="M1.8 2.6h12.4L8 13.4z"/></symbol><symbol id="i-pencil" viewBox="0 0 16 16"><path d="M11.1 1.6l3.3 3.3-8.6 8.6-3.9.9.9-3.9z"/></symbol><symbol id="i-archive" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M1.5 2h13v3.2h-13zM2.5 6.2h11v7.8h-11zm3.3 1.6v1.5h4.4V7.8z"/></symbol><symbol id="i-eye" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M8 3c3.3 0 5.9 2.2 7 5-1.1 2.8-3.7 5-7 5S2.1 10.8 1 8c1.1-2.8 3.7-5 7-5zm0 2.2a2.8 2.8 0 1 0 0 5.6 2.8 2.8 0 0 0 0-5.6z"/></symbol><symbol id="i-info" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M8 1a7 7 0 1 1 0 14A7 7 0 0 1 8 1zm-.8 5.6V12h1.6V6.6H7.2zm0-2.6v1.6h1.6V4H7.2z"/></symbol><symbol id="i-star" viewBox="0 0 16 16"><path d="M8 1.2l2 4.3 4.7.5-3.5 3.2 1 4.6L8 11.4l-4.2 2.4 1-4.6L1.3 6l4.7-.5z"/></symbol><symbol id="i-message" viewBox="0 0 16 16"><path d="M1.8 2.2h12.4v8.9H6.6l-3.4 2.7v-2.7H1.8z"/></symbol><symbol id="i-restart" viewBox="0 0 16 16"><path d="M13.4 2.2v5h-5l1.9-1.9a4 4 0 1 0 1.3 5.2l1.5.7a5.6 5.6 0 1 1-1.7-7l2-2z"/></symbol><symbol id="i-rollover" viewBox="0 0 16 16"><path d="M1.5 7.2h7.9L6.8 4.6l1.1-1.1L12.4 8l-4.5 4.5-1.1-1.1 2.6-2.6H1.5zM12.9 2.5h1.6v11h-1.6z"/></symbol><symbol id="i-chev" viewBox="0 0 16 16"><path d="M5.6 3.2L10.4 8l-4.8 4.8-1.1-1.1L8.2 8 4.5 4.3z"/></symbol><symbol id="i-warn" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M8 1.3l7.2 13H.8L8 1.3zM7.1 5.6v4.6h1.8V5.6H7.1zm0 5.8v1.8h1.8v-1.8H7.1z"/></symbol><symbol id="i-sev-critical" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M5.1 1h5.8L15 5.1v5.8L10.9 15H5.1L1 10.9V5.1L5.1 1zm2 3.4v4.7h1.8V4.4H7.1zm0 5.9v1.8h1.8v-1.8H7.1z"/></symbol><symbol id="i-sev-high" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M8 1.3l7.2 13H.8L8 1.3zM7.1 5.6v4.6h1.8V5.6H7.1zm0 5.8v1.8h1.8v-1.8H7.1z"/></symbol><symbol id="i-sev-medium" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M8 1.5a6.5 6.5 0 1 1 0 13 6.5 6.5 0 0 1 0-13zM4.8 7.1v1.8h6.4V7.1H4.8z"/></symbol><symbol id="i-sev-low" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M8 2.5a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11zm0 1.6a3.9 3.9 0 1 0 0 7.8 3.9 3.9 0 0 0 0-7.8z"/></symbol><symbol id="i-up" viewBox="0 0 16 16"><path d="M8 2.5l5 5.5H9.6v5.5H6.4V8H3z"/></symbol><symbol id="i-down" viewBox="0 0 16 16"><path d="M8 13.5L3 8h3.4V2.5h3.2V8H13z"/></symbol><symbol id="i-tower" viewBox="0 0 16 16"><path d="M6.2 1.5h3.6l.6 3.2H5.6zM5.4 6h5.2l1.9 8.5H3.5zM1.5 14.5h13V16h-13z"/></symbol></defs></svg>
 <a class="skip" href="#main">Skip to content</a>
 <header class="appbar">
   <div class="appbar__in">
@@ -821,7 +1109,8 @@ button { font: inherit; }
       <span class="brand__name">Agent Ops Console</span>
     </div>
     <nav class="tabs" role="tablist" aria-label="Views">
-      <a class="tab" role="tab" id="tab-console" href="#console" aria-controls="view-console" aria-selected="true">Console<span class="tab__count" aria-label="6 decisions waiting">6</span></a>
+      <a class="tab" role="tab" id="tab-tower" href="#tower" aria-controls="view-tower" aria-selected="true"><span><span class="hide-sm">Control </span>Tower</span><span class="tab__count" aria-label="12 items need you">12</span></a>
+      <a class="tab" role="tab" id="tab-console" href="#console" aria-controls="view-console" aria-selected="false" tabindex="-1">Console</a>
       <a class="tab" role="tab" id="tab-session" href="#session" aria-controls="view-session" aria-selected="false" tabindex="-1">Session</a>
       <a class="tab" role="tab" id="tab-registry" href="#registry" aria-controls="view-registry" aria-selected="false" tabindex="-1">Registry</a>
     </nav>
@@ -834,6 +1123,607 @@ button { font: inherit; }
   </div>
 </header>
 <main id="main" class="page" tabindex="-1">
+
+    <section id="view-tower" class="view" role="tabpanel" aria-labelledby="tab-tower">
+      <header class="pagehead">
+        <h1>Control Tower</h1>
+        <p class="pagehead__sub">Approver landing view · all 4 projects · Fri 9 Oct 2026, 13:42 MYT · builders land on Console</p>
+      </header>
+      <p class="summary"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-tower"/></svg><span><b>12 items need you</b>, led by two passkey gates (the Claims Intake rollback for INC-0093 and the CX Copilot v1.4.0 go-live); verified flow is 18% above baseline, tickets wait longest in UAT, and the ledger chain is verified.</span></p>
+
+      <section class="kpis" aria-label="Operation at a glance">
+        <div class="kpi">
+          <p class="kpi__label"><span class="kpi__ic kpi__ic--waiting"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-waiting"/></svg></span>Needs you</p>
+          <p class="kpi__value">12<span class="kpi__unit">items</span></p>
+          <p class="kpi__meta">oldest <b>3d 2h</b> (ticket #1162) · 2 passkey gates</p>
+        </div>
+        <div class="kpi">
+          <p class="kpi__label">Flow · verified tasks today</p>
+          <p class="kpi__value">21<span class="kpi__unit kpi__delta"><svg class="i i--ok" aria-hidden="true" focusable="false"><use href="#i-up"/></svg>18% vs baseline</span></p>
+          <p class="kpi__meta">7-day baseline <b>17.8</b> by this hour · 2 flagged closes</p>
+        </div>
+        <div class="kpi">
+          <p class="kpi__label">Human gate latency</p>
+          <p class="kpi__value">31m<span class="kpi__unit">p50 today</span></p>
+          <p class="kpi__meta">p90 <b>1h 58m</b> vs SLA 1h · <svg class="i i--warn" aria-hidden="true" focusable="false"><use href="#i-warn"/></svg><b>2</b> open past SLA</p>
+        </div>
+        <div class="kpi">
+          <p class="kpi__label">Customer waiting</p>
+          <p class="kpi__value">16<span class="kpi__unit">open tickets</span></p>
+          <p class="kpi__meta">oldest <b>Sev 2</b>: 3d 2h in UAT · no Sev 1 open</p>
+        </div>
+        <div class="kpi kpi--wide">
+          <p class="kpi__label">Integrity</p>
+          <p class="kpi__value kpi__value--word"><span class="kpi__ic kpi__ic--ok"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-shield"/></svg></span>Verified</p>
+          <p class="kpi__meta">chain vs off-host anchor 02:00 (<b>11h 42m</b> old) · checked 13:40</p>
+        </div>
+      </section>
+      <div class="tw-main">
+        <section class="panel queue" aria-labelledby="q-h">
+          <div class="panel__head">
+            <h2 id="q-h">Attention queue <span class="count">12</span></h2>
+            <p class="panel__meta">Ranked by cost of delay, not age</p>
+          </div>
+          <p class="queue__key">Score 0–100 weighs customer impact, blocked work, idle spend and audit exposure, and rises with age. <span class="sev sev--critical"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-sev-critical"/></svg>Critical</span> <span class="sev sev--high"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-sev-high"/></svg>High</span> <span class="sev sev--medium"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-sev-medium"/></svg>Medium</span> <span class="sev sev--low"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-sev-low"/></svg>Low</span></p>
+          <ol class="qlist">
+            <li class="q q--critical">
+              <span class="q__rank"><span class="sr-only">Rank </span>1</span>
+              <div class="q__main">
+                <p class="q__meta"><span class="sev sev--critical"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-sev-critical"/></svg>Critical</span><span class="q__kind">Rollback gate</span><span>Claims Intake Bot</span><span class="chip chip--pk"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-key"/></svg>passkey</span><span class="chip chip--test"><span class="chip__k">test</span>main</span></p>
+                <h3 class="q__title">Roll claims-intake main back to p1-done (7c2e9d1)</h3>
+                <p class="q__basis">Rollback gate · 47m · INC-0093 open, about 38 duplicate claims an hour</p>
+              </div>
+              <div class="q__right">
+                <div class="q__side">
+                  <p class="q__age"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-clock"/></svg>47m</p>
+                  <p class="cod" role="img" aria-label="Cost of delay 94 of 100"><span class="cod__bar" aria-hidden="true"><span style="width:94%"></span></span><b>94</b></p>
+                </div>
+                <div class="q__act"><button type="button" class="btn btn--primary"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-key"/></svg>Approve with passkey</button></div>
+              </div>
+            </li>
+            <li class="q q--critical">
+              <span class="q__rank"><span class="sr-only">Rank </span>2</span>
+              <div class="q__main">
+                <p class="q__meta"><span class="sev sev--critical"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-sev-critical"/></svg>Critical</span><span class="q__kind">Go-live gate</span><span>CX Copilot</span><span class="chip chip--pk"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-key"/></svg>passkey</span><span class="chip chip--test"><span class="chip__k">test</span>production</span></p>
+                <h3 class="q__title">Promote CX Copilot v1.4.0 to production</h3>
+                <p class="q__basis">Go-live gate · 1h 05m · holds a UAT-signed fix for ticket #1171 (Sev 2)</p>
+              </div>
+              <div class="q__right">
+                <div class="q__side">
+                  <p class="q__age"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-clock"/></svg>1h 05m</p>
+                  <p class="cod" role="img" aria-label="Cost of delay 81 of 100"><span class="cod__bar" aria-hidden="true"><span style="width:81%"></span></span><b>81</b></p>
+                </div>
+                <div class="q__act"><button type="button" class="btn btn--primary"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-key"/></svg>Approve with passkey</button></div>
+              </div>
+            </li>
+            <li class="q q--high">
+              <span class="q__rank"><span class="sr-only">Rank </span>3</span>
+              <div class="q__main">
+                <p class="q__meta"><span class="sev sev--high"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-sev-high"/></svg>High</span><span class="q__kind">Post-incident record</span><span>Claims Intake Bot</span><span class="chip">break-glass</span></p>
+                <h3 class="q__title">CR-0219 overdue after the 8 Oct break-glass hotfix</h3>
+                <p class="q__basis">Break-glass follow-up · 3h 30m overdue · open audit finding until filed</p>
+              </div>
+              <div class="q__right">
+                <div class="q__side">
+                  <p class="q__age"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-clock"/></svg>3h 30m</p>
+                  <p class="cod" role="img" aria-label="Cost of delay 66 of 100"><span class="cod__bar" aria-hidden="true"><span style="width:66%"></span></span><b>66</b></p>
+                </div>
+                <div class="q__act"><button type="button" class="btn">Open record</button></div>
+              </div>
+            </li>
+            <li class="q q--high">
+              <span class="q__rank"><span class="sr-only">Rank </span>4</span>
+              <div class="q__main">
+                <p class="q__meta"><span class="sev sev--high"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-sev-high"/></svg>High</span><span class="q__kind">Dead session</span><span>Claims Intake Bot</span><span class="badge badge--dead"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-dead"/></svg>Dead</span></p>
+                <h3 class="q__title">flaky-e2e s2 exited with code 137</h3>
+                <p class="q__basis">Dead session · 21m · the flaky e2e suite blocks 3 queued merges</p>
+              </div>
+              <div class="q__right">
+                <div class="q__side">
+                  <p class="q__age"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-clock"/></svg>21m</p>
+                  <p class="cod" role="img" aria-label="Cost of delay 58 of 100"><span class="cod__bar" aria-hidden="true"><span style="width:58%"></span></span><b>58</b></p>
+                </div>
+                <div class="q__act"><button type="button" class="btn"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-restart"/></svg>Restart</button></div>
+              </div>
+            </li>
+            <li class="q q--high">
+              <span class="q__rank"><span class="sr-only">Rank </span>5</span>
+              <div class="q__main">
+                <p class="q__meta"><span class="sev sev--high"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-sev-high"/></svg>High</span><span class="q__kind">Customer waiting</span><span>Claims Intake Bot</span><span class="chip chip--sev">Sev 2</span></p>
+                <h3 class="q__title">Ticket #1162: claim status not updating for agents</h3>
+                <p class="q__basis">Ticket in UAT · 3d 2h · past the 2-day Sev 2 SLA, requester has not tested</p>
+              </div>
+              <div class="q__right">
+                <div class="q__side">
+                  <p class="q__age"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-clock"/></svg>3d 2h</p>
+                  <p class="cod" role="img" aria-label="Cost of delay 52 of 100"><span class="cod__bar" aria-hidden="true"><span style="width:52%"></span></span><b>52</b></p>
+                </div>
+                <div class="q__act"><button type="button" class="btn">Open ticket</button></div>
+              </div>
+            </li>
+            <li class="q q--medium">
+              <span class="q__rank"><span class="sr-only">Rank </span>6</span>
+              <div class="q__main">
+                <p class="q__meta"><span class="sev sev--medium"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-sev-medium"/></svg>Medium</span><span class="q__kind">Agent decision</span><span>Claims Intake Bot</span><span class="chip chip--test"><span class="chip__k">test</span>data</span></p>
+                <h3 class="q__title">Backfill 41,208 claims into claim_status</h3>
+                <p class="q__basis">Data decision · 2h 14m · backfill-status s5 paused, past the 1h SLA</p>
+              </div>
+              <div class="q__right">
+                <div class="q__side">
+                  <p class="q__age"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-clock"/></svg>2h 14m</p>
+                  <p class="cod" role="img" aria-label="Cost of delay 47 of 100"><span class="cod__bar" aria-hidden="true"><span style="width:47%"></span></span><b>47</b></p>
+                </div>
+                <div class="q__act"><button type="button" class="btn btn--primary">Approve</button></div>
+              </div>
+            </li>
+            <li class="q q--medium">
+              <span class="q__rank"><span class="sr-only">Rank </span>7</span>
+              <div class="q__main">
+                <p class="q__meta"><span class="sev sev--medium"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-sev-medium"/></svg>Medium</span><span class="q__kind">Credit blocked</span><span>CX Copilot</span><span class="chip chip--policy">policy</span></p>
+                <h3 class="q__title">Wei Jie at credit cap; top-up of $40.00 pending</h3>
+                <p class="q__basis">Credit cap · 31m · agent-assist s3 stops at its next task boundary</p>
+              </div>
+              <div class="q__right">
+                <div class="q__side">
+                  <p class="q__age"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-clock"/></svg>31m</p>
+                  <p class="cod" role="img" aria-label="Cost of delay 43 of 100"><span class="cod__bar" aria-hidden="true"><span style="width:43%"></span></span><b>43</b></p>
+                </div>
+                <div class="q__act"><button type="button" class="btn btn--primary">Approve top-up</button></div>
+              </div>
+            </li>
+            <li class="q q--medium">
+              <span class="q__rank"><span class="sr-only">Rank </span>8</span>
+              <div class="q__main">
+                <p class="q__meta"><span class="sev sev--medium"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-sev-medium"/></svg>Medium</span><span class="q__kind">Stalled session</span><span>Claims Intake Bot</span><span class="badge badge--stalled"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-stalled"/></svg>Stalled</span></p>
+                <h3 class="q__title">ocr-fields s3 has produced no output</h3>
+                <p class="q__basis">Stalled · 11m · process alive but silent at 64% context</p>
+              </div>
+              <div class="q__right">
+                <div class="q__side">
+                  <p class="q__age"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-clock"/></svg>11m</p>
+                  <p class="cod" role="img" aria-label="Cost of delay 34 of 100"><span class="cod__bar" aria-hidden="true"><span style="width:34%"></span></span><b>34</b></p>
+                </div>
+                <div class="q__act"><button type="button" class="btn"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-message"/></svg>Nudge…</button></div>
+              </div>
+            </li>
+            <li class="q q--low">
+              <span class="q__rank"><span class="sr-only">Rank </span>9</span>
+              <div class="q__main">
+                <p class="q__meta"><span class="sev sev--low"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-sev-low"/></svg>Low</span><span class="q__kind">Throttled session</span><span>AOC Platform</span><span class="badge badge--throttled"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-throttled"/></svg>Throttled</span></p>
+                <h3 class="q__title">web-console s2 hit its plan limit</h3>
+                <p class="q__basis">Plan limit · idle 24m · resets 14:05; 47 min lost to throttling today</p>
+              </div>
+              <div class="q__right">
+                <div class="q__side">
+                  <p class="q__age"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-clock"/></svg>24m</p>
+                  <p class="cod" role="img" aria-label="Cost of delay 22 of 100"><span class="cod__bar" aria-hidden="true"><span style="width:22%"></span></span><b>22</b></p>
+                </div>
+                <div class="q__act"><button type="button" class="btn">Open</button></div>
+              </div>
+            </li>
+            <li class="q q--low">
+              <span class="q__rank"><span class="sr-only">Rank </span>10</span>
+              <div class="q__main">
+                <p class="q__meta"><span class="sev sev--low"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-sev-low"/></svg>Low</span><span class="q__kind">FX discrepancy</span><span>AOC Platform</span><span class="chip">re-fetched once</span></p>
+                <h3 class="q__title">8 Oct USD/MYR: scraped 4.2210 vs BNM 4.2250</h3>
+                <p class="q__basis">FX discrepancy · 4h 37m · 8 Oct RM rollups stay provisional until reviewed</p>
+              </div>
+              <div class="q__right">
+                <div class="q__side">
+                  <p class="q__age"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-clock"/></svg>4h 37m</p>
+                  <p class="cod" role="img" aria-label="Cost of delay 16 of 100"><span class="cod__bar" aria-hidden="true"><span style="width:16%"></span></span><b>16</b></p>
+                </div>
+                <div class="q__act"><button type="button" class="btn">Review</button></div>
+              </div>
+            </li>
+            <li class="q q--low">
+              <span class="q__rank"><span class="sr-only">Rank </span>11</span>
+              <div class="q__main">
+                <p class="q__meta"><span class="sev sev--low"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-sev-low"/></svg>Low</span><span class="q__kind">Agent decision</span><span>CX Copilot</span><span class="chip chip--test"><span class="chip__k">test</span>data</span></p>
+                <h3 class="q__title">Mask NRIC numbers at ingest, or on screen only</h3>
+                <p class="q__basis">PII decision · 6m · nric-masking s1 discovery run paused</p>
+              </div>
+              <div class="q__right">
+                <div class="q__side">
+                  <p class="q__age"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-clock"/></svg>6m</p>
+                  <p class="cod" role="img" aria-label="Cost of delay 14 of 100"><span class="cod__bar" aria-hidden="true"><span style="width:14%"></span></span><b>14</b></p>
+                </div>
+                <div class="q__act"><button type="button" class="btn btn--primary">Approve</button></div>
+              </div>
+            </li>
+          </ol>
+          <details class="q-more">
+            <summary><svg class="i chev" aria-hidden="true" focusable="false"><use href="#i-chev"/></svg>Show 1 lower-cost item</summary>
+            <ol class="qlist" start="12">
+            <li class="q q--low">
+              <span class="q__rank"><span class="sr-only">Rank </span>12</span>
+              <div class="q__main">
+                <p class="q__meta"><span class="sev sev--low"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-sev-low"/></svg>Low</span><span class="q__kind">Lesson binding</span><span>migration runs</span><span class="chip chip--policy">policy</span></p>
+                <h3 class="q__title">Bind lesson L-017 to migration runs</h3>
+                <p class="q__basis">Lesson binding · 12m · about 14 min saved per migration run</p>
+              </div>
+              <div class="q__right">
+                <div class="q__side">
+                  <p class="q__age"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-clock"/></svg>12m</p>
+                  <p class="cod" role="img" aria-label="Cost of delay 8 of 100"><span class="cod__bar" aria-hidden="true"><span style="width:8%"></span></span><b>8</b></p>
+                </div>
+                <div class="q__act"><button type="button" class="btn btn--primary">Approve</button></div>
+              </div>
+            </li>
+            </ol>
+          </details>
+        </section>
+        <div class="tw-rail">
+
+        <section class="panel fleet" aria-labelledby="fleet-h">
+          <div class="panel__head">
+            <h2 id="fleet-h">Fleet health</h2>
+            <p class="panel__meta">9 live sessions · 5 ended today</p>
+          </div>
+          <div class="panel__body fleet__body">
+            <div class="mix" role="img" aria-label="Liveness mix of 9 live sessions: 2 waiting on you, 1 throttled, 1 dead, 1 stalled, 1 thinking, 3 working."><span class="mix__seg mix__seg--waiting" style="flex:2">2</span><span class="mix__seg mix__seg--throttled" style="flex:1">1</span><span class="mix__seg mix__seg--dead" style="flex:1">1</span><span class="mix__seg mix__seg--stalled" style="flex:1">1</span><span class="mix__seg mix__seg--thinking" style="flex:1">1</span><span class="mix__seg mix__seg--working" style="flex:3">3</span></div>
+            <ul class="mix__legend" aria-hidden="true"><li><span class="badge badge--waiting"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-waiting"/></svg>Waiting on you</span><b>2</b></li><li><span class="badge badge--throttled"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-throttled"/></svg>Throttled</span><b>1</b></li><li><span class="badge badge--dead"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-dead"/></svg>Dead</span><b>1</b></li><li><span class="badge badge--stalled"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-stalled"/></svg>Stalled</span><b>1</b></li><li><span class="badge badge--thinking"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-thinking"/></svg>Thinking</span><b>1</b></li><li><span class="badge badge--working"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-working"/></svg>Working</span><b>3</b></li></ul>
+            <div>
+              <h3 class="minihead">Last 2 hours · 5-minute buckets · same 0–10 scale</h3>
+              <div class="fm-grid">
+              <figure class="fm">
+                <figcaption><span class="fm__ic fm__ic--working"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-working"/></svg></span>Working<b>3</b></figcaption>
+                <svg class="fm__chart" viewBox="0 0 120 24" role="img" aria-label="Working sessions per 5-minute bucket, 11:45 to 13:40: 8, 7, 8, 8, 7, 7, 7, 7, 8, 8, 7, 9, 9, 8, 9, 8, 7, 6, 7, 6, 5, 5, 4, 3. Now 3."><title>Working sessions per 5-minute bucket, 11:45 to 13:40: 8, 7, 8, 8, 7, 7, 7, 7, 8, 8, 7, 9, 9, 8, 9, 8, 7, 6, 7, 6, 5, 5, 4, 3. Now 3.</title><line class="spark__base" x1="0" y1="22.5" x2="120" y2="22.5"/><rect x="0.7" y="5.2" width="3.6" height="16.8"/><rect x="5.7" y="7.3" width="3.6" height="14.7"/><rect x="10.7" y="5.2" width="3.6" height="16.8"/><rect x="15.7" y="5.2" width="3.6" height="16.8"/><rect x="20.7" y="7.3" width="3.6" height="14.7"/><rect x="25.7" y="7.3" width="3.6" height="14.7"/><rect x="30.7" y="7.3" width="3.6" height="14.7"/><rect x="35.7" y="7.3" width="3.6" height="14.7"/><rect x="40.7" y="5.2" width="3.6" height="16.8"/><rect x="45.7" y="5.2" width="3.6" height="16.8"/><rect x="50.7" y="7.3" width="3.6" height="14.7"/><rect x="55.7" y="3.1" width="3.6" height="18.9"/><rect x="60.7" y="3.1" width="3.6" height="18.9"/><rect x="65.7" y="5.2" width="3.6" height="16.8"/><rect x="70.7" y="3.1" width="3.6" height="18.9"/><rect x="75.7" y="5.2" width="3.6" height="16.8"/><rect x="80.7" y="7.3" width="3.6" height="14.7"/><rect x="85.7" y="9.4" width="3.6" height="12.6"/><rect x="90.7" y="7.3" width="3.6" height="14.7"/><rect x="95.7" y="9.4" width="3.6" height="12.6"/><rect x="100.7" y="11.5" width="3.6" height="10.5"/><rect x="105.7" y="11.5" width="3.6" height="10.5"/><rect x="110.7" y="13.6" width="3.6" height="8.4"/><rect class="fm__now" x="115.7" y="15.7" width="3.6" height="6.3"/></svg>
+              </figure>
+              <figure class="fm">
+                <figcaption><span class="fm__ic fm__ic--thinking"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-thinking"/></svg></span>Thinking<b>1</b></figcaption>
+                <svg class="fm__chart" viewBox="0 0 120 24" role="img" aria-label="Thinking sessions per 5-minute bucket, 11:45 to 13:40: 1, 2, 1, 1, 2, 1, 1, 2, 1, 1, 2, 1, 1, 2, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1. Now 1."><title>Thinking sessions per 5-minute bucket, 11:45 to 13:40: 1, 2, 1, 1, 2, 1, 1, 2, 1, 1, 2, 1, 1, 2, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1. Now 1.</title><line class="spark__base" x1="0" y1="22.5" x2="120" y2="22.5"/><rect x="0.7" y="19.9" width="3.6" height="2.1"/><rect x="5.7" y="17.8" width="3.6" height="4.2"/><rect x="10.7" y="19.9" width="3.6" height="2.1"/><rect x="15.7" y="19.9" width="3.6" height="2.1"/><rect x="20.7" y="17.8" width="3.6" height="4.2"/><rect x="25.7" y="19.9" width="3.6" height="2.1"/><rect x="30.7" y="19.9" width="3.6" height="2.1"/><rect x="35.7" y="17.8" width="3.6" height="4.2"/><rect x="40.7" y="19.9" width="3.6" height="2.1"/><rect x="45.7" y="19.9" width="3.6" height="2.1"/><rect x="50.7" y="17.8" width="3.6" height="4.2"/><rect x="55.7" y="19.9" width="3.6" height="2.1"/><rect x="60.7" y="19.9" width="3.6" height="2.1"/><rect x="65.7" y="17.8" width="3.6" height="4.2"/><rect x="70.7" y="19.9" width="3.6" height="2.1"/><rect x="75.7" y="19.9" width="3.6" height="2.1"/><rect x="80.7" y="19.9" width="3.6" height="2.1"/><rect x="85.7" y="17.8" width="3.6" height="4.2"/><rect x="90.7" y="19.9" width="3.6" height="2.1"/><rect x="95.7" y="19.9" width="3.6" height="2.1"/><rect x="100.7" y="19.9" width="3.6" height="2.1"/><rect x="105.7" y="19.9" width="3.6" height="2.1"/><rect x="110.7" y="19.9" width="3.6" height="2.1"/><rect class="fm__now" x="115.7" y="19.9" width="3.6" height="2.1"/></svg>
+              </figure>
+              <figure class="fm">
+                <figcaption><span class="fm__ic fm__ic--stalled"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-stalled"/></svg></span>Stalled<b>1</b></figcaption>
+                <svg class="fm__chart" viewBox="0 0 120 24" role="img" aria-label="Stalled sessions per 5-minute bucket, 11:45 to 13:40: 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1. Now 1."><title>Stalled sessions per 5-minute bucket, 11:45 to 13:40: 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1. Now 1.</title><line class="spark__base" x1="0" y1="22.5" x2="120" y2="22.5"/><rect x="110.7" y="19.9" width="3.6" height="2.1"/><rect class="fm__now" x="115.7" y="19.9" width="3.6" height="2.1"/></svg>
+              </figure>
+              <figure class="fm">
+                <figcaption><span class="fm__ic fm__ic--dead"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-dead"/></svg></span>Dead<b>1</b></figcaption>
+                <svg class="fm__chart" viewBox="0 0 120 24" role="img" aria-label="Dead sessions per 5-minute bucket, 11:45 to 13:40: 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1. Now 1."><title>Dead sessions per 5-minute bucket, 11:45 to 13:40: 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1. Now 1.</title><line class="spark__base" x1="0" y1="22.5" x2="120" y2="22.5"/><rect x="100.7" y="19.9" width="3.6" height="2.1"/><rect x="105.7" y="19.9" width="3.6" height="2.1"/><rect x="110.7" y="19.9" width="3.6" height="2.1"/><rect class="fm__now" x="115.7" y="19.9" width="3.6" height="2.1"/></svg>
+              </figure>
+              <figure class="fm">
+                <figcaption><span class="fm__ic fm__ic--throttled"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-throttled"/></svg></span>Throttled<b>1</b></figcaption>
+                <svg class="fm__chart" viewBox="0 0 120 24" role="img" aria-label="Throttled sessions per 5-minute bucket, 11:45 to 13:40: 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1. Now 1."><title>Throttled sessions per 5-minute bucket, 11:45 to 13:40: 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1. Now 1.</title><line class="spark__base" x1="0" y1="22.5" x2="120" y2="22.5"/><rect x="95.7" y="19.9" width="3.6" height="2.1"/><rect x="100.7" y="19.9" width="3.6" height="2.1"/><rect x="105.7" y="19.9" width="3.6" height="2.1"/><rect x="110.7" y="19.9" width="3.6" height="2.1"/><rect class="fm__now" x="115.7" y="19.9" width="3.6" height="2.1"/></svg>
+              </figure>
+              <figure class="fm">
+                <figcaption><span class="fm__ic fm__ic--waiting"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-waiting"/></svg></span>Waiting on you<b>2</b></figcaption>
+                <svg class="fm__chart" viewBox="0 0 120 24" role="img" aria-label="Waiting on you sessions per 5-minute bucket, 11:45 to 13:40: 1, 1, 1, 1, 1, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2. Now 2."><title>Waiting on you sessions per 5-minute bucket, 11:45 to 13:40: 1, 1, 1, 1, 1, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2. Now 2.</title><line class="spark__base" x1="0" y1="22.5" x2="120" y2="22.5"/><rect x="0.7" y="19.9" width="3.6" height="2.1"/><rect x="5.7" y="19.9" width="3.6" height="2.1"/><rect x="10.7" y="19.9" width="3.6" height="2.1"/><rect x="15.7" y="19.9" width="3.6" height="2.1"/><rect x="20.7" y="19.9" width="3.6" height="2.1"/><rect x="25.7" y="17.8" width="3.6" height="4.2"/><rect x="30.7" y="17.8" width="3.6" height="4.2"/><rect x="35.7" y="19.9" width="3.6" height="2.1"/><rect x="40.7" y="19.9" width="3.6" height="2.1"/><rect x="45.7" y="19.9" width="3.6" height="2.1"/><rect x="50.7" y="19.9" width="3.6" height="2.1"/><rect x="55.7" y="19.9" width="3.6" height="2.1"/><rect x="60.7" y="19.9" width="3.6" height="2.1"/><rect x="65.7" y="19.9" width="3.6" height="2.1"/><rect x="70.7" y="19.9" width="3.6" height="2.1"/><rect x="75.7" y="19.9" width="3.6" height="2.1"/><rect x="80.7" y="19.9" width="3.6" height="2.1"/><rect x="85.7" y="19.9" width="3.6" height="2.1"/><rect x="90.7" y="19.9" width="3.6" height="2.1"/><rect x="95.7" y="19.9" width="3.6" height="2.1"/><rect x="100.7" y="19.9" width="3.6" height="2.1"/><rect x="105.7" y="19.9" width="3.6" height="2.1"/><rect x="110.7" y="19.9" width="3.6" height="2.1"/><rect class="fm__now" x="115.7" y="17.8" width="3.6" height="4.2"/></svg>
+              </figure>
+              </div>
+            </div>
+            <ul class="fstats">
+              <li class="fst">
+                <p class="fst__k">Stall rate</p>
+                <p class="fst__v"><b>11%</b><span>1 of 9 live</span></p>
+                <div class="fst__viz">
+                  <div class="bullet bullet--sm" role="img" aria-label="Stall rate 11% against a 7-day average of 6%."><span class="bullet__bar" style="width:44%"></span><span class="bullet__mark" style="left:24%"></span></div>
+                  <p class="fst__note">Marker: 7-day average 6% · scale 0–25%</p>
+                </div>
+              </li>
+              <li class="fst">
+                <p class="fst__k">Lost to throttling today</p>
+                <p class="fst__v"><b>47 min</b><span>2 plan-limit hits</span></p>
+                <div class="fst__viz">
+                  <div class="tstrip" role="img" aria-label="Throttled today: 10:41 to 11:04 (agent-assist s3) and 13:18 to 13:42 (web-console s2)."><span class="tstrip__span" style="left:52.62%;width:5.48%"></span><span class="tstrip__span" style="left:90.00%;width:5.71%"></span><span class="tstrip__now" style="left:95.71%"></span></div>
+                  <p class="tstrip__axis" aria-hidden="true"><span>07:00</span><span>10:30</span><span>14:00</span></p>
+                </div>
+              </li>
+              <li class="fst">
+                <p class="fst__k">Rollover pressure</p>
+                <p class="fst__v"><b>2</b><span>sessions above 60% context</span></p>
+                <div class="fst__viz"><p class="fst__ctx"><span>web-console s2</span><span class="meter meter--warn" aria-hidden="true"><span class="meter__fill" style="width:72%"></span><span class="meter__mark" style="left:60%"></span></span><span class="sr-only">web-console s2 at 72% of its context window</span><b>72%</b></p><p class="fst__ctx"><span>ocr-fields s3</span><span class="meter" aria-hidden="true"><span class="meter__fill" style="width:64%"></span><span class="meter__mark" style="left:60%"></span></span><span class="sr-only">ocr-fields s3 at 64% of its context window</span><b>64%</b></p></div>
+              </li>
+            </ul>
+          </div>
+        </section>
+
+        <section class="panel" aria-labelledby="wip-h">
+          <div class="panel__head">
+            <h2 id="wip-h">Work in progress</h2>
+            <p class="panel__meta">By project · weighted completion</p>
+          </div>
+          <table class="dt rt wip" role="table">
+            <caption class="sr-only">Work in progress by project</caption>
+            <thead role="rowgroup"><tr role="row"><th role="columnheader" scope="col">Project</th><th role="columnheader" scope="col" class="num">Live sessions</th><th role="columnheader" scope="col" class="num">Open tasks</th><th role="columnheader" scope="col">Progress</th></tr></thead>
+            <tbody role="rowgroup">
+              <tr>
+                <td class="nowrap" data-label="Project"><div class="cv"><b>CX Copilot</b></div></td>
+                <td class="num" data-label="Live sessions"><div class="cv">3</div></td>
+                <td class="num" data-label="Open tasks"><div class="cv">23</div></td>
+                <td data-label="Progress"><div class="cv"><span class="wip__p"><span class="meter" aria-hidden="true"><span class="meter__fill" style="width:61%"></span></span><span class="sr-only">61% of declared weight done</span><b>61%</b></span></div></td>
+              </tr>
+              <tr>
+                <td class="nowrap" data-label="Project"><div class="cv"><b>Claims Intake Bot</b></div></td>
+                <td class="num" data-label="Live sessions"><div class="cv">3</div></td>
+                <td class="num" data-label="Open tasks"><div class="cv">31</div></td>
+                <td data-label="Progress"><div class="cv"><span class="wip__p"><span class="meter" aria-hidden="true"><span class="meter__fill" style="width:48%"></span></span><span class="sr-only">48% of declared weight done</span><b>48%</b></span></div></td>
+              </tr>
+              <tr>
+                <td class="nowrap" data-label="Project"><div class="cv"><b>AOC Platform</b></div></td>
+                <td class="num" data-label="Live sessions"><div class="cv">2</div></td>
+                <td class="num" data-label="Open tasks"><div class="cv">19</div></td>
+                <td data-label="Progress"><div class="cv"><span class="wip__p"><span class="meter" aria-hidden="true"><span class="meter__fill" style="width:40%"></span></span><span class="sr-only">40% of declared weight done</span><b>40%</b></span></div></td>
+              </tr>
+              <tr>
+                <td class="nowrap" data-label="Project"><div class="cv"><b>QA Scorecard</b></div></td>
+                <td class="num" data-label="Live sessions"><div class="cv">1</div></td>
+                <td class="num" data-label="Open tasks"><div class="cv">9</div></td>
+                <td data-label="Progress"><div class="cv"><span class="wip__p"><span class="meter" aria-hidden="true"><span class="meter__fill" style="width:22%"></span></span><span class="sr-only">22% of declared weight done</span><b>22%</b></span></div></td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+        </div>
+      </div>
+      <div class="tw-flow">
+
+        <section class="panel flowp" aria-labelledby="fh-h">
+          <div class="panel__head">
+            <h2 id="fh-h">Tasks done per hour</h2>
+            <p class="panel__meta">Last 12 h · line = 7-day baseline</p>
+          </div>
+          <div class="panel__body flowp__body">
+            <p class="flowsum"><b>23</b> done today: <b>21</b> verified, <b>2</b> flagged. Baseline 17.8 by this hour, so verified flow is <b>+18%</b>.</p>
+            <div class="hb" role="img" aria-label="Tasks done per hour, 02:00 to 13:00: 02:00 0 verified, baseline 0; 03:00 0 verified, baseline 0; 04:00 0 verified, baseline 0; 05:00 0 verified, baseline 0; 06:00 0 verified, baseline 0.2; 07:00 1 verified, baseline 0.8; 08:00 3 verified, baseline 1.9; 09:00 5 verified, baseline 2.9; 10:00 3 verified + 1 flagged, baseline 3.4; 11:00 3 verified, baseline 2.8; 12:00 3 verified + 1 flagged, baseline 2.6; 13:00 3 verified, baseline 3.2.">
+              <div class="hb__grid" aria-hidden="true"><span style="--y:100%"><i>0</i></span><span style="--y:66.67%"><i>2</i></span><span style="--y:33.33%"><i>4</i></span><span style="--y:0%"><i>6</i></span></div>
+              <div class="hb__plot">
+                <div class="hb__cols"><div class="hb__col"></div><div class="hb__col"></div><div class="hb__col"></div><div class="hb__col"></div><div class="hb__col"></div><div class="hb__col"><span class="hb__bar" style="height:16.666666666666664%"><span class="hb__ver" style="flex:1"></span></span><span class="hb__n" style="bottom:16.666666666666664%">1</span></div><div class="hb__col"><span class="hb__bar" style="height:50%"><span class="hb__ver" style="flex:3"></span></span><span class="hb__n" style="bottom:50%">3</span></div><div class="hb__col"><span class="hb__bar" style="height:83.33333333333334%"><span class="hb__ver" style="flex:5"></span></span><span class="hb__n" style="bottom:83.33333333333334%">5</span></div><div class="hb__col"><span class="hb__bar" style="height:66.66666666666666%"><span class="hb__flag" style="flex:1"></span><span class="hb__ver" style="flex:3"></span></span><span class="hb__n" style="bottom:66.66666666666666%">4</span></div><div class="hb__col"><span class="hb__bar" style="height:50%"><span class="hb__ver" style="flex:3"></span></span><span class="hb__n" style="bottom:50%">3</span></div><div class="hb__col"><span class="hb__bar" style="height:66.66666666666666%"><span class="hb__flag" style="flex:1"></span><span class="hb__ver" style="flex:3"></span></span><span class="hb__n" style="bottom:66.66666666666666%">4</span></div><div class="hb__col"><span class="hb__bar" style="height:50%"><span class="hb__ver" style="flex:3"></span></span><span class="hb__n" style="bottom:50%">3</span></div></div>
+                <svg class="hb__base" viewBox="0 0 120 100" preserveAspectRatio="none" aria-hidden="true"><polyline class="hb__halo" points="5,100 15,100 25,100 35,100 45,96.7 55,86.7 65,68.3 75,51.7 85,43.3 95,53.3 105,56.7 115,46.7"/><polyline class="hb__line" points="5,100 15,100 25,100 35,100 45,96.7 55,86.7 65,68.3 75,51.7 85,43.3 95,53.3 105,56.7 115,46.7"/></svg>
+              </div>
+            </div>
+            <div class="hb__x" aria-hidden="true"><span>02</span><span class="hb__x--odd">03</span><span>04</span><span class="hb__x--odd">05</span><span>06</span><span class="hb__x--odd">07</span><span>08</span><span class="hb__x--odd">09</span><span>10</span><span class="hb__x--odd">11</span><span>12</span><span class="hb__x--odd">13<i>now</i></span></div>
+            <ul class="legend">
+              <li><span class="sw sw--ver" aria-hidden="true"></span>Verified evidence</li>
+              <li><span class="sw sw--flag" aria-hidden="true"></span>Flagged close</li>
+              <li><span class="lg lg--base" aria-hidden="true"></span>7-day baseline</li>
+              <li>13:00 hour still running</li>
+            </ul>
+          </div>
+        </section>
+
+        <section class="panel flowp" aria-labelledby="fn-h">
+          <div class="panel__head">
+            <h2 id="fn-h">Ticket funnel</h2>
+            <p class="panel__meta">16 open · 14 completed in 7 days</p>
+          </div>
+          <table class="funnel" role="table">
+            <caption class="sr-only">Open tickets by stage with median and oldest age</caption>
+            <thead><tr><th scope="col">Stage</th><th scope="col">Open</th><th scope="col" class="num">Median</th><th scope="col" class="num">Oldest</th></tr></thead>
+            <tbody>
+              <tr>
+                <th scope="row">Received</th>
+                <td><span class="fn__cell"><span class="fn__track"><span style="width:60%"></span></span><b>3</b></span></td>
+                <td class="num">35m</td>
+                <td class="num">2h 10m</td>
+              </tr>
+              <tr>
+                <th scope="row">Triage</th>
+                <td><span class="fn__cell"><span class="fn__track"><span style="width:60%"></span></span><b>3</b></span></td>
+                <td class="num">3h 05m</td>
+                <td class="num">5h 20m</td>
+              </tr>
+              <tr>
+                <th scope="row">Awaiting human</th>
+                <td><span class="fn__cell"><span class="fn__track"><span style="width:0%"></span></span><b>0</b></span></td>
+                <td class="num">—</td>
+                <td class="num">—</td>
+              </tr>
+              <tr>
+                <th scope="row">Fix-plan gate</th>
+                <td><span class="fn__cell"><span class="fn__track"><span style="width:0%"></span></span><b>0</b></span></td>
+                <td class="num">—</td>
+                <td class="num">—</td>
+              </tr>
+              <tr>
+                <th scope="row">Building</th>
+                <td><span class="fn__cell"><span class="fn__track"><span style="width:100%"></span></span><b>5</b></span></td>
+                <td class="num">19h</td>
+                <td class="num">2d 6h</td>
+              </tr>
+              <tr class="fn--wait">
+                <th scope="row">UAT<span class="fn__tag"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-warn"/></svg>work waits here</span></th>
+                <td><span class="fn__cell"><span class="fn__track"><span style="width:80%"></span></span><b>4</b></span></td>
+                <td class="num">1d 7h</td>
+                <td class="num">3d 2h</td>
+              </tr>
+              <tr>
+                <th scope="row">Go-live gate</th>
+                <td><span class="fn__cell"><span class="fn__track"><span style="width:20%"></span></span><b>1</b></span></td>
+                <td class="num">1h 05m</td>
+                <td class="num">1h 05m</td>
+              </tr>
+            </tbody>
+          </table>
+          <p class="fn__foot"><svg class="i i--okc" aria-hidden="true" focusable="false"><use href="#i-check-circle"/></svg><span>Completed: <b>14</b> in 7 days, median lead time <b>2d 9h</b>. UAT holds the longest waits; requesters have not yet tested 2 builds that are ready.</span></p>
+        </section>
+
+        <section class="panel flowp" aria-labelledby="lat-h">
+          <div class="panel__head">
+            <h2 id="lat-h">Decision latency</h2>
+            <p class="panel__meta">Last 7 days · scaled to each SLA</p>
+          </div>
+          <div class="panel__body">
+            <div class="lat__axis" aria-hidden="true"><span></span><span class="lat__scale"><i style="left:0">0</i><i style="left:50%">SLA</i><i style="left:100%">2× SLA</i></span><span></span></div>
+            <ol class="lat">
+              <li class="lat__row">
+                <p class="lat__kind">Rollback<span>1 open</span></p>
+                <div class="lat__track" role="img" aria-label="Rollback: p50 12m, p90 41m, SLA 30m, 2 breaches in 7 days, 1 open."><span class="lat__p50" style="width:20%"></span><span class="lat__p90" style="left:20%;width:48.33333333333333%"></span><span class="lat__sla"></span></div>
+                <p class="lat__txt">p50 <b>12m</b> · p90 <b>41m</b> · SLA 30m</p>
+                <p class="lat__br lat__br--on"><svg class="i i--warn" aria-hidden="true" focusable="false"><use href="#i-warn"/></svg>2<span> breaches</span></p>
+              </li>
+              <li class="lat__row">
+                <p class="lat__kind">Go-live<span>1 open</span></p>
+                <div class="lat__track" role="img" aria-label="Go-live: p50 38m, p90 1h 50m, SLA 2h, 0 breaches in 7 days, 1 open."><span class="lat__p50" style="width:15.833333333333332%"></span><span class="lat__p90" style="left:15.833333333333332%;width:29.999999999999996%"></span><span class="lat__sla"></span></div>
+                <p class="lat__txt">p50 <b>38m</b> · p90 <b>1h 50m</b> · SLA 2h</p>
+                <p class="lat__br">0<span> breaches</span></p>
+              </li>
+              <li class="lat__row">
+                <p class="lat__kind">Agent decision<span>2 open</span></p>
+                <div class="lat__track" role="img" aria-label="Agent decision: p50 14m, p90 1h 40m, SLA 1h, 3 breaches in 7 days, 2 open."><span class="lat__p50" style="width:11.666666666666666%"></span><span class="lat__p90" style="left:11.666666666666666%;width:71.66666666666667%"></span><span class="lat__sla"></span></div>
+                <p class="lat__txt">p50 <b>14m</b> · p90 <b>1h 40m</b> · SLA 1h</p>
+                <p class="lat__br lat__br--on"><svg class="i i--warn" aria-hidden="true" focusable="false"><use href="#i-warn"/></svg>3<span> breaches</span></p>
+              </li>
+              <li class="lat__row">
+                <p class="lat__kind">Credit top-up<span>1 open</span></p>
+                <div class="lat__track" role="img" aria-label="Credit top-up: p50 22m, p90 48m, SLA 1h, 0 breaches in 7 days, 1 open."><span class="lat__p50" style="width:18.333333333333332%"></span><span class="lat__p90" style="left:18.333333333333332%;width:21.666666666666668%"></span><span class="lat__sla"></span></div>
+                <p class="lat__txt">p50 <b>22m</b> · p90 <b>48m</b> · SLA 1h</p>
+                <p class="lat__br">0<span> breaches</span></p>
+              </li>
+              <li class="lat__row">
+                <p class="lat__kind">Fix plan<span>0 open</span></p>
+                <div class="lat__track" role="img" aria-label="Fix plan: p50 1h 10m, p90 3h 20m, SLA 4h, 0 breaches in 7 days, 0 open."><span class="lat__p50" style="width:14.583333333333334%"></span><span class="lat__p90" style="left:14.583333333333334%;width:27.083333333333336%"></span><span class="lat__sla"></span></div>
+                <p class="lat__txt">p50 <b>1h 10m</b> · p90 <b>3h 20m</b> · SLA 4h</p>
+                <p class="lat__br">0<span> breaches</span></p>
+              </li>
+              <li class="lat__row">
+                <p class="lat__kind">Lesson binding<span>1 open</span></p>
+                <div class="lat__track" role="img" aria-label="Lesson binding: p50 5h, p90 1d 2h, SLA 2d 0h, 0 breaches in 7 days, 1 open."><span class="lat__p50" style="width:5.208333333333334%"></span><span class="lat__p90" style="left:5.208333333333334%;width:21.875%"></span><span class="lat__sla"></span></div>
+                <p class="lat__txt">p50 <b>5h</b> · p90 <b>1d 2h</b> · SLA 2d 0h</p>
+                <p class="lat__br">0<span> breaches</span></p>
+              </li>
+            </ol>
+            <ul class="legend">
+              <li><span class="sw sw--p50" aria-hidden="true"></span>p50</li>
+              <li><span class="lg lg--p90" aria-hidden="true"></span>p50 to p90</li>
+              <li><span class="lg lg--sla" aria-hidden="true"></span>SLA</li>
+            </ul>
+          </div>
+        </section>
+      </div>
+
+      <section class="panel" aria-labelledby="sp-h">
+        <div class="panel__head">
+          <h2 id="sp-h">Spend and capacity</h2>
+          <p class="panel__meta">Notional API-equivalent, not a bill · FX 4.2150 (BNM, live 09:05)</p>
+        </div>
+        <div class="spend">
+          <div class="spend__col">
+            <div>
+              <h3 class="minihead">Notional spend today</h3>
+              <p class="bigfig">$152.38<span>RM 642.27</span></p>
+              <p class="spend__vs"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-down"/></svg>11% below the 7-day average of $171.40</p>
+              <div class="bullet" role="img" aria-label="Today $152.38 against a 7-day average of $171.40."><span class="bullet__bar" style="width:60.95119999999999%"></span><span class="bullet__mark" style="left:68.56%"></span></div>
+              <p class="bullet__axis" aria-hidden="true"><span>$0</span><span class="bullet__avg" style="left:68.56%">7-day avg</span><span>$250</span></p>
+            </div>
+            <div>
+              <h3 class="minihead">Model mix today</h3>
+              <div class="mm" role="img" aria-label="Model mix of today&#39;s notional spend: Opus 47.4% ($72.17), Sonnet 51.8% ($78.93), Haiku 0.8% ($1.28)."><span class="mm__seg mm__seg--opus" style="flex:72.17"></span><span class="mm__seg mm__seg--sonnet" style="flex:78.93"></span><span class="mm__seg mm__seg--haiku" style="flex:1.28"></span></div>
+              <ul class="legend legend--stack"><li><span class="sw sw--opus" aria-hidden="true"></span>Opus <b>47%</b> $72.17</li><li><span class="sw sw--sonnet" aria-hidden="true"></span>Sonnet <b>52%</b> $78.93</li><li><span class="sw sw--haiku" aria-hidden="true"></span>Haiku <b><1%</b> $1.28</li></ul>
+            </div>
+          </div>
+          <div class="spend__col">
+            <div>
+              <h3 class="minihead">By project today</h3>
+              <dl class="hbars" role="img" aria-label="Notional spend today by project: Claims Intake Bot $62.44, CX Copilot $57.92, AOC Platform $29.14, QA Scorecard $2.88."><dt>Claims Intake Bot</dt><dd class="hbar"><span style="width:100.0%"></span></dd><dd class="hbar__v"><b>$62.44</b> 41%</dd><dt>CX Copilot</dt><dd class="hbar"><span style="width:92.8%"></span></dd><dd class="hbar__v"><b>$57.92</b> 38%</dd><dt>AOC Platform</dt><dd class="hbar"><span style="width:46.7%"></span></dd><dd class="hbar__v"><b>$29.14</b> 19%</dd><dt>QA Scorecard</dt><dd class="hbar"><span style="width:4.6%"></span></dd><dd class="hbar__v"><b>$2.88</b> 2%</dd></dl>
+              <p class="spend__note">Same session costs as the Console: 9 live sessions plus 5 that ended today.</p>
+            </div>
+            <div>
+              <h3 class="minihead">Discovery vs execution · 7 days</h3>
+              <div class="mm" role="img" aria-label="Runs in the last 7 days: 9 discovery, 61 execution; execution saved 74% per run."><span class="mm__seg mm__seg--disc" style="flex:9"></span><span class="mm__seg mm__seg--exec" style="flex:61"></span></div>
+              <ul class="legend legend--stack">
+                <li><span class="sw sw--disc" aria-hidden="true"></span>Discovery <b>9</b> runs on Opus</li>
+                <li><span class="sw sw--exec" aria-hidden="true"></span>Execution <b>61</b> runs on playbooks · 74% cheaper per run</li>
+              </ul>
+            </div>
+          </div>
+          <div class="spend__col">
+            <h3 class="minihead">Credit cap forecast · October period</h3>
+            <p class="spend__note">Capacity planning, not a ranking: who runs out of credits before 31 Oct at today's burn rate.</p>
+            <div class="cap__axis" aria-hidden="true"><span></span><span class="cap__scale"><i style="left:0">today</i><i style="left:84.61538461538461%">31 Oct</i></span><span></span></div>
+            <ol class="caps">
+              <li class="cap cap--risk">
+                <p class="cap__name"><b>Wei Jie</b><span>$3.10 left · $21.00/day</span></p>
+                <div class="cap__track" role="img" aria-label="Wei Jie: $3.10 left at $21.00 a day; caps today, top-up pending."><span class="cap__bar" style="width:1.5%"></span><span class="cap__end" style="left:84.61538461538461%"></span></div>
+                <p class="cap__when"><svg class="i i--warn" aria-hidden="true" focusable="false"><use href="#i-warn"/></svg>caps today<span>top-up pending</span></p>
+              </li>
+              <li class="cap cap--risk">
+                <p class="cap__name"><b>Daniel</b><span>$41.00 left · $13.80/day</span></p>
+                <div class="cap__track" role="img" aria-label="Daniel: $41.00 left at $13.80 a day; caps 12 Oct."><span class="cap__bar" style="width:11.538461538461538%"></span><span class="cap__end" style="left:84.61538461538461%"></span></div>
+                <p class="cap__when"><svg class="i i--warn" aria-hidden="true" focusable="false"><use href="#i-warn"/></svg>caps 12 Oct</p>
+              </li>
+              <li class="cap cap--risk">
+                <p class="cap__name"><b>Aisyah</b><span>$96.00 left · $9.10/day</span></p>
+                <div class="cap__track" role="img" aria-label="Aisyah: $96.00 left at $9.10 a day; caps 19 Oct."><span class="cap__bar" style="width:38.46153846153847%"></span><span class="cap__end" style="left:84.61538461538461%"></span></div>
+                <p class="cap__when"><svg class="i i--warn" aria-hidden="true" focusable="false"><use href="#i-warn"/></svg>caps 19 Oct</p>
+              </li>
+              <li class="cap">
+                <p class="cap__name"><b>Priya</b><span>$118.00 left · $3.40/day</span></p>
+                <div class="cap__track" role="img" aria-label="Priya: $118.00 left at $3.40 a day; lasts the period."><span class="cap__bar" style="width:100%"></span><span class="cap__end" style="left:84.61538461538461%"></span></div>
+                <p class="cap__when">lasts the period</p>
+              </li>
+              <li class="cap">
+                <p class="cap__name"><b>Triage pool</b><span>$210.00 left · $6.00/day</span></p>
+                <div class="cap__track" role="img" aria-label="Triage pool: $210.00 left at $6.00 a day; lasts the period."><span class="cap__bar" style="width:100%"></span><span class="cap__end" style="left:84.61538461538461%"></span></div>
+                <p class="cap__when">lasts the period</p>
+              </li>
+            </ol>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="ig-h">
+        <div class="panel__head">
+          <h2 id="ig-h">Integrity and governance</h2>
+          <p class="panel__meta">ISO/IEC 42001 evidence lives here; one hash-chained log for the CEO and the auditor</p>
+        </div>
+        <ul class="igs">
+          <li class="ig ig--ok"><p class="ig__t"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-check-circle"/></svg>Hash chain</p><p class="ig__v">Verified</p><p class="ig__s">against off-host anchor 02:00 (11h 42m old) · checked 13:40 · 2,316 events since the anchor</p></li>
+          <li class="ig ig--ok"><p class="ig__t"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-check-circle"/></svg>Break-glass open</p><p class="ig__v">0</p><p class="ig__s">last used 8 Oct 10:12, closed</p></li>
+          <li class="ig ig--warn"><p class="ig__t"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-warn"/></svg>Post-incident overdue</p><p class="ig__v">1</p><p class="ig__s">CR-0219 · 3h 30m past the 24h limit</p></li>
+          <li class="ig ig--info"><p class="ig__t"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-info"/></svg>Provenance refusals · 7d</p><p class="ig__v">2</p><p class="ig__s">promotions refused: no approved change record</p></li>
+          <li class="ig ig--info"><p class="ig__t"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-info"/></svg>Self-modification · 7d</p><p class="ig__v">1 blocked</p><p class="ig__s">an agent edit to mod-credits (governance core)</p></li>
+          <li class="ig ig--warn"><p class="ig__t"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-warn"/></svg>ISO 42001 mapping</p><p class="ig__v">Provisional</p><p class="ig__s">not yet stamped by the compliance lead</p></li>
+          <li class="ig ig--ok"><p class="ig__t"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-check-circle"/></svg>Projections and reactors</p><p class="ig__v">0 degraded</p><p class="ig__s">1 reactor failure in 24h, retried and cleared</p></li>
+        </ul>
+      </section>
+
+      <section class="panel" aria-labelledby="rad-h">
+        <div class="panel__head">
+          <h2 id="rad-h">Gaming and anomaly radar</h2>
+          <p class="panel__meta">Portfolio level only · never ranked per person (R11)</p>
+        </div>
+        <div class="rad rad--axis" aria-hidden="true"><span>Signal</span><span class="rad__scale"><i style="left:0">0</i><i style="left:33.33%">baseline</i><i style="left:66.67%">2×</i><i style="left:100%">3×</i></span><span>What it measures</span></div>
+        <ol class="rads">
+            <li class="rad rad--watch">
+              <div class="rad__head"><span class="sig sig--watch"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-half-circle"/></svg>Watch</span><p class="rad__name">No-file-change closes<span class="chip">portfolio</span></p></div>
+              <div class="rad__viz"><div class="rad__track" role="img" aria-label="No-file-change closes: 8.7%, 2.8 times the baseline of 3.1%; status watch."><span class="rad__bar" style="width:93.5%"></span><span class="rad__base"></span></div><p class="rad__nums"><b>8.7%</b> vs baseline 3.1% · <b>2.8×</b></p></div>
+              <p class="rad__why">Tasks closed without any file-changing tool call: 2 of 23 today.</p>
+            </li>
+            <li class="rad rad--normal">
+              <div class="rad__head"><span class="sig sig--normal"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-check-circle"/></svg>Normal</span><p class="rad__name">xs-heavy manifests<span class="chip">portfolio</span></p></div>
+              <div class="rad__viz"><div class="rad__track" role="img" aria-label="xs-heavy manifests: 12%, 1.3 times the baseline of 9%; status normal."><span class="rad__bar" style="width:44.4%"></span><span class="rad__base"></span></div><p class="rad__nums"><b>12%</b> vs baseline 9% · <b>1.3×</b></p></div>
+              <p class="rad__why">Plans where most tasks are declared xs, which inflates task counts.</p>
+            </li>
+            <li class="rad rad--normal">
+              <div class="rad__head"><span class="sig sig--normal"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-check-circle"/></svg>Normal</span><p class="rad__name">Denominator growth after start<span class="chip">portfolio</span></p></div>
+              <div class="rad__viz"><div class="rad__track" role="img" aria-label="Denominator growth after start: 4.2%, 1.4 times the baseline of 3%; status normal."><span class="rad__bar" style="width:46.7%"></span><span class="rad__base"></span></div><p class="rad__nums"><b>4.2%</b> vs baseline 3% · <b>1.4×</b></p></div>
+              <p class="rad__why">Weight added to a manifest after its first task_done.</p>
+            </li>
+            <li class="rad rad--alert">
+              <div class="rad__head"><span class="sig sig--alert"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-warn"/></svg>Alert</span><p class="rad__name">Blind affirm-without-edit<span class="chip">portfolio</span></p></div>
+              <div class="rad__viz"><div class="rad__track" role="img" aria-label="Blind affirm-without-edit: 31%, 1.7 times the baseline of 18%; status alert."><span class="rad__bar" style="width:57.4%"></span><span class="rad__base"></span></div><p class="rad__nums"><b>31%</b> vs baseline 18% · <b>1.7×</b></p></div>
+              <p class="rad__why">AI-drafted change-record fields confirmed without a single edit (§14).</p>
+            </li>
+            <li class="rad rad--watch">
+              <div class="rad__head"><span class="sig sig--watch"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-half-circle"/></svg>Watch</span><p class="rad__name">Discovery despite a playbook<span class="chip">bug-triage</span></p></div>
+              <div class="rad__viz"><div class="rad__track" role="img" aria-label="Discovery despite a playbook: 2 runs, 5.0 times the baseline of 0.4 runs; status watch."><span class="rad__bar rad__bar--over" style="width:100.0%"></span><span class="rad__base"></span></div><p class="rad__nums"><b>2 runs</b> vs baseline 0.4 runs · <b>5.0×</b> (off scale)</p></div>
+              <p class="rad__why">Runs launched as discovery on Opus although an approved playbook covers the type.</p>
+            </li>
+            <li class="rad rad--normal">
+              <div class="rad__head"><span class="sig sig--normal"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-check-circle"/></svg>Normal</span><p class="rad__name">Evidence unverified<span class="chip">portfolio</span></p></div>
+              <div class="rad__viz"><div class="rad__track" role="img" aria-label="Evidence unverified: 4.3%, 1.1 times the baseline of 4%; status normal."><span class="rad__bar" style="width:35.8%"></span><span class="rad__base"></span></div><p class="rad__nums"><b>4.3%</b> vs baseline 4% · <b>1.1×</b></p></div>
+              <p class="rad__why">task_done evidence AOC could not verify, such as an unknown test id or commit.</p>
+            </li>
+            <li class="rad rad--normal">
+              <div class="rad__head"><span class="sig sig--normal"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-check-circle"/></svg>Normal</span><p class="rad__name">Self-approval rate<span class="chip">portfolio</span></p></div>
+              <div class="rad__viz"><div class="rad__track" role="img" aria-label="Self-approval rate: 22%, 1.1 times the baseline of 20%; status normal."><span class="rad__bar" style="width:36.7%"></span><span class="rad__base"></span></div><p class="rad__nums"><b>22%</b> vs baseline 20% · <b>1.1×</b></p></div>
+              <p class="rad__why">Reversible off-main changes approved by the builder who made them.</p>
+            </li>
+        </ol>
+        <p class="rad__foot"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-info"/></svg><span>Thresholds are set per signal on the absolute level and the sample size as well as the ratio, so a small sample can stay on watch at 2.8×. Signals point at process, specs and guardrails: a watch or alert opens a root-cause review, never a person's scorecard.</span></p>
+      </section>
+    </section>
 
     <section id="view-console" class="view" role="tabpanel" aria-labelledby="tab-console">
       <header class="pagehead">
@@ -862,7 +1752,7 @@ button { font: inherit; }
           <p class="kpi__value">23<span class="kpi__unit">91% with verified evidence</span></p>
           <p class="kpi__meta kpi__meta--meter"><span class="meter" aria-hidden="true"><span class="meter__fill" style="width:91%"></span></span><span class="sr-only">21 of 23 tasks have verified evidence</span><span>2 flagged: no file change</span></p>
         </div>
-        <div class="kpi kpi--spend">
+        <div class="kpi kpi--wide">
           <p class="kpi__label">Notional spend today</p>
           <p class="kpi__value">$152.38<span class="kpi__unit">RM 642.27</span></p>
           <p class="kpi__meta">notional API-equivalent, not a bill · FX 4.2150 BNM, live 09:05</p>
@@ -1236,7 +2126,7 @@ button { font: inherit; }
             </div>
           </li>
           <li class="dcard">
-            <div class="dcard__top"><span class="dcard__age"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-clock"/></svg>6m</span><span class="dcard__kind">Agent decision</span><span class="chip chip--test"><span class="chip__k">test</span>ambiguity</span></div>
+            <div class="dcard__top"><span class="dcard__age"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-clock"/></svg>6m</span><span class="dcard__kind">Agent decision</span><span class="chip chip--test"><span class="chip__k">test</span>data</span></div>
             <h3 class="dcard__q">Mask NRIC numbers at ingest, or on screen only?</h3>
             <p class="dcard__src">CX Copilot · nric-masking s1 · Daniel</p>
             <div class="rec">
@@ -1357,7 +2247,7 @@ button { font: inherit; }
           <div class="tl">
             <div class="tl__marks">
               <button type="button" class="mk mk--pin" style="--x:11.79%" aria-describedby="tip-0" aria-label="07:58 · Phase P2 complete"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-flag"/></svg><span class="tip tip--start" role="tooltip" id="tip-0"><b>07:58 · Phase P2 complete</b>Pinned tag p2-done → 4e1a9c2. Rollback target for this phase.</span></button>
-              <span class="tl__wait" style="--x:24.36%;--w:5.64%" aria-hidden="true"></span><button type="button" class="mk mk--decision" style="--x:24.36%" aria-describedby="tip-1" aria-label="08:47 · Decision · irreversible"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-waiting"/></svg><span class="tip" role="tooltip" id="tip-1"><b>08:47 · Decision · irreversible</b>Drop staging table tmp_transcripts? Rejected by CEO after 22 min: keep until UAT sign-off.</span></button>
+              <span class="tl__wait" style="--x:24.36%;--w:5.64%" aria-hidden="true"></span><button type="button" class="mk mk--decision" style="--x:24.36%" aria-describedby="tip-1" aria-label="08:47 · Decision · irreversible"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-waiting"/></svg><span class="tip" role="tooltip" id="tip-1"><b>08:47 · Decision · irreversible</b>Store summaries as JSONB or in their own table? Wei Jie chose JSONB (the agent’s recommendation) after 22 min.</span></button>
               <button type="button" class="mk mk--drift" style="--x:30.77%" aria-describedby="tip-2" aria-label="09:12 · Drift"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-drift"/></svg><span class="tip" role="tooltip" id="tip-2"><b>09:12 · Drift</b>P3-T3 edited summariser/src/config.ts, outside its declared files.</span></button>
               <span class="tl__wait" style="--x:38.21%;--w:4.36%" aria-hidden="true"></span><button type="button" class="mk mk--decision" style="--x:38.21%" aria-describedby="tip-3" aria-label="09:41 · Decision · ambiguity"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-waiting"/></svg><span class="tip" role="tooltip" id="tip-3"><b>09:41 · Decision · ambiguity</b>Summary format: 3 bullets or an 80-word paragraph? Wei Jie chose 3 bullets (the agent’s recommendation) after 17 min.</span></button>
               <button type="button" class="mk mk--rollback" style="--x:46.15%" aria-describedby="tip-4" aria-label="10:12 · Rollback (off-main)"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-rollback"/></svg><span class="tip" role="tooltip" id="tip-4"><b>10:12 · Rollback (off-main)</b>Reverted P3-T5 (2 commits) to 9c4e1b7 after the contract test failed. Self-approved by Wei Jie · change record CR-0211.</span></button>
@@ -1612,9 +2502,9 @@ button { font: inherit; }
                 <tr>
                   <td class="nowrap" data-label="Asked"><div class="cv">08:47</div></td>
                   <td data-label="Test"><div class="cv"><span class="chip chip--test"><span class="chip__k">test</span>irreversible</span></div></td>
-                  <td class="dq" data-label="Question"><div class="cv">Drop staging table tmp_transcripts?</div></td>
-                  <td data-label="Outcome"><div class="cv">Rejected — keep until UAT sign-off</div></td>
-                  <td class="nowrap" data-label="By"><div class="cv">CEO</div></td>
+                  <td class="dq" data-label="Question"><div class="cv">Store summaries as JSONB on the call record, or in their own table?</div></td>
+                  <td data-label="Outcome"><div class="cv">JSONB (agent’s recommendation)</div></td>
+                  <td class="nowrap" data-label="By"><div class="cv">Wei Jie</div></td>
                   <td class="num nowrap" data-label="Waited"><div class="cv"><span class="sm-only">waited </span>22m</div></td>
                 </tr>
                 <tr class="grp"><th colspan="6" scope="colgroup">Earlier in this thread · s2</th></tr>
@@ -1939,7 +2829,7 @@ button { font: inherit; }
 <script>
 (() => {
   // Hash routing for the three views; tabs follow the WAI-ARIA tabs pattern (arrows, Home, End).
-  const ids = ['console', 'session', 'registry'];
+  const ids = ['tower', 'console', 'session', 'registry'];
   const tabs = ids.map((id) => document.getElementById('tab-' + id));
   const views = ids.map((id) => document.getElementById('view-' + id));
   const show = (id, focus) => {
@@ -1969,10 +2859,11 @@ button { font: inherit; }
   });
   // Other in-page anchors (the skip link) also change the hash; only view names route.
   const route = () => location.hash.slice(1);
-  const fromHash = () => { const id = route(); if (!id || ids.includes(id)) show(id || 'console'); };
+  // The signed-in role is Approver, whose landing view is the Control Tower (builders land on Console).
+  const fromHash = () => { const id = route(); if (!id || ids.includes(id)) show(id || 'tower'); };
   addEventListener('hashchange', () => { if (ids.includes(route())) { fromHash(); scrollTo(0, 0); } });
   addEventListener('popstate', fromHash);
-  show(ids.includes(route()) ? route() : 'console');
+  show(ids.includes(route()) ? route() : 'tower');
 })();
 </script>
 </body>

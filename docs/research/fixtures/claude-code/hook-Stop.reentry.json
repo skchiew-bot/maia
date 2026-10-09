@@ -1,0 +1,15 @@
+{
+  "session_id": "4d2b8e3f-6c73-4f20-9c7b-9a3f5e4d1b23",
+  "transcript_path": "/tmp/aoc-capture/cfg/projects/-tmp-aoc-capture-work/4d2b8e3f-6c73-4f20-9c7b-9a3f5e4d1b23.jsonl",
+  "cwd": "/tmp/aoc-capture/work",
+  "prompt_id": "f674e8be-bb0f-4c20-a4c3-006ee7e81139",
+  "permission_mode": "acceptEdits",
+  "effort": {
+    "level": "medium"
+  },
+  "hook_event_name": "Stop",
+  "stop_hook_active": true,
+  "last_assistant_message": "CONTINUED",
+  "background_tasks": [],
+  "session_crons": []
+}

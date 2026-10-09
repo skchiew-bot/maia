@@ -10,7 +10,8 @@
   "scripts": {
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "seed": "node --import tsx src/seed.ts"
+    "seed": "node --import tsx src/seed.ts",
+    "pulse": "node --import tsx src/pulse.ts"
   },
   "dependencies": {
     "@aoc/contracts": "workspace:*",

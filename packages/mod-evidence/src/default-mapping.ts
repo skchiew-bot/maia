@@ -92,7 +92,7 @@ export const BUILTIN_MAPPING: MappingFile = {
         'Break-glass invocations and passkey approvals',
         'Mandatory post-incident change records and overdue alerts (breakglass.json)',
       ],
-      eventTypes: ['breakglass.invoked', 'breakglass.approved', 'breakglass.post_incident_overdue'],
+      eventTypes: ['breakglass.invoked', 'breakglass.approved', 'breakglass.rejected', 'breakglass.post_incident_overdue'],
       status: 'provisional',
       correctionNote:
         'AOC-SPEC-002 cited A.8.3 for incident communication; A.8.3 is external reporting. Communication of incidents is A.8.4 (§13).',
@@ -223,7 +223,7 @@ export const BUILTIN_MAPPING: MappingFile = {
         'Promotions requested, refused (provenance gaps) and completed',
         'Go-live decisions resolved (gates.json)',
       ],
-      eventTypes: ['promotion.requested', 'promotion.refused', 'promotion.completed', 'decision.resolved'],
+      eventTypes: ['promotion.requested', 'promotion.refused', 'promotion.rejected', 'promotion.failed', 'promotion.completed', 'decision.resolved'],
       metaFilters: { 'decision.resolved': { kind: ['go_live'] } },
       status: 'provisional',
     },

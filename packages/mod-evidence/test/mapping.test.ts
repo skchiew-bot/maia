@@ -167,9 +167,7 @@ describe('mapping file loading', () => {
     expect(m.mapping.version).toBe('2026.10.2');
     expect(m.mapping.rows[0]!.eventTypes).toEqual([
       'anchor.created',
-      'promotion.requested',
-      'promotion.refused',
-      'promotion.completed',
+      ...[...EVENT_CATALOG.keys()].filter((t) => t.startsWith('promotion.')),
     ]);
     expect(m.mapping.rows[1]!.metaFilters).toEqual({ 'decision.resolved': { kind: ['go_live'] } });
     expect(m.mapping.rows[2]!.eventTypes).toEqual([]);

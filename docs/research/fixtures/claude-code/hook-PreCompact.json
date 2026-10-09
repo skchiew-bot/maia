@@ -1,0 +1,9 @@
+{
+  "session_id": "59c4a8a4-23c6-45c0-9e98-92ae3305068d",
+  "transcript_path": "/tmp/aoc-capture/cfg/projects/-tmp-aoc-capture-work/59c4a8a4-23c6-45c0-9e98-92ae3305068d.jsonl",
+  "cwd": "/tmp/aoc-capture/work",
+  "prompt_id": "160e18b3-c1e6-45de-8908-08ec468f31b0",
+  "hook_event_name": "PreCompact",
+  "trigger": "manual",
+  "custom_instructions": null
+}

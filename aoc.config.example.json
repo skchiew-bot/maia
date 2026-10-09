@@ -14,7 +14,7 @@
 
   "liveness": {
     "workingWindowMs": 30000,
-    "stallAfterMs": 300000,
+    "stallAfterMs": 600000,
     "toolStallAfterMs": 1200000,
     "deadAfterMs": 45000
   },
@@ -56,6 +56,8 @@
 
   "decisions": {
     "remindAfterMinutes": 30,
+    "soleApproverFallback": false,
+    "//soleApproverFallback": "Off by CEO decision: with one Approver, their own requests wait for a second Approver (never credit top-ups).",
     "//webhookUrl": "https://hooks.example.com/aoc — opt-in notification for new and aging decisions (R15)."
   },
 

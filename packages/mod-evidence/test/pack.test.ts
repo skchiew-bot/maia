@@ -241,6 +241,8 @@ describe('evidence pack generation', () => {
     expect(row('aoc.deployment').counts).toEqual({
       'promotion.requested': 0,
       'promotion.refused': 0,
+      'promotion.rejected': 0,
+      'promotion.failed': 0,
       'promotion.completed': 1,
       'decision.resolved': 1,
     });

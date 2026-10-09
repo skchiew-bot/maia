@@ -1,8 +1,17 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { open, seal } from '../crypto';
+
+/**
+ * One directory-entry name per id, injective and traversal-proof: plain ids (every generated id) are used as-is;
+ * anything else — '.', '..', '', separators — becomes a hash, so a scope can never reach outside the blob
+ * directory (erasure deletes recursively) nor share a directory with another scope.
+ */
+function pathSegment(id: string): string {
+  return /^[A-Za-z0-9_-][A-Za-z0-9_.-]{0,127}$/.test(id) ? id : `~${createHash('sha256').update(id).digest('hex').slice(0, 40)}`;
+}
 
 /**
  * Per-scope encrypted body store (§13). Bodies (prompts, file contents, intake text/media) live here,
@@ -106,8 +115,7 @@ export class BodyStore {
   }
 
   private blobPath(scope: string, blobId: string): string {
-    const safe = (s: string) => s.replace(/[^A-Za-z0-9_.-]/g, '_');
-    return join(this.blobDir, safe(scope), safe(blobId));
+    return join(this.blobDir, pathSegment(scope), pathSegment(blobId));
   }
 
   /** Store a large binary (e.g. intake video) encrypted on disk under the scope's DEK. */
@@ -155,7 +163,7 @@ export class BodyStore {
       throw e;
     }
     for (const k of [...this.dekCache.keys()]) if (k.startsWith(`${scope}#`)) this.dekCache.delete(k);
-    rmSync(join(this.blobDir, scope.replace(/[^A-Za-z0-9_.-]/g, '_')), { recursive: true, force: true });
+    rmSync(join(this.blobDir, pathSegment(scope)), { recursive: true, force: true });
     this.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
     return n;
   }

@@ -1,0 +1,26 @@
+{
+  "session_id": "59c4a8a4-23c6-45c0-9e98-92ae3305068d",
+  "transcript_path": "/tmp/aoc-capture/cfg/projects/-tmp-aoc-capture-work/59c4a8a4-23c6-45c0-9e98-92ae3305068d.jsonl",
+  "cwd": "/tmp/aoc-capture/work",
+  "prompt_id": "0a288d76-4f91-4737-b1bb-7c107ecd5037",
+  "permission_mode": "acceptEdits",
+  "effort": {
+    "level": "medium"
+  },
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Write",
+  "tool_input": {
+    "file_path": "/tmp/aoc-capture/work/out.txt",
+    "content": "ALPHA BETA GAMMA\n"
+  },
+  "tool_response": {
+    "type": "create",
+    "filePath": "/tmp/aoc-capture/work/out.txt",
+    "content": "ALPHA BETA GAMMA\n",
+    "structuredPatch": [],
+    "originalFile": null,
+    "userModified": false
+  },
+  "tool_use_id": "toolu_01VMZsuvR92GaYVsetXS9sK2",
+  "duration_ms": 8
+}

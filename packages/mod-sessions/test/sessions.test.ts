@@ -73,7 +73,10 @@ describe('liveness engine (§4)', () => {
     t.clock.advance(60_000);
     e.heartbeat('ses_A', now(), true, 4242);
     expect(engine().row('ses_A')!.liveness).toBe('thinking');
-    t.clock.advance(6 * 60_000);
+    t.clock.advance(9 * 60_000);
+    e.heartbeat('ses_A', now(), true, 4242);
+    expect(engine().row('ses_A')!.liveness).toBe('thinking'); // under the 10-minute stall threshold
+    t.clock.advance(2 * 60_000);
     e.heartbeat('ses_A', now(), true, 4242);
     expect(engine().row('ses_A')!.liveness).toBe('stalled');
     t.clock.advance(60_000);
@@ -218,8 +221,18 @@ describe('hook ingest', () => {
     const obs = engine().byClaudeSessionId(claudeObs)!;
     expect(await t.json('POST', '/ingest/spool', { headers: observer, body: { items: [usage(claudeObs, ['o1'], 'observed-usage-1')] } })).toEqual({ accepted: 1, duplicates: 0, rejected: 0 });
     expect(t.rt.store.list({ types: ['usage.recorded'], sessionId: obs.sessionId })[0]!.source).toBe('hook');
-    // Observer tokens cannot replay a managed session's process exit.
+    // Observer tokens cannot replay a managed session's process exit …
     expect(await t.json('POST', '/ingest/spool', { headers: observer, body: { items: [items[2]] } })).toEqual({ accepted: 0, duplicates: 0, rejected: 1 });
+    // … nor usage or a throttle addressed to a managed session by its claude session id.
+    const forged = [
+      usage(CLAUDE_A, ['f1'], 'forged-usage'),
+      { path: '/ingest/throttle', queuedAt: t.clock.iso(), body: { sessionId: CLAUDE_A, resetAt: null, message: 'x', source: 'transcript' } },
+    ];
+    expect(await t.json('POST', '/ingest/spool', { headers: observer, body: { items: forged } })).toEqual({ accepted: 0, duplicates: 0, rejected: 2 });
+    expect(t.rt.store.list({ types: ['usage.recorded', 'throttle.hit'], sessionId: 'ses_A' })).toHaveLength(2);
+    // Replayed usage gets the same session-bound, hashed idempotency key as live usage: no client text is chained.
+    const replayed = t.rt.store.list({ types: ['usage.recorded'] });
+    expect(replayed.map((e) => e.idempotencyKey).every((k) => !!k && !k.includes('sidecar-usage') && !k.includes('observed-usage'))).toBe(true);
   });
 });
 

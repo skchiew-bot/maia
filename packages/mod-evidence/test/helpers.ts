@@ -74,7 +74,7 @@ export function seed(t: TestRuntime): Seeded {
   append(t, '2026-10-01T02:00:00.000Z', {
     type: 'ratecard.published',
     actor: { kind: 'system', id: 'metering' },
-    meta: { version: 1, effectiveFrom: '2026-10-01', rateCount: 1 },
+    meta: { version: 1, effectiveFrom: '2026-10-01', rateCount: 1, ratesHash: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' },
     payload: {
       rates: [
         {
@@ -366,12 +366,19 @@ export function seed(t: TestRuntime): Seeded {
       rateCardVersion: 1,
       inputTokens: 1000,
       outputTokens: 200,
+      fxSourceDate: '2026-10-03',
       cacheReadTokens: 0,
       cacheWriteTokens: 0,
+      cacheWrite5mTokens: 0,
+      cacheWrite1hTokens: 0,
+      messages: 4,
+      unpricedTokens: 0,
       throttleIdleMs: 0,
+      throttleHits: 0,
+      subscriptionUsd: 33.33,
       closedAt: '2026-10-03T16:15:00.000Z',
     },
-    payload: { byActor: [], byProject: [], byModel: [] },
+    payload: { byActor: [], byProject: [], byModel: [], byProcessType: [], unpricedModels: [], tierPricedModels: [] },
     source: 'scheduler',
   });
   append(t, '2026-10-04T01:00:00.000Z', {
@@ -399,7 +406,7 @@ export function seed(t: TestRuntime): Seeded {
   append(t, '2026-10-04T02:00:00.000Z', {
     type: 'ratecard.published',
     actor: human(a),
-    meta: { version: 2, effectiveFrom: '2026-10-05', rateCount: 1 },
+    meta: { version: 2, effectiveFrom: '2026-10-05', rateCount: 1, ratesHash: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' },
     payload: {
       rates: [
         {
@@ -556,7 +563,7 @@ export function seed(t: TestRuntime): Seeded {
   append(t, '2026-10-05T02:00:00.000Z', {
     type: 'ratecard.published',
     actor: human(a),
-    meta: { version: 3, effectiveFrom: '2026-10-06', rateCount: 1 },
+    meta: { version: 3, effectiveFrom: '2026-10-06', rateCount: 1, ratesHash: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' },
     payload: {
       rates: [
         {

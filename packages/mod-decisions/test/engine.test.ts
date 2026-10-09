@@ -598,3 +598,36 @@ describe('event shapes', () => {
     expect(mine.map((e) => e.type)).toEqual(['decision.requested', 'decision.resolved']);
   });
 });
+
+describe('sole-Approver fallback (decisions.soleApproverFallback, §6)', () => {
+  async function ownRequests(config?: { decisions: { soleApproverFallback: boolean } }) {
+    const hx = (h = await harness(config ? { config } : {}));
+    // Leave `approver` as the only active Approver.
+    (hx.approver2.user as { active: boolean }).active = false;
+    const mine = (kind: DecisionKind) =>
+      hx.engine.request(decisionInput({ kind, requesterId: hx.approver.user.id }), human(hx.approver));
+    return { ...hx, goLive: mine('go_live'), fixPlan: mine('fix_plan'), topup: mine('credit_topup') };
+  }
+
+  it('is off by default: the only Approver cannot resolve their own requests', async () => {
+    const { engine, approver, goLive, fixPlan, topup } = await ownRequests();
+    for (const card of [goLive, fixPlan, topup]) {
+      expect(engine.canResolve(card, approver.user).reason).toBe('separation_of_duties');
+    }
+  });
+
+  it('when enabled, only the sole Approver may resolve their own request (never a credit top-up), recorded as self-approval', async () => {
+    const { engine, approver, approver2, goLive, fixPlan, topup } = await ownRequests({
+      decisions: { soleApproverFallback: true },
+    });
+    expect(engine.canResolve(goLive, approver.user).ok).toBe(true);
+    expect(engine.canResolve(topup, approver.user).reason).toBe('separation_of_duties');
+    const done = await engine.resolve(fixPlan.id, { optionId: fixPlan.options[0]!.id }, approver.user);
+    expect(done.resolution?.selfApproved).toBe(true);
+
+    // Once a second Approver is active, ordinary separation of duties applies again.
+    (approver2.user as { active: boolean }).active = true;
+    expect(engine.canResolve(goLive, approver.user).reason).toBe('separation_of_duties');
+    expect(engine.canResolve(goLive, approver2.user).ok).toBe(true);
+  });
+});

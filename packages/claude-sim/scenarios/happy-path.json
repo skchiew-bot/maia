@@ -1,0 +1,188 @@
+{
+  "name": "happy-path",
+  "description": "Declares a 2-phase / 5-task plan of mixed sizes, reads and edits files, closes every task with diff, commit or test evidence and finishes cleanly.",
+  "steps": [
+    {
+      "kind": "think",
+      "ms": 1800,
+      "outputTokens": 420,
+      "thinking": "The request is a small greeting feature. I should declare the plan before touching any file."
+    },
+    { "kind": "text", "text": "I'll start by declaring the plan for this work." },
+    {
+      "kind": "mcp",
+      "server": "aoc",
+      "tool": "declare_plan",
+      "saveAs": "plan",
+      "args": {
+        "summary": "Add a greeting command, test it, document it and tidy config loading.",
+        "phases": [
+          {
+            "id": "p1",
+            "name": "Feature",
+            "tasks": [
+              {
+                "id": "t1",
+                "title": "Add the greeting module",
+                "size": "s",
+                "acceptance": "greet(name) returns a friendly greeting"
+              },
+              { "id": "t2", "title": "Wire the greeting into the CLI entry point", "size": "m" }
+            ]
+          },
+          {
+            "id": "p2",
+            "name": "Hardening",
+            "tasks": [
+              { "id": "t3", "title": "Unit-test the greeting", "size": "xs" },
+              { "id": "t4", "title": "Document the greet command", "size": "l" },
+              { "id": "t5", "title": "Refactor config loading for the new command", "size": "xl" }
+            ]
+          }
+        ]
+      }
+    },
+    { "kind": "think", "ms": 1200, "outputTokens": 260 },
+    { "kind": "tool", "name": "Glob", "input": { "pattern": "**/*.ts" } },
+    {
+      "kind": "tool",
+      "name": "Write",
+      "input": {
+        "file_path": "src/greeting.ts",
+        "content": "export function greet(name: string): string {\n  return `Hello, ${name}`;\n}\n"
+      }
+    },
+    { "kind": "tool", "name": "Read", "input": { "file_path": "src/greeting.ts" } },
+    {
+      "kind": "tool",
+      "name": "Edit",
+      "input": {
+        "file_path": "src/greeting.ts",
+        "old_string": "return `Hello, ${name}`;",
+        "new_string": "return `Hello, ${name}! Welcome aboard.`;"
+      }
+    },
+    {
+      "kind": "bash",
+      "command": "git diff --stat",
+      "description": "Summarise the change",
+      "stdout": " src/greeting.ts | 3 +++\n 1 file changed, 3 insertions(+)",
+      "saveAs": "diff1",
+      "exec": true
+    },
+    {
+      "kind": "mcp",
+      "server": "aoc",
+      "tool": "task_done",
+      "args": { "task_id": "t1", "evidence": { "kind": "diff", "ref": "src/greeting.ts", "detail": "{{diff1.stdout}}" } }
+    },
+    { "kind": "think", "ms": 1500, "outputTokens": 380 },
+    {
+      "kind": "tool",
+      "name": "Write",
+      "input": {
+        "file_path": "src/cli.ts",
+        "content": "import { greet } from './greeting';\n\nconst [name = 'world'] = process.argv.slice(2);\nconsole.log(greet(name));\n"
+      }
+    },
+    {
+      "kind": "bash",
+      "command": "git add -A && git commit -m \"Wire the greeting into the CLI\"",
+      "description": "Commit the CLI wiring",
+      "stdout": "[main 4f2a9c1] Wire the greeting into the CLI\n 2 files changed, 7 insertions(+)",
+      "exec": true
+    },
+    {
+      "kind": "bash",
+      "command": "git rev-parse --short HEAD",
+      "description": "Get the commit id",
+      "stdout": "4f2a9c1",
+      "saveAs": "head",
+      "exec": true
+    },
+    {
+      "kind": "mcp",
+      "server": "aoc",
+      "tool": "task_done",
+      "args": { "task_id": "t2", "evidence": { "kind": "commit", "ref": "{{head.stdout}}" } }
+    },
+    { "kind": "think", "ms": 900, "outputTokens": 210 },
+    {
+      "kind": "tool",
+      "name": "Write",
+      "input": {
+        "file_path": "test/greeting.test.ts",
+        "content": "import { expect, test } from 'vitest';\nimport { greet } from '../src/greeting';\n\ntest('greets by name', () => {\n  expect(greet('Ada')).toContain('Ada');\n});\n"
+      }
+    },
+    {
+      "kind": "bash",
+      "command": "pnpm vitest run test/greeting.test.ts",
+      "description": "Run the greeting test",
+      "stdout": " ✓ test/greeting.test.ts (1 test) 3ms\n\n Test Files  1 passed (1)\n      Tests  1 passed (1)"
+    },
+    {
+      "kind": "mcp",
+      "server": "aoc",
+      "tool": "task_done",
+      "args": { "task_id": "t3", "evidence": { "kind": "test", "ref": "test/greeting.test.ts > greets by name" } }
+    },
+    { "kind": "think", "ms": 1100, "outputTokens": 300 },
+    {
+      "kind": "tool",
+      "name": "Write",
+      "input": { "file_path": "docs/greet.md", "content": "# greet\n\nRun `cli <name>` to print a greeting.\n" }
+    },
+    {
+      "kind": "mcp",
+      "server": "aoc",
+      "tool": "task_done",
+      "args": { "task_id": "t4", "evidence": { "kind": "diff", "ref": "docs/greet.md" } }
+    },
+    { "kind": "think", "ms": 2400, "outputTokens": 640 },
+    {
+      "kind": "tool",
+      "name": "Write",
+      "input": {
+        "file_path": "src/config.ts",
+        "content": "export interface Config {\n  defaultName: string;\n}\n\nexport function loadConfig(env: NodeJS.ProcessEnv): Config {\n  return { defaultName: env.GREET_NAME ?? 'world' };\n}\n"
+      }
+    },
+    {
+      "kind": "tool",
+      "name": "Edit",
+      "input": {
+        "file_path": "src/cli.ts",
+        "old_string": "const [name = 'world'] = process.argv.slice(2);",
+        "new_string": "const [name = loadConfig(process.env).defaultName] = process.argv.slice(2);"
+      }
+    },
+    {
+      "kind": "tool",
+      "name": "Edit",
+      "input": {
+        "file_path": "src/cli.ts",
+        "old_string": "import { greet } from './greeting';",
+        "new_string": "import { loadConfig } from './config';\nimport { greet } from './greeting';"
+      }
+    },
+    {
+      "kind": "mcp",
+      "server": "aoc",
+      "tool": "task_done",
+      "args": {
+        "task_id": "t5",
+        "evidence": {
+          "kind": "diff",
+          "ref": "src/config.ts",
+          "detail": "Config loading extracted into src/config.ts and used by src/cli.ts"
+        }
+      }
+    },
+    {
+      "kind": "text",
+      "text": "All five tasks are done: the greeting module, the CLI wiring, a unit test, the docs and the config refactor."
+    },
+    { "kind": "endTurn", "final": true }
+  ]
+}

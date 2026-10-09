@@ -196,12 +196,13 @@ export function createIntakeModule(opts: IntakeModuleOptions = {}): AocModule {
         const ticketId = newId('ticket', ctx.clock.now());
         const accepted: { attachmentId: string; sha: string; mime: string; bytes: number; name: string; scan: string; scanner: string; buf: Buffer }[] = [];
         for (const f of files) {
-          const buf = Buffer.from(await f.arrayBuffer());
-          const kind = sniff(buf);
+          // Type and size are decided from the magic bytes and the part's size before the file is copied out.
+          const kind = sniff(Buffer.from(await f.slice(0, 16).arrayBuffer()));
           if (!kind) throw new HttpError(415, 'unsupported_media', `${safeFileName(f.name)}: only PNG, JPEG, GIF, WebP, MP4, MOV, WebM or PDF are accepted`);
           if (!declaredMatches(f.type, kind)) throw new HttpError(415, 'type_mismatch', `${safeFileName(f.name)}: file content does not match its declared type`);
           const cap = kind.kind === 'video' ? cfg.maxVideoBytes : cfg.maxImageBytes;
-          if (buf.length > cap) throw new HttpError(413, 'too_large', `${safeFileName(f.name)} exceeds ${Math.round(cap / 1048576)} MB`);
+          if (f.size > cap) throw new HttpError(413, 'too_large', `${safeFileName(f.name)} exceeds ${Math.round(cap / 1048576)} MB`);
+          const buf = Buffer.from(await f.arrayBuffer());
           const scan = scanner.scan(buf);
           if (scan.verdict === 'infected') {
             ctx.log.warn('intake: infected upload rejected', { requester: auth.user.id, scanner: scan.scanner });

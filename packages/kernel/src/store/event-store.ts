@@ -38,6 +38,8 @@ export interface Projector {
   ddl: string[];
   /** Event types handled; omit for all. */
   handles?: readonly string[];
+  /** Bump when apply() semantics change without a DDL change, to force a rebuild from the log on next start. */
+  version?: number;
   apply(ctx: ProjectionContext, e: StoredEvent, payload: JsonValue | null): void;
   /** Scrub free text belonging to an erased body scope (crypto-shred, §13). */
   onErase?(db: DatabaseSync, scopeId: string): void;
@@ -91,6 +93,14 @@ interface EventRow {
   actor_kind: string;
   actor_id: string;
   scope_json: string;
+  project_id: string | null;
+  thread_id: string | null;
+  session_id: string | null;
+  task_id: string | null;
+  ticket_id: string | null;
+  change_id: string | null;
+  decision_id: string | null;
+  user_id: string | null;
   meta: string;
   payload_hash: string | null;
   body_scope: string | null;
@@ -101,6 +111,17 @@ interface EventRow {
   prev_hash: string;
   hash: string;
 }
+
+const SCOPE_COLUMNS = [
+  ['projectId', 'project_id'],
+  ['threadId', 'thread_id'],
+  ['sessionId', 'session_id'],
+  ['taskId', 'task_id'],
+  ['ticketId', 'ticket_id'],
+  ['changeId', 'change_id'],
+  ['decisionId', 'decision_id'],
+  ['userId', 'user_id'],
+] as const satisfies readonly (readonly [keyof Scope, keyof EventRow])[];
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS chain_info (k TEXT PRIMARY KEY, v TEXT NOT NULL);
@@ -132,6 +153,7 @@ CREATE INDEX IF NOT EXISTS events_causation ON events(causation_id);
 CREATE TRIGGER IF NOT EXISTS events_append_only_u BEFORE UPDATE ON events BEGIN SELECT RAISE(ABORT, 'events are append-only'); END;
 CREATE TRIGGER IF NOT EXISTS events_append_only_d BEFORE DELETE ON events BEGIN SELECT RAISE(ABORT, 'events are append-only'); END;
 CREATE TABLE IF NOT EXISTS projection_health (name TEXT PRIMARY KEY, status TEXT NOT NULL, last_error TEXT, failed_seq INTEGER, updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS projection_state (name TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, rebuilt_at TEXT NOT NULL);
 `;
 
 export interface EventStoreOptions {
@@ -151,6 +173,7 @@ export class EventStore {
   readonly bodies: BodyStore;
   readonly chainId: string;
   private readonly projectors: Projector[] = [];
+  private readonly stale = new Set<string>();
   private readonly listeners = new Set<CommitListener>();
   private headSeq = 0;
   private headHash: string;
@@ -180,8 +203,49 @@ export class EventStore {
   // ── projectors & listeners ────────────────────────────────────────────────
   registerProjector(p: Projector): void {
     if (this.projectors.some((x) => x.name === p.name)) throw new Error(`duplicate projector ${p.name}`);
-    for (const ddl of p.ddl) this.db.exec(ddl);
+    const fingerprint = projectorFingerprint(p);
+    const known = this.db.prepare('SELECT fingerprint FROM projection_state WHERE name = ?').get(p.name) as
+      | { fingerprint: string }
+      | undefined;
+    if (known?.fingerprint === fingerprint) {
+      for (const ddl of p.ddl) this.db.exec(ddl);
+    } else if (!known && this.headSeq === 0) {
+      // Fresh log: nothing to replay.
+      for (const ddl of p.ddl) this.db.exec(ddl);
+      this.markProjectionCurrent(p.name, fingerprint);
+    } else {
+      // New module on an existing log, or its schema/semantics changed: its tables are rebuilt from the log
+      // (rebuildStaleProjections) before anything reads or appends. Old tables may lack new columns, so drop first.
+      for (const t of p.tables) this.db.exec(`DROP TABLE IF EXISTS ${t}`);
+      for (const ddl of p.ddl) this.db.exec(ddl);
+      this.stale.add(p.name);
+    }
     this.projectors.push(p);
+  }
+
+  /**
+   * Rebuild every projector registered as stale (new on an existing log, or changed) plus any marked degraded by
+   * a failed apply. Called once at startup after all projectors are registered. Returns the rebuilt names.
+   */
+  rebuildStaleProjections(): string[] {
+    const degraded = this.projectionHealth()
+      .filter((h) => h.status === 'degraded')
+      .map((h) => h.name);
+    const names = [...new Set([...this.stale, ...degraded])].filter((n) => this.projectors.some((p) => p.name === n));
+    if (!names.length) return [];
+    this.rebuildProjections(names);
+    for (const n of names) this.markProjectionCurrent(n, projectorFingerprint(this.projectors.find((p) => p.name === n)!));
+    this.stale.clear();
+    return names;
+  }
+
+  private markProjectionCurrent(name: string, fingerprint: string): void {
+    this.db
+      .prepare(
+        `INSERT INTO projection_state (name, fingerprint, rebuilt_at) VALUES (?, ?, ?)
+         ON CONFLICT(name) DO UPDATE SET fingerprint = excluded.fingerprint, rebuilt_at = excluded.rebuilt_at`,
+      )
+      .run(name, fingerprint, this.opts.clock.iso());
   }
 
   /** Post-commit listener (SSE, reactors). Called synchronously after COMMIT, in seq order. */
@@ -210,7 +274,7 @@ export class EventStore {
             continue;
           }
         }
-        const problems = validateEvent(input.type, input.meta, input.payload ?? null);
+        const problems = [...validateEvent(input.type, input.meta, input.payload ?? null), ...headerProblems(input as NewEventInput)];
         if (problems.length) throw new EventValidationError(input.type, problems);
         const e = this.write(input as NewEventInput, writtenBodies);
         out.push(e);
@@ -474,6 +538,11 @@ export class EventStore {
           problems.push(`seq ${e.seq}: hash mismatch`);
           firstBad ??= e.seq;
         }
+        // Queries filter on the indexed copies of the scope, which the hash does not cover: they must agree with it.
+        if (SCOPE_COLUMNS.some(([k, col]) => ((e.scope as Record<string, string | undefined>)[k] ?? null) !== (r[col] ?? null))) {
+          problems.push(`seq ${e.seq}: indexed scope columns disagree with the chained scope`);
+          firstBad ??= e.seq;
+        }
         if (want.has(e.seq)) hashesAt[e.seq] = recomputed;
         prev = e.hash;
         expectSeq = e.seq + 1;
@@ -548,6 +617,30 @@ export class EventStore {
     this.db.close();
     this.bodies.close();
   }
+}
+
+function projectorFingerprint(p: Projector): string {
+  return sha256hex(canonicalJson({ tables: p.tables, ddl: p.ddl, handles: p.handles ?? null, version: p.version ?? 0 }));
+}
+
+const MAX_IDEMPOTENCY_KEY = 512;
+const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
+
+/**
+ * sourceTs and idempotencyKey are chained in clear (and exported in evidence packs) like meta, but the catalog
+ * does not cover them: bound them here so no writer can chain free text or bulk data that can never be erased.
+ */
+function headerProblems(input: NewEventInput): string[] {
+  const problems: string[] = [];
+  const ts = input.sourceTs;
+  if (ts !== undefined && ts !== null && !(typeof ts === 'string' && ts.length >= 10 && ts.length <= 40 && !Number.isNaN(Date.parse(ts)))) {
+    problems.push('sourceTs: must be an ISO-8601 timestamp');
+  }
+  const key = input.idempotencyKey;
+  if (key !== undefined && key !== null && !(typeof key === 'string' && key.length >= 1 && key.length <= MAX_IDEMPOTENCY_KEY && !CONTROL_CHARS.test(key))) {
+    problems.push(`idempotencyKey: must be 1–${MAX_IDEMPOTENCY_KEY} characters without control characters`);
+  }
+  return problems;
 }
 
 function cleanScope(s: Scope): Scope {

@@ -1,0 +1,20 @@
+{
+  "session_id": "b2e5f607-1829-43a4-b5c6-d7e8f9a0b1c2",
+  "transcript_path": "/tmp/aoc-capture/cfg/projects/-tmp-aoc-capture-work/b2e5f607-1829-43a4-b5c6-d7e8f9a0b1c2.jsonl",
+  "cwd": "/tmp/aoc-capture/work",
+  "prompt_id": "01ae04de-cca8-43af-a03a-6230dc0c194e",
+  "permission_mode": "bypassPermissions",
+  "effort": {
+    "level": "medium"
+  },
+  "hook_event_name": "PostToolUseFailure",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "ls /nonexistent-aoc-dir",
+    "description": "List nonexistent directory once"
+  },
+  "tool_use_id": "toolu_01ACAuynXwsRpEPLWWmnciXU",
+  "error": "Exit code 2\nls: cannot access '/nonexistent-aoc-dir': No such file or directory",
+  "is_interrupt": false,
+  "duration_ms": 35
+}

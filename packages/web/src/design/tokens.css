@@ -154,6 +154,32 @@
   }
 }
 
+/*
+ * Extensions (web foundation). Aliases and layout metrics — no new hues. The soft status tints reuse the
+ * liveness tints so a status colour and its background always come from the same ramp.
+ */
+:root {
+  --brand-red-contrast: #ffffff; /* wordmark letters on --brand-red, both themes */
+  --ok-soft: var(--live-working-soft);
+  --warn-soft: var(--live-stalled-soft);
+  --danger-soft: var(--live-dead-soft);
+  --info-soft: var(--live-throttled-soft);
+
+  --topbar-h: 44px;
+  --nav-w: 216px;
+  --nav-w-collapsed: 52px;
+  --content-max: 1680px;
+  --ctl-h: 28px;
+  --ctl-h-sm: 24px;
+
+  --z-nav: 15;
+  --z-topbar: 20;
+  --z-popover: 40;
+  --z-overlay: 50;
+  --z-toast: 60;
+  --z-tooltip: 70;
+}
+
 @media (prefers-reduced-motion: reduce) {
   :root {
     --dur-fast: 0ms;

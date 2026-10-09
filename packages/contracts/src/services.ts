@@ -239,7 +239,7 @@ export interface SupervisorService {
   /** Operator asked for a stop at the next task boundary (task_done returns stop_requested). */
   stopRequested(sessionId: string): boolean;
   /** Run a command in a supervisor-controlled environment (rollback verification, promotion). Never exposed to agents. */
-  runIsolated(input: { cwd: string; command: string[]; credentialProfile: string | null; timeoutMs: number }): Promise<{ exitCode: number; stdout: string; stderr: string }>;
+  runIsolated(input: { cwd: string; command: string[]; credentialProfile: string | null; timeoutMs: number; env?: Record<string, string> }): Promise<{ exitCode: number; stdout: string; stderr: string }>;
 }
 
 // ── registry (mod-registry) ────────────────────────────────────────────────
