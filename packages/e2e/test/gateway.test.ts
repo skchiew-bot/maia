@@ -12,6 +12,7 @@ import { dirname, join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { serviceRepoPathFor } from '@aoc/supervisor';
 import { Harness } from './harness';
+import { REPO_ROOT } from './paths';
 import { launchSim, untilSession } from './sim';
 
 const CANARY = 'canary-3f9a61c07be2';
@@ -82,9 +83,18 @@ beforeAll(async () => {
     }),
     { mode: 0o600 },
   );
+  // The shipped builder type scopes Bash to a few git verbs (`git push aoc` among them); this scenario also runs
+  // `printenv` and `git remote -v`, so it uses the shipped registry with the builder's Bash rules left out.
+  const registry = JSON.parse(readFileSync(join(REPO_ROOT, 'config', 'process-types.json'), 'utf8')) as {
+    types: { id: string; tools?: { allow?: string[]; deny?: string[] } }[];
+  };
+  const builder = registry.types.find((t) => t.id === 'feature-build')!;
+  builder.tools = {};
+  const registryFile = join(dir, 'process-types.json');
+  writeFileSync(registryFile, JSON.stringify(registry));
   h = await Harness.start({
     supervisor: 'real',
-    config: { supervisor: { credentialProfilesFile: profiles } },
+    config: { registryFile, supervisor: { credentialProfilesFile: profiles } },
   });
 });
 afterAll(async () => {

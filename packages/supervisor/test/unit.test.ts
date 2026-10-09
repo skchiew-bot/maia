@@ -101,7 +101,7 @@ describe('claude argv', () => {
   it('puts a single-value flag between the variadic tool flags and the prompt, then -- and the prompt', () => {
     const args = buildClaudeArgs({
       ...base,
-      ...toolPolicy(type({ tools: { allow: ['Bash(git log:*)'], deny: ['WebFetch'] } })),
+      ...toolPolicy(type({ tools: { allow: ['WebFetch(domain:example.com)', 'Read'], deny: ['WebFetch'] } })),
     });
     expect(args).toEqual([
       '-p',
@@ -121,7 +121,8 @@ describe('claude argv', () => {
       '--allowedTools',
       'mcp__aoc',
       'Bash',
-      'Bash(git log:*)',
+      'WebFetch(domain:example.com)',
+      'Read',
       '--disallowedTools',
       'WebFetch',
       '--session-id',
@@ -169,13 +170,24 @@ describe('claude argv', () => {
 
   // Claude Code 2.1.295 under -p (acceptEdits): `git add`, `git commit`, `npm test` all answer "This command requires
   // approval" and nobody can approve, so a writer without the grant cannot commit or run its tests (real-CLI check).
-  it('grants Bash to writer types (print mode cannot prompt), never to read-only ones, and respects a registry deny', () => {
+  it('grants Bash to writer types that say nothing about it (print mode cannot prompt), never to read-only ones', () => {
     expect(toolPolicy(type({})).allowedTools).toEqual(['mcp__aoc', 'Bash']);
     expect(toolPolicy(type({ tools: { allow: ['Bash', 'WebFetch'] } })).allowedTools).toEqual(['mcp__aoc', 'Bash', 'WebFetch']);
     expect(toolPolicy(type({ class: 'triage', readOnly: true })).allowedTools).toEqual(['mcp__aoc']);
     const noShell = toolPolicy(type({ tools: { deny: ['Bash'] } }));
     expect(noShell.allowedTools).toEqual(['mcp__aoc']);
     expect(noShell.disallowedTools).toEqual(['Bash']);
+  });
+
+  // The shipped writer types grant a few git verbs and deny merge, rebase and reset. That is their whole Bash policy:
+  // a blanket Bash next to it would allow everything the scoped rules leave out (`git switch main`, `git branch -D`).
+  it('leaves a registry that scopes Bash exactly as written', () => {
+    const scoped = { allow: ['Bash(git status:*)', 'Bash(git commit:*)'], deny: ['Bash(git reset:*)'] };
+    const p = toolPolicy(type({ tools: scoped }));
+    expect(p.allowedTools).toEqual(['mcp__aoc', 'Bash(git status:*)', 'Bash(git commit:*)']);
+    expect(p.disallowedTools).toEqual(['Bash(git reset:*)']);
+    // A scoped deny alone is still a statement about Bash: the type is not widened.
+    expect(toolPolicy(type({ tools: { deny: ['Bash(git push:*)'] } })).allowedTools).toEqual(['mcp__aoc']);
   });
 
   it('redacts the system prompt and the prompt from the recorded argv', () => {

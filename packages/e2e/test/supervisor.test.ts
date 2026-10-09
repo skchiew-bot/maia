@@ -4,6 +4,7 @@
  * through the API, operator nudge / stop / restart, plan-limit throttles resumed by the throttle job, and context
  * rollover to a successor session on the same thread.
  */
+import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -220,16 +221,16 @@ describe('supervisor + claude-sim: a managed session end to end', () => {
 
 describe('supervisor + claude-sim: what a writer may run (print mode cannot prompt)', () => {
   // Real Claude Code 2.1.295 answered `git add` / `git commit` / `npm test` with "This command requires approval" under
-  // -p acceptEdits, so a managed writer could not commit. The supervisor now grants writers Bash; claude-sim refuses
-  // exactly like the real CLI without it, so this fails if the grant is lost.
-  it('a writer commits through Bash and closes its task with that commit', async () => {
+  // -p acceptEdits, so a managed writer could not commit. A writer type the registry says nothing about Bash for is
+  // granted it; claude-sim refuses exactly like the real CLI without it, so this fails if the grant is lost.
+  it('a writer type that says nothing about Bash commits through it and closes its task with that commit', async () => {
     const dev = await h.user('builder', 'Committer');
     const { projectId, repo } = await h.project(dev, 'Hello');
-    const sessionId = await launch(dev, projectId, COMMIT_FILE);
+    const sessionId = await launch(dev, projectId, COMMIT_FILE, 'rollback-verify');
     await until(sessionId, dev, (d) => d.lifecycle === 'ended', 'the committing session to complete');
 
     const argv = payload(h.events({ types: ['session.launched'], sessionId })[0]!)!.argv as string[];
-    const grants = argv.slice(argv.indexOf('--allowedTools') + 1, argv.indexOf('--allowedTools') + 3);
+    const grants = argv.slice(argv.indexOf('--allowedTools') + 1, argv.indexOf('--disallowedTools') > 0 ? argv.indexOf('--disallowedTools') : argv.indexOf('--session-id'));
     expect(grants).toEqual(['mcp__aoc', 'Bash']);
     const done = h.events({ types: ['task.done'], sessionId });
     expect(done.map((e) => [e.meta.evidenceKind, e.meta.evidenceVerified, e.meta.flag])).toEqual([['commit', true, null]]);
@@ -237,7 +238,49 @@ describe('supervisor + claude-sim: what a writer may run (print mode cannot prom
     expect(bashResult).toBeTruthy();
     expect(done[0]!.meta.headSha).toBe(bashResult!.trim());
     expect(readFileSync(join(repo, 'hello.txt'), 'utf8')).toBe('hi\n');
+  });
 
+  // The shipped feature-build type names its Bash rules (a few git verbs; merge, rebase and reset denied). They are the
+  // whole policy: the same commit goes through, and what they leave out is refused rather than widened by a blanket Bash.
+  it('the shipped feature-build type commits through its scoped git grants and nothing beyond them', async () => {
+    const dev = await h.user('builder', 'Scoped');
+    const { projectId, repo } = await h.project(dev, 'Scoped');
+    const scenario = join(scenarioDir, 'scoped.json');
+    writeFileSync(
+      scenario,
+      JSON.stringify({
+        name: 'e2e-scoped',
+        steps: [
+          { kind: 'mcp', server: 'aoc', tool: 'declare_plan', args: { phases: [{ id: 'p1', name: 'Hello', tasks: [{ id: 't1', title: 'Create hello.txt and commit it', size: 'xs' }] }] } },
+          { kind: 'tool', name: 'Write', input: { file_path: 'hello.txt', content: 'hi\n' } },
+          { kind: 'bash', command: 'git add hello.txt && git commit -q -m "Add hello.txt" && git rev-parse HEAD', stdout: '', saveAs: 'sha', exec: true },
+          { kind: 'bash', command: 'git switch main && git branch -D scratch', stdout: '', saveAs: 'widened', exec: true },
+          { kind: 'bash', command: 'git reset --hard HEAD~1', stdout: '', saveAs: 'reset', exec: true },
+          { kind: 'mcp', server: 'aoc', tool: 'task_done', args: { task_id: 't1', evidence: { kind: 'commit', ref: '{{sha.stdout}}' } } },
+          { kind: 'text', text: 'Committed.' },
+          { kind: 'endTurn', final: true },
+        ],
+      }),
+    );
+    const sessionId = await launch(dev, projectId, scenario);
+    await until(sessionId, dev, (d) => d.lifecycle === 'ended', 'the scoped session to complete');
+
+    const argv = payload(h.events({ types: ['session.launched'], sessionId })[0]!)!.argv as string[];
+    const allowed = argv.slice(argv.indexOf('--allowedTools') + 1, argv.indexOf('--disallowedTools'));
+    expect(allowed[0]).toBe('mcp__aoc');
+    expect(allowed).toContain('Bash(git commit:*)');
+    expect(allowed).not.toContain('Bash');
+    expect(argv.slice(argv.indexOf('--disallowedTools') + 1)).toEqual(expect.arrayContaining(['Bash(git reset:*)']));
+
+    // The commit went through and its evidence was verified ...
+    const done = h.events({ types: ['task.done'], sessionId });
+    expect(done.map((e) => [e.meta.evidenceKind, e.meta.evidenceVerified])).toEqual([['commit', true]]);
+    expect(readFileSync(join(repo, 'hello.txt'), 'utf8')).toBe('hi\n');
+    // ... and what the grants leave out was refused: the model was told so, and nothing moved.
+    const shown = shownToModel(sessionId).map(([, content]) => String(content));
+    expect(shown.some((c) => c.includes('requires approval') && c.includes('git switch main'))).toBe(true);
+    expect(shown.some((c) => /reset --hard|denied|requires approval/.test(c) && c.includes('git reset'))).toBe(true);
+    expect(execFileSync('git', ['log', '--format=%s'], { cwd: repo, encoding: 'utf8', env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' } }).split('\n')[0]).toBe('Add hello.txt');
   });
 });
 

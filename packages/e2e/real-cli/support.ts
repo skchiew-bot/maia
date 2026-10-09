@@ -56,16 +56,22 @@ export interface RealCliOptions {
   pushProfile?: { name: string; refs: string[]; env?: Record<string, string> };
 }
 
+const isBashRule = (rule: string) => rule === 'Bash' || rule.startsWith('Bash(');
+
 /**
- * Haiku twins of the production builder and triage types: same permission mode, tool policy and plan rules. With a
- * `pushProfile` name there is a third, `smoke-push`, that holds that credential profile.
+ * Haiku twins of the production builder and triage types: same permission mode and plan rules. The shipped writer
+ * types scope Bash to a few git verbs (an explicit registry policy the supervisor passes on as written); the writer twins
+ * say nothing about Bash, so they get the supervisor's default grant — the policy every live run here verified, and the
+ * one `npm test` needs. With a `pushProfile` name there is a third twin, `smoke-push`, that holds that credential profile.
  */
 export function smokeRegistry(pushProfile?: string): Json {
   const prod = JSON.parse(readFileSync(join(REPO_ROOT, 'config', 'process-types.json'), 'utf8')) as { types: Json[] };
   const twin = (id: string, as: string, name: string): Json => {
     const t = prod.types.find((x) => x.id === id);
     if (!t) throw new Error(`config/process-types.json has no ${id} type`);
-    return { ...t, id: as, name, description: `Real-CLI check twin of ${id} on Haiku.`, class: t.class === 'discovery' ? 'execution' : t.class, model: 'haiku', executionModel: null, credentialProfile: null };
+    const tools = (t.tools ?? {}) as { allow?: string[]; deny?: string[] };
+    const unscoped = t.readOnly ? tools : { ...tools, allow: (tools.allow ?? []).filter((r) => !isBashRule(r)), deny: (tools.deny ?? []).filter((r) => !isBashRule(r)) };
+    return { ...t, id: as, name, description: `Real-CLI check twin of ${id} on Haiku.`, class: t.class === 'discovery' ? 'execution' : t.class, model: 'haiku', executionModel: null, credentialProfile: null, tools: unscoped };
   };
   const types = [twin('feature-build', 'smoke', 'Real CLI build'), twin('bug-triage', 'smoke-triage', 'Real CLI triage')];
   if (pushProfile) types.push({ ...twin('feature-build', 'smoke-push', 'Real CLI build with a push profile'), credentialProfile: pushProfile });

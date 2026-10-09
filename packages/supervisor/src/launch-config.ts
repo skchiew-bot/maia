@@ -17,19 +17,25 @@ export interface ToolPolicy {
   disallowedTools: string[];
 }
 
+/** True when the registry entry says anything about Bash: `Bash`, or a scoped rule such as `Bash(git commit:*)`. */
+const hasBashRule = (rules: readonly string[]) => rules.some((r) => r === 'Bash' || r.startsWith('Bash('));
+
 /**
  * Nobody can answer a permission prompt under -p, so whatever is not allowed up front is denied. Verified on 2.1.295
  * (acceptEdits): MCP tools are denied unless allowed, so the AOC server is always allowed (server-level rule); and so
  * is every Bash command beyond read-only ones (`ls`, `git status`, ...) and plain file commands (`touch`, `mv`, ...):
  * `git add`, `git commit`, `npm test` all answer "This command requires approval". A writer that cannot commit or run
- * its tests cannot do the work, and the gate on its commands is AOC's own (PreToolUse guards, credential isolation —
- * a hook deny still wins over an allow rule), so writer types are granted Bash unless their registry entry denies it.
- * Read-only types never get it and additionally deny every file-changing tool, whatever the registry says (defence in depth).
+ * its tests cannot do the work, so a writer type whose registry entry says nothing about Bash is granted it (the gate
+ * on its commands is AOC's own: PreToolUse guards, credential isolation; a hook deny still wins over an allow rule).
+ * An entry that does name Bash rules, such as the shipped types' few git verbs, is the type's whole Bash policy and is
+ * passed as written: widening it here would undo it. Read-only types never get Bash and additionally deny every
+ * file-changing tool, whatever the registry says (defence in depth).
  */
 export function toolPolicy(t: ProcessType): ToolPolicy {
+  const allow = t.tools.allow ?? [];
   const deny = t.tools.deny ?? [];
-  const bash = !t.readOnly && !deny.includes('Bash') ? ['Bash'] : [];
-  const allowed = unique([`mcp__${AOC_MCP_SERVER_NAME}`, ...bash, ...(t.tools.allow ?? [])]);
+  const bash = !t.readOnly && !hasBashRule(allow) && !hasBashRule(deny) ? ['Bash'] : [];
+  const allowed = unique([`mcp__${AOC_MCP_SERVER_NAME}`, ...bash, ...allow]);
   const disallowed = unique([...deny, ...(t.readOnly ? FILE_CHANGING_TOOLS : [])]);
   return {
     ...(t.builtinTools ? { builtinTools: t.builtinTools } : {}),
