@@ -217,15 +217,17 @@ The full procedure (what, the order, encryption, retention, keys kept apart) is 
 
 Jobs are defined by modules: interval jobs (`everyMs`) and daily jobs (`dailyAt`, local time). Each module
 declares its own: for example `intake.diagnosis-budget` and `decisions.aging` (every 60 s), the ledger's overrun
-check, the FX fetch, the metering day close and lesson retirement. `SELECT name FROM job_runs` lists the jobs that
-have run.
+check, the FX fetch (`fx.daily` at 18:00 MYT, then `fx.retry@18:30` and `fx.retry@21:00` while BNM's 1700 rate is
+unpublished; architecture §11), the metering day close and lesson retirement. `SELECT name FROM job_runs` lists the
+jobs that have run.
 
 **Anchoring now:** `aoc audit anchor` anchors the current chain head immediately, once `mod-audit` lands. Use it
 after a missed anchor, before a backup, or after a high-value event.
 
 **Any other job:** the kernel can run a job immediately (`AocRuntime.runJob(name)`), but **no admin command
 exposes it yet** (threat model O-26). Until one does, a missed daily job runs at its next scheduled time; for FX, a
-missed day is carried forward and stamped as such, which is the designed behaviour. Every run updates `job_runs`.
+missed day is carried forward and stamped as such, which is the designed behaviour, and an Approver can re-run the
+day's FX attempt with `POST /api/fx/run`. Every run updates `job_runs`.
 Jobs must be idempotent: a daily job forced by hand runs again even if it already ran today.
 
 ## 8. Upgrades

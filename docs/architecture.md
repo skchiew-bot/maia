@@ -695,21 +695,38 @@ dollars.
 
 ## 11. FX state machine
 
-The daily USD/MYR rate for each local date `D` (§10, R13). Implemented by `mod-fx`. Contracted.
+The daily USD/MYR rate for each local date `D` (§10, R13). Implemented by `mod-fx`. Contracted. The sources and
+defaults follow the [BNM research note](research/bnm-fx.md).
+
+**Definition.** AOC's rate for `D` is BNM's Kuala Lumpur interbank *middle* rate for the configured session
+(`fx.session`, default `1700`, the end-of-day reference), in ringgit per 1 USD. Every `fx.rate_recorded` and
+`fx.discrepancy_raised` carries the session in `meta.session` (a carried-forward rate keeps its source's session).
+Session 1130, the best counter rates of selected banks, has no middle rate and is never used.
+
+**Schedule.** BNM publishes a session about 40 minutes after its time (1700 at about 17:40 MYT). The job `fx.daily`
+runs at `fx.runAtLocalTime` (default 18:00 MYT), and a job `fx.retry@HH:MM` runs at each of `fx.retryAtLocalTimes`
+(default 18:30 and 21:00). A retry re-attempts the day only while nothing is recorded for it (not yet published, or
+not yet confirmed by the API) or its page was unreadable. A failed Sonnet escalation stops for the day; the Approver
+can still re-run it with `POST /api/fx/run`. The last scheduled attempt decides: a day that is still unpublished then
+is a public holiday.
 
 ```mermaid
 stateDiagram-v2
-  [*] --> scheduled: daily job for date D
-  scheduled --> inherited: weekend or holiday
+  [*] --> scheduled: attempt for date D at 18:00, 18:30 or 21:00
+  scheduled --> inherited: weekend
   scheduled --> fetching: weekday
-  fetching --> inherited: source unreadable
+  fetching --> inherited: page unreadable, flagged, retried
   fetching --> extracting: page read
   extracting --> validating: Haiku extraction
   validating --> reconciling: passes shape and sanity checks
   validating --> escalated: fails
   escalated --> reconciling: Sonnet extraction, once, passes
-  escalated --> inherited: Sonnet fails too
-  reconciling --> live: equals the official BNM figure
+  escalated --> inherited: Sonnet fails too, flagged
+  reconciling --> waiting: no row for D yet, or the API cannot confirm it
+  waiting --> scheduled: a retry remains
+  waiting --> inherited: last attempt, a holiday, or flagged when the page is stale or a large move is unconfirmed
+  waiting --> live: last attempt, API unavailable, recorded unreconciled
+  reconciling --> live: equals the API figure for D and the session at 4 dp
   reconciling --> refetch: mismatch
   refetch --> live: equal after one re-fetch
   refetch --> discrepancy: still mismatched
@@ -719,23 +736,32 @@ stateDiagram-v2
   resolved --> [*]
 ```
 
-- **Live**: `fx.rate_recorded {status: live, extractor: haiku | sonnet, validation: pass, reason: fetched}`.
-- **Inherited**: carry forward the last live rate, stamped with its `sourceDate` and a reason:
+- **Sources.** The page `https://www.bnm.gov.my/exchange-rates` shows session 1700, middle rate, RM per unit, one
+  row per publication day; a GET cannot select another session. The BNM Open API is read at
+  `<apiUrl>/date/<D>?session=<session>` with `Accept: application/vnd.BNM.API.v1+json`. Its 404 JSON
+  (`No records found.`) means "not published". A figure for another date or session, a null middle rate, or a
+  non-JSON answer means "can't read".
+- **Live**: `fx.rate_recorded {status: live, extractor: haiku | sonnet, validation: pass, reason: fetched, session}`.
+- **Inherited**: carry forward the last rate, stamped with its `sourceDate`, its session and a reason:
   `weekend_or_holiday`, `source_unreadable` or `validation_failed`. Weekend and holiday gaps carry forward by
-  design.
-- **Sanity bounds** reject out-of-band values (default 3.5 to 5.5 and at most 3 % change from day to day).
-  "Can't read the source" means carry forward with no ticket. "Read but mismatched against the true BNM figure"
-  means re-fetch once, and if it is still unreconciled, raise `fx.discrepancy_raised` as an audited Approver
-  decision that carries both figures. The day carries forward (`discrepancy_pending`) until a human resolves it
-  (`fx.discrepancy_resolved`, recorded as `manual_override`).
-- After `fx.carryForwardAlertDays` consecutive carried-forward days, `fx.carry_forward_alert` asks for a manual
-  check.
+  design and are not flagged.
+- **Reconciliation** compares both figures rounded to 4 dp. They may differ by `fx.reconcileTolerance` (default
+  0.0001, one unit in the fourth decimal). "Can't read the source" means carry forward with no ticket. "Read but
+  mismatched against the true BNM figure" means re-fetch once, and if it is still unreconciled, raise
+  `fx.discrepancy_raised` as an audited Approver decision that carries both figures. The day carries forward
+  (`discrepancy_pending`) until a human resolves it (`fx.discrepancy_resolved`, recorded as `manual_override`).
+- **Sanity bounds** reject out-of-band values (default 3.5 to 5.5) and day-over-day moves above
+  `fx.sanity.maxDailyChangePct` (3 %). A move above `fx.sanity.softFlagPct` (1.25 %, about the 2025–26 p99) is
+  accepted only when the API agrees exactly at 4 dp. A different API figure is a discrepancy. No API figure by the
+  last attempt means carry forward (`validation_failed`, problem `soft_flag_unconfirmed`) and an `fx.alert` asking
+  for a manual check.
+- **Alert.** After `fx.carryForwardAlertWeekdays` (default 3) weekdays in a row without a live rate,
+  `fx.carry_forward_alert` asks for a manual check, once per streak. Weekends never count. Holidays and weekdays
+  without any record do; BNM's longest holiday run in 2025–26 was two weekdays.
+- **Session 0900 or 1200.** If the noon rate is mandated, set `fx.session: "1200"`, `fx.runAtLocalTime: "13:00"` and
+  `fx.retryAtLocalTimes: ["13:30", "15:00"]`. The page cannot show 1200 without a form POST, so the rate is the API
+  figure alone (`extractor: api`): sanity-bounded, but with no page cross-check and no LLM.
 - Rates and rate-card changes apply forward only. A closed `rollup.closed` keeps the rate it was stamped with.
-
-The [BNM research note](research/bnm-fx.md) recommends changes to the Wave 0 FX defaults: pin session 1700 (the
-interbank middle rate) and run at 17:45 MYT instead of 12:30; pass `?session=` explicitly to the API; compare at 4
-decimal places; count weekdays (alert at 3) rather than calendar days. These are open for the `mod-fx` owner and
-the lead.
 
 ## 12. Error learning and repeat-offence detection
 
@@ -977,7 +1003,8 @@ Open items found while writing this document. Owners and details are in the [thr
    [self-modification boundary](compliance/self-modification-boundary.md)).
 6. Default anchoring (`anchorProvider: git` with no `anchorRemote`) is local only and does not mitigate R2 until a
    remote is configured.
-7. FX defaults differ from the BNM research recommendations (§11).
+7. FX now follows the BNM research (§11): the 1700 middle rate from 18:00 MYT. The CEO has yet to confirm the
+   1700 (end of day) rate over the 1200 (noon) rate.
 
 ## Glossary
 

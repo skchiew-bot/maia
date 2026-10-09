@@ -267,7 +267,7 @@ unprivileged OS user (O-1).
 
 | | Threat | Control | Status | Residual |
 | --- | --- | --- | --- | --- |
-| T | Injected content on the BNM page steers the extraction | A deterministic parse, sanity bounds, Haiku → Sonnet once, reconciliation with the BNM API, a human discrepancy decision | Built | Defaults differ from the research (O-18) |
+| T | Injected content on the BNM page steers the extraction | A deterministic parse, sanity bounds, Haiku → Sonnet once, reconciliation with the BNM API, a human discrepancy decision | Built | The session choice (1700 or 1200) awaits the CEO (O-18) |
 | T | The triage reconciliation model judges two different causes "the same" | The fix plan still goes through the human fix-plan gate | Built | — |
 | T | Distillation or lesson drafting absorbs injected instructions from session data | Playbooks and lessons bind only through a human decision ([T-15](#t-15-lesson-and-playbook-poisoning)) | Built | Reviewer fatigue |
 | T | AI-drafted change-record fields are accepted blindly | Each field must be edited or affirmed; blind affirmation is flagged ([T-9](#t-9-blind-affirm-without-edit)) | Built | — |
@@ -653,7 +653,7 @@ copying a trailer.
 | R10 | The lessons rulebook grows without bound | Medium | Scoped lessons; retirement after 20 unused runs; payoff tracking; human binding | Built | Reviewer fatigue (T-15) |
 | R11 | Repeat detection becomes per-person blame | Medium | No user id in error events; class-level aggregation; Tower scope never a person (T-16) | Built + Contracted (Tower) | The session-owner join exists; enforced by policy |
 | R12 | A rate edit restates closed days | Medium | Rate cards apply forward only; `rollup.closed` carries its figures and rate-card version, so a rebuild reproduces them | Built | — |
-| R13 | BNM scrape fragility writes a bad rate | Low | Sanity bounds; Haiku → Sonnet once; carry forward; reconciliation; discrepancy decision | Built | Defaults differ from the research (O-18) |
+| R13 | BNM scrape fragility writes a bad rate | Low | Sanity bounds; Haiku → Sonnet once; carry forward; reconciliation; discrepancy decision | Built | The session choice (1700 or 1200) awaits the CEO (O-18) |
 | R14 | Self-build corrupts the governance core | High | Self-modification guard; external audit log; human review of core changes (T-21) | Contracted + Ops | Guard inert by default; incomplete path list; the AI-built core needs human review before go-live (O-10) |
 | R15 | Indefinite decision waits stall the system | Medium | Age on every card; reminders; webhook; Tower attention queue; end-turn waits (T-17) | Built + Contracted | The single Approver (O-8) |
 | R16 | Rollover mid-risky-operation loses a constraint | Medium | Clean boundaries only; risky types never mid-operation; a deterministic brief validated against the manifest and decisions (ADR-0008) | Built (ledger) + Contracted (supervisor) | Constraints never written down are lost |
@@ -685,7 +685,7 @@ are ordered by importance within the table.
 | O-15 | Launch fail-closed checks: validate generated settings; fail a launch with no `SessionStart` within N seconds; abort unless `aoc` is `connected` | Change | `supervisor`, `hooks` | T-20 |
 | O-16 | Rate limits: per-session decision-card creation, ingest, uploads per Requester, SSE connections per user | Change | `mod-sessions`, `mod-decisions`, `mod-intake`, `daemon` | T-17, §3 |
 | O-17 | Lesson and playbook hygiene: provenance on the card, text length caps, highlighted invisible characters, no auto-proposal from untrusted-input sessions | Change | `mod-learning`, `mod-registry` | T-15 |
-| O-18 | FX defaults: session 1700 middle rate at 17:45 MYT; explicit `?session=`; compare at 4 dp; alert after 3 weekdays without a live rate | Decision (FinOps) + change | `mod-fx`, lead | R13 |
+| O-18 | FX session: confirm the 1700 end-of-day middle rate (the default: page scrape cross-checked with the API, from 18:00 MYT) or mandate the 1200 noon rate (from 13:00, API figure only, no page cross-check). The research defaults are built: explicit `?session=`, 4-dp comparison, 1.25 % soft flag, alert after 3 weekdays without a live rate | Decision (CEO, FinOps) | CEO; `mod-fx` | R13 |
 | O-19 | Extend passkeys beyond go-live, rollback and break-glass to every Approver gate (fix plan, main/production/data change requests, protected operations, lesson binding, top-ups) | **Decision (CEO)** | CEO, `mod-identity` | T-8 |
 | O-20 | Durability: keep `synchronous = NORMAL` (may lose the last transactions on power loss) or switch `aoc.db` to `FULL` | Decision (architect) | Platform architect | ADR-0002 |
 | O-21 | Enablement gates: keep the intake portal and Builder surfaces switched off in production until the identity stage (§15.3) is signed off, even though the code exists | **Decision (CEO)** + change | CEO, `daemon` | R5 |
