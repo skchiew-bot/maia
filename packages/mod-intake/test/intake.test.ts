@@ -807,7 +807,7 @@ describe('after the requester signs UAT off', () => {
     const { s, ticketId, req } = await atGoLive();
     // The requester has nothing left to test, and nothing about the next step reaches them.
     const waiting = await publicOf(ticketId, req);
-    expect(waiting).toMatchObject({ status: 'being_worked_on', statusLabel: 'Being worked on', canSignOffUat: false });
+    expect(waiting).toMatchObject({ status: 'being_worked_on', statusLabel: 'Being worked on', canSignOffUat: false, fixConfirmed: true });
     expect(JSON.stringify(waiting)).not.toMatch(gateWords);
     expect(t.decisions!.list({ kind: ['go_live'], status: ['open'] })).toHaveLength(1);
     expect(statuses(ticketId)).toEqual(['being_worked_on', 'ready_for_testing', 'being_worked_on']);
@@ -820,7 +820,7 @@ describe('after the requester signs UAT off', () => {
       source: 'api',
     });
     await t.drain();
-    expect(await publicOf(ticketId, req)).toMatchObject({ status: 'completed', statusLabel: 'Completed' });
+    expect(await publicOf(ticketId, req)).toMatchObject({ status: 'completed', statusLabel: 'Completed', fixConfirmed: false });
     expect(statuses(ticketId)).toEqual(['being_worked_on', 'ready_for_testing', 'being_worked_on', 'completed']);
   });
 
@@ -832,7 +832,8 @@ describe('after the requester signs UAT off', () => {
     await t.drain();
     const escalation = t.decisions!.list({ subjectId: ticketId, status: ['open'] })[0]!;
     expect(escalation.kind).toBe('fix_plan');
-    expect(await publicOf(ticketId, req)).toMatchObject({ status: 'being_worked_on', canSignOffUat: false });
+    // The fix itself was confirmed; only its release is being re-decided.
+    expect(await publicOf(ticketId, req)).toMatchObject({ status: 'being_worked_on', canSignOffUat: false, fixConfirmed: true });
 
     await t.decisions!.resolve(escalation.id, { optionId: 'retry_golive' }, approver.user);
     await t.drain();
@@ -848,11 +849,12 @@ describe('after the requester signs UAT off', () => {
     const escalation = t.decisions!.list({ subjectId: ticketId, status: ['open'] })[0]!;
     await t.decisions!.resolve(escalation.id, { optionId: 'rebuild' }, approver.user);
     await t.drain();
-    expect(await publicOf(ticketId, req)).toMatchObject({ status: 'being_worked_on', canSignOffUat: false });
+    // The pass was for the old build: a rebuild withdraws the thanks until the new build is ready to test.
+    expect(await publicOf(ticketId, req)).toMatchObject({ status: 'being_worked_on', canSignOffUat: false, fixConfirmed: false });
 
     endBuild(s.launches.filter((l) => l.ticketId === ticketId && l.processType === 'bug-fix')[1]!.sessionId);
     await t.drain();
-    expect(await publicOf(ticketId, req)).toMatchObject({ status: 'ready_for_testing', canSignOffUat: true });
+    expect(await publicOf(ticketId, req)).toMatchObject({ status: 'ready_for_testing', canSignOffUat: true, fixConfirmed: false });
   });
 
   it('delivered again, the answer changes nothing', async () => {

@@ -61,6 +61,7 @@ function publicView(ctx: ModuleContext, flow: IntakeFlow, t: TicketRow): PublicT
     updatedAt: t.updated_at,
     attachments: flow.attachments(t.ticket_id).map((a) => ({ attachmentId: a.attachment_id, fileName: a.file_name, mime: a.mime, bytes: a.bytes })),
     canSignOffUat: canSign,
+    fixConfirmed: t.uat_passed_at !== null && t.resolution === null,
   };
 }
 

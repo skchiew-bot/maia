@@ -12,20 +12,37 @@ import { APPROVER, BUILDER, INTERNAL_TERMS, REQUESTER, ticket } from './fixtures
 
 describe('requester view of a ticket', () => {
   it('asks for testing only while the requester can answer', () => {
-    expect(viewOf({ status: 'ready_for_testing', canSignOffUat: true })).toEqual({
+    expect(viewOf({ status: 'ready_for_testing', canSignOffUat: true, fixConfirmed: false })).toEqual({
       status: 'ready_for_testing',
       tested: false,
       needsYou: true,
     });
     // Answered (the server keeps "ready for testing" until the fix is live): no test left to do.
-    expect(viewOf({ status: 'ready_for_testing', canSignOffUat: false })).toEqual({
+    expect(viewOf({ status: 'ready_for_testing', canSignOffUat: false, fixConfirmed: false })).toEqual({
       status: 'being_worked_on',
       tested: true,
       needsYou: false,
     });
-    expect(viewOf({ status: 'completed', canSignOffUat: false })).toMatchObject({
+    expect(viewOf({ status: 'completed', canSignOffUat: false, fixConfirmed: false })).toMatchObject({
       status: 'completed',
       needsYou: false,
+    });
+  });
+
+  it('thanks a requester whose pass is recorded, until a new build needs testing', () => {
+    // The server has moved the request back to "being worked on" and says the fix is confirmed.
+    expect(viewOf({ status: 'being_worked_on', canSignOffUat: false, fixConfirmed: true })).toEqual({
+      status: 'being_worked_on',
+      tested: true,
+      needsYou: false,
+    });
+    // A new build to test clears it: the request is asked for again, not thanked.
+    expect(viewOf({ status: 'ready_for_testing', canSignOffUat: true, fixConfirmed: false })).toMatchObject({
+      tested: false,
+      needsYou: true,
+    });
+    expect(viewOf({ status: 'being_worked_on', canSignOffUat: false, fixConfirmed: false })).toMatchObject({
+      tested: false,
     });
   });
 
