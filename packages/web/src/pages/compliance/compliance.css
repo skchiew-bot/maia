@@ -233,6 +233,15 @@
   gap: 4px;
   margin-top: 2px;
 }
+.compliance-chip {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  text-decoration: none;
+}
+.compliance-chip:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
 .compliance-correction {
   color: var(--text-2);
   font-size: var(--fs-xs);

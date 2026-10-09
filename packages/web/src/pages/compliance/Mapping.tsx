@@ -1,11 +1,11 @@
 import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { Link } from 'react-router-dom';
 import type { ComplianceMappingDTO, ComplianceMappingRowDTO } from '@aoc/contracts';
 import { apiPost } from '../../api/client';
 import {
   Badge,
   Button,
   Checkbox,
-  Chip,
   CopyableHash,
   DataTable,
   Dialog,
@@ -409,15 +409,19 @@ export function MappingTable({ mapping }: { mapping: ComplianceMappingDTO }) {
         header: 'Evidence',
         cell: (r) => (
           <span className="compliance-evidence">
-            {r.evidence.length > 0 && <Clamp text={r.evidence.join(' · ')} lines={4} label="evidence" />}
+            {r.evidence.length > 0 && <Clamp text={r.evidence.join(' · ')} lines={3} label="evidence" />}
             {r.eventTypes.length > 0 && (
-              <span className="compliance-chips" aria-label="Event types an auditor can query">
-                {r.eventTypes.slice(0, 6).map((t) => (
-                  <Chip key={t}>{t}</Chip>
+              <span className="compliance-chips">
+                {r.eventTypes.map((t) => (
+                  <Link
+                    key={t}
+                    className="aoc-chip aoc-tone--neutral compliance-chip"
+                    to={`/audit?type=${encodeURIComponent(t)}`}
+                    aria-label={`${t} events in the audit log`}
+                  >
+                    {t}
+                  </Link>
                 ))}
-                {r.eventTypes.length > 6 && (
-                  <span className="compliance-muted">+{r.eventTypes.length - 6} event types</span>
-                )}
               </span>
             )}
           </span>
