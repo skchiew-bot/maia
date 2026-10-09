@@ -116,8 +116,9 @@ export class AocClient {
     if (!dir || !existsSync(dir)) return { sent: 0, failed: 0 };
     let sent = 0;
     let failed = 0;
-    for (const f of readdirSync(dir).filter((x) => x.endsWith('.jsonl'))) {
-      const claimed = join(dir, `${f}.sending-${process.pid}`);
+    // A flusher that died mid-flush (hooks are short-lived processes) leaves its claim behind: take those over too.
+    for (const f of readdirSync(dir).filter((x) => x.endsWith('.jsonl') || abandonedClaim(x))) {
+      const claimed = join(dir, `${f.replace(/\.sending-\d+$/, '')}.sending-${process.pid}`);
       try {
         renameSync(join(dir, f), claimed);
       } catch {
@@ -147,6 +148,20 @@ export class AocClient {
 
 export function createClient(opts: ClientOptions): AocClient {
   return new AocClient(opts);
+}
+
+/** `<file>.jsonl.sending-<pid>` whose flusher is gone. Never this process's own claims (another flush may hold them). */
+function abandonedClaim(name: string): boolean {
+  const m = /\.jsonl\.sending-(\d+)$/.exec(name);
+  if (!m) return false;
+  const pid = Number(m[1]);
+  if (pid === process.pid) return false;
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'ESRCH';
+  }
 }
 
 function safeJson(text: string): unknown {

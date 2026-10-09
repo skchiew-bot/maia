@@ -47,7 +47,8 @@ export async function readJson<T>(c: Ctx, schema: z.ZodType<T>): Promise<T> {
   let body: unknown;
   try {
     body = await c.req.json();
-  } catch {
+  } catch (err) {
+    if (err instanceof HttpError) throw err; // e.g. the body cap tripped mid-read
     throw new HttpError(400, 'bad_json', 'Request body must be JSON');
   }
   const r = schema.safeParse(body);
@@ -88,6 +89,33 @@ export function bodyLimitFor(path: string, config: AocConfig): number {
     return i.maxAttachments * Math.max(i.maxImageBytes, i.maxVideoBytes) + MAX_BODY_BYTES.formOverhead;
   }
   return MAX_BODY_BYTES.api;
+}
+
+/**
+ * Enforce a body cap without reading the body: a declared Content-Length is checked up front (Node never delivers
+ * more than it declares); a chunked body is counted while the route reads it. Nothing is buffered on behalf of a
+ * caller that auth or the route goes on to refuse.
+ */
+export function capRequestBody(c: Ctx, maxSize: number): void {
+  const raw = c.req.raw;
+  if (!raw.body) return;
+  const tooLarge = () => new HttpError(413, 'payload_too_large', `Request body exceeds ${maxSize} bytes`);
+  const declared = raw.headers.get('content-length');
+  if (declared !== null && /^\d+$/.test(declared) && !raw.headers.has('transfer-encoding')) {
+    if (Number(declared) > maxSize) throw tooLarge();
+    return;
+  }
+  let seen = 0;
+  const counted = raw.body.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        seen += chunk.byteLength;
+        if (seen > maxSize) controller.error(tooLarge());
+        else controller.enqueue(chunk);
+      },
+    }),
+  );
+  c.req.raw = new Request(raw, { body: counted, duplex: 'half' } as RequestInit);
 }
 
 /** Extract the bearer token from Authorization or the aoc_session cookie. */

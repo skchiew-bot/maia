@@ -45,6 +45,7 @@ belongs to it, including the code that loads, wires or feeds the parts.
 | `packages/mod-ledger/` | The evidence rule, progress, boundaries, the writer lock, handoff briefs | **No: add it** |
 | `packages/mod-metering/` | The notional cost that credits consume; rollups | **No: add it** |
 | `packages/mod-registry/` | Model routing and playbook binding | **No: add it** |
+| `packages/distill/` | The shared distillation core: the Approver gate and the rule that only a person picking the binding option binds a playbook or lesson | **No: add it** |
 | `packages/mod-evidence/` | Evidence packs and the mapping stamp | **No: add it** |
 | `packages/daemon/` | Which modules and guards are loaded at all | **No: add it** |
 | `packages/client/`, `packages/mcp-server/`, `packages/sidecar/` | Ingest authentication and the telemetry that metering and credits trust | **No: add them** |

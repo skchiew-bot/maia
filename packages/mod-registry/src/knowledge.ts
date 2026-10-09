@@ -113,6 +113,9 @@ function eraseScope(db: DatabaseSync, scopeId: string): void {
     doc_id: string;
   }[];
   for (const d of docs) deleteDoc(db, d.doc_id);
+  // An FTS5 delete only adds tombstones: the erased terms stay in live index segments until a merge rewrites
+  // them. Merge now so they leave the index pages (the kernel's secure_delete then zeroes the freed pages).
+  if (docs.length) db.exec("INSERT INTO reg_knowledge(reg_knowledge) VALUES('optimize')");
   db.prepare('DELETE FROM reg_kn_diagnoses WHERE body_scope = ? OR ticket_id = ?').run(scopeId, scopeId);
   db.prepare('DELETE FROM reg_kn_fixplans WHERE ticket_id = ?').run(scopeId);
   db.prepare('DELETE FROM reg_kn_playbooks WHERE body_scope = ? OR playbook_id = ?').run(scopeId, scopeId);

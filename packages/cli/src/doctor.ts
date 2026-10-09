@@ -135,10 +135,13 @@ function globToRegex(glob: string): RegExp {
 }
 const SECRET_RES = DEPLOY_SECRET_ENV_PATTERNS.map(globToRegex);
 
-/** Names of non-empty env vars that look like deploy-grade credentials. Values are never returned. */
+/**
+ * Names of non-empty env vars that look like deploy-grade credentials. The name is matched first, so only
+ * those variables' values are read (to tell set from empty), and values are never returned.
+ */
 export function deploySecretEnvNames(env: Record<string, string | undefined>): string[] {
   return Object.keys(env)
-    .filter((name) => (env[name] ?? '').trim() !== '' && SECRET_RES.some((re) => re.test(name)))
+    .filter((name) => SECRET_RES.some((re) => re.test(name)) && (env[name] ?? '').trim() !== '')
     .sort();
 }
 

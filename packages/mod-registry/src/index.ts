@@ -17,9 +17,9 @@ export interface RegistryModuleOptions {
 }
 
 /**
- * Process-type registry module: the fixed registry and model routing (§2.2, §10), the distillation
- * engine for playbooks (§11), registry economics for the Registry hero (§12) and the team knowledge
- * layer (§14). Provides the `registry` service.
+ * Process-type registry module: the fixed registry and model routing (§2.2, §10), playbook distillation
+ * on the shared distillation core (@aoc/distill, §11), registry economics for the Registry hero (§12) and
+ * the team knowledge layer (§14). Provides the `registry` service.
  */
 export function createRegistryModule(opts: RegistryModuleOptions = {}): AocModule {
   let engine: RegistryEngine | null = null;

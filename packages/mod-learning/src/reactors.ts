@@ -1,6 +1,7 @@
 import type { JsonValue, MetaOf, StoredEvent } from '@aoc/contracts';
+import { gateVerdict } from '@aoc/distill';
 import type { Reactor } from '@aoc/kernel';
-import { clip, SYSTEM, type LearningEngine, type RecordErrorInput } from './engine';
+import { clip, LESSON_GATE, SYSTEM, type LearningEngine, type RecordErrorInput } from './engine';
 import { reopensOn, REPEAT_THRESHOLD } from './rules';
 import { toolErrorText } from './signature';
 
@@ -193,27 +194,31 @@ export function offenceReactor(engine: () => LearningEngine): Reactor {
   };
 }
 
-/** Lesson binding follows the human decision: bind → lesson.bound; reject, withdrawal or expiry → lesson.rejected. */
+/**
+ * Lesson binding follows the Approver gate: a person choosing bind → lesson.bound; anything else (reject, a
+ * policy resolution, withdrawal, expiry) → lesson.rejected.
+ */
 export function lessonDecisionReactor(engine: () => LearningEngine): Reactor {
   return {
     name: 'learning.lesson-decisions',
     handles: ['decision.resolved', 'decision.withdrawn', 'decision.expired'],
     react(e) {
+      const verdict = gateVerdict(LESSON_GATE, e);
+      if (!verdict) return;
       const eng = engine();
-      const m = e.meta as
-        MetaOf<'decision.resolved'> | MetaOf<'decision.withdrawn'> | MetaOf<'decision.expired'>;
-      if (e.type === 'decision.resolved' && (m as MetaOf<'decision.resolved'>).kind !== 'lesson_binding')
-        return;
+      const { decisionId } = e.meta as
+        | MetaOf<'decision.resolved'>
+        | MetaOf<'decision.withdrawn'>
+        | MetaOf<'decision.expired'>;
       const lesson = eng.one<{ lesson_id: string; status: string }>(
         'SELECT lesson_id, status FROM lrn_lessons WHERE decision_id = ?',
-        m.decisionId,
+        decisionId,
       );
       if (!lesson || lesson.status !== 'proposed') return;
-      const bind = e.type === 'decision.resolved' && (m as MetaOf<'decision.resolved'>).optionId === 'bind';
       eng.ctx.store.append({
-        type: bind ? 'lesson.bound' : 'lesson.rejected',
+        type: verdict === 'approved' ? 'lesson.bound' : 'lesson.rejected',
         actor: SYSTEM,
-        meta: { lessonId: lesson.lesson_id, decisionId: m.decisionId },
+        meta: { lessonId: lesson.lesson_id, decisionId },
         source: 'system',
         causationId: e.id,
         idempotencyKey: `lesson.decided:${lesson.lesson_id}`,
