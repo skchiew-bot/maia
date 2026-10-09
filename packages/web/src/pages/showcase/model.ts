@@ -6,7 +6,12 @@ import type {
   SessionSummary,
 } from '@aoc/contracts';
 import type { AocEvent, StreamMessage } from '../../api/stream';
-import { LIVENESS_META, LIVENESS_PRECEDENCE, isLivenessState, type LivenessState } from '../../components/liveness/liveness';
+import {
+  LIVENESS_META,
+  LIVENESS_PRECEDENCE,
+  isLivenessState,
+  type LivenessState,
+} from '../../components/liveness/liveness';
 
 /**
  * Showcase (§12): a 2D map of the fleet. Each session is a node on a track made of its own plan's phases, sized
@@ -34,6 +39,8 @@ export interface TrackModel {
   liveness: LivenessState | null;
   livenessSince: string | null;
   finished: boolean;
+  /** The plan has loaded (or the session cannot have one); until then the track waits instead of jumping. */
+  planKnown: boolean;
   phases: PhaseSegment[];
   totalWeight: number;
   doneWeight: number;
@@ -119,6 +126,7 @@ export function trackOf(s: SessionSummary, manifest: readonly ManifestPhaseDTO[]
     liveness: isLivenessState(state) ? state : null,
     livenessSince: s.liveness?.since ?? null,
     finished: FINISHED.has(s.lifecycle),
+    planKnown: manifest !== undefined || s.mode === 'observed',
     phases,
     totalWeight: phases.reduce((n, p) => n + p.total, 0),
     doneWeight: phases.reduce((n, p) => n + p.done, 0),
@@ -163,7 +171,8 @@ export function buildLanes({ console: snap, projects, manifests, decisions }: Fl
     return lane;
   };
   for (const p of projects ?? []) laneFor(p.projectId, p.name);
-  for (const s of snap.sessions) laneFor(s.projectId, s.projectName).tracks.push(trackOf(s, manifests.get(s.sessionId)));
+  for (const s of snap.sessions)
+    laneFor(s.projectId, s.projectName).tracks.push(trackOf(s, manifests.get(s.sessionId)));
   const carried = new Set(snap.sessions.map((s) => s.openDecision?.decisionId).filter(Boolean));
   for (const d of decisions ?? []) {
     if (d.status !== 'open' || carried.has(d.id)) continue;
@@ -191,12 +200,22 @@ export function buildLanes({ console: snap, projects, manifests, decisions }: Fl
 export function livenessCounts(lanes: readonly LaneModel[]): Map<LivenessState, number> {
   const counts = new Map<LivenessState, number>();
   for (const lane of lanes)
-    for (const t of lane.tracks) if (!t.finished && t.liveness) counts.set(t.liveness, (counts.get(t.liveness) ?? 0) + 1);
+    for (const t of lane.tracks)
+      if (!t.finished && t.liveness) counts.set(t.liveness, (counts.get(t.liveness) ?? 0) + 1);
   return counts;
 }
 
 /** Events that change what the map draws (console, project progress, decisions). */
-export const MAP_EVENT_PREFIXES = ['session.', 'decision.', 'throttle.', 'plan.', 'phase.', 'task.', 'rollover.', 'credit.'];
+export const MAP_EVENT_PREFIXES = [
+  'session.',
+  'decision.',
+  'throttle.',
+  'plan.',
+  'phase.',
+  'task.',
+  'rollover.',
+  'credit.',
+];
 
 export function changesMap(m: StreamMessage): boolean {
   if (m.kind === 'liveness') return true;
@@ -213,7 +232,12 @@ export const MANIFEST_EVENTS: ReadonlySet<string> = new Set([
 ]);
 
 export function changesProjects(m: StreamMessage): boolean {
-  return m.kind === 'aoc' && (MANIFEST_EVENTS.has(m.event.type) || m.event.type.startsWith('project.') || m.event.type === 'session.ended');
+  return (
+    m.kind === 'aoc' &&
+    (MANIFEST_EVENTS.has(m.event.type) ||
+      m.event.type.startsWith('project.') ||
+      m.event.type === 'session.ended')
+  );
 }
 
 export function isDecisionEvent(m: StreamMessage): boolean {
@@ -309,7 +333,8 @@ function detailOf(e: AocEvent): string | null {
   const m = e.meta as Record<string, unknown>;
   if (typeof m.kind === 'string' && e.type.startsWith('decision.')) return decisionWord(m.kind);
   if (typeof m.outcome === 'string') return m.outcome.replace(/_/g, ' ');
-  if (e.type === 'session.lifecycle_changed' && typeof m.to === 'string') return `→ ${m.to.replace(/_/g, ' ')}`;
+  if (e.type === 'session.lifecycle_changed' && typeof m.to === 'string')
+    return `→ ${m.to.replace(/_/g, ' ')}`;
   if (typeof m.verdict === 'string') return m.verdict;
   if (e.type === 'tool.used' && typeof m.toolName === 'string') return m.toolName;
   return null;

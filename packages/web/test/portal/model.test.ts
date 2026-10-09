@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { ApiError } from '../../src/api';
 import { portalDestination } from '../../src/pages/portal/hooks';
-import { countByStatus, groupTickets, portalErrorMessage, STATUS_META, viewOf } from '../../src/pages/portal/model';
+import {
+  countByStatus,
+  groupTickets,
+  portalErrorMessage,
+  STATUS_META,
+  viewOf,
+} from '../../src/pages/portal/model';
 import { APPROVER, BUILDER, INTERNAL_TERMS, REQUESTER, ticket } from './fixtures';
 
 describe('requester view of a ticket', () => {
@@ -17,7 +23,10 @@ describe('requester view of a ticket', () => {
       tested: true,
       needsYou: false,
     });
-    expect(viewOf({ status: 'completed', canSignOffUat: false })).toMatchObject({ status: 'completed', needsYou: false });
+    expect(viewOf({ status: 'completed', canSignOffUat: false })).toMatchObject({
+      status: 'completed',
+      needsYou: false,
+    });
   });
 
   it('groups waiting-on-you first, then in progress, then done, newest first', () => {

@@ -4,7 +4,15 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ApiError } from '../../api/client';
 import { useAuth } from '../../api/auth';
 import { useResource } from '../../api/useResource';
-import { Button, ButtonLink, EmptyState, Icon, InlineAlert, PageHeader, RelativeTime } from '../../components';
+import {
+  Button,
+  ButtonLink,
+  EmptyState,
+  Icon,
+  InlineAlert,
+  PageHeader,
+  RelativeTime,
+} from '../../components';
 import { formatDayTime } from './dates';
 import { AttachmentList } from './files';
 import { canUsePortal, useRefreshOnReturn } from './hooks';
@@ -21,7 +29,9 @@ export default function PortalTicketPage() {
   const allowed = canUsePortal(user);
   const location = useLocation();
   const navigate = useNavigate();
-  const resource = useResource<PublicTicket>(`/portal/api/tickets/${encodeURIComponent(id)}`, { enabled: allowed });
+  const resource = useResource<PublicTicket>(`/portal/api/tickets/${encodeURIComponent(id)}`, {
+    enabled: allowed,
+  });
   useRefreshOnReturn(resource.reload, allowed);
   const [answered, setAnswered] = useState<PublicTicket | null>(null);
   const [verdict, setVerdict] = useState<Verdict | null>(null);
@@ -82,7 +92,11 @@ export default function PortalTicketPage() {
   const view = viewOf(ticket);
   // Until the server moves a rejected fix back into work, the answer itself says what happens next.
   const rejectedJustNow = verdict === 'fail' && view.tested;
-  const explain = rejectedJustNow ? STATUS_META.being_worked_on.explain : view.tested ? TESTED_NOTE : STATUS_META[view.status].explain;
+  const explain = rejectedJustNow
+    ? STATUS_META.being_worked_on.explain
+    : view.tested
+      ? TESTED_NOTE
+      : STATUS_META[view.status].explain;
   return (
     <div className="portal-page">
       <PageHeader
@@ -91,7 +105,8 @@ export default function PortalTicketPage() {
         breadcrumbs={crumbs}
         subtitle={
           <>
-            Sent {formatDayTime(ticket.submittedAt)} · Last update <RelativeTime value={ticket.updatedAt} suffix=" ago" />
+            Sent {formatDayTime(ticket.submittedAt)} · Last update{' '}
+            <RelativeTime value={ticket.updatedAt} suffix=" ago" />
           </>
         }
       />
@@ -105,7 +120,11 @@ export default function PortalTicketPage() {
           You can follow it here. We will ask you to test the fix on this page when it is ready.
         </InlineAlert>
       )}
-      <section className="portal-card portal-status-card" aria-labelledby="status-title" data-status={view.status}>
+      <section
+        className="portal-card portal-status-card"
+        aria-labelledby="status-title"
+        data-status={view.status}
+      >
         <div className="portal-status-card__head">
           <h2 id="status-title" className="portal-section-title">
             Status
@@ -167,7 +186,8 @@ export default function PortalTicketPage() {
             <>
               <AttachmentList attachments={ticket.attachments} />
               <p className="portal-files__privacy">
-                Stored encrypted. Only the people working on your request open them, and only when they need to.
+                Stored encrypted. Only the people working on your request open them, and only when they need
+                to.
               </p>
             </>
           ) : (

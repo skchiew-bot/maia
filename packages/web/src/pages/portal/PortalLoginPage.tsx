@@ -28,7 +28,9 @@ export default function PortalLoginPage() {
           <h1 id="portal-sign-in" className="aoc-login__title">
             Sign in
           </h1>
-          <p className="aoc-login__lede">Report a problem, follow its progress and test the fix when it is ready.</p>
+          <p className="aoc-login__lede">
+            Report a problem, follow its progress and test the fix when it is ready.
+          </p>
         </div>
         <TokenSignInForm label="Access code" hint="Use the access code you were given." onSignedIn={go} />
         <ul className="portal-login__points">

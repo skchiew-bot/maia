@@ -52,12 +52,18 @@ export const STATUS_META: Record<PortalStatus, StatusMeta> = {
     icon: 'ended',
     color: 'var(--text-3)',
     bg: 'var(--surface-2)',
-    explain: 'This request was closed without a change. If the problem is still happening, send a new request.',
+    explain:
+      'This request was closed without a change. If the problem is still happening, send a new request.',
   },
 };
 
 /** The path a request normally takes; `closed` leaves it. */
-export const STEPS: readonly PortalStatus[] = ['received', 'being_worked_on', 'ready_for_testing', 'completed'];
+export const STEPS: readonly PortalStatus[] = [
+  'received',
+  'being_worked_on',
+  'ready_for_testing',
+  'completed',
+];
 
 export interface TicketView {
   /** Status to show. */
@@ -68,7 +74,8 @@ export interface TicketView {
   needsYou: boolean;
 }
 
-export const TESTED_NOTE = 'Thanks for testing. We are finishing up and will mark this request completed here.';
+export const TESTED_NOTE =
+  'Thanks for testing. We are finishing up and will mark this request completed here.';
 
 /**
  * A request stays "ready for testing" on the server after the requester confirms the fix, until it is live.
@@ -105,7 +112,9 @@ export function groupOf(t: PublicTicket): TicketGroup {
 }
 
 /** Requests in display order: waiting on you, then in progress, then done — newest activity first in each. */
-export function groupTickets(tickets: readonly PublicTicket[]): { group: TicketGroup; tickets: PublicTicket[] }[] {
+export function groupTickets(
+  tickets: readonly PublicTicket[],
+): { group: TicketGroup; tickets: PublicTicket[] }[] {
   const order: TicketGroup[] = ['needs_you', 'active', 'done'];
   const byUpdate = (a: PublicTicket, b: PublicTicket) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt);
   return order
@@ -129,7 +138,8 @@ export function countByStatus(tickets: readonly PublicTicket[]): Record<PortalSt
 /** Error text for requesters: no internal terms, no status codes, always a next step. */
 export function portalErrorMessage(error: unknown): string {
   if (error instanceof ApiError) {
-    if (error.status === 0) return 'We couldn’t reach the service. Check your internet connection and try again.';
+    if (error.status === 0)
+      return 'We couldn’t reach the service. Check your internet connection and try again.';
     if (error.status === 401) return 'You have been signed out. Sign in again to continue.';
     if (error.status === 403) return 'Your account can’t use this part of the portal.';
     if (error.status === 404) return 'We couldn’t find that request. The link may be out of date.';

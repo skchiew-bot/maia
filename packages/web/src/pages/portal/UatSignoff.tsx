@@ -51,10 +51,13 @@ export function UatSignoff({ ticket, canAnswer, onAnswered, onStale }: UatSignof
     setBusy(true);
     setError(null);
     try {
-      const updated = await apiPost<PublicTicket>(`/portal/api/tickets/${encodeURIComponent(ticket.ticketId)}/uat`, {
-        verdict,
-        ...(text ? { comment: text } : {}),
-      });
+      const updated = await apiPost<PublicTicket>(
+        `/portal/api/tickets/${encodeURIComponent(ticket.ticketId)}/uat`,
+        {
+          verdict,
+          ...(text ? { comment: text } : {}),
+        },
+      );
       onAnswered(updated, verdict);
     } catch (err) {
       if (err instanceof ApiError && err.code === 'not_ready') {
@@ -152,7 +155,9 @@ function ChoiceCard({
   icon: 'ok' | 'danger';
 }) {
   return (
-    <label className={cx('portal-option', 'portal-choice', `portal-choice--${value}`, selected && 'is-selected')}>
+    <label
+      className={cx('portal-option', 'portal-choice', `portal-choice--${value}`, selected && 'is-selected')}
+    >
       <input type="radio" name="verdict" value={value} checked={selected} onChange={onSelect} />
       <span className="portal-choice__icon" aria-hidden="true">
         <Icon name={icon} size={16} />

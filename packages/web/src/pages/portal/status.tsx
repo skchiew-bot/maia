@@ -23,7 +23,9 @@ type StepState = 'done' | 'current' | 'todo';
 function stepStates(status: PortalStatus): StepState[] | null {
   const current = STEPS.indexOf(status);
   if (current < 0) return null;
-  return STEPS.map((_, i) => (i < current || status === 'completed' ? 'done' : i === current ? 'current' : 'todo'));
+  return STEPS.map((_, i) =>
+    i < current || status === 'completed' ? 'done' : i === current ? 'current' : 'todo',
+  );
 }
 
 export interface StatusTrackerProps {
@@ -48,7 +50,9 @@ export function StatusTracker({ status, className }: StatusTrackerProps) {
         <li
           key={step}
           className={cx('portal-steps__step', `is-${states[i]}`)}
-          aria-current={states[i] === 'current' || (status === 'completed' && i === STEPS.length - 1) ? 'step' : undefined}
+          aria-current={
+            states[i] === 'current' || (status === 'completed' && i === STEPS.length - 1) ? 'step' : undefined
+          }
         >
           <span className="portal-steps__mark" aria-hidden="true">
             {states[i] === 'done' && <Icon name="check" size={12} />}

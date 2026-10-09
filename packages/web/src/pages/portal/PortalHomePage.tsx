@@ -22,7 +22,13 @@ import { TicketCard } from './TicketCard';
 import './portal.css';
 
 type Filter = PortalStatus | 'all';
-const FILTER_ORDER: readonly PortalStatus[] = ['ready_for_testing', 'received', 'being_worked_on', 'completed', 'closed'];
+const FILTER_ORDER: readonly PortalStatus[] = [
+  'ready_for_testing',
+  'received',
+  'being_worked_on',
+  'completed',
+  'closed',
+];
 
 /** The requester's home: what needs them first, then every request with its abstracted status (§7). */
 export default function PortalHomePage() {
@@ -110,7 +116,15 @@ interface RequestListProps {
   staleError: unknown;
 }
 
-function RequestList({ tickets, filter, onFilter, refreshing, checkedAt, onRefresh, staleError }: RequestListProps) {
+function RequestList({
+  tickets,
+  filter,
+  onFilter,
+  refreshing,
+  checkedAt,
+  onRefresh,
+  staleError,
+}: RequestListProps) {
   const counts = useMemo(() => countByStatus(tickets), [tickets]);
   const groups = useMemo(() => groupTickets(tickets), [tickets]);
   const waiting = groups.find((g) => g.group === 'needs_you')?.tickets ?? [];
@@ -127,7 +141,12 @@ function RequestList({ tickets, filter, onFilter, refreshing, checkedAt, onRefre
       {waiting.length > 0 && <NeedsYou tickets={waiting} />}
       <div className="portal-toolbar">
         <div className="portal-filters" role="group" aria-label="Show requests by status">
-          <FilterChip label="All" count={tickets.length} pressed={active === 'all'} onClick={() => onFilter('all')} />
+          <FilterChip
+            label="All"
+            count={tickets.length}
+            pressed={active === 'all'}
+            onClick={() => onFilter('all')}
+          />
           {FILTER_ORDER.filter((s) => counts[s] > 0).map((s) => (
             <FilterChip
               key={s}
@@ -180,9 +199,24 @@ function RequestList({ tickets, filter, onFilter, refreshing, checkedAt, onRefre
   );
 }
 
-function FilterChip({ label, count, pressed, onClick }: { label: string; count: number; pressed: boolean; onClick: () => void }) {
+function FilterChip({
+  label,
+  count,
+  pressed,
+  onClick,
+}: {
+  label: string;
+  count: number;
+  pressed: boolean;
+  onClick: () => void;
+}) {
   return (
-    <button type="button" className={cx('portal-chip', pressed && 'is-pressed')} aria-pressed={pressed} onClick={onClick}>
+    <button
+      type="button"
+      className={cx('portal-chip', pressed && 'is-pressed')}
+      aria-pressed={pressed}
+      onClick={onClick}
+    >
       <span>{label}</span>
       <span className="portal-chip__count aoc-num">{count}</span>
     </button>

@@ -110,7 +110,15 @@ export function AttachmentPicker({ attachments, limits, disabled }: AttachmentPi
   );
 }
 
-function AttachmentRow({ item, onRemove, disabled }: { item: CheckedAttachment; onRemove: () => void; disabled?: boolean }) {
+function AttachmentRow({
+  item,
+  onRemove,
+  disabled,
+}: {
+  item: CheckedAttachment;
+  onRemove: () => void;
+  disabled?: boolean;
+}) {
   const { check } = item;
   const problem = item.refused ?? (check && !check.ok ? check.message : null);
   const kind = check?.ok ? check.kind : null;
@@ -129,7 +137,9 @@ function AttachmentRow({ item, onRemove, disabled }: { item: CheckedAttachment; 
       <span className="portal-attach__info">
         <span className="portal-attach__name">{name}</span>
         <span className="portal-attach__meta aoc-num">
-          {check === null ? 'Checking…' : `${kind ? KIND_WORD[kind] : 'File'} · ${formatBytes(item.file.size)}`}
+          {check === null
+            ? 'Checking…'
+            : `${kind ? KIND_WORD[kind] : 'File'} · ${formatBytes(item.file.size)}`}
           {check?.ok && !item.refused && (
             <span className="portal-attach__ok">
               <Icon name="check" size={12} /> Ready to send

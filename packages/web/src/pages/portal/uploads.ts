@@ -42,12 +42,17 @@ export interface SniffedMedia {
 export function sniffMedia(b: Uint8Array): SniffedMedia | null {
   const at = (i: number, bytes: number[]) => bytes.every((x, j) => b[i + j] === x);
   const ascii = (start: number, end: number) => String.fromCharCode(...b.subarray(start, end));
-  if (b.length >= 8 && at(0, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) return { mime: 'image/png', kind: 'image' };
+  if (b.length >= 8 && at(0, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+    return { mime: 'image/png', kind: 'image' };
   if (b.length >= 3 && at(0, [0xff, 0xd8, 0xff])) return { mime: 'image/jpeg', kind: 'image' };
-  if (b.length >= 6 && (ascii(0, 6) === 'GIF87a' || ascii(0, 6) === 'GIF89a')) return { mime: 'image/gif', kind: 'image' };
-  if (b.length >= 12 && ascii(0, 4) === 'RIFF' && ascii(8, 12) === 'WEBP') return { mime: 'image/webp', kind: 'image' };
+  if (b.length >= 6 && (ascii(0, 6) === 'GIF87a' || ascii(0, 6) === 'GIF89a'))
+    return { mime: 'image/gif', kind: 'image' };
+  if (b.length >= 12 && ascii(0, 4) === 'RIFF' && ascii(8, 12) === 'WEBP')
+    return { mime: 'image/webp', kind: 'image' };
   if (b.length >= 12 && ascii(4, 8) === 'ftyp')
-    return ascii(8, 12).startsWith('qt') ? { mime: 'video/quicktime', kind: 'video' } : { mime: 'video/mp4', kind: 'video' };
+    return ascii(8, 12).startsWith('qt')
+      ? { mime: 'video/quicktime', kind: 'video' }
+      : { mime: 'video/mp4', kind: 'video' };
   if (b.length >= 4 && at(0, [0x1a, 0x45, 0xdf, 0xa3])) return { mime: 'video/webm', kind: 'video' };
   if (b.length >= 5 && ascii(0, 5) === '%PDF-') return { mime: 'application/pdf', kind: 'document' };
   return null;
@@ -81,13 +86,16 @@ export function acceptedSummary(limits: IntakeLimits): string {
     limits.accepted
       .filter((a) => a.kind === kind)
       .map((a) => FORMAT_NAME[a.mime] ?? a.extensions[0]?.slice(1).toUpperCase() ?? a.mime);
-  const list = (xs: string[]) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} or ${xs[xs.length - 1]}`);
+  const list = (xs: string[]) =>
+    xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} or ${xs[xs.length - 1]}`;
   const parts = [
     names('image').length ? `${list(names('image'))} images` : '',
     names('video').length ? `${list(names('video'))} videos` : '',
     names('document').length ? 'PDFs' : '',
   ].filter(Boolean);
-  return parts.length < 2 ? parts.join('') : `${parts.slice(0, -1).join(', ')}, or ${parts[parts.length - 1]}`;
+  return parts.length < 2
+    ? parts.join('')
+    : `${parts.slice(0, -1).join(', ')}, or ${parts[parts.length - 1]}`;
 }
 
 const FORMAT_NAME: Record<string, string> = {
@@ -108,7 +116,11 @@ export function acceptAttribute(limits: IntakeLimits): string {
 
 export type FileCheck =
   | { ok: true; kind: MediaKind; mime: string }
-  | { ok: false; code: 'unsupported' | 'type_mismatch' | 'too_large' | 'empty' | 'unreadable'; message: string };
+  | {
+      ok: false;
+      code: 'unsupported' | 'type_mismatch' | 'too_large' | 'empty' | 'unreadable';
+      message: string;
+    };
 
 /** Checks one file from its first bytes, declared type and size. */
 export function checkFile(
@@ -133,7 +145,8 @@ export function checkFile(
     };
   const cap = limits.maxBytes[sniffed.kind];
   if (file.size > cap) {
-    const advice = sniffed.kind === 'video' ? 'Try a shorter recording.' : 'Try a smaller screenshot or export.';
+    const advice =
+      sniffed.kind === 'video' ? 'Try a shorter recording.' : 'Try a smaller screenshot or export.';
     return {
       ok: false,
       code: 'too_large',
@@ -180,13 +193,20 @@ export interface SubmitProblem {
 }
 
 /** Turns a refused submission into a kind message, pointing at the file or field when the server names one. */
-export function describeSubmitError(error: unknown, files: readonly { name: string }[], limits: IntakeLimits): SubmitProblem {
+export function describeSubmitError(
+  error: unknown,
+  files: readonly { name: string }[],
+  limits: IntakeLimits,
+): SubmitProblem {
   if (!(error instanceof ApiError)) return { message: 'Your request wasn’t sent. Try again.' };
   const fileIndex = fileNamedIn(error.message, files);
   const name = fileIndex === undefined ? 'One of your files' : `“${safeFileName(files[fileIndex]!.name)}”`;
   switch (error.code) {
     case 'unsupported_media':
-      return { fileIndex, message: `${name} isn’t a file type we can accept. Attach ${acceptedSummary(limits)}.` };
+      return {
+        fileIndex,
+        message: `${name} isn’t a file type we can accept. Attach ${acceptedSummary(limits)}.`,
+      };
     case 'type_mismatch':
       return {
         fileIndex,
@@ -206,7 +226,8 @@ export function describeSubmitError(error: unknown, files: readonly { name: stri
       return { message: `You can attach up to ${limits.maxAttachments} files. Remove some and send again.` };
     case 'payload_too_large':
       return {
-        message: 'Together your files are too large to send in one request. Remove a file or use a shorter video.',
+        message:
+          'Together your files are too large to send in one request. Remove a file or use a shorter video.',
       };
     case 'scanner_unavailable':
       return {
@@ -225,13 +246,18 @@ export function describeSubmitError(error: unknown, files: readonly { name: stri
         field: 'description',
         message: `Describe what happened in at least ${limits.descriptionLength.min} characters.`,
       };
-    if (/severity/i.test(error.message)) return { field: 'severity', message: 'Choose how much this affects you.' };
+    if (/severity/i.test(error.message))
+      return { field: 'severity', message: 'Choose how much this affects you.' };
     return { message: 'We couldn’t file this request right now. Try again later.' };
   }
-  if (error.status === 401) return { signedOut: true, message: 'You have been signed out. Sign in again to send your request.' };
+  if (error.status === 401)
+    return { signedOut: true, message: 'You have been signed out. Sign in again to send your request.' };
   if (error.status === 403) return { message: 'Your account can’t send requests here.' };
   if (error.status === 0)
-    return { message: 'Your request wasn’t sent: we couldn’t reach the service. Check your connection and try again.' };
+    return {
+      message:
+        'Your request wasn’t sent: we couldn’t reach the service. Check your connection and try again.',
+    };
   return { message: 'Something went wrong on our side and your request wasn’t sent. Try again in a moment.' };
 }
 

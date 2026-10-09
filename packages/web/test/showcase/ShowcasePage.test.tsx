@@ -28,9 +28,18 @@ function mount() {
     if (path === '/api/console') return jsonResponse(CONSOLE);
     if (path === '/api/projects') return jsonResponse(PROJECTS);
     if (url === '/api/decisions?status=open') return jsonResponse({ generatedAt: '', decisions: DECISIONS });
-    if (path === '/api/decisions/summary') return jsonResponse({ generatedAt: '', open: 3, resolvableByMe: 3, oldestOpenAt: null, oldestResolvableByMeAt: null, byKind: {} });
+    if (path === '/api/decisions/summary')
+      return jsonResponse({
+        generatedAt: '',
+        open: 3,
+        resolvableByMe: 3,
+        oldestOpenAt: null,
+        oldestResolvableByMeAt: null,
+        byKind: {},
+      });
     if (path === '/api/sessions/ses_work/timeline') return jsonResponse({ manifest: manifest(workDone) });
-    if (path === '/api/sessions/ses_done/timeline') return jsonResponse({ manifest: manifest(['t1', 't2', 't3', 't4', 't5', 't6']) });
+    if (path === '/api/sessions/ses_done/timeline')
+      return jsonResponse({ manifest: manifest(['t1', 't2', 't3', 't4', 't5', 't6']) });
     if (path.endsWith('/timeline')) return jsonResponse({ manifest: manifest(['t1']) });
     return jsonResponse({ error: { code: 'not_found', message: url } }, { status: 404 });
   });
@@ -78,20 +87,23 @@ describe('showcase', () => {
         'Greeting command: Working, phase Design (1 of 3), 2 of 17 weight done (12%)',
       ),
     );
-    expect(within(map).getAllByRole('heading', { level: 3 }).map((h) => h.textContent)).toEqual([
-      'AOC Platform',
-      'Claims Intake Bot',
-      'CX Copilot',
-      'Across projects',
-    ]);
+    expect(
+      within(map)
+        .getAllByRole('heading', { level: 3 })
+        .map((h) => h.textContent),
+    ).toEqual(['AOC Platform', 'Claims Intake Bot', 'CX Copilot', 'Across projects']);
     // A decision waiting on a session rides on its node; others wait as diamonds on their lane.
     expect(track(/^Normalise policy numbers/)).toHaveAccessibleName(/Waiting on you.*decision waiting 34m/);
     const cx = screen.getByRole('region', { name: 'CX Copilot' });
     expect(within(cx).getByRole('link', { name: /Fix plan/ })).toHaveAttribute('href', '/decisions');
-    expect(within(screen.getByRole('region', { name: 'Across projects' })).getByText('Credit top-up')).toBeInTheDocument();
+    expect(
+      within(screen.getByRole('region', { name: 'Across projects' })).getByText('Credit top-up'),
+    ).toBeInTheDocument();
     expect(track(/^CSAT overlay/)).toHaveAccessibleName(/Throttled.*resets at/);
     // The observed session has no plan: one dot, labelled.
-    expect(screen.getByRole('link', { name: /Observed · aoc: Stalled, observed, read-only/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole('link', { name: /Observed · aoc: Stalled, observed, read-only/ }),
+    ).toBeInTheDocument();
     // Finished sessions wait behind a toggle.
     expect(screen.queryByRole('img', { name: /^Finished fix/ })).toBeNull();
     await userEvent.setup().click(screen.getByRole('button', { name: /Show 1 session that finished/ }));
@@ -126,7 +138,9 @@ describe('showcase', () => {
     expect(screen.getByText(/Last event #502/)).toBeInTheDocument();
     expect(screen.getByRole('region', { name: /Latest events/ })).toHaveTextContent('Task done');
 
-    act(() => es.emit('liveness', { sessionId: 'ses_work', state: 'stalled', since: '2026-10-09T05:41:40Z' }));
+    act(() =>
+      es.emit('liveness', { sessionId: 'ses_work', state: 'stalled', since: '2026-10-09T05:41:40Z' }),
+    );
     await waitFor(() => expect(calls['/api/console']).toBe(consoleCalls! + 1));
     expect(screen.getByRole('region', { name: /Latest events/ })).toHaveTextContent('Stalled');
   });
@@ -151,6 +165,10 @@ describe('showcase', () => {
     await user.click(within(filters).getByRole('button', { name: /Throttled/ }));
     expect(screen.getByRole('img', { name: /^CSAT overlay/ })).toBeInTheDocument();
     expect(screen.queryByRole('img', { name: /^Greeting command/ })).toBeNull();
-    expect(within(screen.getByRole('region', { name: 'Claims Intake Bot' })).getByText(/No sessions match this filter/)).toBeInTheDocument();
+    expect(
+      within(screen.getByRole('region', { name: 'Claims Intake Bot' })).getByText(
+        /No sessions match this filter/,
+      ),
+    ).toBeInTheDocument();
   });
 });

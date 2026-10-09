@@ -1,7 +1,8 @@
 import type { Severity } from '@aoc/contracts';
 import { useEffect, useRef, useState, type ClipboardEvent, type FormEvent, type RefObject } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../api/auth';
+import { loginPathFor } from '../../api/client';
 import { Button, Icon, PageHeader, TextArea, TextField } from '../../components';
 import { AttachmentPicker } from './AttachmentPicker';
 import { canUsePortal, useIntakeLimits } from './hooks';
@@ -58,10 +59,12 @@ export default function PortalNewRequestPage() {
   const allowed = canUsePortal(user);
   const limits = useIntakeLimits(allowed);
   const navigate = useNavigate();
+  const location = useLocation();
   const attachments = useAttachments(limits);
   const [draft, setDraft] = useState<Draft>(readDraft);
   const [problems, setProblems] = useState<Problems>({});
   const [failure, setFailure] = useState<string | null>(null);
+  const [signedOut, setSignedOut] = useState(false);
   const [progress, setProgress] = useState<UploadProgress | null>(null);
   const upload = useRef<UploadHandle | null>(null);
   const summaryRef = useRef<HTMLDivElement>(null);
@@ -84,7 +87,10 @@ export default function PortalNewRequestPage() {
   if (!allowed && user) {
     return (
       <div className="portal-page">
-        <PageHeader title="New request" breadcrumbs={[{ label: 'My requests', to: '/portal' }, { label: 'New request' }]} />
+        <PageHeader
+          title="New request"
+          breadcrumbs={[{ label: 'My requests', to: '/portal' }, { label: 'New request' }]}
+        />
         <BuilderNotice user={user} />
       </div>
     );
@@ -117,6 +123,7 @@ export default function PortalNewRequestPage() {
     const found = validate();
     setProblems(found);
     setFailure(null);
+    setSignedOut(false);
     if (Object.values(found).some(Boolean)) {
       focusSummary();
       return;
@@ -143,6 +150,7 @@ export default function PortalNewRequestPage() {
         const problem = describeSubmitError(err, files, limits);
         if (problem.fileIndex !== undefined) attachments.markRefused(problem.fileIndex, problem.message);
         if (problem.field) setProblems({ [problem.field]: problem.message });
+        setSignedOut(problem.signedOut === true);
         setFailure(
           problem.signedOut
             ? `${problem.message} Your text is kept in this tab; attach your files again after signing in.`
@@ -182,7 +190,13 @@ export default function PortalNewRequestPage() {
         breadcrumbs={[{ label: 'My requests', to: '/portal' }, { label: 'New request' }]}
       />
       <div className="portal-new">
-        <form className="portal-card portal-form" onSubmit={onSubmit} onPaste={onPaste} noValidate aria-label="New request">
+        <form
+          className="portal-card portal-form"
+          onSubmit={onSubmit}
+          onPaste={onPaste}
+          noValidate
+          aria-label="New request"
+        >
           {(listed.length > 0 || failure) && (
             <div ref={summaryRef} className="portal-summary" role="alert" tabIndex={-1}>
               <p className="portal-summary__title">
@@ -190,11 +204,20 @@ export default function PortalNewRequestPage() {
                 {failure ? 'Your request wasn’t sent' : 'Check your request before sending'}
               </p>
               {failure && <p className="portal-summary__text">{failure}</p>}
+              {signedOut && (
+                <p>
+                  <Link to={loginPathFor(location)}>Sign in again</Link>
+                </p>
+              )}
               {listed.length > 0 && (
                 <ul className="portal-summary__list">
                   {listed.map((p) => (
                     <li key={p.key}>
-                      <button type="button" className="aoc-link-button" onClick={() => p.target.current?.focus()}>
+                      <button
+                        type="button"
+                        className="aoc-link-button"
+                        onClick={() => p.target.current?.focus()}
+                      >
                         {p.message}
                       </button>
                     </li>
@@ -228,7 +251,10 @@ export default function PortalNewRequestPage() {
               error={problems.description}
               onChange={(e) => set('description', e.target.value)}
             />
-            <fieldset className="portal-field portal-severity" aria-describedby={problems.severity ? 'severity-error' : undefined}>
+            <fieldset
+              className="portal-field portal-severity"
+              aria-describedby={problems.severity ? 'severity-error' : undefined}
+            >
               <legend className="aoc-field__label">How much is this affecting you?</legend>
               <div className="portal-severity__options">
                 {SEVERITY_ORDER.map((s, i) => (
@@ -335,14 +361,16 @@ function NextSteps() {
       </h2>
       <ol className="portal-next__list">
         <li>
-          <strong>We look into it.</strong> Your request goes to the people who can fix it. You can follow it under My
-          requests.
+          <strong>We look into it.</strong> Your request goes to the people who can fix it. You can follow it
+          under My requests.
         </li>
         <li>
-          <strong>You test the fix.</strong> When a fix is ready, we ask you to try it and tell us whether it works.
+          <strong>You test the fix.</strong> When a fix is ready, we ask you to try it and tell us whether it
+          works.
         </li>
         <li>
-          <strong>We finish up.</strong> Once you confirm, the fix goes live and your request is marked completed.
+          <strong>We finish up.</strong> Once you confirm, the fix goes live and your request is marked
+          completed.
         </li>
       </ol>
     </aside>

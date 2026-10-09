@@ -13,7 +13,12 @@ import {
 } from '../../src/pages/showcase/model';
 import { CONSOLE, DECISIONS, manifest, PROJECTS, session } from './fixtures';
 
-const aoc = (type: string, seq: number, sessionId?: string, meta: Record<string, unknown> = {}): StreamMessage => ({
+const aoc = (
+  type: string,
+  seq: number,
+  sessionId?: string,
+  meta: Record<string, unknown> = {},
+): StreamMessage => ({
   kind: 'aoc',
   event: { seq, type, ts: '2026-10-09T05:40:00Z', scope: sessionId ? { sessionId } : {}, meta },
 });
@@ -34,19 +39,33 @@ describe('showcase model', () => {
 
   it('makes a track from a session and its manifest', () => {
     const t = trackOf(session({ sessionId: 's', throttledUntil: null }), manifest(['t1', 't2', 't3']));
-    expect(t).toMatchObject({ totalWeight: 17, doneWeight: 10, currentPhase: 1, liveness: 'working', finished: false, decision: null });
-    expect(trackOf(session({ sessionId: 'e', lifecycle: 'ended', liveness: null }), undefined)).toMatchObject({
-      finished: true,
-      liveness: null,
-      phases: [],
-      currentPhase: -1,
+    expect(t).toMatchObject({
+      totalWeight: 17,
+      doneWeight: 10,
+      currentPhase: 1,
+      liveness: 'working',
+      finished: false,
+      decision: null,
     });
+    expect(trackOf(session({ sessionId: 'e', lifecycle: 'ended', liveness: null }), undefined)).toMatchObject(
+      {
+        finished: true,
+        liveness: null,
+        phases: [],
+        currentPhase: -1,
+      },
+    );
   });
 
   it('groups tracks into project lanes by §4 precedence and keeps decisions no track carries', () => {
     const manifests = new Map([['ses_work', manifest(['t1'])]]);
     const lanes = buildLanes({ console: CONSOLE, projects: PROJECTS, manifests, decisions: DECISIONS });
-    expect(lanes.map((l) => l.name)).toEqual(['AOC Platform', 'Claims Intake Bot', 'CX Copilot', 'Across projects']);
+    expect(lanes.map((l) => l.name)).toEqual([
+      'AOC Platform',
+      'Claims Intake Bot',
+      'CX Copilot',
+      'Across projects',
+    ]);
     const cx = lanes.find((l) => l.projectId === 'prj_cx')!;
     expect(cx.progressPct).toBe(76.8);
     expect(cx.tracks.map((t) => t.sessionId)).toEqual(['ses_thr', 'ses_work', 'ses_done']);
@@ -56,13 +75,20 @@ describe('showcase model', () => {
     expect(claims.decisions).toEqual([]);
     expect(claims.tracks[0]!.decision).toMatchObject({ kind: 'agent_decision' });
     expect(lanes[3]!.decisions.map((d) => d.label)).toEqual(['Credit top-up']);
-    expect(Object.fromEntries(livenessCounts(lanes))).toEqual({ working: 1, waiting_on_you: 1, throttled: 1, stalled: 1 });
+    expect(Object.fromEntries(livenessCounts(lanes))).toEqual({
+      working: 1,
+      waiting_on_you: 1,
+      throttled: 1,
+      stalled: 1,
+    });
   });
 
   it('refreshes the map only for events that change it', () => {
     expect(changesMap(aoc('task.done', 1, 's'))).toBe(true);
     expect(changesMap(aoc('decision.requested', 2))).toBe(true);
-    expect(changesMap({ kind: 'liveness', event: { sessionId: 's', state: 'stalled', since: 'x' } })).toBe(true);
+    expect(changesMap({ kind: 'liveness', event: { sessionId: 's', state: 'stalled', since: 'x' } })).toBe(
+      true,
+    );
     expect(changesMap(aoc('tool.used', 3, 's'))).toBe(false);
     expect(changesMap(aoc('fx.rate_recorded', 4))).toBe(false);
   });
@@ -71,8 +97,16 @@ describe('showcase model', () => {
     expect(eventWord('task.done')).toBe('Task done');
     expect(eventWord('ticket.fix_plan_submitted')).toBe('Fix plan submitted');
     expect(feedItem(aoc('usage.recorded', 1, 's'))).toBeNull();
-    expect(feedItem(aoc('decision.requested', 2, undefined, { kind: 'fix_plan' }))).toMatchObject({ word: 'Decision requested', detail: 'Fix plan' });
-    expect(feedItem({ kind: 'liveness', event: { sessionId: 's', state: 'throttled', since: '2026-10-09T05:41:00Z' } })).toMatchObject({
+    expect(feedItem(aoc('decision.requested', 2, undefined, { kind: 'fix_plan' }))).toMatchObject({
+      word: 'Decision requested',
+      detail: 'Fix plan',
+    });
+    expect(
+      feedItem({
+        kind: 'liveness',
+        event: { sessionId: 's', state: 'throttled', since: '2026-10-09T05:41:00Z' },
+      }),
+    ).toMatchObject({
       word: 'Now throttled',
       liveness: 'throttled',
     });

@@ -3,14 +3,52 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { jsonResponse } from '../helpers';
 import { RETURN_REFRESH_GAP_MS } from '../../src/pages/portal/hooks';
-import { allowSlowRenders, BUILDER, get, INTERNAL_TERMS, manualClock, REQUESTER, renderPortal, routes, ticket } from './fixtures';
+import {
+  allowSlowRenders,
+  BUILDER,
+  get,
+  INTERNAL_TERMS,
+  manualClock,
+  REQUESTER,
+  renderPortal,
+  routes,
+  ticket,
+} from './fixtures';
 
 const TICKETS = [
-  ticket({ ticketId: 'tkt_ready', title: 'Search finds nothing for policy numbers', status: 'ready_for_testing', canSignOffUat: true, updatedAt: '2026-10-09T05:30:00Z', attachments: [{ attachmentId: 'a1', fileName: 'shot.png', mime: 'image/png', bytes: 2048 }] }),
-  ticket({ ticketId: 'tkt_work', title: 'Export button does nothing', status: 'being_worked_on', severity: 'low' }),
-  ticket({ ticketId: 'tkt_tested', title: 'Desktop freezes on switch', status: 'ready_for_testing', canSignOffUat: false, updatedAt: '2026-10-09T05:20:00Z' }),
-  ticket({ ticketId: 'tkt_done', title: 'Typo in the payment email', status: 'completed', updatedAt: '2026-10-08T05:00:00Z' }),
-  ticket({ ticketId: 'tkt_closed', title: 'Duplicate report', status: 'closed', updatedAt: '2026-10-07T05:00:00Z' }),
+  ticket({
+    ticketId: 'tkt_ready',
+    title: 'Search finds nothing for policy numbers',
+    status: 'ready_for_testing',
+    canSignOffUat: true,
+    updatedAt: '2026-10-09T05:30:00Z',
+    attachments: [{ attachmentId: 'a1', fileName: 'shot.png', mime: 'image/png', bytes: 2048 }],
+  }),
+  ticket({
+    ticketId: 'tkt_work',
+    title: 'Export button does nothing',
+    status: 'being_worked_on',
+    severity: 'low',
+  }),
+  ticket({
+    ticketId: 'tkt_tested',
+    title: 'Desktop freezes on switch',
+    status: 'ready_for_testing',
+    canSignOffUat: false,
+    updatedAt: '2026-10-09T05:20:00Z',
+  }),
+  ticket({
+    ticketId: 'tkt_done',
+    title: 'Typo in the payment email',
+    status: 'completed',
+    updatedAt: '2026-10-08T05:00:00Z',
+  }),
+  ticket({
+    ticketId: 'tkt_closed',
+    title: 'Duplicate report',
+    status: 'closed',
+    updatedAt: '2026-10-07T05:00:00Z',
+  }),
 ];
 
 afterEach(() => vi.unstubAllGlobals());
@@ -27,11 +65,18 @@ describe('portal home', () => {
     expect(await screen.findByRole('heading', { level: 1, name: 'My requests' })).toBeInTheDocument();
 
     const callout = await screen.findByRole('region', { name: 'A fix is ready for your testing' });
-    const testLink = within(callout).getByRole('link', { name: /Search finds nothing for policy numbers.*Test it now/ });
+    const testLink = within(callout).getByRole('link', {
+      name: /Search finds nothing for policy numbers.*Test it now/,
+    });
     expect(testLink).toHaveAttribute('href', '/portal/tickets/tkt_ready');
 
     const groups = screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent);
-    expect(groups).toEqual(['A fix is ready for your testing', 'Waiting for your testing 1', 'In progress 2', 'Done 2']);
+    expect(groups).toEqual([
+      'A fix is ready for your testing',
+      'Waiting for your testing 1',
+      'In progress 2',
+      'Done 2',
+    ]);
 
     const inProgress = screen.getByRole('region', { name: /In progress/ });
     const cards = within(inProgress).getAllByRole('listitem');
@@ -101,14 +146,19 @@ describe('portal home', () => {
     let fail = true;
     routes((url) => {
       if (url !== '/portal/api/tickets') return undefined;
-      return fail ? jsonResponse({ error: { code: 'internal', message: 'boom' } }, { status: 500 }) : jsonResponse([]);
+      return fail
+        ? jsonResponse({ error: { code: 'internal', message: 'boom' } }, { status: 500 })
+        : jsonResponse([]);
     });
     renderPortal('/portal', REQUESTER);
     expect(await screen.findByText("We couldn't load your requests")).toBeInTheDocument();
     expect(screen.getByText('Something went wrong on our side. Try again in a moment.')).toBeInTheDocument();
     fail = false;
     await userEvent.setup().click(screen.getByRole('button', { name: 'Try again' }));
-    expect(await screen.findByRole('link', { name: 'Report a problem' })).toHaveAttribute('href', '/portal/new');
+    expect(await screen.findByRole('link', { name: 'Report a problem' })).toHaveAttribute(
+      'href',
+      '/portal/new',
+    );
   });
 
   it('tells a Builder where requests reach them instead of calling the requester API', async () => {
@@ -116,6 +166,8 @@ describe('portal home', () => {
     renderPortal('/portal', BUILDER);
     expect(await screen.findByText('This portal is for reporting problems')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Open tickets' })).toHaveAttribute('href', '/tickets');
-    await waitFor(() => expect(fetchMock.mock.calls.filter(([u]) => String(u).startsWith('/portal/api'))).toHaveLength(0));
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.filter(([u]) => String(u).startsWith('/portal/api'))).toHaveLength(0),
+    );
   });
 });

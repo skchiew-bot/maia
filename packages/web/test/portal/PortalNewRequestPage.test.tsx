@@ -16,9 +16,10 @@ class FakeXhr {
   status = 0;
   responseText = '';
   aborted = false;
-  upload: { onprogress: ((e: { lengthComputable: boolean; loaded: number; total: number }) => void) | null } = {
-    onprogress: null,
-  };
+  upload: { onprogress: ((e: { lengthComputable: boolean; loaded: number; total: number }) => void) | null } =
+    {
+      onprogress: null,
+    };
   onload: (() => void) | null = null;
   onerror: (() => void) | null = null;
   onabort: (() => void) | null = null;
@@ -49,9 +50,16 @@ class FakeXhr {
   }
 }
 
-const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 73, 72, 68, 82, 1, 2]);
+const PNG = new Uint8Array([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 73, 72, 68, 82, 1, 2,
+]);
 const PDF = new TextEncoder().encode('%PDF-1.7\n1 0 obj << >> endobj\n');
-const LIMITS: IntakeLimits = { ...DEFAULT_LIMITS, maxAttachments: 3, maxBytes: { image: 1024, video: 4096, document: 1024 }, maxTotalBytes: 4096 };
+const LIMITS: IntakeLimits = {
+  ...DEFAULT_LIMITS,
+  maxAttachments: 3,
+  maxBytes: { image: 1024, video: 4096, document: 1024 },
+  maxTotalBytes: 4096,
+};
 
 beforeEach(() => {
   FakeXhr.last = null;
@@ -62,7 +70,10 @@ afterEach(() => vi.unstubAllGlobals());
 
 async function fillForm(user: ReturnType<typeof userEvent.setup>) {
   await user.type(await screen.findByRole('textbox', { name: /What went wrong/ }), 'Claim form goes blank');
-  await user.type(screen.getByRole('textbox', { name: /What happened/ }), 'The page turns white when I attach a PDF.');
+  await user.type(
+    screen.getByRole('textbox', { name: /What happened/ }),
+    'The page turns white when I attach a PDF.',
+  );
 }
 
 allowSlowRenders();
@@ -105,7 +116,9 @@ describe('new request', () => {
     expect(screen.getByText('3 of 3 files · 2 KB')).toBeInTheDocument();
     // The limit is enforced as files are added.
     await user.upload(input, new File([PNG], 'fourth.png', { type: 'image/png' }));
-    expect(await screen.findByText(/You can attach up to 3 files, so “fourth.png” was not added\./)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/You can attach up to 3 files, so “fourth.png” was not added\./),
+    ).toBeInTheDocument();
 
     await fillForm(user);
     await user.click(screen.getByRole('button', { name: 'Send request' }));
@@ -118,12 +131,21 @@ describe('new request', () => {
 
   it('uploads with progress, then opens the new request', async () => {
     const user = userEvent.setup();
-    routes(get('/portal/api/limits', LIMITS), get('/portal/api/tickets/tkt_new', ticket({ ticketId: 'tkt_new', status: 'received', title: 'Claim form goes blank' })));
+    routes(
+      get('/portal/api/limits', LIMITS),
+      get(
+        '/portal/api/tickets/tkt_new',
+        ticket({ ticketId: 'tkt_new', status: 'received', title: 'Claim form goes blank' }),
+      ),
+    );
     renderPortal('/portal/new', REQUESTER);
     await fillForm(user);
     await user.click(screen.getByRole('radio', { name: /Critical/ }));
     await user.type(screen.getByRole('textbox', { name: /Anything else/ }), 'Since Monday.');
-    await user.upload(document.querySelector<HTMLInputElement>('input[type=file]')!, new File([PNG], 'screen.png', { type: 'image/png' }));
+    await user.upload(
+      document.querySelector<HTMLInputElement>('input[type=file]')!,
+      new File([PNG], 'screen.png', { type: 'image/png' }),
+    );
     await screen.findByText('Ready to send');
     await user.click(screen.getByRole('button', { name: 'Send request' }));
 
@@ -155,10 +177,17 @@ describe('new request', () => {
     routes(get('/portal/api/limits', LIMITS));
     renderPortal('/portal/new', REQUESTER);
     await fillForm(user);
-    await user.upload(document.querySelector<HTMLInputElement>('input[type=file]')!, new File([PNG], 'Screen Shot.png', { type: 'image/png' }));
+    await user.upload(
+      document.querySelector<HTMLInputElement>('input[type=file]')!,
+      new File([PNG], 'Screen Shot.png', { type: 'image/png' }),
+    );
     await screen.findByText('Ready to send');
     await user.click(screen.getByRole('button', { name: 'Send request' }));
-    act(() => FakeXhr.last!.respond(422, { error: { code: 'rejected', message: 'Screen Shot.png was rejected by the malware scanner' } }));
+    act(() =>
+      FakeXhr.last!.respond(422, {
+        error: { code: 'rejected', message: 'Screen Shot.png was rejected by the malware scanner' },
+      }),
+    );
 
     const summary = await screen.findByRole('alert');
     expect(summary).toHaveTextContent('Your request wasn’t sent');
@@ -181,6 +210,8 @@ describe('new request', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Sending was cancelled. Nothing was sent');
     unmount();
     renderPortal('/portal/new', REQUESTER);
-    expect(await screen.findByRole('textbox', { name: /What went wrong/ })).toHaveValue('Claim form goes blank');
+    expect(await screen.findByRole('textbox', { name: /What went wrong/ })).toHaveValue(
+      'Claim form goes blank',
+    );
   });
 });

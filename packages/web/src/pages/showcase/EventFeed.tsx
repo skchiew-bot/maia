@@ -15,7 +15,9 @@ export interface EventFeedProps {
  */
 export function EventFeed({ items, titles }: EventFeedProps) {
   if (!items.length) {
-    return <p className="sc-feed__empty">Waiting for the next event. Nothing here moves until one arrives.</p>;
+    return (
+      <p className="sc-feed__empty">Waiting for the next event. Nothing here moves until one arrives.</p>
+    );
   }
   return (
     <ol className="sc-feed" aria-live="polite" aria-relevant="additions">
@@ -27,7 +29,11 @@ export function EventFeed({ items, titles }: EventFeedProps) {
               {formatClock(it.at)}
             </time>
             <span className="sc-feed__what">
-              {it.liveness ? <LivenessBadge state={it.liveness} size="sm" /> : <span className="sc-feed__word">{it.word}</span>}
+              {it.liveness ? (
+                <LivenessBadge state={it.liveness} size="sm" />
+              ) : (
+                <span className="sc-feed__word">{it.word}</span>
+              )}
               {it.kind === 'tool' && it.count > 1 ? (
                 <span className="sc-feed__detail aoc-num">×{it.count}</span>
               ) : (
@@ -35,7 +41,11 @@ export function EventFeed({ items, titles }: EventFeedProps) {
               )}
               {it.sessionId &&
                 (title ? (
-                  <Link className="sc-feed__session" to={`/sessions/${encodeURIComponent(it.sessionId)}`} title={title}>
+                  <Link
+                    className="sc-feed__session"
+                    to={`/sessions/${encodeURIComponent(it.sessionId)}`}
+                    title={title}
+                  >
                     {title}
                   </Link>
                 ) : (

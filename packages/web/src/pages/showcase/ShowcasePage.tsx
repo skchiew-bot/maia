@@ -162,7 +162,10 @@ export default function ShowcasePage() {
                 aria-pressed={active === 'all'}
                 onClick={() => setFilter('all')}
               >
-                All live <span className="sc-filter__count aoc-num">{[...counts.values()].reduce((a, b) => a + b, 0)}</span>
+                All live{' '}
+                <span className="sc-filter__count aoc-num">
+                  {[...counts.values()].reduce((a, b) => a + b, 0)}
+                </span>
               </button>
               {LIVENESS_PRECEDENCE.filter((s) => counts.get(s)).map((s) => (
                 <button
@@ -183,9 +186,12 @@ export default function ShowcasePage() {
                 <span className="aoc-num">{openDecisions ?? '—'}</span> decisions waiting
               </Link>
               <span className="sc-stat">
-                <span className="aoc-num">{formatInteger(snapshot.data.kpis.tasksDoneToday)}</span> tasks done today ·{' '}
-                <span className="aoc-num">{formatPercent(snapshot.data.kpis.tasksDoneWithEvidencePct / 100)}</span> with
-                evidence
+                <span className="aoc-num">{formatInteger(snapshot.data.kpis.tasksDoneToday)}</span> tasks done
+                today ·{' '}
+                <span className="aoc-num">
+                  {formatPercent(snapshot.data.kpis.tasksDoneWithEvidencePct / 100)}
+                </span>{' '}
+                with evidence
               </span>
             </div>
           </div>
@@ -207,11 +213,17 @@ export default function ShowcasePage() {
                   body="Sessions appear here as soon as one is launched."
                 />
               ) : (
-                lanes.map((lane) => <Lane key={lane.key} lane={lane} show={shown} now={now} activity={activity} />)
+                lanes.map((lane) => (
+                  <Lane key={lane.key} lane={lane} show={shown} now={now} activity={activity} />
+                ))
               )}
               {finishedCount > 0 && (
                 <div className="sc-map__more">
-                  <button type="button" className="aoc-link-button" onClick={() => setShowFinished((v) => !v)}>
+                  <button
+                    type="button"
+                    className="aoc-link-button"
+                    onClick={() => setShowFinished((v) => !v)}
+                  >
                     {showFinished
                       ? 'Hide sessions that finished in the last 6 hours'
                       : `Show ${finishedCount} session${finishedCount === 1 ? '' : 's'} that finished in the last 6 hours`}
@@ -242,8 +254,8 @@ function Lane({
   activity: ReadonlyMap<string, number>;
 }) {
   const tracks = lane.tracks.filter(show);
-  const planned = tracks.filter((t) => t.phases.length > 0);
-  const unplanned = tracks.filter((t) => t.phases.length === 0);
+  const planned = tracks.filter((t) => !t.planKnown || t.phases.length > 0);
+  const unplanned = tracks.filter((t) => t.planKnown && t.phases.length === 0);
   const live = lane.tracks.filter((t) => !t.finished).length;
   const waiting = lane.tracks.filter((t) => !t.finished && t.decision).length + lane.decisions.length;
   const headingId = `lane-${lane.key}`;
@@ -251,7 +263,11 @@ function Lane({
     <section className="sc-lane" aria-labelledby={headingId}>
       <header className="sc-lane__head">
         <h3 id={headingId} className="sc-lane__name">
-          {lane.projectId ? <Link to={`/projects/${encodeURIComponent(lane.projectId)}`}>{lane.name}</Link> : lane.name}
+          {lane.projectId ? (
+            <Link to={`/projects/${encodeURIComponent(lane.projectId)}`}>{lane.name}</Link>
+          ) : (
+            lane.name
+          )}
         </h3>
         {lane.progressPct !== null && (
           <span className="sc-lane__progress">
@@ -266,7 +282,9 @@ function Lane({
         </span>
       </header>
       {tracks.length === 0 && (lane.projectId !== null || lane.tracks.length > 0) && (
-        <p className="sc-lane__empty">No sessions {lane.tracks.length ? 'match this filter' : 'running'} on this project.</p>
+        <p className="sc-lane__empty">
+          No sessions {lane.tracks.length ? 'match this filter' : 'running'} on this project.
+        </p>
       )}
       {planned.length > 0 && (
         <ul className="sc-rows">
@@ -344,13 +362,25 @@ function trackSummary(t: TrackModel, now: number): string {
       `phase ${p?.name ?? '—'} (${t.currentPhase + 1} of ${t.phases.length})`,
       `${formatInteger(t.doneWeight)} of ${formatInteger(t.totalWeight)} weight done (${formatPercent(t.totalWeight ? t.doneWeight / t.totalWeight : 0)})`,
     );
-  } else parts.push(t.mode === 'observed' ? 'observed, read-only' : 'no plan declared');
+  } else
+    parts.push(
+      !t.planKnown ? 'plan loading' : t.mode === 'observed' ? 'observed, read-only' : 'no plan declared',
+    );
   if (t.decision) parts.push(`decision waiting ${ageSince(now, t.decision.since)}`);
-  if (t.liveness === 'throttled' && t.throttledUntil) parts.push(`resets at ${formatClock(t.throttledUntil)}`);
+  if (t.liveness === 'throttled' && t.throttledUntil)
+    parts.push(`resets at ${formatClock(t.throttledUntil)}`);
   return parts.join(', ');
 }
 
-function TrackRow({ track, now, activitySeq }: { track: TrackModel; now: number; activitySeq: number | null }) {
+function TrackRow({
+  track,
+  now,
+  activitySeq,
+}: {
+  track: TrackModel;
+  now: number;
+  activitySeq: number | null;
+}) {
   const [ref, width] = useElementWidth<HTMLDivElement>(480);
   const phase = track.phases[track.currentPhase];
   const pct = track.totalWeight ? track.doneWeight / track.totalWeight : 0;
@@ -372,18 +402,31 @@ function TrackRow({ track, now, activitySeq }: { track: TrackModel; now: number;
           {track.title}
         </Link>
         <span className="sc-row__meta">
-          <LivenessBadge state={track.finished ? 'ended' : (track.liveness ?? 'ended')} size="sm" detail={detail} />
+          <LivenessBadge
+            state={track.finished ? 'ended' : (track.liveness ?? 'ended')}
+            size="sm"
+            detail={detail}
+          />
           {track.processType && <span>{track.processType}</span>}
           {phase && (
             <span>
-              {phase.name} <span className="aoc-num">{track.currentPhase + 1}/{track.phases.length}</span>
+              {phase.name}{' '}
+              <span className="aoc-num">
+                {track.currentPhase + 1}/{track.phases.length}
+              </span>
             </span>
           )}
           {track.totalWeight > 0 && <span className="aoc-num">{formatPercent(pct)}</span>}
         </span>
       </div>
       <div className="sc-row__track" ref={ref}>
-        <FleetTrack track={track} width={width} now={now} activitySeq={activitySeq} label={trackSummary(track, now)} />
+        <FleetTrack
+          track={track}
+          width={width}
+          now={now}
+          activitySeq={activitySeq}
+          label={trackSummary(track, now)}
+        />
       </div>
     </li>
   );
@@ -393,7 +436,14 @@ const ageSince = (now: number, since: string) => formatAge(now - Date.parse(sinc
 
 function DecisionGlyph() {
   return (
-    <svg className="sc-diamond" width={12} height={12} viewBox="0 0 12 12" aria-hidden="true" focusable="false">
+    <svg
+      className="sc-diamond"
+      width={12}
+      height={12}
+      viewBox="0 0 12 12"
+      aria-hidden="true"
+      focusable="false"
+    >
       <path d="M6,0.5L11.5,6L6,11.5L0.5,6Z" />
     </svg>
   );
@@ -451,9 +501,21 @@ function DataTwin({ lanes, now }: { lanes: readonly LaneModel[]; now: number }) 
       t.phases[t.currentPhase]?.name ?? '—',
       t.totalWeight ? `${formatInteger(t.doneWeight)}/${formatInteger(t.totalWeight)}` : '—',
       t.totalWeight ? formatPercent(t.doneWeight / t.totalWeight) : '—',
-      t.decision ? `Decision, ${ageSince(now, t.decision.since)}` : t.liveness === 'throttled' && t.throttledUntil ? `Resets ${formatClock(t.throttledUntil)}` : '',
+      t.decision
+        ? `Decision, ${ageSince(now, t.decision.since)}`
+        : t.liveness === 'throttled' && t.throttledUntil
+          ? `Resets ${formatClock(t.throttledUntil)}`
+          : '',
     ]),
-    ...lane.decisions.map((d) => [lane.name, '—', 'Decision waiting', '—', '—', '—', `${d.label}, ${ageSince(now, d.createdAt)}`]),
+    ...lane.decisions.map((d) => [
+      lane.name,
+      '—',
+      'Decision waiting',
+      '—',
+      '—',
+      '—',
+      `${d.label}, ${ageSince(now, d.createdAt)}`,
+    ]),
   ]);
   return (
     <ChartTable

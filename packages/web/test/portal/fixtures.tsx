@@ -75,8 +75,11 @@ export function routes(...handlers: Route[]) {
   });
 }
 
-export const get = (path: string, body: unknown, status = 200): Route => (url, init) =>
-  url === path && (init.method ?? 'GET') === 'GET' ? jsonResponse(body, { status }) : undefined;
+export const get =
+  (path: string, body: unknown, status = 200): Route =>
+  (url, init) =>
+    url === path && (init.method ?? 'GET') === 'GET' ? jsonResponse(body, { status }) : undefined;
 
 /** Words a requester must never see (§7): internal gates, roles, machinery or timelines. */
-export const INTERNAL_TERMS = /decision|session|approver|\bgates?\b|triage|\bqueue\b|\buat\b|fix plan|go-live|go live|\beta\b|daemon/i;
+export const INTERNAL_TERMS =
+  /decision|session|approver|\bgates?\b|triage|\bqueue\b|\buat\b|fix plan|go-live|go live|\beta\b|daemon/i;

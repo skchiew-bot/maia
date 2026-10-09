@@ -9,8 +9,12 @@ import { MANIFEST_EVENTS } from './model';
  * The plan manifest of each listed session (`/api/sessions/:id/timeline`), fetched once and refetched only when
  * an event changes that session's plan or done weight — never on a timer.
  */
-export function useManifests(sessionIds: readonly string[]): ReadonlyMap<string, readonly ManifestPhaseDTO[]> {
-  const [manifests, setManifests] = useState<ReadonlyMap<string, readonly ManifestPhaseDTO[]>>(() => new Map());
+export function useManifests(
+  sessionIds: readonly string[],
+): ReadonlyMap<string, readonly ManifestPhaseDTO[]> {
+  const [manifests, setManifests] = useState<ReadonlyMap<string, readonly ManifestPhaseDTO[]>>(
+    () => new Map(),
+  );
   const requested = useRef(new Set<string>());
   const controllers = useRef(new Map<string, AbortController>());
   const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>());

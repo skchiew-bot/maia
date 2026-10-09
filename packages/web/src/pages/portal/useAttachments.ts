@@ -33,9 +33,14 @@ export interface AttachmentsState {
   markRefused: (index: number, message: string) => void;
 }
 
-const UNREADABLE: FileCheck = { ok: false, code: 'unreadable', message: 'We couldn’t read this file. Attach it again.' };
+const UNREADABLE: FileCheck = {
+  ok: false,
+  code: 'unreadable',
+  message: 'We couldn’t read this file. Attach it again.',
+};
 
-const sameFile = (a: File, b: File) => a.name === b.name && a.size === b.size && a.lastModified === b.lastModified;
+const sameFile = (a: File, b: File) =>
+  a.name === b.name && a.size === b.size && a.lastModified === b.lastModified;
 
 /** Selected files with their client-side checks and previews (object URLs are revoked when no longer shown). */
 export function useAttachments(limits: IntakeLimits): AttachmentsState {
@@ -66,7 +71,10 @@ export function useAttachments(limits: IntakeLimits): AttachmentsState {
         notes.push(
           `You can attach up to ${limits.maxAttachments} files, so ${skipped.map((f) => `“${safeFileName(f.name)}”`).join(', ')} ${skipped.length === 1 ? 'was' : 'were'} not added.`,
         );
-      if (duplicates) notes.push(duplicates === 1 ? 'That file is already attached.' : 'Some of those files are already attached.');
+      if (duplicates)
+        notes.push(
+          duplicates === 1 ? 'That file is already attached.' : 'Some of those files are already attached.',
+        );
       setNotice(notes.length ? notes.join(' ') : null);
       if (!accepted.length) return;
 
@@ -89,7 +97,8 @@ export function useAttachments(limits: IntakeLimits): AttachmentsState {
             setItems((prev) => prev.map((x) => (x.id === a.id ? { ...x, head, preview } : x)));
           },
           () => {
-            if (live.current.has(a.id)) setItems((prev) => prev.map((x) => (x.id === a.id ? { ...x, unreadable: true } : x)));
+            if (live.current.has(a.id))
+              setItems((prev) => prev.map((x) => (x.id === a.id ? { ...x, unreadable: true } : x)));
           },
         );
       }
