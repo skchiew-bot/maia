@@ -147,6 +147,7 @@ export const ANOMALY_SIGNALS = [
   'discovery_with_playbook',
   'evidence_unverified',
   'self_approval_rate',
+  'metering_discrepancy', // turns whose sidecar usage disagreed with the claude process's own figures (G-44)
 ] as const;
 export type AnomalySignal = (typeof ANOMALY_SIGNALS)[number];
 

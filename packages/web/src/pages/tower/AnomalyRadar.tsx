@@ -11,7 +11,7 @@ import {
   scopeLabel,
 } from './towerModel';
 
-/** The seven gaming/anomaly signals in contract order (packages/contracts/src/dto/tower.ts). */
+/** The gaming/anomaly signals in contract order (packages/contracts/src/dto/tower.ts). */
 const SIGNAL_ORDER: readonly AnomalySignal[] = [
   'no_file_change_closes',
   'xs_heavy_manifests',
@@ -20,6 +20,7 @@ const SIGNAL_ORDER: readonly AnomalySignal[] = [
   'discovery_with_playbook',
   'evidence_unverified',
   'self_approval_rate',
+  'metering_discrepancy',
 ];
 
 function SignalStatus({ status }: { status: TowerAnomaly['status'] }) {

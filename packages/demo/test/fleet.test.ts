@@ -56,6 +56,17 @@ describe('the default scenario', () => {
     expect(commands.find((c) => c.startsWith('git commit'))).toMatch(/AOC-Ticket: tkt_01ABC.*AOC-Session: \$AOC_SESSION_ID/);
     expect(commands.at(-1)).toBe('git checkout main');
   });
+
+  it("closes the commit task while HEAD is the UAT commit: provenance only traces commits in a session's recorded HEADs (G-25)", () => {
+    const build = scenario.steps.findIndex((s) => (s as { label?: string }).label === 'build-receipts');
+    expect(build).toBeGreaterThan(-1);
+    const at = (match: (s: (typeof scenario.steps)[number]) => boolean) => scenario.steps.findIndex((s, i) => i >= build && match(s));
+    const bash = (prefix: string) => at((s) => s.kind === 'bash' && s.command.startsWith(prefix));
+    const commitTask = at((s) => s.kind === 'mcp' && s.tool === 'task_done' && (s.args as { task_id?: string }).task_id === 't3');
+    expect(bash('git commit')).toBeGreaterThan(-1);
+    expect(commitTask).toBeGreaterThan(bash('git commit'));
+    expect(bash('git checkout main')).toBeGreaterThan(commitTask);
+  });
 });
 
 describe('nextAction', () => {

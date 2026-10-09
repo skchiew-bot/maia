@@ -114,7 +114,7 @@ describe('session activity', () => {
     tool('ses_A', '2026-10-09T01:00:10.000Z');
     tool('ses_A', '2026-10-09T01:00:50.000Z');
     tool('ses_A', '2026-10-09T01:05:00.000Z');
-    const headers = t.ingestHeaders('ses_A');
+    const headers = t.sidecarHeaders('ses_A');
     t.clock.set(Date.parse('2026-10-09T01:10:00.000Z'));
     await t.json('POST', '/ingest/throttle', { headers, body: { sessionId: 'ses_A', resetAt: '2026-10-09T01:30:00.000Z', message: 'limit', source: 'stream' } });
     t.clock.set(Date.parse('2026-10-09T01:30:00.000Z'));

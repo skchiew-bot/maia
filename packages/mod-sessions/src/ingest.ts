@@ -157,6 +157,8 @@ export class HookDispatcher {
 
   /** Resolve (or create, for observed) the session a hook belongs to. */
   private resolve(req: HookIngestRequest, p: IngestPrincipal): SessionInfo | { error: HookIngestResponse } {
+    // Hook events come from the hook binary: never from a sidecar, whose principal reports telemetry only.
+    if (p.kind === 'sidecar') throw new HttpError(403, 'forbidden', 'Sidecar tokens cannot post hook events');
     if (req.mode === 'managed') {
       if (p.kind === 'observer') throw new HttpError(403, 'forbidden', 'Observer tokens cannot post managed events');
       const s = req.aocSessionId ? this.d.engine.get(req.aocSessionId) : null;
@@ -351,7 +353,13 @@ export function registerIngestRoutes(app: App, d: IngestDeps): void {
   const { ctx, engine } = d;
   const hooks = new HookDispatcher(d);
 
-  /** The session an ingest body is about, as the principal may address it (observers only know the claude session id). */
+  /**
+   * The session a sidecar report (heartbeat, activity, usage, throttle, process exit) is about, as the principal may
+   * address it. A managed session takes these only from its own sidecar principal: its session token sits in the
+   * model's environment, so with it the model could forge its own liveness and metering (G-44). Observed sessions
+   * report with the observer token, which only knows the claude session id. replay() applies the same rule to every
+   * spooled report, item by item, under the principal that flushes the spool.
+   */
   const sessionOf = (p: IngestPrincipal, sessionId: string, opts: { allowObserver?: boolean } = {}): string => {
     if (p.kind === 'observer') {
       if (!opts.allowObserver) throw new HttpError(403, 'forbidden', 'Token kind not allowed here');
@@ -359,13 +367,14 @@ export function registerIngestRoutes(app: App, d: IngestDeps): void {
       if (!s || s.mode !== 'observed') throw new HttpError(404, 'not_found', 'Unknown observed session');
       return s.sessionId;
     }
-    if (p.kind === 'session' && p.sessionId !== sessionId) throw new HttpError(403, 'forbidden', 'Token not valid for this session');
-    if (!engine.row(sessionId)) throw new HttpError(404, 'not_found', 'Unknown session');
+    if (p.kind !== 'sidecar') throw new HttpError(403, 'sidecar_token_required', 'Only the session’s sidecar reports this');
+    if (p.sessionId !== sessionId) throw new HttpError(403, 'forbidden', 'Token not valid for this session');
+    if (engine.row(sessionId)?.mode !== 'managed') throw new HttpError(404, 'not_found', 'Unknown session');
     return sessionId;
   };
 
   const sessionFor = (c: Ctx, sessionId: string, opts: { allowObserver?: boolean } = {}): string =>
-    sessionOf(requireIngest(c, { sessionId, allowObserver: opts.allowObserver }), sessionId, opts);
+    sessionOf(requireIngest(c, { sessionId, allowObserver: opts.allowObserver, allowSidecar: true }), sessionId, opts);
 
   const handleHook = (body: HookIngestRequest, p: IngestPrincipal): HookIngestResponse => {
     if (body.mode === 'observed' && p.kind === 'session') throw new HttpError(403, 'forbidden', 'Session tokens post managed events only');
@@ -480,7 +489,8 @@ export function registerIngestRoutes(app: App, d: IngestDeps): void {
 
   app.post(INGEST_PATHS.spool, async (c) => {
     const body = await readJson(c, SpoolSchema);
-    const p = requireIngest(c, { allowObserver: true });
+    // Hooks, observed hooks and sidecars all spool; replay() holds each item to its live route's principal rules.
+    const p = requireIngest(c, { allowObserver: true, allowSidecar: true });
     const res: SpoolFlushResponse = { accepted: 0, duplicates: 0, rejected: 0 };
     for (const item of body.items as SpoolItem[]) {
       try {

@@ -4,7 +4,7 @@ import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { detectThrottle, parseThrottle, Sidecar, TranscriptTailer } from '../src';
+import { detectThrottle, parseThrottle, Sidecar, sidecarOptionsFrom, TranscriptTailer } from '../src';
 
 const asst = (id: string, block: string, usage: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
   JSON.stringify({
@@ -112,5 +112,45 @@ describe('Sidecar end to end', () => {
     posts.length = 0;
     await sc2.exit();
     expect(posts.filter((p) => p.path === '/ingest/usage')).toHaveLength(0);
+  });
+
+  it('reports with its own token, and a stop (SIGTERM) finishes an exit report under way instead of cutting it off', async () => {
+    const posts: { path: string; auth: string | undefined }[] = [];
+    const url = await new Promise<string>((resolve) => {
+      server = createServer((req, res) => {
+        req.resume();
+        req.on('end', () =>
+          // A slow daemon: the report is still in flight when the stop arrives.
+          setTimeout(() => {
+            posts.push({ path: req.url!, auth: req.headers.authorization });
+            res.writeHead(200, { 'content-type': 'application/json' });
+            res.end('{"ok":true}');
+          }, 150),
+        );
+      }).listen(0, '127.0.0.1', () => resolve(`http://127.0.0.1:${(server!.address() as { port: number }).port}`));
+    });
+    const dir = mkdtempSync(join(tmpdir(), 'aoc-sc-'));
+    const transcript = join(dir, 'session.jsonl');
+    writeFileSync(transcript, asst('msg_1', 'text', U) + '\n');
+    const sc = new Sidecar({ sessionId: 'ses_X', pid: 999999, transcriptPath: transcript, daemonUrl: url, token: 'aoc_c_sidecar', stateDir: join(dir, 'state'), isAlive: () => false });
+    const exiting = sc.exit();
+    await new Promise((r) => setTimeout(r, 20));
+    await sc.shutdown();
+    expect(posts.map((p) => p.path).filter((p) => p !== '/ingest/activity')).toEqual(['/ingest/usage', '/ingest/process']);
+    expect(posts.every((p) => p.auth === 'Bearer aoc_c_sidecar')).toBe(true);
+    await exiting;
+  });
+});
+
+describe('sidecar command line', () => {
+  const argv = ['--session', 'ses_X', '--pid', '4242', '--transcript', '/tmp/t.jsonl', '--daemon', 'http://127.0.0.1:7420'];
+
+  it('takes its token from AOC_INGEST_TOKEN only — never from argv, which every local user can read', () => {
+    expect(sidecarOptionsFrom(argv, { AOC_INGEST_TOKEN: 'aoc_c_sidecar' })).toMatchObject({ sessionId: 'ses_X', pid: 4242, token: 'aoc_c_sidecar' });
+    expect(sidecarOptionsFrom([...argv, '--token', 'aoc_c_sidecar'], { AOC_INGEST_TOKEN: 'aoc_c_sidecar' })).toEqual({
+      error: expect.stringContaining('AOC_INGEST_TOKEN only'),
+    });
+    expect(sidecarOptionsFrom(argv, {})).toEqual({ error: expect.stringMatching(/^usage:/) });
+    expect(sidecarOptionsFrom(argv.slice(0, 6), { AOC_INGEST_TOKEN: 't', AOC_DAEMON_URL: 'http://d' })).toMatchObject({ daemonUrl: 'http://d' });
   });
 });

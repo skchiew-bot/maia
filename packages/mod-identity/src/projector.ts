@@ -1,5 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite';
-import type { MetaOf, PayloadOf, StoredEvent } from '@aoc/contracts';
+import type { IdentityTokenKind, MetaOf, PayloadOf, StoredEvent } from '@aoc/contracts';
 import type { Projector } from '@aoc/kernel';
 
 export const ERASED = '[erased]';
@@ -17,7 +17,7 @@ export interface UserRow {
 
 export interface TokenRow {
   id: string;
-  kind: 'user' | 'web_session' | 'ingest_session' | 'observer' | 'system';
+  kind: IdentityTokenKind;
   prefix: string;
   hash: string;
   user_id: string | null;

@@ -88,5 +88,6 @@ export function resetDemoDir(layout: DemoLayout): void {
   if (entries.length && !ours) {
     throw new Error(`refusing to reset ${layout.root}: it is not empty and was not created by the demo seeder`);
   }
-  rmSync(layout.root, { recursive: true, force: true });
+  // A straggler of a previous run (a sidecar's last spool write) can recreate a directory mid-removal: retry on ENOTEMPTY.
+  rmSync(layout.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
 }
