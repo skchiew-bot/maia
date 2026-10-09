@@ -125,6 +125,42 @@ export interface EraseResultDTO {
   decisionId: string | null;
 }
 
+/** One `backup.completed` (G-21). The backup directory itself is configuration and is not exposed. */
+export interface BackupDTO {
+  backupId: string;
+  /** When the backup was recorded. */
+  at: string;
+  file: string;
+  /** Size and SHA-256 of the encrypted file (check an off-host copy without the key). */
+  bytes: number;
+  sha256: string;
+  /** Fingerprint of the backup key that decrypts it. */
+  keyId: string;
+  headSeq: number;
+  headHash: string;
+  /** Off-host copy command result (null = none configured). */
+  copied: boolean | null;
+  eventSeq: number;
+}
+
+/** `GET /api/audit/backups`, newest first. */
+export interface BackupListDTO {
+  /** audit.backupKeyFile is set: the daily job runs. */
+  configured: boolean;
+  atLocalTime: string;
+  retentionDays: number;
+  copyConfigured: boolean;
+  backups: BackupDTO[];
+}
+
+/** `POST /api/audit/backup`. */
+export interface BackupRunDTO {
+  ok: true;
+  backup: BackupDTO;
+  /** Set when the backup was written but the off-host copy command failed. */
+  copyError: string | null;
+}
+
 export interface AuditHealthDTO {
   generatedAt: string;
   chainId: string;
@@ -153,5 +189,13 @@ export interface AuditHealthDTO {
     lastError: string | null;
   }[];
   selfmodBlocked: { total: number; last24h: number };
+  /** Encrypted backups (G-21, R6). */
+  backup: {
+    configured: boolean;
+    last: (BackupDTO & { ageMs: number }) | null;
+    lastFailure: { at: string; stage: string; reason: string } | null;
+    /** Configured and none within the stale window (same window as anchors). */
+    stale: boolean;
+  };
   warnings: string[];
 }

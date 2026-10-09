@@ -4,7 +4,7 @@
  */
 import type { DecisionCard, DecisionRequestInput, DecisionResolveInput } from './decisions';
 import type { ChangeScope, LivenessState, ModelTier, Role, SessionLifecycle, SessionMode } from './domain';
-import type { AnchorDTO, AuditHealthDTO, VerifyReportDTO } from './dto/audit';
+import type { AnchorDTO, AuditHealthDTO, BackupDTO, VerifyReportDTO } from './dto/audit';
 import type { Actor, EventSource, JsonValue } from './envelope';
 import type { BoundaryInstruction } from './mcp';
 import type { Progress } from './progress';
@@ -306,6 +306,8 @@ export interface AuditService {
   verify(record?: { actor: Actor; source: EventSource }): Promise<VerifyReportDTO>;
   /** Newest anchor recorded in the chain (null = never anchored). */
   lastAnchor(): AnchorDTO | null;
+  /** Newest completed encrypted backup (null = never; G-21). */
+  lastBackup(): BackupDTO | null;
   /** Integrity summary from the read models; never recomputes the chain, so it is cheap enough for dashboards. */
   health(): AuditHealthDTO;
 }
@@ -356,8 +358,11 @@ export interface LlmService {
 
 // ── notifications ──────────────────────────────────────────────────────────
 export interface Notification {
-  /** `audit.integrity`: Verify failed — the chain or an off-host anchor disagrees (Sev-1, docs/runbooks/anchoring.md §7). */
-  kind: 'decision.new' | 'decision.aging' | 'decision.escalated' | 'evidence.integrity' | 'audit.integrity' | 'session.attention' | 'fx.alert' | 'breakglass' | 'anchor.missed' | 'credit.topup' | 'info';
+  /**
+   * `audit.integrity`: Verify failed — the chain or an off-host anchor disagrees (Sev-1, docs/runbooks/anchoring.md §7).
+   * `backup.missed`: a backup step failed or the backup did not reach off-host storage (docs/runbooks/backup-restore.md).
+   */
+  kind: 'decision.new' | 'decision.aging' | 'decision.escalated' | 'evidence.integrity' | 'audit.integrity' | 'session.attention' | 'fx.alert' | 'breakglass' | 'anchor.missed' | 'backup.missed' | 'credit.topup' | 'info';
   title: string;
   /** Roles that should see it (requesters never see internal notifications). */
   audience: Role[];

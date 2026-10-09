@@ -29,6 +29,8 @@ describe('loadConfig', () => {
     expect(config.dataDir).toBe(join(cwd, '.aoc', 'data'));
     expect(config.supervisor.workspacesDir).toBe(join(cwd, '.aoc', 'workspaces'));
     expect(config.audit.anchorRepoPath).toBe(join(cwd, '.aoc', 'anchor-repo'));
+    expect(config.audit).toMatchObject({ backupDir: join(cwd, '.aoc', 'backups'), backupAtLocalTime: '02:30' });
+    expect(config.audit.backupKeyFile).toBeUndefined();
     expect(config.publicUrl).toBe('http://localhost:7420');
     expect(config.identity).toMatchObject({ origin: 'http://localhost:7420', rpId: 'localhost' });
     expect(warnings.some((w) => w.includes('hookCommand'))).toBe(true);
@@ -109,6 +111,9 @@ describe('loadConfig', () => {
         gnupgHome: 'gnupg',
         tsaCaFile: 'certs/tsa-ca.pem',
         tsaUntrustedFile: '/etc/aoc/tsa-chain.pem',
+        backupDir: 'backups',
+        backupKeyFile: '../keys/backup.key',
+        backupCopyCommand: ['rclone', 'copy', '{file}', './offsite'],
       },
       selfModification: {
         aocRepoPaths: ['../..'],
@@ -140,6 +145,9 @@ describe('loadConfig', () => {
       gnupgHome: join(confDir, 'gnupg'),
       tsaCaFile: join(confDir, 'certs', 'tsa-ca.pem'),
       tsaUntrustedFile: '/etc/aoc/tsa-chain.pem',
+      backupDir: join(confDir, 'backups'),
+      backupKeyFile: join(cwd, 'etc', 'keys', 'backup.key'),
+      backupCopyCommand: ['rclone', 'copy', '{file}', join(confDir, 'offsite')],
     });
     expect(config.audit.gpgKeyId).toBeUndefined();
     expect(config.selfModification.aocRepoPaths).toEqual([cwd]);

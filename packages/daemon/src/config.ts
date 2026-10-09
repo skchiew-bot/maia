@@ -201,6 +201,9 @@ function resolvePaths(c: AocConfig, baseDir: string): AocConfig {
       gnupgHome: optPath(c.audit.gnupgHome),
       tsaCaFile: optPath(c.audit.tsaCaFile),
       tsaUntrustedFile: optPath(c.audit.tsaUntrustedFile),
+      backupDir: path(c.audit.backupDir),
+      backupKeyFile: optPath(c.audit.backupKeyFile),
+      backupCopyCommand: c.audit.backupCopyCommand.map(arg),
     },
     selfModification: {
       ...c.selfModification,

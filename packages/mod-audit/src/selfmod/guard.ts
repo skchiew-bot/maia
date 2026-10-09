@@ -64,6 +64,8 @@ export function boundaryConfig(config: AocConfig, dataDir: string, tsrDir?: stri
     config.audit.gnupgHome,
     config.audit.tsaCaFile,
     config.audit.tsaUntrustedFile,
+    config.audit.backupDir,
+    config.audit.backupKeyFile,
     config.selfModification.externalAuditLog,
     config.keys.masterKeyFile,
     config.supervisor.credentialProfilesFile,

@@ -1,6 +1,12 @@
 /** Audit-integrity events (owner: mod-audit, §13). */
 import { z } from 'zod';
-import { defineEvent, meta, payload, zId, zLabel } from './define';
+import { defineEvent, meta, payload, zHash, zId, zLabel } from './define';
+
+/** `aoc-backup-<UTC yyyymmddThhmmssZ>-<8 id chars>.aocbk` — generated, never user text. */
+export const BACKUP_FILE_RE = /^aoc-backup-\d{8}T\d{6}Z-[0-9A-Z]{8}\.aocbk$/;
+const zKeyId = z.string().regex(/^[0-9a-f]{16}$/);
+const zCount = z.number().int().min(0);
+export const BACKUP_STAGES = ['key', 'snapshot', 'package', 'copy', 'prune'] as const;
 
 export const AUDIT_EVENTS = [
   defineEvent({
@@ -69,5 +75,45 @@ export const AUDIT_EVENTS = [
     description: 'A governed configuration file changed (detected by hash at startup).',
     meta: meta({ key: zLabel, versionHash: z.string().max(64), previousHash: z.string().max(64).nullable() }),
     payload: null,
+  }),
+  defineEvent({
+    type: 'backup.completed',
+    owner: 'audit',
+    description:
+      'Encrypted backup of the event log, the body store, blobs, RFC 3161 tokens and evidence packs written (G-21, R6). Never contains the KEK.',
+    meta: meta({
+      backupId: zId,
+      file: z.string().regex(BACKUP_FILE_RE),
+      /** Size and SHA-256 of the encrypted file: an off-host copy can be checked without the key. */
+      bytes: zCount,
+      sha256: zHash,
+      /** Fingerprints (not the keys): which backup key decrypts the file, which KEK unwraps its bodies. */
+      keyId: zKeyId,
+      kekId: zKeyId,
+      /** Chain head inside the backup. */
+      headSeq: zCount,
+      headHash: zHash,
+      files: zCount,
+      aocDbBytes: zCount,
+      bodiesDbBytes: zCount,
+      blobs: zCount,
+      blobBytes: zCount,
+      /** Blob files already gone when they were copied (their scope was being erased). */
+      skippedBlobs: zCount,
+      /** Events whose body was already absent (not erased) in the live store when the snapshot was taken. */
+      bodiesMissing: zCount,
+      /** backupCopyCommand result (null = no copy command configured). */
+      copied: z.boolean().nullable(),
+      pruned: zCount,
+      retained: zCount,
+    }),
+    payload: null,
+  }),
+  defineEvent({
+    type: 'backup.failed',
+    owner: 'audit',
+    description: 'A backup step failed: backup key checks, snapshot, packaging, the off-host copy or retention pruning.',
+    meta: meta({ backupId: zId.nullable(), stage: z.enum(BACKUP_STAGES), reason: zLabel }),
+    payload: payload({ detail: z.string().optional() }),
   }),
 ] as const;

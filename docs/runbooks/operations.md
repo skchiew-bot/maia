@@ -203,8 +203,9 @@ A dead-lettered reaction means something that should have happened did not.
 
 ## 6. Backups
 
-The full procedure (what, the order, encryption, retention, keys kept apart) is in
-[key custody §4](key-custody.md#4-backups-off-host-nightly), and the restore drill is in
+aocd backs itself up daily once `audit.backupKeyFile` is set (`aoc backup now` / `aoc backup list`; restore with
+`aocd restore`): see the [backup and restore runbook](backup-restore.md). Key custody and the manual procedure are in
+[key custody §4](key-custody.md#4-backups-off-host-nightly) and the drill in
 [key custody §7](key-custody.md#7-restore-drill-quarterly). The rules that matter most:
 
 - **Never copy `aoc.db` alone while aocd runs.** Use `sqlite3 … ".backup …"` or `VACUUM INTO`. Copy `aoc.db`

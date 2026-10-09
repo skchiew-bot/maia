@@ -94,7 +94,14 @@
     "//gpgKeyId": "0123456789ABCDEF0123456789ABCDEF01234567 — OpenPGP key that signs anchor commits; Verify then requires a valid signature from it.",
     "//gnupgHome": "/var/lib/aoc/gnupg — keyring used to sign and verify anchor commits (default: aocd's GNUPGHOME).",
     "//tsaCaFile": "/etc/aoc/tsa-ca.pem — CA bundle that verifies RFC 3161 token signatures (without it only the imprint and the time are checked).",
-    "//tsaUntrustedFile": "/etc/aoc/tsa-intermediates.pem — intermediate certificates for the TSA chain."
+    "//tsaUntrustedFile": "/etc/aoc/tsa-intermediates.pem — intermediate certificates for the TSA chain.",
+    "//backup": "Encrypted daily backup (G-21, R6) of aoc.db, bodies.db, blobs/, RFC 3161 tokens and evidence packs — never the KEK. Runs only once backupKeyFile is set; restore with `aocd restore`. See docs/runbooks/backup-restore.md.",
+    "backupDir": ".aoc/backups",
+    "//backupKeyFile": "/etc/aoc/backup.key — 32 bytes (64 hex chars), mode 0400; a different key from the KEK, kept apart from the KEK, the data dir and the backups.",
+    "backupAtLocalTime": "02:30",
+    "backupRetentionDays": 35,
+    "backupCopyCommand": [],
+    "//backupCopyCommand": "[\"rclone\", \"copy\", \"{file}\", \"offsite:aoc-backups\"] — runs without a shell after each backup; {file} is the backup's path."
   },
 
   "intake": {
