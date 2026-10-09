@@ -119,7 +119,7 @@ flowchart TB
 | **aocd** | `packages/daemon` | Composition root. One process hosts the HTTP API, ingest, SSE, the job scheduler, every domain module and the launcher/supervisor. It is the **sole writer** of the event log. | Built |
 | **Kernel** | `packages/kernel` | `EventStore` (hash chain, idempotency, projections, rebuild, verification, crypto-shred), `BodyStore` (per-scope envelope encryption, blobs), module host (`AocRuntime`), guard policy, broadcaster, reactor bus, job scheduler, git wrapper, test kit. | Built |
 | **Launcher / supervisor** | `packages/supervisor` | Spawns `claude -p` per turn with the AOC hooks, the AOC MCP server, the env allowlist and the process type's credential profile. Resumes, nudges, restarts, stops, rolls over, and runs isolated verification commands. | Built |
-| **Per-session sidecar** | `packages/sidecar` | Started by the supervisor next to each managed session. Heartbeats from the process (hooks cannot fire while the model generates, §2.1). Tails the transcript and subagent transcripts for per-message usage (deduplicated by `message.id`) and plan-limit hits. Spools when aocd is down. | Built |
+| **Per-session sidecar** | `packages/sidecar` | Started by the supervisor next to each managed session. Heartbeats from the process (hooks cannot fire while the model generates, §2.1). Tails the transcript and subagent transcripts for per-message usage (deduplicated by `message.id`) and plan-limit hits. Spools when aocd is down. Reports with its own `sidecar` token, never the session's (G-44). | Built |
 | **AOC MCP server** | `packages/mcp-server` | The agent's structured voice (§2). Eight schema-validated tools, relayed verbatim to `/ingest/mcp/<tool>`. Refuses to start without a session id, daemon URL and ingest token. Never retries writes. | Built |
 | **Hooks** | `packages/hooks` | A thin relay from Claude Code hook events to `/ingest/hook`. The daemon decides the effect; the hook only applies it (ADR-0004). Managed mode fails closed. Observed mode never blocks and spools locally. | Built |
 | **Ingest client** | `packages/client` | Timeouts, bounded retries and a local JSONL spool replayed through `/ingest/spool` (idempotent). Shared by the hooks, sidecar, MCP server and CLI. | Built |
@@ -232,6 +232,20 @@ Thinking must be told apart from Stalled (§2.1). The sidecar fills that gap:
   come first, see §6) and reports `/ingest/throttle`.
 - It reports the process exit (`/ingest/process`), flushes and stops. Its offsets and counted state persist in a
   0600 state file, so a restart does not double-count.
+- **It has its own principal (G-44).** The supervisor issues one `sidecar` ingest token (`aoc_c_…`) per managed
+  session and passes it only in the sidecar's environment (`AOC_INGEST_TOKEN`, never argv, never the `claude`
+  environment). `/ingest/usage`, `heartbeat`, `activity`, `process` and `throttle` for a managed session accept only
+  that principal. The session's own token, which the model's environment holds, gets `403 sidecar_token_required`,
+  and so does a spooled item posted under it. Observed sessions keep their observer token. The token is revoked
+  after the session's last sidecar has exited.
+- **Hand-off at the end of a turn.** The sidecar prints `aoc-sidecar ready` once it is tailing. The supervisor stops
+  a finished turn's sidecar with SIGTERM only after that line, so the final flush and the exit report land before
+  the turn is reconciled and before the token is revoked.
+- **Reconciliation.** After each turn the supervisor compares what the sidecar reported with the stream-json
+  `result.modelUsage` (cumulative across `--resume`, so a turn is the difference from the previous result) and
+  appends `usage.reconciled` with `match`, `overhead` (compaction usage that is only in `modelUsage`),
+  `under_reported`, `over_reported`, `regressed` or `unverified`. Tower counts the three discrepancy statuses as the
+  `metering_discrepancy` signal.
 
 ### 2.4 AOC MCP server: the agent's structured voice
 
@@ -613,7 +627,7 @@ Signals and their sources:
 | Signal | Source | Trust |
 | --- | --- | --- |
 | Process alive or exited | The supervisor (parent of `claude`) and the sidecar (`kill(pid, 0)`) | Supervisor: authoritative. Sidecar: see the threat model |
-| Heartbeat | Sidecar, every 5 s | Agent-reachable token (threat model T-3) |
+| Heartbeat | Sidecar, every 5 s, with the session's sidecar token (never in the `claude` env, G-44) | Observational; out of the model's reach with session isolation (threat model T-4) |
 | Tool in flight or finished | `PreToolUse` / `PostToolUse` / `PostToolUseFailure` hooks | Agent-reachable token |
 | Model output | stream-json deltas seen by the supervisor; transcript growth seen by the sidecar | Supervisor: authoritative |
 | Throttle | `rate_limit_event` (status `rejected`, `resetsAt`), the `StopFailure` hook with `error: rate_limit`, `result.api_error_status: 429`, then the text fallback | Supervisor stream first |
@@ -768,7 +782,8 @@ flowchart TD
 Metering facts that the sidecar and metering module rely on (research note §6.3): count each assistant `message.id`
 once; tail subagent transcripts too (their usage is not in the main file); price 5-minute and 1-hour cache writes
 separately; never sum `total_cost_usd` across `--resume` invocations, because it is cumulative per session.
-Throttle idle time is metered too, because the enterprise case is productivity lost to throttling, not only
+The same cumulative behaviour is what lets the supervisor check each turn's sidecar totals against `modelUsage`
+(§2.3). Throttle idle time is metered too, because the enterprise case is productivity lost to throttling, not only
 dollars.
 
 ## 11. FX state machine

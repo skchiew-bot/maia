@@ -39,7 +39,7 @@
 | The KEK (master key) | Decrypts every body that has not been erased | `keys.masterKeyFile`, `AOC_MASTER_KEY`, or the dev default `dataDir/master.key` |
 | Deploy credentials and protected-branch rights | Whoever holds them can move main or production; every control depends on them (§3, R1) | The supervisor's credential profiles file and the supervisor machine user |
 | Claude credentials | Cost, quota and access to the organisation's Claude account | aocd's environment, passed into sessions through `envAllowlist` |
-| Ingest tokens (session, observer, system) | The integrity of telemetry, progress and decisions raised by agents | The `claude` environment (session), developer machines (observer), aocd (system) |
+| Ingest tokens (session, sidecar, observer, system) | The integrity of telemetry, progress and decisions raised by agents | The `claude` environment (session), the sidecar's environment only (sidecar), developer machines (observer), aocd (system) |
 | Human credentials: tokens, cookies, passkeys | The authority to approve | Browsers, `~/.aoc/client.json`, authenticators |
 | Off-host anchors | The proof that the chain was not rewritten (R2) | The anchor remote and the TSA tokens |
 | The registry and governed config | Model routing and the security profile of every process type | `config/` |
@@ -79,7 +79,7 @@ flowchart LR
   OBS -- "observer token" --> D
   HK -- "session token" --> D
   MC -- "session token" --> D
-  SC -- "session token" --> D
+  SC -- "sidecar token" --> D
   D -- "spawn with env allowlist" --> CL
   CL --> HK
   CL --> MC
@@ -125,7 +125,7 @@ unprivileged OS user (O-1).
 | API calls by an authenticated person (decisions, change records) | The holder of that person's token or cookie | Attributed in v1; signed for passkey kinds | Yes, within the routing rules |
 | Managed hooks (`/ingest/hook`, session token) | The hook binary, **and anything else in Zone 3, including the model** | Agent-asserted | No |
 | MCP calls (`/ingest/mcp/*`, session token) | The MCP server, **and the model directly** (with `curl` and the token) | Agent-asserted, schema-validated | Only as claims that AOC verifies (evidence against git) |
-| Sidecar (`/ingest/heartbeat`, `usage`, `throttle`, `process`) | The sidecar, **and the model whenever it can reach the token** | Agent-reachable until O-1 and O-3 are done | No. Reconciliation against the supervisor's figures is still required (O-5) |
+| Sidecar (`/ingest/heartbeat`, `activity`, `usage`, `throttle`, `process`) | The sidecar, with the session's own sidecar token (O-3); the model only by reading the sidecar's environment, while both run as one OS user (no session isolation, O-1), or by editing the transcript the sidecar reads | Observational; every turn reconciled against the supervisor's `result.modelUsage` (O-5) | No |
 | Observed hooks (observer token) | Any holder of the observer token | Unverified | Never |
 | Scheduler jobs | aocd, with untrusted inputs (the BNM page, LLM output) | Trusted code, untrusted data | Only after validation and reconciliation |
 
@@ -150,7 +150,7 @@ unprivileged OS user (O-1).
 
 | | Threat | Control | Status | Residual |
 | --- | --- | --- | --- | --- |
-| S | The model forges hook, MCP or sidecar events with its own session token | Tokens are scoped to one session (403 otherwise); unknown managed session → exit 2; observer tokens cannot post managed events, nor observed events that name a managed session (403); a request to `/ingest/*` without a valid token gets 401 before its body is read | Built | Forgery **within its own session** remains possible ([T-3](#t-3-the-model-reads-its-own-environment)) |
+| S | The model forges hook, MCP or sidecar events with its own session token | Tokens are scoped to one session (403 otherwise); unknown managed session → exit 2; observer tokens cannot post managed events, nor observed events that name a managed session (403); sidecar reports (heartbeat, activity, usage, throttle, process) refuse the session token (403 `sidecar_token_required`), live and spooled, and a sidecar token posts nothing else; a request to `/ingest/*` without a valid token gets 401 before its body is read | Built | Forgery of hook and MCP events **within its own session** remains possible ([T-3](#t-3-the-model-reads-its-own-environment)) |
 | T | Replays and duplicate flushes | Idempotency keys; spool replays deduplicated. Chained keys are derived from the session and the client's key, so one session cannot pre-claim another's | Built | — |
 | R | A hook-relayed event is taken for a supervisor fact | Hook-sourced events must carry the agent as actor. Today a managed `UserPromptSubmit` is recorded as `{kind: system, id: supervisor}` | Required (O-4) | — |
 | I | Ingest responses leak data | Responses are acknowledgements and hook decisions; `get_status` returns only the caller's own session | Built | — |
@@ -208,10 +208,10 @@ unprivileged OS user (O-1).
 
 | | Threat | Control | Status | Residual |
 | --- | --- | --- | --- | --- |
-| S | The model forges heartbeats or usage | Process liveness from the supervisor wins (Built); usage reconciled against supervisor-observed totals, and a separate sidecar token outside the `claude` environment ([T-4](#t-4-sidecar-spoofing)) | Built / Required (O-3, O-5) | — |
-| T | The model edits its transcript | Continuous tailing with persisted offsets; reconciliation ([T-5](#t-5-transcript-tampering)) | Built / Required (O-5) | A few seconds' window |
-| I | The token is passed in argv and is readable by every local user through `ps` | The supervisor passes the sidecar's token in its environment, never argv | Built | The sidecar still uses the session's own token (O-3) |
-| D | The model kills the sidecar | Heartbeats stop, so the session shows Dead while the supervisor knows the process is alive. That mismatch is a signal; the supervisor restarts the sidecar | Required | — |
+| S | The model forges heartbeats or usage | Process liveness from the supervisor wins; only the session's sidecar principal may report, its token in the sidecar's environment alone; every turn's usage is reconciled against the process's own `result.modelUsage` and a disagreement is flagged (`usage.reconciled`, Control Tower radar) ([T-4](#t-4-sidecar-spoofing)) | Built (O-3, O-5) | Without session isolation the model can read the sidecar's environment (same OS user): reconciliation flags what it forges, it does not prevent it |
+| T | The model edits its transcript | Continuous tailing with persisted offsets; per-turn reconciliation flags the difference ([T-5](#t-5-transcript-tampering)) | Built (O-5) | A shortfall in a turn that compacted reads as overhead |
+| I | The token is passed in argv and is readable by every local user through `ps` | The sidecar reads its token from its environment only (`--token` is refused), and it is the sidecar's own token, never the session's | Built | — |
+| D | The model kills the sidecar | Heartbeats stop, so the session shows Dead while the supervisor knows the process is alive; the turn's usage is flagged `under_reported`. The supervisor restarting the sidecar is not built | Built (signals) / Required (restart) | — |
 
 ### 3.8 AOC MCP server
 
@@ -362,8 +362,10 @@ state that holds.
   - a `UserPromptSubmit` hook payload, which today is recorded as a **supervisor** prompt
     (`prompt.submitted {origin: supervisor}`): a false attribution in the audit log;
   - fake `PostToolUse` events for `Edit`;
-  - fake heartbeats or usage;
   - forged `PreToolUse` events that raise decision cards.
+
+  Heartbeats, activity, usage, throttles and process exits are no longer among them: those routes take only the
+  session's sidecar token (G-44).
 - **Controls:**
   - Tokens are scoped to one session and revoked at session end; endpoints reject other sessions (Built).
   - The token is append-only: it reads nothing but its own status (Built).
@@ -371,27 +373,38 @@ state that holds.
     state, and human decisions (design rule, ADR-0004).
   - Record hook-relayed events with the agent as actor (O-4).
   - Compute "file changed" from git, never from `tool.used` (Built: the ledger compares working-tree fingerprints, `task.done.treeChanged`, §4).
-  - Give the sidecar its own token, outside the `claude` environment (O-3). The sidecar now receives its token in
-    its environment instead of argv (Built), but it is still the session's token.
+  - Give the sidecar its own token, outside the `claude` environment (O-3, Built): sidecar reports refuse the
+    session token.
   - Give sessions a home directory of their own, holding no credentials (O-1).
   - Restrict network egress from build sessions and review how Claude credentials reach sessions (O-14).
-- **Residual:** an agent can always lie about **itself**: its own liveness and its own telemetry. It cannot
-  approve, promote or forge another session's events.
+- **Residual:** an agent can still lie about **itself** through its own hook and MCP events and through the
+  transcript it writes; its liveness and usage now reach aocd only from the sidecar and are reconciled against the
+  process's own figures (T-4). It cannot approve, promote or forge another session's events.
 
 ### T-4. Sidecar spoofing
 
-Any process holding the session token can post heartbeats, usage and throttle reports for that session. That
-includes the model, if the sidecar runs as the same user or its token is visible.
+Until G-44, any process holding the session token could post heartbeats, usage and throttle reports for that
+session, the model included. Now only the session's sidecar principal can, and its token never enters the `claude`
+environment.
 
 - **Controls:**
   - The supervisor is the parent of `claude` and knows process exit authoritatively; that wins over a heartbeat.
   - Usage is deduplicated by message id (Built).
-  - A distinct sidecar principal (O-3). The token already travels in the sidecar's environment, never argv
-    (Built).
-  - Reconciliation of transcript usage against the supervisor's stream-json `result.modelUsage` (O-5).
-  - Run the sidecar as the service user, with read-only access to the session's transcript directory (O-1).
-- **Residual:** while the sidecar shares a user with the agent, liveness and metering of that one session are
-  agent-influenced. They are observational, so no gate depends on them alone.
+  - A distinct sidecar principal (O-3, Built): `aoc_c_` token bound to one session, issued by the supervisor and
+    passed only in the sidecar's environment (never argv, never `claude`'s env, redacted from session output);
+    `/ingest/heartbeat`, `activity`, `usage`, `throttle` and `process` refuse the session token (403), live and
+    in spool replays; the sidecar token posts no hooks or MCP calls; it is revoked once the session's last sidecar
+    has exited (bounded by the grace), while the session token dies with the session.
+  - Reconciliation (O-5, Built): when a turn's sidecar has exited, the supervisor compares the usage it recorded
+    since the previous check with the difference of the process's cumulative `result.modelUsage`, per model. Any
+    disagreement beyond 16 tokens or 0.5 % is chained as `usage.reconciled` (`over_reported`, `under_reported`,
+    `regressed`) and counted by the Control Tower's `metering_discrepancy` signal.
+  - Run the sidecar as the service user, with read-only access to the session's transcript directory (Built with
+    session isolation, O-1; required in production).
+- **Residual:** without session isolation (development) the model shares the sidecar's OS user: it can read the
+  sidecar token from `/proc/<pid>/environ` and plant spool or state files. Whatever that adds or hides disagrees
+  with the process's own figures and is flagged; a flag is not a block (metering observes, §10). A batch that is
+  partly seen is still recorded whole (O-5).
 
 ### T-5. Transcript tampering
 
@@ -402,11 +415,12 @@ agent can edit it to hide usage or to plant throttle text.
   - The sidecar ships usage every 10 s or every 50 messages, and keeps its offsets in a 0600 state file (Built).
   - Truncation is detected (Built).
   - The audit record is the chain, not the transcript.
-  - Per-invocation reconciliation against supervisor-observed totals (O-5).
+  - Per-turn reconciliation against the process's own `result.modelUsage` flags an edit that hides or adds usage
+    (O-5, Built).
   - Throttle state prefers structured signals from the supervisor's stream (`rate_limit_event`) over transcript
     text (Built).
-- **Residual:** a few seconds' window before a line is shipped. Throttle text planted in the transcript can only
-  make the session look Throttled, which is visible and harmless.
+- **Residual:** an edit to a turn that compacted reads as compaction overhead. Throttle text planted in the
+  transcript can only make the session look Throttled, which is visible and harmless.
 
 ### T-6. Progress inflation through many tiny tasks
 
@@ -547,11 +561,13 @@ later hash. `verifyChain()` passes, because the genesis value depends only on th
   - An ended turn with the plan incomplete shows as Waiting on you (Built).
   - `drift.detected {overrun}` (Built).
   - The launch boundary check (Built, `mod-credits`).
-- **Under-reporting usage.** With its session token, the agent pre-posts tiny usage batches that claim the message
-  ids it can read from its own transcript. The sidecar's real batch is then skipped as already seen.
-  - Count usage only from the sidecar principal (O-3).
-  - Record only the unseen part of a partially seen batch.
-  - Reconcile against supervisor-observed totals (O-5).
+- **Under-reporting usage.** With its session token, the agent could pre-post tiny usage batches that claim the
+  message ids it can read from its own transcript, so that the sidecar's real batch is skipped as already seen.
+  - Count usage only from the sidecar principal (O-3, Built: the session token gets 403).
+  - Record only the unseen part of a partially seen batch (Required: batches carry per-model totals, not per-message
+    usage).
+  - Reconcile each turn against the process's own `result.modelUsage` (O-5, Built): a shortfall is flagged
+    `under_reported`.
 - **Repeat grants.** The auto-grant is once per requester per period, and further top-ups need a human who is not
   the requester (Built).
 - **Splitting work into observed sessions.** It is visible as observed usage. Observed work cannot reach `main`
@@ -734,9 +750,9 @@ the [gap list](../compliance/gaps.md), which tracks owners and acceptance tests.
 | --- | --- | --- | --- | --- |
 | O-1 | Run every managed session (`claude`, hooks, MCP server, the model's tools) as a separate unprivileged OS user, or in a per-session container, with a home directory of its own that holds no credentials (today the default `envAllowlist` passes aocd's `HOME` and `CLAUDE_CONFIG_DIR`). aocd, the supervisor and the sidecar run as the service user that owns the KEK, the databases and the credential profiles. Without this, file permissions protect nothing from agents | Change + decision | `supervisor`, Ops | T-2, T-3, T-4, R1, R6, gaps G-01, P-13 |
 | O-2 | Never run privileged git or tests in agent-writable trees. Inspect as the sandbox user with hardened flags; promote, tag and roll back from a service-owned clone fetched by SHA; never set `safe.directory=*` | Change | `kernel` (git), `supervisor`, `mod-change`, `mod-ledger` | T-2, gap G-04 |
-| O-3 | Give the sidecar its own principal, outside the `claude` environment. **Partly done:** the supervisor passes the token in the sidecar's environment, never argv; it is still the session's own token | Change | `supervisor`, `sidecar`, `mod-identity`, `mod-sessions` | T-3, T-4, T-14, gap G-44 |
+| O-3 | Give the sidecar its own principal, outside the `claude` environment. **Done (G-44):** a sidecar token per session, only in the sidecar's environment; sidecar reports refuse the session token, live and spooled; revoked once the last report is in. Out of the model's reach only with session isolation (O-1) | Change | `supervisor`, `sidecar`, `mod-identity`, `mod-sessions` | T-3, T-4, T-14, gap G-44 |
 | O-4 | Record hook-relayed events with the agent as actor. A managed `UserPromptSubmit` is recorded today as a supervisor prompt; the supervisor already records what it injects (`session.turn_started.injectedText`) | Change | `mod-sessions` | T-3, gap G-47 |
-| O-5 | Count usage only from the sidecar principal; record only the unseen part of a partially seen batch; reconcile each invocation against the supervisor-observed `result.modelUsage` (cumulative, so take differences) | Change | `mod-sessions`, `supervisor`, `mod-metering` | T-4, T-5, T-14, gap G-44 |
+| O-5 | Count usage only from the sidecar principal; record only the unseen part of a partially seen batch; reconcile each invocation against the supervisor-observed `result.modelUsage` (cumulative, so take differences). **Mostly done (G-44):** usage counts only from the sidecar principal, and every turn is reconciled (`usage.reconciled`, Tower `metering_discrepancy`). Remaining: record only the unseen part of a partially seen batch | Change | `mod-sessions`, `supervisor`, `mod-metering` | T-4, T-5, T-14, gap G-44 |
 | O-6 | Bind each observer token to a person (today the Approver issues them with a label and an expiry, but no user id), and rate-limit observed ingest | Change | `mod-identity`, `cli` | T-12 |
 | O-7 | **Done for identity events**, which use the scope `user:<userId>`. It remains a review rule: every event type that carries personal data needs a scope that can be erased on its own, because the kernel default falls back to `global` | Review rule | Lead, module owners | ADR-0003, PDPA |
 | O-8 | Separation of duties with a single Approver. **Decided by the CEO on 2026-10-09:** no exception; `decisions.soleApproverFallback` stays `false`, so the Approver's own Approver-level requests wait for a second Approver. Remaining actions: appoint a second Approver with a passkey; add the `decisions` settings to the governed configuration, so that turning the flag on is chained as `config.changed` | **Decided (CEO)**; follow-up Ops + change | CEO, `mod-audit` | T-8, R15, gaps G-35, P-11 |
