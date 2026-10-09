@@ -120,6 +120,9 @@ describe('Tickets list', { timeout: 15_000 }, () => {
       `/tickets/${ID}`,
     );
     expect(within(rows[1]!).getByText(/21\.9K \/ 800K/)).toBeInTheDocument();
+    expect(within(rows[1]!).getByText(/sessions: 2 triage$/)).toBeInTheDocument();
+    expect(within(rows[0]!).getByText(/sessions: 2 triage, 1 build/)).toBeInTheDocument();
+    expect(within(rows[1]!).getByText(/compares a seconds timestamp/)).toBeInTheDocument();
     expect(within(rows[0]!).getByTitle('Go-live: not started')).toBeInTheDocument();
     expect(screen.getByText('Go-live did not start after a UAT pass')).toBeInTheDocument();
   });
