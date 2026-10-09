@@ -287,7 +287,7 @@ function Footnote({
       </p>
       {rmIncomplete > 0 && (
         <p>
-          <Icon name="warn" size={12} /> RM incomplete: {rmIncompleteText(rmIncomplete, shown)}. Their US$ is complete.
+          <Icon name="warn" size={12} /> RM incomplete: {rmIncompleteText(rmIncomplete, shown)}. Their US$ figures are unaffected.
         </p>
       )}
       {unpriced > 0 && (

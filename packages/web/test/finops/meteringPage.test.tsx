@@ -506,7 +506,7 @@ describe('Cost per outcome', { timeout: 30_000 }, () => {
     expect(within(tickets).getByText('Median').nextElementSibling).toHaveTextContent(`US$17.00 ${rm(84.588)}`);
     expect(within(changes).queryByText('RM incomplete')).toBeNull();
     expect(within(phases).queryByText('RM incomplete')).toBeNull();
-    expect(widget).toHaveTextContent('RM incomplete: 1 of 7 has usage on a day with no stamped FX rate, so is left out of the RM figures. Their US$ is complete.');
+    expect(widget).toHaveTextContent('RM incomplete: 1 of 7 has usage on a day with no stamped FX rate, so is left out of the RM figures. Their US$ figures are unaffected.');
 
     // The outcome itself keeps its US$ and shows no RM, not even the part the daemon could convert.
     const table = within(widget).getByRole('table', { name: 'Outcomes completed in this range, newest first' });
