@@ -1,6 +1,5 @@
 import { useMemo } from 'react';
 import type { DecisionCardView } from '@aoc/contracts';
-import { LatencyBars } from '../../charts/LatencyBars';
 import { Badge } from '../../components/Badge';
 import { DataTable, type DataTableColumn } from '../../components/DataTable';
 import { EmptyState } from '../../components/EmptyState';
@@ -9,14 +8,8 @@ import { RelativeTime } from '../../components/RelativeTime';
 import { Widget, WidgetGrid } from '../../components/Widget';
 import { formatAge, formatInteger } from '../../lib/format';
 import type { Directory } from './directory';
-import {
-  KIND_LABEL,
-  closedWithinSla,
-  latencyByKind,
-  methodLabel,
-  outcomeLabel,
-  requesterOf,
-} from './model';
+import { KIND_LABEL, closedWithinSla, latencyByKind, methodLabel, outcomeLabel, requesterOf } from './model';
+import { SlaLatency } from './SlaLatency';
 
 function decidedBy(card: DecisionCardView, directory: Directory): string {
   if (card.resolution) return requesterOf(card.resolution.resolvedBy, directory).name;
@@ -64,16 +57,38 @@ export function ResolvedView({ cards, directory, selectedId, onSelect, busy }: R
           </span>
         ),
       },
-      { id: 'outcome', header: 'Outcome', sortValue: (c) => outcomeLabel(c), cell: (c) => outcomeLabel(c) },
-      { id: 'by', header: 'Decided by', sortValue: (c) => decidedBy(c, directory), cell: (c) => decidedBy(c, directory) },
+      {
+        id: 'outcome',
+        header: 'Outcome',
+        width: '18%',
+        sortValue: (c) => outcomeLabel(c),
+        cell: (c) => outcomeLabel(c),
+      },
+      {
+        id: 'by',
+        header: 'Decided by',
+        width: '150px',
+        sortValue: (c) => decidedBy(c, directory),
+        cell: (c) => <span className="dec-nowrap">{decidedBy(c, directory)}</span>,
+      },
       {
         id: 'method',
         header: 'How',
+        width: '210px',
         sortValue: (c) => (c.resolution ? methodLabel(c.resolution) : ''),
         cell: (c) =>
           c.resolution ? (
             <span className="dec-method">
-              <Icon name={c.resolution.method === 'passkey' ? 'key' : c.resolution.method === 'policy' ? 'registry' : 'user'} size={12} />
+              <Icon
+                name={
+                  c.resolution.method === 'passkey'
+                    ? 'key'
+                    : c.resolution.method === 'policy'
+                      ? 'registry'
+                      : 'user'
+                }
+                size={12}
+              />
               {methodLabel(c.resolution)}
             </span>
           ) : (
@@ -84,6 +99,7 @@ export function ResolvedView({ cards, directory, selectedId, onSelect, busy }: R
         id: 'latency',
         header: 'Time to decide',
         numeric: true,
+        width: '180px',
         sortValue: (c) => c.ageMs,
         cell: (c) => (
           <span className="dec-latency-cell">
@@ -96,6 +112,7 @@ export function ResolvedView({ cards, directory, selectedId, onSelect, busy }: R
         id: 'closed',
         header: 'Closed',
         numeric: true,
+        width: '110px',
         firstSort: 'desc',
         sortValue: (c) => (c.closedAt ? Date.parse(c.closedAt) : null),
         cell: (c) => (c.closedAt ? <RelativeTime value={c.closedAt} suffix=" ago" /> : '—'),
@@ -112,25 +129,19 @@ export function ResolvedView({ cards, directory, selectedId, onSelect, busy }: R
       <Widget
         span={12}
         title="Time to decide, by kind"
-        subtitle={`${formatInteger(resolved.length)} resolved · p50 and p90 against the agreed SLA`}
-        info="Time from request to resolution for resolved decisions in the loaded history (up to 500). Withdrawn and expired decisions never got a decision, so they are left out. SLAs are the CEO-approved ones; kinds without an agreed SLA show no line."
+        subtitle={`${formatInteger(resolved.length)} resolved · each kind scaled to its own SLA`}
+        info="Time from request to resolution for resolved decisions in the loaded history (up to 500), as p50 (bar) and p90 (whisker). Each row is scaled from 0 to twice its SLA, so the SLA line sits in the middle of every row. SLAs are the CEO-approved ones; withdrawn and expired decisions are left out."
         busy={busy}
       >
         {latency.length ? (
-          <LatencyBars
-            label="Time to decide"
-            rows={latency.map((r) => ({
-              id: r.kind,
-              label: r.label,
-              p50Ms: r.p50Ms,
-              p90Ms: r.p90Ms,
-              slaMs: r.slaMs ?? undefined,
-              breaches: r.breaches ?? undefined,
-              total: r.total,
-            }))}
-          />
+          <SlaLatency rows={latency} />
         ) : (
-          <EmptyState size="sm" icon="decisions" title="No resolved decisions yet" body="Latency appears once a decision is resolved." />
+          <EmptyState
+            size="sm"
+            icon="decisions"
+            title="No resolved decisions yet"
+            body="Latency appears once a decision is resolved."
+          />
         )}
       </Widget>
       <Widget

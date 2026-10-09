@@ -19,7 +19,11 @@ const WITHDRAW_REASONS = [
 ] as const;
 
 /** Button text. "Approve" applies the recommended option (CEO decision on the mock, 2026-10-09). */
-export function optionButtonLabel(card: DecisionCardView, option: DecisionOption, recommended: boolean): string {
+export function optionButtonLabel(
+  card: DecisionCardView,
+  option: DecisionOption,
+  recommended: boolean,
+): string {
   if (card.requiresPasskey) return `${option.label} with passkey`;
   if (!recommended || /^approve\b/i.test(option.label)) return option.label;
   return `Approve: ${option.label}`;
@@ -62,7 +66,13 @@ export function ResolvePanel({ card, directory, actions, passkeys }: ResolvePane
         </Button>
       )}
       {card.viewer.canWithdraw && !withdrawOpen && (
-        <Button size="sm" variant="ghost" icon="close" disabled={busy !== null} onClick={() => setWithdrawOpen(true)}>
+        <Button
+          size="sm"
+          variant="ghost"
+          icon="close"
+          disabled={busy !== null}
+          onClick={() => setWithdrawOpen(true)}
+        >
           Withdraw…
         </Button>
       )}
@@ -80,9 +90,21 @@ export function ResolvePanel({ card, directory, actions, passkeys }: ResolvePane
             onChange={(e) => setReason(e.target.value)}
             options={WITHDRAW_REASONS.map((r) => ({ value: r.value, label: r.label }))}
           />
-          <TextArea label="Note (optional)" rows={2} value={note} onChange={(e) => setNote(e.target.value)} maxLength={2000} />
+          <TextArea
+            label="Note (optional)"
+            rows={2}
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            maxLength={2000}
+          />
           <div className="dec-withdraw__actions">
-            <Button type="submit" size="sm" variant="danger" loading={busy?.kind === 'withdraw'} loadingText="Withdrawing…">
+            <Button
+              type="submit"
+              size="sm"
+              variant="danger"
+              loading={busy?.kind === 'withdraw'}
+              loadingText="Withdrawing…"
+            >
               Withdraw decision
             </Button>
             <Button size="sm" variant="ghost" onClick={() => setWithdrawOpen(false)}>
@@ -120,15 +142,16 @@ export function ResolvePanel({ card, directory, actions, passkeys }: ResolvePane
         <div className="dec-signnote">
           <Icon name="key" size={16} />
           <p>
-            <strong>Signed approval.</strong> Your passkey signs a single-use challenge bound to you, this decision
-            and the option you pick, plus a hash of the title, question and options shown here. A changed card
-            voids the signature.
+            <strong>Signed approval.</strong> Your passkey signs a single-use challenge bound to you, this
+            decision and the option you pick, plus a hash of the title, question and options shown here. A
+            changed card voids the signature.
           </p>
         </div>
       )}
       {unsupported && (
         <InlineAlert tone="warn" title="Passkeys are not available in this browser">
-          Open the console in a browser with WebAuthn support, at its configured address, to sign this decision.
+          Open the console in a browser with WebAuthn support, at its configured address, to sign this
+          decision.
         </InlineAlert>
       )}
       {(needsPasskey || problem?.needsRegistration) && !unsupported && (
