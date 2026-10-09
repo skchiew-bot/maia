@@ -1,0 +1,15 @@
+/*
+ * Global stylesheet: the one token set, then base element styles, then the design system. Imported once by
+ * main.tsx so every lazily-loaded page finds its styles already present (no flash of unstyled chunks).
+ */
+@import '../design/tokens.css';
+@import './base.css';
+@import '../components/styles/controls.css';
+@import '../components/styles/surfaces.css';
+@import '../components/styles/table.css';
+@import '../components/styles/overlays.css';
+@import '../components/styles/ranked.css';
+@import '../components/liveness/liveness.css';
+@import '../charts/charts.css';
+@import '../charts/operations.css';
+@import '../shell/shell.css';

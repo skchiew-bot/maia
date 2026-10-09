@@ -1,0 +1,78 @@
+/* ---- Liveness badge: tint + coloured icon + word in primary ink ---- */
+.aoc-liveness {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 9px 0 7px;
+  border-radius: 999px;
+  background: var(--lv-bg);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--lv-fg) 24%, transparent);
+  color: var(--text);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.aoc-liveness--sm {
+  gap: 4px;
+  height: 20px;
+  padding: 0 7px 0 5px;
+}
+.aoc-liveness__icon {
+  color: var(--lv-fg);
+}
+.aoc-liveness__word {
+  color: var(--text);
+}
+.aoc-liveness__detail {
+  color: var(--text-2);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+.aoc-liveness__detail::before {
+  content: '·' / '';
+  margin: 0 4px 0 1px;
+  color: var(--text-3);
+}
+
+/* ---- Alive indicator: static dot; one pulse per activity event ---- */
+.aoc-alive {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 10px;
+  height: 10px;
+  vertical-align: middle;
+}
+.aoc-alive__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--alive-color);
+}
+.aoc-alive__pulse {
+  position: absolute;
+  inset: 0;
+  border: 2px solid var(--alive-color);
+  border-radius: 50%;
+  pointer-events: none;
+  animation: aoc-alive-pulse 800ms ease-out 1 forwards;
+}
+@keyframes aoc-alive-pulse {
+  from {
+    opacity: 0.85;
+    transform: scale(0.8);
+  }
+  to {
+    opacity: 0;
+    transform: scale(2.4);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .aoc-alive__pulse {
+    display: none;
+  }
+}

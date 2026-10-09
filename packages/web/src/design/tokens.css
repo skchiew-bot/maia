@@ -18,7 +18,7 @@
   /* text (AA on --surface) */
   --text: #1b1f24;
   --text-2: #48515e;
-  --text-3: #66707d;
+  --text-3: #606976;
   --text-inverse: #ffffff;
 
   /* brand */
@@ -30,7 +30,7 @@
   --brand-grey: #58595b;
 
   /* liveness (precedence: waiting > throttled > dead > stalled > thinking > working) */
-  --live-working: #17804a;
+  --live-working: #167c48;
   --live-working-soft: #e3f4ea;
   --live-thinking: #5b6675;
   --live-thinking-soft: #eceff3;
@@ -58,7 +58,7 @@
 
   /* categorical series (paired: discovery = series-1, execution = series-2) */
   --series-1: #5d3fd3;
-  --series-2: #0e7c86;
+  --series-2: #00949a;
   --series-3: #c2410c;
   --series-4: #2563eb;
   --series-5: #a21caf;
@@ -142,8 +142,8 @@
     --danger: #ff7a6e;
     --info: #72aaff;
 
-    --series-1: #a593f2;
-    --series-2: #2bb3bf;
+    --series-1: #8c79e0;
+    --series-2: #00939a;
     --series-3: #f08a4b;
     --series-4: #72aaff;
     --series-5: #e07ae6;
@@ -152,6 +152,32 @@
 
     --shadow: 0 1px 2px rgb(0 0 0 / 40%);
   }
+}
+
+/*
+ * Extensions (web foundation). Aliases and layout metrics — no new hues. The soft status tints reuse the
+ * liveness tints so a status colour and its background always come from the same ramp.
+ */
+:root {
+  --brand-red-contrast: #ffffff; /* wordmark letters on --brand-red, both themes */
+  --ok-soft: var(--live-working-soft);
+  --warn-soft: var(--live-stalled-soft);
+  --danger-soft: var(--live-dead-soft);
+  --info-soft: var(--live-throttled-soft);
+
+  --topbar-h: 44px;
+  --nav-w: 216px;
+  --nav-w-collapsed: 52px;
+  --content-max: 1680px;
+  --ctl-h: 28px;
+  --ctl-h-sm: 24px;
+
+  --z-nav: 15;
+  --z-topbar: 20;
+  --z-popover: 40;
+  --z-overlay: 50;
+  --z-toast: 60;
+  --z-tooltip: 70;
 }
 
 @media (prefers-reduced-motion: reduce) {
