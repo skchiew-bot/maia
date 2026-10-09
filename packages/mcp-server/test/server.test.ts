@@ -119,6 +119,19 @@ describe('tool listing', () => {
     expect(d.requests).toHaveLength(0);
   });
 
+  // The real model closed a test task with "npm test (node test.js)" — a command, not a test id, so the ledger flagged it
+  // evidence_unverified. The schema the model reads says what each kind's ref is.
+  it('tells the model, in the schema it reads, what a task_done evidence ref is for each kind', async () => {
+    const d = await daemon();
+    const { tools } = await (await connect(d.url)).listTools();
+    const taskDone = tools.find((t) => t.name === 'task_done')!;
+    expect(taskDone.description).toContain('file and test name, not the command');
+    const evidence = (taskDone.inputSchema.properties as Record<string, any>).evidence;
+    expect(evidence.properties.ref.description).toMatch(/kind test: the test file and test name that passed.*never the shell command/);
+    expect(evidence.properties.ref.description).toContain('kind commit: the full commit SHA');
+    expect(evidence.properties.ref.description).toContain('kind diff: the path of the changed file');
+  });
+
   it('toolNames() matches the registered tools', async () => {
     const d = await daemon();
     const { tools } = await (await connect(d.url)).listTools();
@@ -341,7 +354,9 @@ describe('turn-ending instructions', () => {
     expect(END_TURN_FOR_DECISION).toBe(
       'END YOUR TURN NOW. The supervisor will resume this session with the human answer.',
     );
-    expect(r.structuredContent).toEqual(reply);
+    // The real CLI shows the model only the structured data, so the order is in it too, first.
+    expect(r.structuredContent).toEqual({ notice: END_TURN_FOR_DECISION, ...reply });
+    expect(Object.keys(r.structuredContent as object)[0]).toBe('notice');
   });
 
   it('a rejected request_decision does not tell the agent to wait for an answer', async () => {
@@ -370,10 +385,16 @@ describe('turn-ending instructions', () => {
       const d = await daemon(() => ({ status: 200, body: reply }));
       const r = await call(await connect(d.url), 'task_done', VALID.task_done);
       expect(r.isError).toBeFalsy();
-      expect(textOf(r)).toBe(
-        `${pretty(reply)}\n\nSTOP — AOC task boundary (${reason}). Do not start another task.\n${instruction}`,
-      );
-      expect(r.structuredContent).toEqual(reply);
+      // The order says it outranks the rest of the prompt and what to do instead: a real Haiku session that was asked
+      // for two things carried on to the second after a plainer "do not start another task" (real-CLI check).
+      const notice =
+        `STOP — AOC task boundary (${reason}). Do not start another task.\n${instruction}\n` +
+        'This order outranks your plan and every step of your prompt that is not done yet; leaving them undone is expected. ' +
+        'Make no further tool calls: say in one sentence what is done and what is left, then end your turn.';
+      expect(textOf(r)).toBe(`${pretty(reply)}\n\n${notice}`);
+      // ... and what the real CLI actually shows the model (the structured data) carries the order as its first key.
+      expect(r.structuredContent).toEqual({ notice, ...reply });
+      expect(Object.keys(r.structuredContent as object)[0]).toBe('notice');
     },
   );
 
@@ -382,5 +403,6 @@ describe('turn-ending instructions', () => {
     const d = await daemon(() => ({ status: 200, body: reply }));
     const r = await call(await connect(d.url), 'task_done', VALID.task_done);
     expect(textOf(r)).toBe(pretty(reply));
+    expect(r.structuredContent).toEqual(reply);
   });
 });

@@ -11,6 +11,10 @@ export interface ToolOutcome {
   content: string | McpContentBlock[];
   isError: boolean;
   toolUseResult: unknown;
+  /** What PostToolUse hooks get as `tool_response` when it is not `toolUseResult` (MCP results with structuredContent). */
+  hookResponse?: unknown;
+  /** Printed with the stream's user line as `tool_result_meta` (why the call did not run, for a rejected one). */
+  resultMeta?: Record<string, unknown>;
   /** Value stored under the step's `saveAs`. */
   saveValue?: unknown;
   /** Line counts of a file change (the cost-state ledger tracks them). */
@@ -23,6 +27,8 @@ export interface ToolContext {
   env: Readonly<Record<string, string>>;
   /** CLAUDE_SIM_EXEC=1: bash steps marked `exec: true` really run. */
   execAllowed: boolean;
+  /** Aborting the run (SIGINT, SIGTERM) kills a command that is still running, as the real CLI does. */
+  signal?: AbortSignal;
 }
 
 export interface BashScript {
@@ -440,10 +446,13 @@ function execShell(command: string, ctx: ToolContext, timeoutMs: number, shell =
     let stdout = '';
     let stderr = '';
     let interrupted = false;
-    const timer = setTimeout(() => {
+    const stop = () => {
       interrupted = true;
       killGroup(child, 'SIGTERM');
-    }, timeoutMs);
+    };
+    const timer = setTimeout(stop, timeoutMs);
+    if (ctx.signal?.aborted) stop();
+    else ctx.signal?.addEventListener('abort', stop, { once: true });
     child.stdout.setEncoding('utf8').on('data', (chunk: string) => (stdout += chunk));
     child.stderr.setEncoding('utf8').on('data', (chunk: string) => (stderr += chunk));
     child.on('error', (error: NodeJS.ErrnoException) => {
@@ -454,6 +463,7 @@ function execShell(command: string, ctx: ToolContext, timeoutMs: number, shell =
     });
     child.on('close', (code) => {
       clearTimeout(timer);
+      ctx.signal?.removeEventListener('abort', stop);
       resolve({ stdout, stderr, exitCode: code ?? (interrupted ? 143 : 1), interrupted });
     });
   });

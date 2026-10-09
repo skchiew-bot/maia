@@ -31,7 +31,19 @@ export interface StreamFacts {
 
 const MAX_TEXT = 4000;
 /** Activity markers that would drown the operator view (still count as liveness). */
-const QUIET_SYSTEM = new Set(['status', 'thinking_tokens', 'hook_started', 'hook_response', 'notification']);
+const QUIET_SYSTEM = new Set([
+  'status',
+  'thinking_tokens',
+  'hook_started',
+  'hook_response',
+  'notification',
+  // Seen on 2.1.295 around a long Bash call and a commit: bookkeeping, not output.
+  'vcs_state_changed',
+  'task_started',
+  'task_notification',
+  'task_updated',
+  'background_tasks_changed',
+]);
 
 type Obj = Record<string, unknown>;
 const rec = (v: unknown): Obj | null => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Obj) : null);
@@ -164,6 +176,10 @@ function result(o: Obj, f: StreamFacts): void {
     .filter((s): s is string => !!s);
   const text = str(o.result) ?? errors.join('\n');
   const subtype = str(o.subtype) ?? 'unknown';
+  // SIGINT ends a turn cleanly with error_during_execution and terminal_reason aborted_*; its only "error" text is an
+  // internal diagnostic ("[ede_diagnostic] …"), which means nothing to an operator.
+  const terminal = str(o.terminal_reason);
+  const interrupted = o.is_error === true && !!terminal?.startsWith('aborted');
   f.result = {
     isError: o.is_error === true,
     subtype,
@@ -171,7 +187,7 @@ function result(o: Obj, f: StreamFacts): void {
     apiErrorStatus: num(o.api_error_status),
     modelUsage: modelUsageOf(o.modelUsage),
   };
-  f.items.push({ kind: 'result', text: clip(text || subtype) });
+  f.items.push({ kind: 'result', text: clip(interrupted ? `Turn interrupted (${terminal})` : text || subtype) });
 }
 
 function modelUsageOf(v: unknown): ModelTokens | null {
@@ -203,8 +219,17 @@ function rateLimit(o: Obj, f: StreamFacts): void {
     resetsAtMs: resets === null ? null : resets > 1e12 ? resets : resets * 1000,
     window,
   };
-  if (status !== 'allowed')
-    f.items.push({ kind: 'system', text: `Rate limit ${status}${window ? ` (${window})` : ''}` });
+  if (status === 'allowed') return;
+  // `allowed_warning` accompanies every turn of an account that is merely part-way into a window (33 % of seven_day on
+  // 2.1.295): it reads as the number it is, not as an event name that sounds like trouble.
+  const used = num(info.utilization);
+  f.items.push({
+    kind: 'system',
+    text:
+      status === 'allowed_warning'
+        ? `Plan usage ${window ?? 'window'}${used === null ? '' : ` ${Math.round(used * 100)}% used`}`
+        : `Rate limit ${status}${window ? ` (${window})` : ''}`,
+  });
 }
 
 function toolInputSummary(input: Obj | null): string {

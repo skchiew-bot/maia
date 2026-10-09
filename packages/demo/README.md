@@ -31,8 +31,8 @@ pnpm --filter @aoc/demo live -- --data-dir /abs/path/demo [--port 7420] [--reset
 5. **Prints** the console URL and the CEO (Approver) token. Paste the token on the sign-in page.
 
 **Ctrl-C** first stops every managed session that has a process, through the API. It then stops aocd and waits for
-it to exit, then for the per-session sidecars aocd leaves behind (they outlive it for a final flush into the data
-directory). `Stopped.` therefore means nothing of the demo is still running or writing, and `--reset` or `rm -rf`
+it to exit, then for anything left in its process group (aocd waits for its per-session sidecars itself; only a killed
+aocd leaves them behind, to spool a final flush into the data directory). `Stopped.` therefore means nothing of the demo is still running or writing, and `--reset` or `rm -rf`
 right after is safe. The launcher signals only the daemon it started and that daemon's own process group, by PID,
 and never pattern-kills. Sessions waiting on a decision or throttled have no process, so they keep their state and
 are still there on the next start. A second Ctrl-C stops aocd without waiting for the sessions.

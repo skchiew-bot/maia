@@ -4,8 +4,10 @@
  *  (a) an `AOC-Session: <id>` trailer names a session the platform itself linked to a gate — an approved change record
  *      (change.started, inherited on rollover) or a ticket whose fix plan was approved — and every `AOC-Change`
  *      trailer names one of that session's approved changes, and
- *  (b) the commit is reachable from a HEAD the ledger recorded for that session (task.done headSha,
- *      phase.completed pinnedSha), i.e. it really was in that session's working history.
+ *  (b) the commit is reachable from a HEAD the platform recorded for that session (the ledger's task.done headSha
+ *      and phase.completed pinnedSha, the supervisor's session.head_recorded at a turn end), i.e. it really was in
+ *      that session's working history. The proof is that the commit was in the workspace when a HEAD was read, not
+ *      that the session wrote it: a session that checks a foreign commit out before a turn ends records it too.
  * Everything else is an orphan.
  */
 import type { ProvenanceCommitDTO } from '@aoc/contracts';
@@ -72,7 +74,7 @@ export interface ProvenanceLookups {
   /** The ticket the session was launched or built for (supervisor / intake records, never a trailer). */
   sessionTicket(sessionId: string): string | null;
   ticketFixPlanApproved(ticketId: string): boolean;
-  /** The commit is reachable from a HEAD the ledger recorded for the session (task.done, phase.completed). */
+  /** The commit is reachable from a HEAD the platform recorded for the session (task.done, phase.completed, turn end). */
   sessionRecorded(sessionId: string, sha: string): boolean;
 }
 
@@ -121,7 +123,7 @@ export function classifyCommit(
       continue;
     }
     if (!look.sessionRecorded(s, c.sha)) {
-      problems.push(`session ${s} never recorded a HEAD containing this commit (task_done / phase pin)`);
+      problems.push(`session ${s} never recorded a HEAD containing this commit (task_done / phase pin / turn end)`);
       continue;
     }
     return { ...base, ticketIds, traced: true, via, reason: null };

@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { demoLayout, type DemoTokens, type LiveKind } from '../src/layout';
-import { groupExited } from '../src/process-group';
+import { groupExited, groupRunning } from '../src/process-group';
 import { CLAUDE_SIM_BIN } from '../src/sim-guard';
 import { REPO, childEnv, claudeTripwire, daemonChildEnv, eventsAfter, freePort, launchedArgv, removeTree, seedDemo, stopChild, tsxImport, waitFor } from './helpers';
 
@@ -51,6 +51,7 @@ describe('seed + aocd', () => {
     const kindOf = new Map(Object.entries(tokens.sessions).map(([k, id]) => [id, k as LiveKind]));
     let snapshot: Record<string, string | null> = {};
     let stopped: { code: number | null; signal: NodeJS.Signals | null } | null = null;
+    let running: string[] = [];
     try {
       await waitFor('aocd to listen', () => (aocd.exitCode !== null ? Promise.reject(new Error(`aocd exited:\n${log}`)) : log.includes('aocd listening')), 180_000, 250);
       await waitFor(
@@ -71,10 +72,15 @@ describe('seed + aocd', () => {
       expect(snapshot.observed).toBe('stalled');
     } finally {
       stopped = await stopChild(aocd, 'SIGTERM', 60_000);
-      // aocd's sidecars outlive it for a final flush that writes a spool file into the data directory.
+      // A clean stop waits for the sidecars itself (their last report goes through its API), so nothing is left running
+      // in its process group; the wait below only keeps a failed run from leaking processes.
+      running = groupRunning(aocd.pid!);
       await groupExited(aocd.pid!, 20_000);
     }
     expect(stopped, log).toEqual({ code: 0, signal: null });
+    expect(running, 'left running by a clean stop').toEqual([]);
+    // The fake LLM answers the error-learning passes, so the log holds no failure per unclassified error.
+    expect(log).not.toMatch(/learning\.(classify|distill) failed/);
 
     // Working, Thinking and Stalled were real processes: the supervisor launched the seeded queued sessions on
     // claude-sim at startup and their hooks reported in (UserPromptSubmit).

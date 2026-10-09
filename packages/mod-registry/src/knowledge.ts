@@ -9,17 +9,18 @@
  * on replay (`body.erased`), so a rebuild reproduces exactly the post-erasure index.
  */
 import type { DatabaseSync } from 'node:sqlite';
-import type {
-  DecisionKind,
-  JsonValue,
-  KnowledgeKind,
-  KnowledgeRefs,
-  KnowledgeResult,
-  KnowledgeSearchResponse,
-  KnowledgeSnippetPart,
-  MetaOf,
-  PayloadOf,
-  StoredEvent,
+import {
+  diagnosisRootCauseClass,
+  type DecisionKind,
+  type JsonValue,
+  type KnowledgeKind,
+  type KnowledgeRefs,
+  type KnowledgeResult,
+  type KnowledgeSearchResponse,
+  type KnowledgeSnippetPart,
+  type MetaOf,
+  type PayloadOf,
+  type StoredEvent,
 } from '@aoc/contracts';
 import type { Projector } from '@aoc/kernel';
 
@@ -203,7 +204,7 @@ function applyKnowledge(db: DatabaseSync, e: StoredEvent, payload: JsonValue | n
         m.sessionId,
         e.seq,
         m.confidence,
-        m.rootCauseClass,
+        diagnosisRootCauseClass(m, p),
         p?.rootCause ?? null,
         p?.fixPlan ?? null,
         p?.affectedAreas ? JSON.stringify(p.affectedAreas) : null,
