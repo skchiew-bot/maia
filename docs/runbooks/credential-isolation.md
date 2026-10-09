@@ -7,9 +7,10 @@
 - **When:** before the first managed session touches a real repository, then quarterly (the drill in §6), and
   after any change to GitHub organisation settings, rulesets, deploy keys or the credential profiles file.
 
-> **Deploy credentials and protected-branch rights live only in supervisor-controlled session environments, never
-> on developer machines.** (AOC-SPEC-003 §3.) This is the single highest-priority integrity requirement. Every
-> gate, the provenance guarantee, metering and the audit trail depend on it.
+> **Deploy credentials and protected-branch rights live only with the supervisor, never on developer machines.**
+> (AOC-SPEC-003 §3 says "in supervisor-controlled session environments". Since R-02 aocd alone holds them and a
+> session never receives them: §4, item 11.) This is the single highest-priority integrity requirement. Every gate,
+> the provenance guarantee, metering and the audit trail depend on it.
 
 ## 1. Why hooks are never the wall
 
@@ -321,7 +322,10 @@ The host that runs aocd and the supervisor. Items 1–3 are enforced by aocd whe
    `CLAUDE_CONFIG_DIR`, `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, `NODE_EXTRA_CA_CERTS`);
    and the ClamAV client. The one deliberate exception is the backup copy command, which gets aocd's environment
    minus `AOC_*`, `ANTHROPIC_*` and `CLAUDE_CODE_OAUTH*` because it carries the operator's own transfer credentials
-   ([backup and restore](backup-restore.md) §2).
+   ([backup and restore](backup-restore.md) §2). If sessions reach Claude through a host-managed provider,
+   `ANTHROPIC_BASE_URL` and `CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST` have to be on `supervisor.envAllowlist` too: the
+   default list carries only the API-key, token, proxy and CA variables
+   ([research §13.8](../research/claude-code-integration.md#138-re-running-and-refreshing)).
 9. **Privileged git (gap G-04: enforced).** Promotion, rollback, break-glass, pin tags and rollback verification
    never run git or repository code with privilege in a tree an agent can write (threat model
    [T-2](../security/threat-model.md#t-2-code-execution-through-git-configuration-in-agent-workspaces), O-2). aocd
@@ -582,9 +586,12 @@ Use a disposable branch and record the results as an AOC change record (or attac
    is `packages/supervisor/test/isolation.test.ts` (it needs root). With isolation off every read succeeds.
 7. **Provenance gate.** Push a commit with no change record to a feature branch, then request promotion → expect
    `promotion.refused {reason: provenance_gap, orphanShas: [...]}`. Then repeat with a commit made on a laptop
-   whose message carries a copied `AOC-Change: <approved change id>` trailer. Today that commit **passes** (threat
-   model [T-22](../security/threat-model.md#t-22-forged-provenance-trailers)). Record the result until O-27 closes
-   the gap.
+   whose message carries a copied `AOC-Change: <approved change id>` trailer → expect the same refusal: a trailer
+   counts only for a session that the platform linked to the change and a HEAD that AOC recorded for that session
+   (gap G-25; automated in `packages/mod-change/test/promotion.test.ts`). What the gate cannot see is a foreign commit
+   that a managed session checked out itself, which then counts as the session's own (threat model
+   [T-22](../security/threat-model.md#t-22-forged-provenance-trailers)): the Approver's review of the diff at go-live
+   is the control for that.
 8. **Planted git configuration does nothing.** In a disposable project, as the session user
    (`sudo -u aoc-agent`), add a `pre-push` hook and a `core.sshCommand` that each create a marker file inside the
    project's `.git`, and set `remote.origin.pushurl` to a decoy repository. Take a change through promotion and

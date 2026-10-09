@@ -48,18 +48,19 @@
   gives **no** protection against a host-level attacker. Production must configure a remote
   ([anchoring runbook](../runbooks/anchoring.md)).
 
-## Implementation status (integration commit `a1c8a0c`)
+## Implementation status (integration commit `b4fdf57`)
 
-`mod-audit` implements the decision with these differences, tracked in the threat model (O-11, O-29):
+`mod-audit` implements the decision with these differences, tracked in the threat model (O-11) and the gap list:
 
 - **Built:** both providers (one at a time, chosen by `audit.anchorProvider`); the nightly job (governed-config
   check, anchor with two retries, then Verify); `aoc anchor` and `aoc verify`; Verify fetches the remote and
   compares it with the local anchor repository; anchoring refuses a chain that no longer matches earlier
-  anchors, so a rewritten history is never anchored; RFC 3161 imprint and time checks (at most 1 h of skew).
-- **Not yet:** hourly and event-triggered anchors (gap G-40). Anchor-commit signing and the TSA certificate
-  check exist as module options that `aocd`'s configuration cannot set, so the default build signs nothing and
-  checks no TSA signature. Evidence packs compare anchors with `anchor.created` in the chain, not with the
-  external records (gap G-42).
+  anchors, so a rewritten history is never anchored; RFC 3161 imprint and time checks (at most 1 h of skew); the
+  TSA certificate chain against `audit.tsaCaFile`, and signed anchor commits with `audit.gpgKeyId`, once those are
+  set; evidence packs that confirm each anchor against the off-host record through the audit service and say
+  `not_verifiable` when they cannot (G-42, closed).
+- **Not yet:** hourly and event-triggered anchors (gap G-40). Until `audit.tsaCaFile` and `audit.gpgKeyId` are set,
+  the default build signs nothing and checks no TSA signature (P-04).
 - **Caution:** if the remote cannot be fetched, Verify falls back to the local copy with a warning. Treat that
   warning as a failed check.
 

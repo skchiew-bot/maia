@@ -37,6 +37,10 @@ Every fact carries one evidence tag:
 
 ## 1. Corrections to `packages/contracts/src/claude-code.ts` and `mcp.ts`
 
+> **Status: history.** These rows were requested changes when the note was written, and the contracts follow them now
+> (for example `HOOK_EVENTS` lists the events named in C1). The contracts are the current truth: where a row and
+> `packages/contracts/src/claude-code.ts` differ, the contracts win.
+
 These are the facts that contradict, or are missing from, the current contracts. The lead owns those files, so
 each row is a requested change.
 
