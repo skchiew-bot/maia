@@ -26,6 +26,12 @@ describe('the fleet', () => {
     expect(launchBody(FLEET.find((s) => s.key === 'triage')!, tokens)).toMatchObject({ processType: 'bug-triage', ticketId: 'tkt_2' });
   });
 
+  it('gives every slot that edits files a workspace of its own to run in, and read-only triage none', () => {
+    for (const slot of FLEET) expect(slot.workspace ?? false, slot.key).toBe(slot.processType !== 'bug-triage');
+    expect(launchBody(FLEET.find((s) => s.key === 'feature')!, tokens, '/work/space')).toMatchObject({ cwd: '/work/space' });
+    expect(launchBody(FLEET.find((s) => s.key === 'triage')!, tokens)).not.toHaveProperty('cwd');
+  });
+
   it('selects a subset of the slots for --slots, in fleet order, and refuses unknown names', () => {
     expect(selectSlots([]).map((s) => s.key)).toEqual(FLEET.map((s) => s.key));
     expect(selectSlots(['triage', 'decision']).map((s) => s.key)).toEqual(['decision', 'triage']);
@@ -47,8 +53,18 @@ describe('the default scenario', () => {
       [['diagnosing customer ticket tkt_01ABC '], 'triage-receipts'],
       [['diagnosing customer ticket tkt_01XYZ '], 'triage-transfer'],
       [['fix plan for ticket tkt_01ABC.'], 'build-receipts'],
+      [['fix plan for ticket tkt_01XYZ.'], 'build-transfer'],
+      [['Implement the APPROVED fix plan for ticket'], 'build-generic'],
       [['diagnosing customer ticket'], 'triage-unknown'],
     ]);
+  });
+
+  it('builds any ticket, scripted or not, on its own UAT branch, named by the id the supervisor exports', () => {
+    const commands = scenario.steps.flatMap((s) => (s.kind === 'bash' ? [s.command] : []));
+    for (const ticket of ['tkt_01ABC', 'tkt_01XYZ', '$AOC_TICKET_ID']) {
+      expect(commands, ticket).toContain(`git switch -c uat/${ticket} || git switch uat/${ticket}`);
+      expect(commands.find((c) => c.startsWith('git commit') && c.includes(`AOC-Ticket: ${ticket}"`)), ticket).toMatch(/AOC-Session: \$AOC_SESSION_ID/);
+    }
   });
 
   it("commits the ticket's build to uat/<ticketId> with the trailers provenance needs, using scoped git only", () => {

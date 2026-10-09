@@ -1,7 +1,9 @@
 /**
  * What a managed build may do with git, as the shipped process types grant it (config/process-types.json), judged by
- * claude-sim's permission engine (which models Claude Code's) and by mod-change's protected-operation guard. The demo's
- * builds branch, stage and commit for real; they never push, never merge, never touch main.
+ * claude-sim's permission engine (which models Claude Code's) and by mod-change's protected-operation guard. Builds
+ * branch, stage and commit for real. They push only through the supervisor's gateway (remote `aoc`, R-02: the
+ * credential never enters the session and the credential profile's push.refs decide the branch); they never merge,
+ * rewrite history or touch main.
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -54,16 +56,19 @@ describe.each(WRITERS)('%s: scoped git', (id) => {
       // A compound command needs a grant for every part of it.
       'git switch -c uat/tkt_1 || git switch uat/tkt_1',
       'git add -A && git commit -m "Fix"',
+      // What the intake build prompt tells a builder to run when the fix is committed.
+      'git push aoc HEAD:refs/heads/uat/tkt_1',
     ]) {
       expect(bash(policy, command), command).toBe('allow');
     }
   });
 
-  it('never pushes, merges, rewrites history or moves onto the default branch', () => {
+  it('pushes nowhere but the gateway remote, merges nothing, rewrites no history and does not move onto the default branch', () => {
     for (const command of [
       'git push origin uat/tkt_1',
       'git push origin main',
       'git push --force origin HEAD:main',
+      'git push https://example.invalid/repo.git HEAD:refs/heads/uat/tkt_1',
       'git merge uat/tkt_1',
       'git rebase main',
       'git reset --hard HEAD~1',
@@ -108,12 +113,19 @@ describe('everything else stays as it was', () => {
   });
 
   it('is still bounced by the protected-operation guard before the permission rules are consulted', () => {
-    for (const command of ['git push origin main', 'git push --force origin HEAD:main', 'git push origin HEAD:refs/heads/main']) {
+    for (const command of [
+      'git push origin main',
+      'git push --force origin HEAD:main',
+      'git push origin HEAD:refs/heads/main',
+      // The gateway would refuse it too; the permission rules allow the remote, so this one is the guard's catch.
+      'git push aoc HEAD:refs/heads/main',
+    ]) {
       expect(matchProtectedOperation(command), command).toMatchObject({ test: 'main' });
     }
-    // The permission rules do not need the guard to deny these, and a UAT branch push is not the guard's business.
-    expect(matchProtectedOperation('git commit -m x')).toBeNull();
-    expect(matchProtectedOperation('git switch -c uat/tkt_1')).toBeNull();
+    // A UAT branch push through the gateway, a commit and a branch switch are not the guard's business.
+    for (const command of ['git push aoc HEAD:refs/heads/uat/tkt_1', 'git commit -m x', 'git switch -c uat/tkt_1']) {
+      expect(matchProtectedOperation(command), command).toBeNull();
+    }
   });
 });
 
