@@ -451,6 +451,7 @@ export function meteringStub(fx: number | null = 4.2): {
 export const sys = SYS;
 export const minutes = (n: number) => n * MIN;
 export const hours = (n: number) => n * HOUR;
+export const days = (n: number) => n * DAY;
 
 // ── credits, change control, audit, registry ────────────────────────────────
 

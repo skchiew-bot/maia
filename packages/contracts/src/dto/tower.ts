@@ -37,13 +37,14 @@ export interface TowerAttentionItem {
   detail: string | null;
   projectId: string | null;
   projectName: string | null;
-  /** When it started needing attention. */
+  /** When it started needing attention (a customer ticket: when the customer submitted it). */
   since: string;
   ageMs: number;
   /**
-   * Ranking: higher = act first (the queue is already in this order). `score` is 0–100 on the approved scale
-   * (severity bands ≥75 critical, 50–74 high, 25–49 medium, <25 low) and rises with the share of the item's SLA
-   * consumed. `basis` explains it in words ("Go-live gate · 2h 14m · blocks a UAT-signed fix").
+   * Ranking: higher = act first (the queue is already in this order). `score` is 0–100 on the approved bands
+   * (≥75 critical, 50–74 high, 25–49 medium, <25 low): the item's impact (kind × blast radius) plus 20 points per
+   * doubling of 1 + age ÷ its SLA (the approved SLA, else a reference scale), shown as is up to 90 and approaching
+   * 100 above. `basis` explains it in words ("Go-live gate · 2h 14m · blocks a UAT-signed fix").
    */
   costOfDelay: { score: number; basis: string };
   action: {

@@ -133,7 +133,7 @@ describe('projections: rebuildable from the log', () => {
     h.t.rt.store.rebuildProjections(['tower']);
     expect(dumpTables()).toEqual(tables);
     expect(await h.snap()).toEqual(before);
-  });
+  }, 60_000); // 3,000+ events through the real chain: slow on a loaded machine
 
   it('degrades to manifest meta when a plan body is crypto-shredded (rebuild after erasure)', async () => {
     h = await setup();

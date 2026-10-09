@@ -1,66 +1,108 @@
 /**
- * Cost-of-delay scoring (pure). raw = base(kind, sub-kind) × ageFactor × blastRadius, where
- * ageFactor = 1 + log2(1 + ageMinutes / 30): a fresh break-glass (100) outranks a lesson that has waited
- * a day (15 × 6.6 = 99), while a stall left for an hour (50 × 2.6) overtakes a fresh go-live gate (90).
- * The queue is ordered by raw; the published score is raw on the approved 0–100 scale (mock, 2026-10-09).
+ * Cost-of-delay scoring (pure), calibrated on the approved mock (mocks/README.md, 2026-10-09):
+ *
+ *   rank  = impact × blastRadius + 20 · log2(1 + age ÷ timeScale)
+ *   score = rank up to 90, then 100 − 10 · 2^(−(rank − 90) / 10)   (approaches 100, keeps the order)
+ *
+ * Impact is what a kind holds up when it is fresh (customer impact, blocked work, idle spend, audit exposure).
+ * Age enters only as a share of the item's own time scale — its approved SLA where there is one — so kinds of
+ * equal impact cross each severity band (75/50/25) at the same fraction of their SLA: every item gains 20
+ * points at its SLA, 40 at 3× and 60 at 7×. A lesson binding (impact 8, SLA 2 days) is still low at 22h, medium
+ * from about 39h and critical only past 9× its SLA; a rollback (70, SLA 30m) is critical within 6 minutes.
+ * With these values the mock's twelve-item queue comes out in the same order and bands, each score within 1.5.
  */
-import type { AttentionSeverity, DecisionKind, DecisionTest, Severity } from '@aoc/contracts';
+import {
+  DECISION_TEST_INFO,
+  type AttentionSeverity,
+  type DecisionKind,
+  type DecisionTest,
+  type Severity,
+} from '@aoc/contracts';
 import { DAY, HOUR, MINUTE } from './zoned';
 
-/** Base cost of delay per open decision kind. credit_topup folds into credit_blocked; uat_signoff waits on the customer. */
-export function decisionBase(kind: DecisionKind, test: DecisionTest | null): number | null {
+/** Points an item gains per doubling of (1 + age ÷ time scale). */
+export const AGEING_POINTS = 20;
+export const MAX_BLAST_RADIUS = 3;
+
+/** Impact of an open decision. credit_topup folds into credit_blocked; uat_signoff waits on the customer. */
+export function decisionImpact(kind: DecisionKind, test: DecisionTest | null): number | null {
   switch (kind) {
     case 'break_glass':
-      return 100;
+      return 80; // production is down
     case 'rollback':
-      return 95;
+      return 70;
     case 'go_live':
-      return 90;
+      return 45;
     case 'fix_plan':
-      return 65;
-    case 'agent_decision':
-      return test === 'main' || test === 'production' || test === 'data' ? 60 : 35;
-    case 'protected_operation':
-      return 60;
+      return 30;
     case 'triage_reconciliation':
     case 'low_confidence_diagnosis':
-      return 50;
-    case 'change_request':
-      return 40;
-    case 'fx_discrepancy':
       return 20;
+    case 'agent_decision':
+      // Tests that bounce to the Approver (main, production, irreversible, data) hold more than a builder's call.
+      return test && DECISION_TEST_INFO[test].bouncesToApprover ? 12 : 8;
+    case 'protected_operation':
+      return 12;
+    case 'fx_discrepancy':
+      return 11;
+    case 'change_request':
+      return 10;
     case 'lesson_binding':
     case 'playbook_approval':
-      return 15;
+      return 8;
     case 'credit_topup':
     case 'uat_signoff':
       return null;
   }
 }
 
-export const BASE = {
-  chain_broken: 100,
-  breakglass_open: 100,
-  post_incident_overdue: 85,
-  anchor_missed: 80,
-  session_dead: 70,
-  projection_degraded: 60,
-  provenance_refused: 55,
-  session_stalled: 50,
-  credit_blocked: 45,
-  credit_blocked_per_session: 10,
-  session_throttled: 30,
-  fx_discrepancy: 20,
-  fx_carry_forward: 15,
+/** Impact of the other attention kinds (credit: per builder plus per blocked session). */
+export const IMPACT = {
+  chain_broken: 80,
+  breakglass_open: 80,
+  post_incident_overdue: 62,
+  session_dead: 50,
+  anchor_missed: 50,
+  projection_degraded: 40,
+  provenance_refused: 35,
+  session_stalled: 30,
+  credit_blocked: 25,
+  credit_blocked_per_session: 6,
+  session_throttled: 12,
+  fx_discrepancy: 11,
+  fx_carry_forward: 8,
 } as const;
 
-export const TICKET_BASE: Record<Severity, number> = { critical: 90, high: 70, medium: 40, low: 20 };
-/** How long a customer may wait (from submission) before the ticket needs attention. */
+/** Time scale of the non-decision kinds: how long until an item has gained its first 20 points. */
+export const ATTENTION_SCALE_MS = {
+  breakglass_open: 15 * MINUTE,
+  session_dead: HOUR,
+  session_stalled: HOUR,
+  session_throttled: HOUR,
+  credit_blocked: HOUR, // the approved credit top-up SLA
+  chain_broken: HOUR,
+  projection_degraded: 4 * HOUR,
+  provenance_refused: 4 * HOUR,
+  post_incident_overdue: DAY, // the break-glass allowance; the item exists only once it has run out
+  anchor_missed: DAY, // the nightly cadence
+  fx_discrepancy: DAY,
+  fx_carry_forward: DAY,
+} as const;
+
+/**
+ * A customer ticket waiting past its severity SLA: the item appears at the breach (a critical one as critical) and
+ * ages on that SLA from there.
+ */
+export const TICKET_IMPACT: Record<Severity, number> = { critical: 75, high: 40, medium: 25, low: 15 };
+/**
+ * How long a customer may wait from submission. High (Sev 2) is the mock's 2 days; the others are proposed on the
+ * same footing and await confirmation.
+ */
 export const TICKET_SLA_MS: Record<Severity, number> = {
-  critical: HOUR,
-  high: 4 * HOUR,
-  medium: 24 * HOUR,
-  low: 72 * HOUR,
+  critical: 4 * HOUR,
+  high: 2 * DAY,
+  medium: 5 * DAY,
+  low: 10 * DAY,
 };
 /** Blast-radius bump when an item blocks a customer ticket of this severity. */
 export const TICKET_BLAST: Record<Severity, number> = { critical: 0.5, high: 0.3, medium: 0.15, low: 0.05 };
@@ -68,29 +110,27 @@ export const TICKET_BLAST: Record<Severity, number> = { critical: 0.5, high: 0.3
 /** Nightly anchor + slack: no anchor for this long → anchor_missed. */
 export const ANCHOR_MAX_AGE_MS = 26 * HOUR;
 
-export function ageFactor(ageMs: number): number {
-  return 1 + Math.log2(1 + Math.max(0, ageMs) / MINUTE / 30);
+/** Ageing points: 20 at one time scale, 40 at three, 60 at seven. */
+export function agePoints(ageMs: number, scaleMs: number): number {
+  return AGEING_POINTS * Math.log2(1 + Math.max(0, ageMs) / scaleMs);
 }
 
-export const MAX_BLAST_RADIUS = 3;
-
-/** Raw cost of delay (unbounded, unrounded): the ranking key. */
-export function costOfDelay(base: number, ageMs: number, blastRadius = 1): number {
+/** The ranking key (unbounded, unrounded). */
+export function costOfDelay(impact: number, ageMs: number, scaleMs: number, blastRadius = 1): number {
   const radius = Math.min(MAX_BLAST_RADIUS, Math.max(1, blastRadius));
-  return base * ageFactor(ageMs) * radius;
+  return impact * radius + agePoints(ageMs, scaleMs);
 }
 
 /**
- * Raw cost → the published 0–100 score (approved scale). Linear (× 5/6) up to raw 90, so the approved bands
- * 75/50/25 are exactly raw 90/60/30 — a fresh go-live gate is critical; above that a tail approaches 100, halving
- * the remaining distance every 60 raw, so the most urgent items stay distinguishable. Monotonic: order is kept.
+ * Rank → the published 0–100 score: unchanged up to 90 (so the approved bands apply to the rank itself), then
+ * halving the remaining distance to 100 every 10 points, so the most urgent items stay distinguishable.
  */
 const LINEAR_UNTIL = 90;
-const TAIL_HALF_RAW = 60;
-export function displayScore(raw: number): number {
-  const r = Math.max(0, raw);
-  const score = r <= LINEAR_UNTIL ? (r * 5) / 6 : 75 + 25 * (1 - 2 ** (-(r - LINEAR_UNTIL) / TAIL_HALF_RAW));
-  return Math.round(score * 10) / 10;
+const TAIL_HALF = 10;
+export function displayScore(rank: number): number {
+  const r = Math.max(0, rank);
+  const score = r <= LINEAR_UNTIL ? r : 100 - (100 - LINEAR_UNTIL) * 2 ** (-(r - LINEAR_UNTIL) / TAIL_HALF);
+  return Math.min(100, Math.round(score * 10) / 10);
 }
 
 /** Approved bands on the 0–100 score: ≥75 critical, 50–74 high, 25–49 medium, <25 low. */

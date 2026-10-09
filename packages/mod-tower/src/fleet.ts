@@ -51,8 +51,8 @@ export function buildFleet(r: ReadCtx): TowerFleet {
     ...args,
   )!.n;
 
-  // Replay: the state before a session's first loaded change is that change's `from`; without changes it is the
-  // current state. So only changes after the earliest instant of interest are needed, never the full history.
+  // Each session is replayed once, in seq order: its state before the first loaded change is that change's `from`
+  // (without changes, its current state), so only changes after the earliest instant of interest are loaded.
   // Day bounds are real local midnights: the previous 7 days, then today up to now.
   const days = [
     ...Array.from({ length: STALL_AVG_DAYS }, (_, i) =>
@@ -61,7 +61,11 @@ export function buildFleet(r: ReadCtx): TowerFleet {
     r.midnight,
     r.now,
   ];
-  const from = Math.min(days[0]!, r.now - TREND_BUCKETS * TREND_BUCKET_MS);
+  const points = Array.from(
+    { length: TREND_BUCKETS },
+    (_, i) => r.now - (TREND_BUCKETS - 1 - i) * TREND_BUCKET_MS,
+  );
+  const from = Math.min(days[0]!, points[0]!);
   const sessions = all<SessionState>(
     r,
     `SELECT session_id, liveness, ended_ms FROM twr_sessions WHERE (ended_ms IS NULL OR ended_ms > ?)${where}`,
@@ -77,49 +81,42 @@ export function buildFleet(r: ReadCtx): TowerFleet {
   )) {
     changes.get(c.session_id)?.push(c);
   }
-  const stateAt = (s: SessionState, t: number): LivenessState | null => {
-    if (s.ended_ms !== null && s.ended_ms <= t) return null;
-    const cs = changes.get(s.session_id)!;
-    let state = cs.length ? cs[0]!.from_state : s.liveness;
-    for (const c of cs) {
-      if (c.ts_ms > t) break;
-      state = c.to_state;
-    }
-    return state;
-  };
 
-  const trend: TowerFleet['trend'] = [];
-  for (let i = 0; i < TREND_BUCKETS; i++) {
-    const at = r.now - (TREND_BUCKETS - 1 - i) * TREND_BUCKET_MS;
-    const point = {
-      at: iso(at),
-      working: 0,
-      thinking: 0,
-      stalled: 0,
-      dead: 0,
-      throttled: 0,
-      waiting_on_you: 0,
-    };
-    for (const s of sessions) {
-      const state = stateAt(s, at);
-      if (state) point[state]++;
-    }
-    trend.push(point);
-  }
-
-  // Per local day: sessions live at some point (a state at its start or a change into one) and those that entered
-  // Stalled. Index STALL_AVG_DAYS is today.
+  const trend: TowerFleet['trend'] = points.map((at) => ({
+    at: iso(at),
+    working: 0,
+    thinking: 0,
+    stalled: 0,
+    dead: 0,
+    throttled: 0,
+    waiting_on_you: 0,
+  }));
+  // Per local day (index STALL_AVG_DAYS is today): sessions live at some point — a state at the day's start or a
+  // change into one — and sessions that entered Stalled.
   const live = new Array<number>(STALL_AVG_DAYS + 1).fill(0);
   const stalled = new Array<number>(STALL_AVG_DAYS + 1).fill(0);
   for (const s of sessions) {
     const cs = changes.get(s.session_id)!;
-    for (let d = 0; d <= STALL_AVG_DAYS; d++) {
-      const start = days[d]!;
-      const end = days[d + 1]!;
-      if (s.ended_ms !== null && s.ended_ms <= start) continue;
-      const during = cs.filter((c) => c.ts_ms > start && c.ts_ms <= end);
-      if (stateAt(s, start) !== null || during.some((c) => c.to_state !== null)) live[d]!++;
-      if (during.some((c) => c.to_state === 'stalled')) stalled[d]!++;
+    const ended = (t: number) => s.ended_ms !== null && s.ended_ms <= t;
+    let state = cs.length ? cs[0]!.from_state : s.liveness;
+    let i = 0;
+    for (let p = 0; p < TREND_BUCKETS && !ended(points[p]!); p++) {
+      while (i < cs.length && cs[i]!.ts_ms <= points[p]!) state = cs[i++]!.to_state;
+      if (state) trend[p]![state]++;
+    }
+    state = cs.length ? cs[0]!.from_state : s.liveness;
+    i = 0;
+    for (let d = 0; d <= STALL_AVG_DAYS && !ended(days[d]!); d++) {
+      while (i < cs.length && cs[i]!.ts_ms <= days[d]!) state = cs[i++]!.to_state;
+      let wasLive = state !== null;
+      let wasStalled = false;
+      while (i < cs.length && cs[i]!.ts_ms <= days[d + 1]!) {
+        state = cs[i++]!.to_state;
+        wasLive ||= state !== null;
+        wasStalled ||= state === 'stalled';
+      }
+      if (wasLive) live[d]!++;
+      if (wasStalled) stalled[d]!++;
     }
   }
   const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
