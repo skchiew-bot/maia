@@ -144,6 +144,9 @@ export class HookDispatcher {
       return s;
     }
     const existing = this.d.engine.byClaudeSessionId(req.hook.session_id);
+    // Managed sessions also carry a claude session id (visible on the console). Observed-mode events must never
+    // reach them, or any holder of the shared observer token could forge a managed session's audit trail.
+    if (existing && existing.mode !== 'observed') throw new HttpError(403, 'forbidden', 'Observed events cannot target a managed session');
     if (existing) return existing;
     const sessionId = newId('session', this.ctx.clock.now());
     this.ctx.store.append({
