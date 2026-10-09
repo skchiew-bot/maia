@@ -102,6 +102,67 @@ describe('client-supplied header fields', () => {
   });
 });
 
+describe('usage timestamps are bounded by the receipt time and the session (R-08)', () => {
+  const batch = (id: string, firstAt: string, lastAt: string) => ({
+    model: 'claude-opus-5-5',
+    inputTokens: 10,
+    outputTokens: 20,
+    cacheReadTokens: 0,
+    cacheWrite5mTokens: 0,
+    cacheWrite1hTokens: 0,
+    messageIds: [id],
+    firstAt,
+    lastAt,
+    contextTokens: 0,
+  });
+  const recorded = (messageId: string) => {
+    const e = t.rt.store.list({ types: ['usage.recorded'] }).find((u) => (t.rt.store.readPayload(u) as { messageIds: string[] }).messageIds[0] === messageId)!;
+    return { meta: e.meta, payload: t.rt.store.readPayload(e) as Record<string, unknown> };
+  };
+
+  it('keeps a client from backdating usage into a closed period or forward-dating it', async () => {
+    await setup(); // 2026-10-09T02:00Z
+    launch(t.user('builder'));
+    t.clock.advance(5 * 60_000);
+    await t.json('POST', '/ingest/usage', {
+      headers: t.ingestHeaders('ses_A'),
+      body: {
+        sessionId: 'ses_A',
+        idempotencyKey: 'usage-key-r08',
+        batches: [
+          batch('m-back', '2026-09-15T02:00:00.000Z', '2026-09-15T02:00:01.000Z'),
+          batch('m-fwd', '2026-11-01T00:00:00.000Z', '2026-11-02T00:00:00.000Z'),
+          batch('m-ok', '2026-10-09T10:01:00+08:00', '2026-10-09T02:04:00.000Z'),
+        ],
+      },
+    });
+    // backdated: never before the session started; forward-dated: never after receipt
+    expect(recorded('m-back').meta).toMatchObject({ firstAt: '2026-10-09T02:00:00.000Z', lastAt: '2026-10-09T02:00:00.000Z' });
+    expect(recorded('m-fwd').meta).toMatchObject({ firstAt: '2026-10-09T02:05:00.000Z', lastAt: '2026-10-09T02:05:00.000Z' });
+    expect(recorded('m-ok').meta).toMatchObject({ firstAt: '2026-10-09T02:01:00.000Z', lastAt: '2026-10-09T02:04:00.000Z' });
+    // what the client claimed stays in the encrypted body for the audit trail
+    expect(recorded('m-back').payload.claimed).toEqual({ firstAt: '2026-09-15T02:00:00.000Z', lastAt: '2026-09-15T02:00:01.000Z' });
+    expect(recorded('m-ok').payload.claimed).toBeUndefined();
+  });
+
+  it('bounds a long-running session by a window before receipt, and refuses non-timestamps', async () => {
+    await setup();
+    launch(t.user('builder'));
+    t.clock.advance(40 * 86_400_000); // the session has run (waited, resumed) for weeks
+    const now = t.clock.now();
+    await t.json('POST', '/ingest/usage', {
+      headers: t.ingestHeaders('ses_A'),
+      body: { sessionId: 'ses_A', idempotencyKey: 'usage-key-r08-long', batches: [batch('m-old', '2026-10-10T00:00:00.000Z', '2026-10-10T00:00:00.000Z')] },
+    });
+    expect(Date.parse(String(recorded('m-old').meta.lastAt))).toBeGreaterThanOrEqual(now - 3_600_000);
+    const bad = await t.request('POST', '/ingest/usage', {
+      headers: t.ingestHeaders('ses_A'),
+      body: { sessionId: 'ses_A', idempotencyKey: 'usage-key-r08-bad', batches: [batch('m-bad', 'last tuesday', 'today')] },
+    });
+    expect(bad.status).toBe(422);
+  });
+});
+
 describe('observer tokens never write into managed sessions', () => {
   it('rejects observed-mode events that address a managed session by its claude session id', async () => {
     await setup();

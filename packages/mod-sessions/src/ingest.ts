@@ -19,6 +19,31 @@ import type { SessionsEngine } from './engine';
 /** Chained as the event's sourceTs: a timestamp, never free text. */
 const zSentAt = z.string().min(10).max(40).refine((s) => !Number.isNaN(Date.parse(s)), 'must be an ISO-8601 timestamp');
 
+/** How far before its receipt a usage batch may be dated: the sidecar ships every 10 s, a spool replay later. */
+export const USAGE_MAX_AGE_MS = 3_600_000;
+
+/**
+ * Usage times decide the credit period and the metering day a batch counts in, and the client chooses them: they
+ * are kept within [max(session start, receipt − USAGE_MAX_AGE_MS), receipt], so usage can neither be backdated into
+ * a closed period nor dated into a future one. Times are returned as UTC ISO strings.
+ */
+export function boundUsageTimes(
+  claimed: { firstAt: string; lastAt: string },
+  bounds: { receivedAt: number; sessionStartedAt: number | null },
+): { firstAt: string; lastAt: string; clamped: boolean } {
+  const hi = bounds.receivedAt;
+  const lo = Math.min(hi, Math.max(bounds.sessionStartedAt ?? -Infinity, hi - USAGE_MAX_AGE_MS));
+  const clamp = (ms: number) => Math.min(hi, Math.max(lo, ms));
+  const first = Date.parse(claimed.firstAt);
+  const last = clamp(Date.parse(claimed.lastAt));
+  const firstAt = Math.min(clamp(first), last);
+  return {
+    firstAt: new Date(firstAt).toISOString(),
+    lastAt: new Date(last).toISOString(),
+    clamped: firstAt !== first || last !== Date.parse(claimed.lastAt),
+  };
+}
+
 const HookIngestSchema = z.object({
   mode: z.enum(['managed', 'observed']),
   aocSessionId: z.string().max(64).nullable(),
@@ -59,8 +84,8 @@ const UsageSchema = z.object({
         cacheWrite5mTokens: z.number().min(0),
         cacheWrite1hTokens: z.number().min(0),
         messageIds: z.array(z.string()).min(1).max(5000),
-        firstAt: z.string(),
-        lastAt: z.string(),
+        firstAt: zSentAt,
+        lastAt: zSentAt,
         contextTokens: z.number().min(0),
       }),
     )
@@ -419,6 +444,7 @@ export function registerIngestRoutes(app: App, d: IngestDeps): void {
     const { sessionId } = sessionFor(c, b.sessionId, { allowObserver: true });
     const row = engine.row(sessionId)!;
     const seen = ctx.db.prepare('SELECT 1 FROM sess_seen_messages WHERE session_id = ? AND message_id = ?');
+    const bounds = { receivedAt: ctx.clock.now(), sessionStartedAt: Date.parse(row.started_at) };
     let recorded = 0;
     let skipped = 0;
     b.batches.forEach((batch, i) => {
@@ -427,6 +453,7 @@ export function registerIngestRoutes(app: App, d: IngestDeps): void {
         skipped++;
         return;
       }
+      const at = boundUsageTimes(batch, bounds);
       ctx.store.append({
         type: 'usage.recorded',
         actor: { kind: 'agent', id: sessionId },
@@ -441,10 +468,10 @@ export function registerIngestRoutes(app: App, d: IngestDeps): void {
           cacheWrite1hTokens: batch.cacheWrite1hTokens,
           messages: batch.messageIds.length,
           contextTokens: batch.contextTokens,
-          firstAt: batch.firstAt,
-          lastAt: batch.lastAt,
+          firstAt: at.firstAt,
+          lastAt: at.lastAt,
         },
-        payload: { messageIds: batch.messageIds },
+        payload: { messageIds: batch.messageIds, ...(at.clamped ? { claimed: { firstAt: batch.firstAt, lastAt: batch.lastAt } } : {}) },
         source: row.mode === 'observed' ? 'hook' : 'sidecar',
         idempotencyKey: usageKey(sessionId, b.idempotencyKey, i),
       });
