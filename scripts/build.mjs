@@ -1,6 +1,8 @@
 #!/usr/bin/env node
-// Build the AOC binaries (esbuild → dist/bin/*.mjs), the web UI (vite → dist/web) and the packaged
-// default data files (dist/config). Usage: node scripts/build.mjs [--no-web] [entry names…]
+// Build the AOC binaries (esbuild → dist/bin/*.mjs, side by side: aocd resolves its helpers and the CLI its
+// daemon next to themselves), the web UI (vite → dist/web), the packaged default data files (dist/config) and
+// the managed-workspace git hooks (dist/git). Usage: node scripts/build.mjs [--no-web] [entry names…]
+// `node scripts/smoke-dist.mjs` builds and runs the bundles.
 import { spawnSync } from 'node:child_process';
 import { chmodSync, cpSync, existsSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -142,11 +144,20 @@ if (badFlags.length || badNames.length) {
   process.exit(2);
 }
 
+/** @aoc/hooks resolves its POSIX git hooks at `../git/` from the running bundle (gitHooksDir()). */
+function copyGitHooks() {
+  const out = join(dist, 'git');
+  rmSync(out, { recursive: true, force: true });
+  cpSync(join(root, 'packages', 'hooks', 'git'), out, { recursive: true });
+  for (const f of readdirSync(out)) chmodSync(join(out, f), 0o755);
+}
+
 const selected = names.length ? ENTRIES.filter((e) => names.includes(e.name)) : ENTRIES;
 const results = await Promise.allSettled(selected.map(bundle));
 const built = results.flatMap((r) => (r.status === 'fulfilled' && r.value ? [r.value] : []));
 const failed = results.flatMap((r, i) => (r.status === 'rejected' ? [selected[i].name] : []));
 cpSync(join(root, 'config'), join(dist, 'config'), { recursive: true });
+copyGitHooks();
 
 let web = null;
 let webFailed = false;

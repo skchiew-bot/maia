@@ -6,10 +6,15 @@
   "type": "module",
   "packageManager": "pnpm@10.28.0",
   "engines": { "node": ">=22.13" },
+  "bin": {
+    "aoc": "dist/bin/aoc.mjs",
+    "aocd": "dist/bin/aocd.mjs"
+  },
   "scripts": {
     "test": "vitest run",
     "typecheck": "pnpm -r --workspace-concurrency=3 typecheck",
     "build": "node scripts/build.mjs",
+    "smoke": "node scripts/smoke-dist.mjs",
     "dev": "tsx packages/daemon/src/main.ts",
     "format": "prettier --write \"packages/*/src/**/*.{ts,tsx}\" \"packages/*/test/**/*.{ts,tsx}\"",
     "format:check": "prettier --check \"packages/*/src/**/*.{ts,tsx}\" \"packages/*/test/**/*.{ts,tsx}\""
