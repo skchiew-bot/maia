@@ -19,9 +19,10 @@ export const ENV = {
   ingestToken: 'AOC_INGEST_TOKEN',
   spoolDir: 'AOC_SPOOL_DIR',
   internalLlm: 'AOC_INTERNAL_LLM',
+  readOnly: 'AOC_READ_ONLY',
 } as const satisfies Pick<
   typeof AOC_ENV,
-  'mode' | 'sessionId' | 'daemonUrl' | 'ingestToken' | 'spoolDir' | 'internalLlm'
+  'mode' | 'sessionId' | 'daemonUrl' | 'ingestToken' | 'spoolDir' | 'internalLlm' | 'readOnly'
 >;
 
 /** Env vars only the hooks package reads (not part of AOC_ENV). */

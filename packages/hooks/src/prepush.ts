@@ -3,8 +3,9 @@
  * into a managed workspace. Like the script, this is a speed bump: `--no-verify` or another clone skips it. Branch
  * protection and credential isolation are the real wall (AOC-SPEC-003 §2.4, §3, R1).
  */
-import { chmodSync, copyFileSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { AOC_ENV } from '@aoc/contracts';
 import type { Env } from './constants';
@@ -53,12 +54,43 @@ export function gitHooksDir(): string {
 }
 
 /** Copies the git hooks into `hooksDir` (e.g. <workspace>/.git/hooks), executable; returns the installed paths. */
-export function installGitHooks(hooksDir: string): string[] {
+export function installGitHooks(hooksDir: string, names: readonly string[] = GIT_HOOK_NAMES): string[] {
   mkdirSync(hooksDir, { recursive: true });
-  return GIT_HOOK_NAMES.map((name) => {
+  return names.map((name) => {
     const dest = join(hooksDir, name);
     copyFileSync(join(gitHooksDir(), name), dest);
     chmodSync(dest, 0o755);
     return dest;
   });
+}
+
+/** Every AOC git hook says so on its second line ("# AOC pre-push guard…"), older versions included. */
+function isAocHook(path: string): boolean {
+  return readFileSync(path, 'utf8').split('\n', 2)[1]?.startsWith('# AOC ') ?? false;
+}
+
+/**
+ * Installs the git hooks into the repository holding `cwd`, wherever git looks for them (`core.hooksPath` included),
+ * so a managed session's commits carry provenance trailers without relying on the agent (G-37). A hook the project
+ * already has is left alone: provenance is traced from recorded HEADs, never from trailers alone (G-25). An AOC hook
+ * is refreshed. Returns the paths written; none when `cwd` is not in a git repository.
+ */
+export function ensureGitHooks(cwd: string): string[] {
+  let hooksDir: string;
+  try {
+    const out = execFileSync('git', ['rev-parse', '--git-path', 'hooks'], {
+      cwd,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 2000,
+    });
+    hooksDir = resolve(cwd, out.trim());
+  } catch {
+    return [];
+  }
+  const names = GIT_HOOK_NAMES.filter((name) => {
+    const dest = join(hooksDir, name);
+    return !existsSync(dest) || isAocHook(dest);
+  });
+  return installGitHooks(hooksDir, names);
 }

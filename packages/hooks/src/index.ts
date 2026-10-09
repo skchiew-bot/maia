@@ -16,6 +16,7 @@ export {
   PROTECTED_BRANCHES,
   evaluatePrePush,
   gitHooksDir,
+  ensureGitHooks,
   installGitHooks,
   isProtectedRef,
 } from './prepush';

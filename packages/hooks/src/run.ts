@@ -105,6 +105,7 @@ async function runManaged(mode: ManagedMode, input: ParsedInput, ctx: Ctx): Prom
   const { event, hook } = input;
   if (!mode.aocSessionId)
     return managedFailure(event, 'AOC managed session is misconfigured', `${ENV.sessionId} is not set`);
+  if (event === 'SessionStart' && !mode.readOnly) await installWorkspaceGitHooks(hook);
   const req = hookRequest('managed', mode.aocSessionId, event, hook, ctx);
   const target: SpoolTarget = { spoolDir: mode.spoolDir, daemonUrl: mode.daemonUrl, token: mode.token };
   const r: PostResult<unknown> = mode.daemonUrl
@@ -138,6 +139,17 @@ async function runManaged(mode: ManagedMode, input: ParsedInput, ctx: Ctx): Prom
       ? `AOC daemon unreachable (${r.error}): the ${event} event was spooled to ${mode.spoolDir} and will be replayed when the daemon is back.`
       : `AOC daemon unreachable (${r.error}) and the local spool failed: the ${event} event was not recorded.`,
   );
+}
+
+/** Best effort: a workspace without the git hooks still works, and the session must start regardless. */
+async function installWorkspaceGitHooks(hook: HookInput): Promise<void> {
+  if (!hook.cwd) return;
+  try {
+    const { ensureGitHooks } = await import('./prepush');
+    ensureGitHooks(hook.cwd);
+  } catch {
+    // unwritable hooks directory: commits simply carry no trailers
+  }
 }
 
 /** Managed sessions fail loudly (AOC-SPEC-003 §2): PreToolUse is blocked, every other event warns the user. */

@@ -1,3 +1,5 @@
+import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
@@ -9,6 +11,7 @@ import {
   preToolUse,
   readSpool,
   runHookBinary,
+  sessionStart,
   startFakeDaemon,
   stop,
   tmp,
@@ -244,5 +247,36 @@ describe('managed mode: the daemon decides, the hook relays', () => {
     expect(run.code).toBe(2);
     expect(run.stderr).toContain('AOC hook could not read its input — managed sessions fail closed');
     expect(daemon.requests).toHaveLength(0);
+  });
+
+  it('installs the git hooks at SessionStart, so a commit carries AOC-Session without the agent adding it (G-37)', async () => {
+    daemon = await startFakeDaemon();
+    const repo = tmp();
+    const git = (...args: string[]) =>
+      spawnSync('git', ['-c', 'user.name=a', '-c', 'user.email=a@example.com', ...args], {
+        cwd: repo,
+        encoding: 'utf8',
+        env: { PATH: process.env.PATH ?? '', HOME: repo, AOC_SESSION_ID: AOC_SESSION },
+      });
+    git('init', '-q');
+    const run = await runHookBinary('SessionStart', sessionStart(repo), managedEnv(tmp(), daemon.url));
+
+    expect(run.code).toBe(0);
+    expect(daemon.requests.map((r) => r.body.hook.hook_event_name)).toEqual(['SessionStart']);
+    expect(git('commit', '-q', '--allow-empty', '-m', 'Fix the parser').status).toBe(0);
+    expect(git('log', '-1', '--format=%B').stdout).toContain(`AOC-Session: ${AOC_SESSION}`);
+  });
+
+  it('gives a read-only session no git hooks, and a workspace that is not a repository starts as usual', async () => {
+    daemon = await startFakeDaemon();
+    const repo = tmp();
+    spawnSync('git', ['init', '-q', repo]);
+    const env = managedEnv(tmp(), daemon.url, { AOC_READ_ONLY: '1' });
+    expect((await runHookBinary('SessionStart', sessionStart(repo), env)).code).toBe(0);
+    expect(existsSync(join(repo, '.git', 'hooks', 'pre-push'))).toBe(false);
+
+    const plain = await runHookBinary('SessionStart', sessionStart(tmp()), managedEnv(tmp(), daemon.url));
+    expect(plain).toMatchObject({ code: 0, stdout: '' });
+    expect(daemon.requests).toHaveLength(2);
   });
 });
