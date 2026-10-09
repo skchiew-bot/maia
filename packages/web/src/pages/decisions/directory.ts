@@ -29,7 +29,9 @@ export function useDirectory(): Directory {
     if (user) names.set(user.id, user.name);
     const sessionMap = new Map((sessions.data ?? []).map((s) => [s.sessionId, s]));
     const projectMap = new Map((projects.data ?? []).map((p) => [p.projectId, p.name]));
-    const approvers = users.data ? users.data.users.filter((u) => u.active && u.role === 'approver').length : null;
+    const approvers = users.data
+      ? users.data.users.filter((u) => u.active && u.role === 'approver').length
+      : null;
     return {
       nameOf: (id) => names.get(id) ?? null,
       activeApprovers: approvers,

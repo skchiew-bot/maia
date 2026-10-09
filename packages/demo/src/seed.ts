@@ -25,6 +25,7 @@ import { createLedgerModule } from '@aoc/mod-ledger';
 import { createMeteringModule } from '@aoc/mod-metering';
 import { createRegistryModule } from '@aoc/mod-registry';
 import { createSessionsModule } from '@aoc/mod-sessions';
+import { createTowerModule } from '@aoc/mod-tower';
 
 // ── deterministic randomness ──────────────────────────────────────────────────
 let seed = 20261009;
@@ -90,6 +91,7 @@ const modules: AocModule[] = [
   createAuditModule(),
   createEvidenceModule(),
   createIntakeModule(),
+  createTowerModule(),
 ];
 
 const rt = await AocRuntime.create({ config, modules, clock, log: createLogger({ level: 'warn' }) });

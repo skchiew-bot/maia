@@ -302,6 +302,10 @@ export function buildRollbacks(ctx: SectionContext, inRange: StoredEvent[]): Evi
           executed = true;
           break;
         }
+        case 'rollback.failed':
+          // Approved but never executed: the default branch was left unchanged.
+          r.status = 'failed';
+          break;
       }
     }
     if (executed && r.clean !== true) r.flags.push('executed_without_clean_verification');
