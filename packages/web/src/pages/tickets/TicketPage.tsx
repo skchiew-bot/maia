@@ -31,7 +31,7 @@ import { usePasskeys, useDecisionActions } from '../decisions/actions';
 import { RecommendationBox } from '../decisions/DecisionDetail';
 import { useDirectory, type Directory } from '../decisions/directory';
 import { isDecisionEvent } from '../decisions/inbox';
-import { KIND_LABEL, agingOf, methodLabel, outcomeLabel, requesterOf, shortId } from '../decisions/model';
+import { KIND_LABEL, agingOf, assuranceLabel, outcomeLabel, requesterOf, shortId } from '../decisions/model';
 import { AgingBadge, KindLine } from '../decisions/parts';
 import { ResolvePanel } from '../decisions/ResolvePanel';
 import '../decisions/decisions.css';
@@ -688,7 +688,7 @@ export default function TicketPage() {
                 <span className="tkt-links__sub">
                   {d.status === 'open'
                     ? `open · waiting ${formatAge(now - Date.parse(d.createdAt))}`
-                    : `${outcomeLabel(d)}${d.resolution ? ` · ${requesterOf(d.resolution.resolvedBy, directory).name} · ${methodLabel(d.resolution)}` : ''}`}
+                    : `${outcomeLabel(d)}${d.resolution ? ` · ${requesterOf(d.resolution.resolvedBy, directory).name} · ${assuranceLabel(d.resolution)}` : ''}`}
                 </span>
               </li>
             ))}
