@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { DecisionCardView, DecisionListResponse, SessionDetail, StoredEvent } from '@aoc/contracts';
 import { Harness, waitFor, type TestUser } from './harness';
+import { launchSim, outcomesOf as simOutcomesOf, sessionDetail, turnsOf as simTurnsOf, untilSession } from './sim';
 
 /** Predecessor of the rollover scenario: closes t1 and t2 with the context past 70% of the window, t3 left open. */
 const ROLLOVER = {
@@ -82,32 +83,13 @@ afterAll(async () => {
 
 // ── helpers ─────────────────────────────────────────────────────────────────
 
-async function launch(as: TestUser, projectId: string, scenario: string, processType = 'feature-build'): Promise<string> {
-  const r = await h.api<{ sessionId: string }>('POST', '/api/sessions', {
-    as,
-    body: { processType, projectId, prompt: `Work through your plan. [[scenario:${scenario}]]` },
-    expect: 201,
-  });
-  return r.sessionId;
-}
-
-const detail = (sessionId: string, as: TestUser) => h.api<SessionDetail>('GET', `/api/sessions/${sessionId}`, { as });
-
-function until(sessionId: string, as: TestUser, pred: (d: SessionDetail) => boolean, what: string, timeout = 60_000): Promise<SessionDetail> {
-  return waitFor(async () => {
-    const d = await detail(sessionId, as);
-    return pred(d) && d;
-  }, { timeout, interval: 100, what });
-}
-
+const launch = (as: TestUser, projectId: string, scenario: string, processType?: string) => launchSim(h, as, projectId, scenario, processType);
+const detail = (sessionId: string, as: TestUser) => sessionDetail(h, sessionId, as);
+const until = (sessionId: string, as: TestUser, pred: (d: SessionDetail) => boolean, what: string, timeout?: number) =>
+  untilSession(h, sessionId, as, pred, what, timeout);
 const payload = (e: StoredEvent) => h.store.readPayload(e) as Record<string, unknown> | null;
-const turnsOf = (sessionId: string) =>
-  h.events({ types: ['session.turn_started'], sessionId }).map((e) => ({
-    turn: e.meta.turn as number,
-    reason: e.meta.reason as string,
-    text: (payload(e)?.injectedText as string | undefined) ?? '',
-  }));
-const outcomesOf = (sessionId: string) => h.events({ types: ['session.turn_ended'], sessionId }).map((e) => e.meta.outcome);
+const turnsOf = (sessionId: string) => simTurnsOf(h, sessionId);
+const outcomesOf = (sessionId: string) => simOutcomesOf(h, sessionId);
 const typesOf = (sessionId: string) => h.events({ sessionId }).map((e) => e.type);
 
 // ── scenarios ───────────────────────────────────────────────────────────────
