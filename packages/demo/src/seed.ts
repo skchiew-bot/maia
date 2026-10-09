@@ -51,17 +51,29 @@ const repoRoot = join(dataDir, 'repos');
 
 const now = Date.now();
 const clock = new FakeClock(now - days * 86_400_000);
-const config = AocConfigSchema.parse({
+/**
+ * The daemon config for this demo data dir (written to <dataDir>/aoc.config.json). Managed sessions run on
+ * claude-sim, never the real `claude` CLI, and LLM-backed jobs use the fake extractor: clicking Nudge or Restart
+ * in a demo must not spend plan quota or touch real repositories.
+ */
+const demoConfig = {
   dataDir,
   timezone: TZ,
   registryFile: join(repoDir, 'config/process-types.json'),
   metering: { rateCardFile: join(repoDir, 'config/rate-card.json') },
   compliance: { mappingFile: join(repoDir, 'config/iso42001-mapping.json') },
-  fx: { enabled: false, extractor: 'fake' },
-  audit: { anchorProvider: 'git', anchorRepoPath: join(dataDir, 'anchor-repo') },
-  supervisor: { workspacesDir: join(dataDir, 'workspaces') },
+  fx: { enabled: false, extractor: 'fake' as const },
+  audit: { anchorProvider: 'git' as const, anchorRepoPath: join(dataDir, 'anchor-repo') },
+  supervisor: {
+    claudeBin: process.execPath,
+    claudeArgsPrefix: [join(repoDir, 'packages/claude-sim/bin/claude-sim.mjs')],
+    workspacesDir: join(dataDir, 'workspaces'),
+  },
   selfModification: { externalAuditLog: join(dataDir, 'selfmod-audit.log') },
   credits: { defaultMonthlyAllocationUsd: 300 },
+};
+const config = AocConfigSchema.parse({
+  ...demoConfig,
 });
 
 const modules: AocModule[] = [
@@ -479,7 +491,9 @@ const out = {
   head: store.head(),
 };
 writeFileSync(join(dataDir, 'demo-tokens.json'), JSON.stringify(out, null, 2), { mode: 0o600 });
+writeFileSync(join(dataDir, 'aoc.config.json'), JSON.stringify(demoConfig, null, 2));
 await rt.stop();
 console.log(`Seeded ${out.head.seq} events into ${dataDir}`);
 console.log(`Tokens: ${join(dataDir, 'demo-tokens.json')} (CEO token logs you in as the Approver)`);
-console.log(`Run:   AOC_DATA_DIR=${dataDir} node --import tsx packages/daemon/src/main.ts`);
+console.log(`Run:   AOC_CONFIG=${join(dataDir, 'aoc.config.json')} node --import tsx packages/daemon/src/main.ts`);
+console.log('       (the config runs managed sessions on claude-sim, never the real claude CLI)');
