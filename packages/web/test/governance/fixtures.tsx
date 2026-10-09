@@ -525,6 +525,7 @@ export function health(over: Partial<AuditHealthDTO> = {}): AuditHealthDTO {
     ],
     selfmodBlocked: { total: 2, last24h: 1 },
     warnings: ['anchor_not_off_host'],
+    backup: { configured: false, last: null, lastFailure: null, stale: false },
     ...over,
   };
 }
@@ -533,6 +534,8 @@ export function verifyReport(over: Partial<VerifyReportDTO> = {}): VerifyReportD
   return {
     ok: true,
     chainOk: true,
+    chainFirstBadSeq: null,
+    chainProblems: [],
     chainId: 'cdb7fbeafd3f232cd1a700a32262c701',
     headSeq: 3368,
     headHash: 'ab'.repeat(32),
@@ -544,6 +547,8 @@ export function verifyReport(over: Partial<VerifyReportDTO> = {}): VerifyReportD
         seq: 3149,
         anchoredHash: '6e601fd46fcaf126bdbf31293f732046edefc26cf741ffef188e4cd2903afde7',
         recomputedHash: '6e601fd46fcaf126bdbf31293f732046edefc26cf741ffef188e4cd2903afde7',
+        chainHash: '6e601fd46fcaf126bdbf31293f732046edefc26cf741ffef188e4cd2903afde7',
+        record: 'found',
         matched: true,
         proofOk: true,
         anchoredAt: ago(3 * HOUR),
@@ -646,6 +651,7 @@ export function pack(over: Partial<EvidencePackSummaryDTO> = {}): EvidencePackSu
     anchorsChecked: 1,
     anchorsMatched: 1,
     downloadUrl: '/api/evidence/packs/evp_01M4FK2X5Z9W8V7T6S5R4Q3P2N/download',
+    verification: 'verified',
     ...over,
   };
 }

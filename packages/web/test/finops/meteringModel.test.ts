@@ -49,8 +49,8 @@ describe('FX stamps', () => {
   it('says whether a day used a live or an inherited rate, with the source day', () => {
     expect(fxStampText(DAYS[1]!.fx)).toBe('live');
     expect(fxStampText(DAYS[3]!.fx)).toBe('inherited from Oct 2');
-    expect(fxStampText({ rate: 4.2, status: 'inherited', sourceDate: null })).toBe('inherited');
-    expect(fxStampText({ rate: null, status: 'missing', sourceDate: null })).toBe('missing');
+    expect(fxStampText({ rate: 4.2, status: 'inherited', sourceDate: null, session: null })).toBe('inherited');
+    expect(fxStampText({ rate: null, status: 'missing', sourceDate: null, session: null })).toBe('missing');
   });
 
   it('tells carried-forward-by-design apart from failures and manual entries', () => {
