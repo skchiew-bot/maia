@@ -3,12 +3,17 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { GitCommit, GitService } from '@aoc/contracts';
+import { childEnv } from './child-env';
 
+/**
+ * git sees an allowlisted environment (no AOC_*, keys or tokens, and no inherited GIT_DIR / GIT_WORK_TREE that
+ * would redirect it) plus what the caller passes explicitly.
+ */
 function git(dir: string, args: string[], opts: { env?: Record<string, string>; timeoutMs?: number } = {}) {
   const r = spawnSync('git', args, {
     cwd: dir,
     encoding: 'utf8',
-    env: { ...process.env, GIT_TERMINAL_PROMPT: '0', ...opts.env },
+    env: childEnv(process.env, { GIT_TERMINAL_PROMPT: '0', ...opts.env }),
     timeout: opts.timeoutMs ?? 60_000,
     maxBuffer: 64 * 1024 * 1024,
   });

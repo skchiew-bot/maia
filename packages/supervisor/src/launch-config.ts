@@ -3,6 +3,7 @@
  * the per-session MCP config and the hook settings. Verified against Claude Code 2.1.295 (research §2, §4.5, §8).
  */
 import { readFileSync } from 'node:fs';
+import { isAbsolute } from 'node:path';
 import { z } from 'zod';
 import { AOC_MCP_SERVER_NAME, FILE_CHANGING_TOOLS, type ProcessType } from '@aoc/contracts';
 import { builtinToolsOf, MANAGED_HOOK_EVENTS } from './claude-facts';
@@ -85,6 +86,15 @@ export function allowlistedEnv(
   return env;
 }
 
+/** The identity and private directories of an isolated session (supervisor.isolation 'user'). */
+export interface IsolatedIdentity {
+  /** OS user the turn runs as. */
+  user: string;
+  home: string;
+  claudeConfigDir: string;
+  tmpDir: string;
+}
+
 export interface SessionEnvInput {
   source: Record<string, string | undefined>;
   allowlist: readonly string[];
@@ -93,28 +103,85 @@ export interface SessionEnvInput {
   readOnly: boolean;
   aoc: Record<string, string>;
   timezone: string;
+  /** Isolated sessions get their own HOME, config dir, TMPDIR and user variables instead of aocd's. */
+  isolated?: IsolatedIdentity | null;
 }
 
-/** Everything in a session env is readable by the model's own Bash: only entitled sessions get credentials. */
+/** Variables that point into aocd's own account (its home, agent sockets, keyrings): never inherited when isolated. */
+const AOCD_ACCOUNT_VARS = [
+  'HOME',
+  'USER',
+  'LOGNAME',
+  'MAIL',
+  'CLAUDE_CONFIG_DIR',
+  'TMPDIR',
+  'XDG_CONFIG_HOME',
+  'XDG_DATA_HOME',
+  'XDG_STATE_HOME',
+  'XDG_CACHE_HOME',
+  'XDG_RUNTIME_DIR',
+  'SSH_AUTH_SOCK',
+  'GNUPGHOME',
+];
+
+/**
+ * Everything in a session env is readable by the model's own Bash: only entitled sessions get credentials. An
+ * isolated session's identity variables are pinned last (a profile cannot point HOME back at aocd's), and git
+ * reads no global or system config — so no credential helper or include from the host applies (G-01).
+ */
 export function buildSessionEnv(i: SessionEnvInput): Record<string, string> {
   const env = allowlistedEnv(i.source, i.allowlist);
+  if (i.isolated) for (const k of AOCD_ACCOUNT_VARS) delete env[k];
   if (i.credentials && !i.readOnly) {
     for (const [k, v] of Object.entries(i.credentials)) if (!k.startsWith('AOC_')) env[k] = v;
+  }
+  if (i.isolated) {
+    const iso = i.isolated;
+    Object.assign(env, {
+      HOME: iso.home,
+      USER: iso.user,
+      LOGNAME: iso.user,
+      CLAUDE_CONFIG_DIR: iso.claudeConfigDir,
+      TMPDIR: iso.tmpDir,
+      GIT_CONFIG_GLOBAL: '/dev/null',
+      GIT_CONFIG_NOSYSTEM: '1',
+      GIT_TERMINAL_PROMPT: '0',
+    });
+    // Without a global config git has no identity; a credential profile may name the machine user instead.
+    env.GIT_AUTHOR_NAME ??= 'AOC agent';
+    env.GIT_COMMITTER_NAME ??= env.GIT_AUTHOR_NAME;
+    env.GIT_AUTHOR_EMAIL ??= `${iso.user}@localhost`;
+    env.GIT_COMMITTER_EMAIL ??= env.GIT_AUTHOR_EMAIL;
   }
   // Claude Code renders limit reset times in the process zone.
   env.TZ = i.timezone;
   return { ...env, ...i.aoc };
 }
 
+const FILE_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
+const FILE_REF = /\{\{file:([^}]*)\}\}/g;
+/** Key files are small; anything bigger is a mistake in the profile, not a key. */
+export const MAX_CREDENTIAL_FILE_BYTES = 1024 * 1024;
+
 const CredentialProfilesSchema = z.object({
-  profiles: z.record(z.object({ env: z.record(z.string()) })),
+  profiles: z.record(z.object({ env: z.record(z.string()), files: z.record(z.string()).optional() })),
 });
 
 /**
- * Env of a named credential profile from `{ profiles: { [name]: { env } } }`. Errors never echo file content
- * (a JSON parse error would quote the secret it choked on).
+ * A credential profile: env for the session, plus the key files it needs. An env value refers to a key file as
+ * `{{file:<name>}}`, so an isolated session can be handed a private per-session copy instead of the original.
  */
-export function readCredentialProfile(file: string, profile: string): Record<string, string> {
+export interface CredentialProfile {
+  env: Record<string, string>;
+  /** Absolute path of each key file, by name. */
+  files: Record<string, string>;
+}
+
+/**
+ * Every profile of a `{ profiles: { [name]: { env, files? } } }` file. Errors never echo file content (a JSON
+ * parse error would quote the secret it choked on) and name env variables, never their values.
+ */
+export function readCredentialProfiles(file: string): Record<string, CredentialProfile> {
   let raw: unknown;
   try {
     raw = JSON.parse(readFileSync(file, 'utf8'));
@@ -128,10 +195,45 @@ export function readCredentialProfile(file: string, profile: string): Record<str
   }
   const parsed = CredentialProfilesSchema.safeParse(raw);
   if (!parsed.success)
-    throw new Error('credential profiles file must look like {"profiles":{"<name>":{"env":{...}}}}');
-  const p = parsed.data.profiles[profile];
+    throw new Error(
+      'credential profiles file must look like {"profiles":{"<name>":{"env":{...},"files":{"<key>":"/abs/path"}}}}',
+    );
+  const out: Record<string, CredentialProfile> = {};
+  for (const [name, p] of Object.entries(parsed.data.profiles)) {
+    const files = p.files ?? {};
+    for (const [key, path] of Object.entries(files)) {
+      if (!FILE_NAME.test(key))
+        throw new Error(`credential profile "${name}": file names are 1-64 letters, digits, . _ -`);
+      if (!isAbsolute(path)) throw new Error(`credential profile "${name}": file "${key}" needs an absolute path`);
+    }
+    for (const [k, v] of Object.entries(p.env)) {
+      for (const m of v.matchAll(FILE_REF)) {
+        if (!Object.hasOwn(files, m[1]!))
+          throw new Error(`credential profile "${name}": ${k} refers to a file that "files" does not declare`);
+      }
+    }
+    out[name] = { env: { ...p.env }, files: { ...files } };
+  }
+  return out;
+}
+
+export function readCredentialProfileSpec(file: string, profile: string): CredentialProfile {
+  const p = readCredentialProfiles(file)[profile];
   if (!p) throw new Error(`credential profile "${profile}" is not defined`);
-  return { ...p.env };
+  return p;
+}
+
+/** Replaces `{{file:<name>}}` with the given paths (originals for aocd's own runs, copies for isolated sessions). */
+export function resolveFileRefs(env: Record<string, string>, paths: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(env)) out[k] = v.replace(FILE_REF, (_, name: string) => paths[name] ?? '');
+  return out;
+}
+
+/** Env of a named profile with key files at their original paths (supervisor-run commands, dev sessions). */
+export function readCredentialProfile(file: string, profile: string): Record<string, string> {
+  const p = readCredentialProfileSpec(file, profile);
+  return resolveFileRefs(p.env, p.files);
 }
 
 // ── per-session MCP config and hook settings ───────────────────────────────

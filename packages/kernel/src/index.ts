@@ -3,6 +3,7 @@ export * from './clock';
 export * from './time';
 export * from './logger';
 export * from './crypto';
+export * from './child-env';
 export * from './git';
 export * from './store/body-store';
 export * from './store/event-store';
