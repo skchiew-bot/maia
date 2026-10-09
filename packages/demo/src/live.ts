@@ -70,7 +70,7 @@ function prepareDataDir(layout: DemoLayout, reset: boolean): void {
   if (existsSync(layout.root) && readdirSync(layout.root).length) {
     throw new Error(`${layout.root} is not empty but holds no complete demo; pass an empty directory or add --reset`);
   }
-  say(`Seeding ${layout.root} (14 days of history, about 10 s)…`);
+  say(`Seeding ${layout.root} (14 days of history, up to a minute)…`);
   const r = spawnSync(process.execPath, ['--import', tsxImport(), join(HERE, 'seed.ts'), '--data-dir', layout.root], { stdio: 'inherit', cwd: join(REPO, 'packages/demo') });
   if (r.status !== 0) throw new Error(`seeding failed (${r.signal ?? `exit ${r.status}`})`);
 }
@@ -294,7 +294,9 @@ function banner(o: LiveOptions, layout: DemoLayout, tokens: DemoTokens, daemon: 
     '  Fleet (relaunched when a run finishes):',
     slots,
     '  Seeded too: a decision waiting on you (answer it and the session resumes), a throttled session,',
-    '  a dead docs session (press Restart), an observed developer terminal.',
+    '  a dead docs session (press Restart), an observed developer terminal, intake tickets in every stage',
+    '  (the one in triage is being diagnosed by two read-only agents on claude-sim right now), a verified',
+    '  rollback and a break-glass record waiting for you, and the change-control history behind them.',
     '',
     '  Ctrl-C stops the running sessions, then the daemon.',
     '',

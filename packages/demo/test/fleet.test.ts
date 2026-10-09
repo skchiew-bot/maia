@@ -38,23 +38,28 @@ describe('the fleet', () => {
 });
 
 describe('the default scenario', () => {
-  const scenario = parseScenario(defaultScenario('tkt_01ABC'), 'test');
+  const scenario = parseScenario(defaultScenario({ receipts: 'tkt_01ABC', transferBlank: 'tkt_01XYZ' }), 'test');
   const branches = scenario.steps.filter((s) => s.kind === 'branch');
 
   it('dispatches the prompts the platform writes: rollover successors, intake triage and builds', () => {
     expect(branches.map((b) => (b.kind === 'branch' ? [b.onResumeTextIncludes, b.goto] : null))).toEqual([
       [['Context rollover:'], 'rollover-successor'],
       [['diagnosing customer ticket tkt_01ABC '], 'triage-receipts'],
+      [['diagnosing customer ticket tkt_01XYZ '], 'triage-transfer'],
       [['fix plan for ticket tkt_01ABC.'], 'build-receipts'],
       [['diagnosing customer ticket'], 'triage-unknown'],
     ]);
   });
 
-  it("commits the ticket's build to uat/<ticketId> with the trailers provenance needs", () => {
+  it("commits the ticket's build to uat/<ticketId> with the trailers provenance needs, using scoped git only", () => {
     const commands = scenario.steps.flatMap((s) => (s.kind === 'bash' ? [s.command] : []));
-    expect(commands).toContain('git checkout -B uat/tkt_01ABC');
+    expect(commands).toContain('git switch -c uat/tkt_01ABC || git switch uat/tkt_01ABC');
     expect(commands.find((c) => c.startsWith('git commit'))).toMatch(/AOC-Ticket: tkt_01ABC.*AOC-Session: \$AOC_SESSION_ID/);
-    expect(commands.at(-1)).toBe('git checkout main');
+    expect(commands.at(-1)).toBe('git switch -');
+  });
+
+  it('carries no scenario marker: the prompts around a requester\'s text never select a scenario', () => {
+    expect(JSON.stringify(scenario)).not.toContain('[[scenario:');
   });
 });
 
