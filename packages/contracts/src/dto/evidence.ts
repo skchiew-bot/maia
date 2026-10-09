@@ -120,6 +120,24 @@ export interface EvidencePackDetailDTO extends EvidencePackSummaryDTO {
   manifest: EvidencePackManifest | null;
 }
 
+/**
+ * One pack builds at a time. POST /api/evidence/packs answers 201 with the pack when it could start at once, else
+ * 202 with this job (poll `statusUrl`); 429 when the caller already has a pack pending or is over the hourly budget.
+ */
+export interface EvidencePackJobDTO {
+  jobId: string;
+  status: 'queued' | 'running' | 'done' | 'failed';
+  from: string;
+  to: string;
+  requestedBy: string;
+  requestedAt: string;
+  /** 1 = builds next; null once started. */
+  position: number | null;
+  pack: EvidencePackSummaryDTO | null;
+  error: string | null;
+  statusUrl: string;
+}
+
 // ── pack file format ─────────────────────────────────────────────────────────
 
 export const EVIDENCE_PACK_FORMAT = 'aoc-evidence-pack/1';

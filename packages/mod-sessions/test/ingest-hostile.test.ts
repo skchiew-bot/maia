@@ -31,7 +31,7 @@ async function setup() {
     payload: { cwd: '/tmp/repo', argv: [], transcriptPath: '/tmp/t.jsonl' },
     source: 'supervisor',
   });
-  return t.ingestHeaders('ses_h');
+  return { headers: t.ingestHeaders('ses_h'), sidecar: t.sidecarHeaders('ses_h') };
 }
 
 const batch = (over: Record<string, unknown> = {}) => ({
@@ -52,7 +52,7 @@ const healthy = () => expect(t.rt.store.projectionHealth()).toEqual([]);
 
 describe('ingest bodies that would poison the log are refused (§2)', () => {
   it('a usage batch with a timestamp that is not an instant, or a count that is not a count, is a 422 and writes nothing', async () => {
-    const headers = await setup();
+    const { sidecar: headers } = await setup();
     const before = t.rt.store.head().seq;
     const bad: Record<string, unknown>[] = [
       { lastAt: 'not-a-date-at-all' },
@@ -78,7 +78,7 @@ describe('ingest bodies that would poison the log are refused (§2)', () => {
   });
 
   it('every other client timestamp is checked as well: throttle reset, heartbeat, activity, process exit, spooled item', async () => {
-    const headers = await setup();
+    const { sidecar: headers } = await setup();
     const at = '2026-10-09T02:00:00.000Z';
     const cases: [string, unknown][] = [
       ['/ingest/throttle', { sessionId: 'ses_h', resetAt: 'tomorrow-ish', message: 'limit', source: 'stream' }],
@@ -95,7 +95,7 @@ describe('ingest bodies that would poison the log are refused (§2)', () => {
   });
 
   it('a hook with the wrong fields is a 422, not a crash', async () => {
-    const headers = await setup();
+    const { headers } = await setup();
     const hook = (extra: Record<string, unknown>, event = 'PreToolUse') => ({
       mode: 'managed',
       aocSessionId: 'ses_h',

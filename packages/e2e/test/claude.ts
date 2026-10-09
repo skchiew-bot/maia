@@ -393,12 +393,12 @@ export class ClaudeSession {
         '--pid', String(this.s.pid),
         '--transcript', this.s.transcriptPath,
         '--daemon', this.h.url,
-        '--token', this.s.token,
         '--interval', String(opts.intervalMs ?? 200),
         '--state-dir', stateDir,
         '--spool-dir', join(stateDir, 'spool'),
       ],
-      { cwd: this.s.cwd, env: { PATH: process.env.PATH ?? '', HOME: this.h.homeDir, TZ: 'Asia/Kuala_Lumpur' }, stdio: ['ignore', 'ignore', 'pipe'] },
+      // Its own token, in its env only, as the supervisor starts it (G-44).
+      { cwd: this.s.cwd, env: { PATH: process.env.PATH ?? '', HOME: this.h.homeDir, TZ: 'Asia/Kuala_Lumpur', AOC_INGEST_TOKEN: this.s.sidecarToken }, stdio: ['ignore', 'ignore', 'pipe'] },
     );
     this.h.track(child);
     this.sidecarProc = new SidecarProcess(child);

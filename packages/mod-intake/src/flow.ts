@@ -138,8 +138,10 @@ export class IntakeFlow {
     const cfg = this.ctx.config.intake;
     const ids: string[] = [];
     for (let i = 0; i < cfg.triageAgents; i++) {
+      // Keyed on the cause: a redelivered reaction gets the sessions already launched, and launches only the rest.
+      const idempotencyKey = causationId ? `intake.triage:${causationId}:${i}` : null;
       const { sessionId } = await supervisor.launch(
-        { processType: cfg.triageProcessType, projectId: t.project_id, prompt: this.triagePrompt(t), ticketId },
+        { processType: cfg.triageProcessType, projectId: t.project_id, prompt: this.triagePrompt(t), ticketId, idempotencyKey },
         INTAKE_ACTOR,
       );
       ids.push(sessionId);
@@ -274,11 +276,12 @@ export class IntakeFlow {
     const supervisor = this.ctx.services.maybe('supervisor');
     if (!t || !t.project_id || !supervisor) return;
     const prompt = [
-      `Implement the APPROVED fix plan for ticket ${ticketId}. Work on branch uat/${ticketId}; push it for UAT when done (the supervisor holds the UAT deploy credential).`,
+      `Implement the APPROVED fix plan for ticket ${ticketId}. Work on branch uat/${ticketId}; when done, push it for UAT with \`git push aoc HEAD:refs/heads/uat/${ticketId}\` (the supervisor forwards it with the UAT deploy credential; you hold none).`,
       'Every commit must carry the trailers `AOC-Ticket: ' + ticketId + '` and `AOC-Session: $AOC_SESSION_ID`.',
       `Approved fix plan:\n${t.fix_plan ?? ''}`,
     ].join('\n\n');
-    const { sessionId } = await supervisor.launch({ processType: this.ctx.config.intake.buildProcessType, projectId: t.project_id, prompt, ticketId }, INTAKE_ACTOR);
+    const idempotencyKey = causationId ? `intake.build:${causationId}` : null; // never two writers on uat/<ticket>
+    const { sessionId } = await supervisor.launch({ processType: this.ctx.config.intake.buildProcessType, projectId: t.project_id, prompt, ticketId, idempotencyKey }, INTAKE_ACTOR);
     this.ctx.store.append({
       type: 'ticket.build_started',
       actor: INTAKE_ACTOR,

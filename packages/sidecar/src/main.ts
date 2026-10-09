@@ -1,40 +1,20 @@
-/** aoc-sidecar --session <id> --pid <pid> --transcript <path> --daemon <url> --token <t> [--interval 5000] [--state-dir <dir>] [--spool-dir <dir>] */
-import { homedir } from 'node:os';
-import { join } from 'node:path';
+/** AOC_INGEST_TOKEN=<sidecar token> aoc-sidecar --session <id> --pid <pid> --transcript <path> [--daemon <url>] [--interval 5000] [--state-dir <dir>] [--spool-dir <dir>] */
+import { SIDECAR_READY_LINE } from '@aoc/contracts';
+import { sidecarOptionsFrom } from './cli';
 import { Sidecar } from './sidecar';
 
-function arg(name: string, argv: string[]): string | undefined {
-  const i = argv.indexOf(`--${name}`);
-  return i >= 0 ? argv[i + 1] : undefined;
-}
-
 async function main(argv: string[]): Promise<void> {
-  const sessionId = arg('session', argv);
-  const pid = Number(arg('pid', argv));
-  const transcriptPath = arg('transcript', argv);
-  const daemonUrl = arg('daemon', argv) ?? process.env.AOC_DAEMON_URL;
-  const token = arg('token', argv) ?? process.env.AOC_INGEST_TOKEN;
-  if (!sessionId || !Number.isInteger(pid) || pid <= 0 || !transcriptPath || !daemonUrl || !token) {
-    process.stderr.write('usage: aoc-sidecar --session <id> --pid <pid> --transcript <path> --daemon <url> --token <token> [--interval ms] [--state-dir dir]\n');
+  const opts = sidecarOptionsFrom(argv, process.env);
+  if ('error' in opts) {
+    process.stderr.write(`aoc-sidecar: ${opts.error}\n`);
     process.exit(2);
   }
-  const stateDir = arg('state-dir', argv) ?? join(homedir(), '.aoc', 'sidecar');
-  const sc = new Sidecar({
-    sessionId,
-    pid,
-    transcriptPath,
-    daemonUrl,
-    token,
-    stateDir,
-    spoolDir: arg('spool-dir', argv),
-    intervalMs: Number(arg('interval', argv) ?? 5000),
-  });
-  const shutdown = () => {
-    sc.stop();
-    void sc.flush().finally(() => process.exit(0));
-  };
+  const sc = new Sidecar(opts);
+  // The supervisor stops the sidecar once its turn's process is gone: report what is left, then exit.
+  const shutdown = () => void sc.shutdown().finally(() => process.exit(0));
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
+  process.stdout.write(`${SIDECAR_READY_LINE}\n`);
   await sc.start();
 }
 

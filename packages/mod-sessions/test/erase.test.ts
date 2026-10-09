@@ -58,7 +58,7 @@ async function setup() {
     source: 'supervisor',
   });
   const usage = await t.request('POST', '/ingest/usage', {
-    headers: t.ingestHeaders('ses_a'),
+    headers: t.sidecarHeaders('ses_a'),
     body: {
       sessionId: 'ses_a',
       idempotencyKey: 'usage-batch-1',

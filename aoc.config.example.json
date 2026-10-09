@@ -11,7 +11,7 @@
   "timezone": "Asia/Kuala_Lumpur",
 
   "keys": {
-    "//": "Key-encryption key for the per-scope body keys (crypto-shred, §13). Development order: AOC_MASTER_KEY env, then masterKeyFile, else <dataDir>/master.key is generated (0600). Production mode accepts only an existing masterKeyFile outside the data dir, per docs/runbooks/key-custody.md (R6).",
+    "//": "Key-encryption key for the per-scope body keys (crypto-shred, §13). Development order: AOC_MASTER_KEY env (warned about at every start), then masterKeyFile, else <dataDir>/master.key is generated (0600) - only while the data dir holds no data; beside existing data aocd refuses to start instead. Production mode accepts only an existing masterKeyFile outside the data dir, per docs/runbooks/key-custody.md (R6).",
     "//masterKeyFile": "/etc/aoc/master.key"
   },
 
@@ -54,7 +54,7 @@
       "NODE_EXTRA_CA_CERTS",
       "SSL_CERT_FILE"
     ],
-    "//credentialProfilesFile": "/etc/aoc/credential-profiles.json — { \"profiles\": { \"<name>\": { \"env\": { \"GIT_SSH_COMMAND\": \"ssh -i {{file:ssh-key}}\" }, \"files\": { \"ssh-key\": \"/etc/aoc/keys/<name>\" } } } }, readable only by the user aocd runs as; never on developer machines. Isolated sessions get a private copy of each file for the length of a turn.",
+    "//credentialProfilesFile": "/etc/aoc/credential-profiles.json — { \"profiles\": { \"<name>\": { \"env\": { \"GIT_SSH_COMMAND\": \"ssh -i {{file:ssh-key}}\" }, \"files\": { \"ssh-key\": \"/etc/aoc/keys/<name>\" }, \"push\": { \"refs\": [\"refs/heads/feature/**\", \"refs/heads/uat/{ticketId}\"] }, \"session\": { \"env\": { \"NPM_READ_TOKEN\": \"...\" } } } } }, readable only by the user aocd runs as; never on developer machines. env/files are the credential: only aocd holds them, and it pushes with them for a session through the push gateway (a session runs `git push aoc <commit>:refs/heads/<branch>`; push.refs says which branches, never main, release/*, tags or deletions). A session is given only the profile's `session` part (model-visible: never a key that can push); its files come as private per-turn copies. See docs/runbooks/credential-isolation.md.",
     "//isolation": "user | none. Unset: user once sessionUser is set or in production, else none (sessions run as aocd's own user and can read its keys and databases: development only, warned on every launch).",
     "//sessionUser": "aoc-agent — unprivileged OS user every credentialed turn runs as (claude, hooks, MCP server, tools). aocd must run as root to switch to it.",
     "//readOnlySessionUser": "aoc-reader — OS user for read-only (triage) types, with its own uid and group; required in production.",
@@ -79,6 +79,11 @@
   "metering": {
     "rateCardFile": "config/rate-card.json",
     "closeDayAfterLocalTime": "00:15"
+  },
+
+  "compliance": {
+    "//": "ISO/IEC 42001 control mapping (provisional until the compliance lead stamps it). Like registryFile and metering.rateCardFile, the default falls back to the copy packaged with aocd (dist/config next to dist/bin, or the checkout's config/) when it is not next to this file; the startup banner names the file in use, or says the built-in default is.",
+    "mappingFile": "config/iso42001-mapping.json"
   },
 
   "fx": {
@@ -137,7 +142,7 @@
   },
 
   "selfModification": {
-    "//": "Repos that are AOC itself; changes under protectedPaths (governance, audit, credit core) are refused to agents and logged outside AOC (§13).",
+    "//": "Repos that are AOC itself; changes under protectedPaths (the Tier 1 core in docs/compliance/self-modification-boundary.md: governance, audit, credit, ingest, supervisor, build and rule files) are refused to agents and logged outside AOC (§13). Set aocRepoPaths to every clone of the AOC repo that managed sessions can reach; the guard protects no core code while it is empty.",
     "aocRepoPaths": [],
     "protectedPaths": [
       "packages/kernel/",
@@ -147,7 +152,28 @@
       "packages/mod-decisions/",
       "packages/mod-identity/",
       "packages/hooks/",
-      "config/"
+      "config/",
+      "packages/supervisor/",
+      "packages/mod-change/",
+      "packages/mod-sessions/",
+      "packages/mod-ledger/",
+      "packages/mod-metering/",
+      "packages/mod-registry/",
+      "packages/distill/",
+      "packages/mod-evidence/",
+      "packages/daemon/",
+      "packages/client/",
+      "packages/mcp-server/",
+      "packages/sidecar/",
+      "package.json",
+      "packages/*/package.json",
+      "pnpm-lock.yaml",
+      "pnpm-workspace.yaml",
+      "scripts/",
+      ".github/",
+      "CLAUDE.md",
+      "docs/spec/",
+      "docs/compliance/"
     ],
     "externalAuditLog": ".aoc/selfmod-audit.log"
   },

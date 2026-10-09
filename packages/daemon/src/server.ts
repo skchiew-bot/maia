@@ -42,7 +42,7 @@ export interface AocServer {
   webDir: string | null;
   /** End all open event streams so an HTTP server can finish closing. */
   closeStreams(): void;
-  /** closeStreams, then runtime.stop(): drain reactors, stop jobs, stop modules, close the DB. Idempotent. */
+  /** closeStreams, then runtime.stop(): drain reactors, stop modules, wait for running jobs, close the DB. Idempotent. */
   close(): Promise<void>;
 }
 

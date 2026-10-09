@@ -25,6 +25,7 @@ export const TOWER_HANDLES = [
   'session.liveness_changed',
   'session.ended',
   'usage.recorded',
+  'usage.reconciled',
   'throttle.hit',
   'throttle.cleared',
   // decisions
@@ -93,6 +94,7 @@ export const TOWER_TABLES = [
   'twr_sessions',
   'twr_liveness',
   'twr_usage',
+  'twr_usage_checks',
   'twr_throttle_idle',
   'twr_decisions',
   'twr_projects',
@@ -134,6 +136,8 @@ const DDL = [
     input INTEGER NOT NULL, output INTEGER NOT NULL, cache_read INTEGER NOT NULL, cache_w5 INTEGER NOT NULL, cache_w1 INTEGER NOT NULL,
     PRIMARY KEY (bucket_ms, session_id, model))`,
   `CREATE INDEX IF NOT EXISTS twr_usage_session ON twr_usage(session_id)`,
+  `CREATE TABLE IF NOT EXISTS twr_usage_checks (seq INTEGER PRIMARY KEY, ts_ms INTEGER NOT NULL, project_id TEXT, process_type TEXT, status TEXT NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS twr_usage_checks_ts ON twr_usage_checks(ts_ms)`,
   `CREATE TABLE IF NOT EXISTS twr_throttle_idle (seq INTEGER PRIMARY KEY, session_id TEXT NOT NULL, ts_ms INTEGER NOT NULL, idle_ms INTEGER NOT NULL)`,
   `CREATE INDEX IF NOT EXISTS twr_throttle_idle_ts ON twr_throttle_idle(ts_ms)`,
   // The recommendation's option id and the due time come from meta, so they survive crypto-shredding of the body.
@@ -416,6 +420,18 @@ function apply(db: DatabaseSync, e: StoredEvent, p: Payload): void {
         m.contextTokens,
         m.model,
         m.sessionId,
+      );
+      return;
+    }
+    case 'usage.reconciled': {
+      const m = metaOf(e, 'usage.reconciled');
+      run(
+        'INSERT OR IGNORE INTO twr_usage_checks (seq, ts_ms, project_id, process_type, status) VALUES (?, ?, ?, ?, ?)',
+        e.seq,
+        ts,
+        e.scope.projectId ?? null,
+        processTypeOf(m.sessionId),
+        m.status,
       );
       return;
     }

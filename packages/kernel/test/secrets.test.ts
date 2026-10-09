@@ -5,14 +5,26 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   rmSync,
   statSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { childEnv, createGitService, initRepo, loadOrCreateMasterKey } from '../src';
+import { AocConfigSchema } from '@aoc/contracts';
+import {
+  AocRuntime,
+  childEnv,
+  createGitService,
+  EventStore,
+  FakeClock,
+  initRepo,
+  loadOrCreateMasterKey,
+  silentLogger,
+  type Logger,
+} from '../src';
 
 const dirs: string[] = [];
 const temp = () => {
@@ -126,6 +138,176 @@ describe('KEK custody (R6)', () => {
     expect(loadOrCreateMasterKey(file, {}).key.equals(generated.key)).toBe(true);
     const fromEnv = hex();
     expect(loadOrCreateMasterKey(file, { AOC_MASTER_KEY: fromEnv }).key.toString('hex')).toBe(fromEnv);
+  });
+
+  describe('development never replaces the KEK of a data dir that already holds data', () => {
+    /** A data dir as aocd leaves it after real use: one sealed body, one event. */
+    function populated(): string {
+      const dataDir = join(temp(), 'data');
+      const store = new EventStore({
+        dataDir,
+        clock: new FakeClock('2026-10-09T01:00:00.000Z'),
+        log: silentLogger,
+        masterKey: randomBytes(32),
+      });
+      store.append({
+        type: 'session.nudged',
+        actor: { kind: 'human', id: 'usr_1' },
+        scope: { sessionId: 'ses_1' },
+        meta: { sessionId: 'ses_1' },
+        payload: { text: 'sealed under the original KEK' },
+        source: 'api',
+      });
+      store.close();
+      return dataDir;
+    }
+    /** Where a restored or mistyped configuration would point: no key there. */
+    const lostKey = () => join(temp(), 'keys', 'master.key');
+
+    it('refuses to generate a KEK beside aoc.db and bodies.db with data, and leaves nothing behind', () => {
+      const dataDir = populated();
+      const file = lostKey();
+      let message = '';
+      try {
+        loadOrCreateMasterKey(file, {}, { dataDir });
+      } catch (err) {
+        message = (err as Error).message;
+      }
+      expect(message).toContain('refusing to generate a new KEK');
+      expect(message).toContain('aoc.db holds events');
+      expect(message).toContain('bodies.db holds wrapped data keys');
+      expect(message).toContain(dataDir);
+      expect(message).toContain(file);
+      expect(message).toContain('docs/runbooks/key-custody.md');
+      expect(existsSync(file)).toBe(false);
+      expect(existsSync(dirname(file))).toBe(false);
+    });
+
+    it('refuses when only bodies.db remains (aoc.db lost) or only aoc.db remains (bodies.db lost)', () => {
+      const noChain = populated();
+      for (const f of readdirSync(noChain).filter((f) => f.startsWith('aoc.db'))) rmSync(join(noChain, f));
+      expect(() => loadOrCreateMasterKey(lostKey(), {}, { dataDir: noChain })).toThrow(
+        /bodies\.db holds wrapped data keys/,
+      );
+      const noBodies = populated();
+      for (const f of readdirSync(noBodies).filter((f) => f.startsWith('bodies.db')))
+        rmSync(join(noBodies, f));
+      expect(() => loadOrCreateMasterKey(lostKey(), {}, { dataDir: noBodies })).toThrow(
+        /aoc\.db holds events/,
+      );
+    });
+
+    it('fails closed on a database it cannot read', () => {
+      const dataDir = join(temp(), 'data');
+      mkdirSync(dataDir);
+      writeFileSync(join(dataDir, 'aoc.db'), 'this is not a database'.repeat(200));
+      const file = lostKey();
+      expect(() => loadOrCreateMasterKey(file, {}, { dataDir })).toThrow(/aoc\.db cannot be read/);
+      expect(existsSync(file)).toBe(false);
+    });
+
+    it('checks the key file directory when no data dir is given (the default <dataDir>/master.key)', () => {
+      const dataDir = populated();
+      expect(() => loadOrCreateMasterKey(join(dataDir, 'master.key'), {})).toThrow(
+        /refusing to generate a new KEK/,
+      );
+      expect(existsSync(join(dataDir, 'master.key'))).toBe(false);
+    });
+
+    it('still generates for a fresh data dir, also one that only holds empty databases', () => {
+      const fresh = join(temp(), 'data');
+      const first = loadOrCreateMasterKey(join(fresh, 'master.key'), {}, { dataDir: fresh });
+      expect(first.created).toBe(true);
+
+      const empty = join(temp(), 'data');
+      new EventStore({
+        dataDir: empty,
+        clock: new FakeClock(),
+        log: silentLogger,
+        masterKey: randomBytes(32),
+      }).close();
+      expect(readdirSync(empty)).toContain('aoc.db');
+      expect(loadOrCreateMasterKey(join(empty, 'master.key'), {}, { dataDir: empty }).created).toBe(true);
+    });
+
+    it('does not get in the way of a KEK that exists: a key file, or AOC_MASTER_KEY', () => {
+      const dataDir = populated();
+      const key = hex();
+      const file = join(temp(), 'kek');
+      writeFileSync(file, `${key}\n`, { mode: 0o600 });
+      expect(loadOrCreateMasterKey(file, {}, { dataDir }).key.toString('hex')).toBe(key);
+      const fromEnv = hex();
+      expect(
+        loadOrCreateMasterKey(lostKey(), { AOC_MASTER_KEY: fromEnv }, { dataDir }).key.toString('hex'),
+      ).toBe(fromEnv);
+    });
+
+    it('stops aocd at startup, before it touches the data', async () => {
+      const dataDir = populated();
+      const file = lostKey();
+      const config = AocConfigSchema.parse({ dataDir, keys: { masterKeyFile: file } });
+      await expect(
+        AocRuntime.create({ config, modules: [], clock: new FakeClock(), log: silentLogger }),
+      ).rejects.toThrow(/refusing to generate a new KEK.*docs\/runbooks\/key-custody\.md/s);
+      expect(existsSync(file)).toBe(false);
+      expect(existsSync(join(dataDir, 'master.key'))).toBe(false);
+    });
+  });
+
+  describe('development: a KEK from AOC_MASTER_KEY is accepted, and warned about at startup', () => {
+    /** Starts a runtime on a fresh data dir with `env`, returning every warning it logged. */
+    async function startWith(env: Record<string, string>, masterKeyFile?: string): Promise<string[]> {
+      const warnings: string[] = [];
+      const log: Logger = {
+        ...silentLogger,
+        warn: (msg, fields) => void warnings.push(`${msg} ${JSON.stringify(fields ?? {})}`),
+        child: () => log,
+      };
+      const config = AocConfigSchema.parse({
+        dataDir: join(temp(), 'data'),
+        keys: masterKeyFile ? { masterKeyFile } : {},
+      });
+      const rt = await AocRuntime.create({ config, modules: [], clock: new FakeClock(), log, env });
+      await rt.stop();
+      return warnings;
+    }
+
+    it('logs a warning that names the variable and the runbook, and never the key itself', async () => {
+      const key = hex();
+      const warnings = await startWith({ AOC_MASTER_KEY: key });
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toContain('AOC_MASTER_KEY');
+      expect(warnings[0]).toContain('development only');
+      expect(warnings[0]).toContain('docs/runbooks/key-custody.md');
+      expect(warnings.join('\n')).not.toContain(key);
+    });
+
+    it('is quiet when the KEK comes from a file, generated or provided', async () => {
+      expect(await startWith({})).toEqual([]);
+      const file = join(temp(), 'kek');
+      writeFileSync(file, `${hex()}\n`, { mode: 0o600 });
+      expect(await startWith({}, file)).toEqual([]);
+    });
+
+    it('production still refuses it', async () => {
+      const dir = temp();
+      const kek = join(dir, 'kek');
+      writeFileSync(kek, `${hex()}\n`, { mode: 0o400 });
+      const config = AocConfigSchema.parse({
+        mode: 'production',
+        dataDir: join(dir, 'data'),
+        keys: { masterKeyFile: kek },
+      });
+      await expect(
+        AocRuntime.create({
+          config,
+          modules: [],
+          clock: new FakeClock(),
+          log: silentLogger,
+          env: { AOC_MASTER_KEY: hex() },
+        }),
+      ).rejects.toThrow(/AOC_MASTER_KEY is refused/);
+    });
   });
 
   describe('production', () => {

@@ -8,9 +8,10 @@ import { z } from 'zod';
 import { ROLES } from '../domain';
 import { defineEvent, meta, payload, zHash, zId, zIso, zLabel } from './define';
 
-export const IDENTITY_TOKEN_KINDS = ['user', 'web_session', 'ingest_session', 'observer', 'system'] as const;
+/** ingest_sidecar: a managed session's sidecar (G-44), never in the claude environment. */
+export const IDENTITY_TOKEN_KINDS = ['user', 'web_session', 'ingest_session', 'ingest_sidecar', 'observer', 'system'] as const;
 /** Kind prefix + the first 8 chars of the random body. Displayed to identify a token; ~200 secret bits remain. */
-export const zIdentityTokenPrefix = z.string().regex(/^aoc_[uwios]_[0-9A-Za-z]{8}$/, 'token prefix');
+export const zIdentityTokenPrefix = z.string().regex(/^aoc_[uwicos]_[0-9A-Za-z]{8}$/, 'token prefix');
 
 export const IDENTITY_EVENTS = [
   defineEvent({
