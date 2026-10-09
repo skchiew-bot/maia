@@ -52,22 +52,31 @@ sequenceDiagram
   AP->>AOC: review the diff and justification, approve with passkey
   AOC->>AOC: breakglass.approved, post-incident change raised, due in 24 h
   AOC->>SUP: promote the approved SHA
-  SUP->>GH: update main as the machine user
+  SUP->>GH: push the approved SHA to main from the service clone, as the machine user
   SUP->>AOC: promotion.completed with breakglass true
   IL->>AOC: confirm production recovered
   Note over AOC: within 24 h the post-incident change record must be completed
 ```
 
 1. **Declare** a Sev-1 and name the incident lead.
-2. **Prepare the fix:**
-   - a hotfix through a managed session (the normal discovery or bug-fix types, which keeps credential isolation
-     intact), pushed to a branch; **or**
-   - the pinned tag of the last known-good state (`git.ref_pinned`). Rolling back to a pinned state through
-     break-glass skips the rollback verification step, so prefer the normal
-     [rollback](../architecture.md#132-rollback-break-glass-and-promotion) when production can wait for it.
-3. **Invoke** from the console or CLI (permission `breakglass.invoke`, held by Builders and the Approver), with:
+2. **Prepare the fix.** Break-glass promotes a commit as a **fast-forward** of the protected branch: AOC never
+   rewrites `main`, so a commit that is not a descendant of the branch's current head is refused after approval
+   (`promotion.refused {reason: not_fast_forward}`, `main` unchanged).
+   - Make the hotfix through a managed session (the normal discovery or bug-fix types, which keeps credential
+     isolation intact), **or** on a developer machine. Either way the commit must be in the **project's repository
+     on the AOC host**: AOC resolves the ref there and copies the commit into its service clone, and does not fetch
+     from GitHub. A managed session that works in the project's checkout, or in a worktree of it, leaves its
+     commits there.
+   - To return to an earlier state, a pinned tag (`git.ref_pinned`) is not promotable, because it is an ancestor of
+     `main`. Either use the [rollback](../architecture.md#132-rollback-break-glass-and-promotion), which verifies
+     the target first and needs its own approval, or make a revert commit on top of `main` and break-glass that.
+3. **Invoke** from the console (the Rollbacks page) or with `POST /api/breakglass`; the `aoc` CLI has no break-glass
+   command. The permission is `breakglass.invoke`, held by Builders and the Approver. Give:
    - the project;
-   - the ref and SHA to promote;
+   - the ref to promote (a commit, branch or tag). AOC resolves it to a SHA and records both. It refuses at once,
+     with 422, a ref that does not resolve (`unknown_ref`), a commit it cannot copy (`commit_unavailable`) and a
+     project whose repository has remotes but for which AOC has no promotion remote
+     (`promotion_remote_unconfigured`, [operations §8.1](operations.md#81-upgrade-notes-changes-that-need-an-operator-action) A3);
    - a justification: what is down, the user impact, why the normal path is too slow, the fix, and how the result
      will be checked.
 
@@ -76,8 +85,10 @@ sequenceDiagram
 4. **The Approver decides** after reading the diff and the justification. Approval needs a WebAuthn passkey bound to
    this decision and option. AOC records `breakglass.approved` with the id of the automatically raised
    **post-incident change record** and its due time (24 h).
-5. **Promotion.** The supervisor moves `main` using its machine identity. The provenance check is waived (this is
-   the sole exception, §14) and recorded as such: `promotion.completed {breakglass: true}`.
+5. **Promotion.** The supervisor pushes the approved SHA to the protected remote from the service-owned clone with
+   the promotion credential profile (`prod-promote` by default), which is its machine identity. The push carries a
+   lease on the head AOC last saw; the project repository's branch is updated afterwards. The provenance check is
+   waived (this is the sole exception, §14) and recorded as such: `promotion.completed {breakglass: true}`.
 6. **Confirm recovery.** Monitor the product. If the fix did not work, raise another break-glass (each one is
    recorded separately), or roll back.
 7. **Communicate** to affected users and other stakeholders (ISO 42001 A.8.4, communication of incidents). AOC
@@ -138,4 +149,8 @@ A complete break-glass leaves these events in the chain, all linked by ids, so a
 - `breakglass.post_incident_overdue`, if the 24 h was missed.
 
 An emergency that does not go through ends differently, and is just as visible: `breakglass.rejected` (not
-approved), or `promotion.failed` (approved, but the push could not be executed; main is left unchanged).
+approved), `promotion.refused` (approved, but the SHA is not a fast-forward of the protected branch), or
+`promotion.failed` (approved, but the push could not be executed, for example `push_failed` or
+`default_branch_moved`; main is left unchanged). Invoke again with a corrected ref: each break-glass is recorded
+separately. An approved break-glass raises its post-incident record, due 24 h after approval, whether or not its
+promotion went through.
