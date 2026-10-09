@@ -4,6 +4,8 @@
  * projection at once and then fails every rebuild on it, so aocd could not start again.
  */
 import { afterEach, describe, expect, it } from 'vitest';
+import { z } from 'zod';
+import { EVENT_CATALOG } from '@aoc/contracts';
 import { createTestRuntime, type TestRuntime } from '@aoc/kernel';
 import { createSessionsModule } from '../src';
 
@@ -122,26 +124,35 @@ describe('a log that already holds an unreadable timestamp still projects and re
   it('counts the batch on the day it arrived instead of failing the projector (logs written before ingest checked)', async () => {
     await setup();
     const store = t.rt.store;
-    store.append({
-      type: 'usage.recorded',
-      actor: { kind: 'agent', id: 'ses_h' },
-      scope: { sessionId: 'ses_h' },
-      meta: {
-        sessionId: 'ses_h',
-        model: 'claude-opus-5-5',
-        inputTokens: 5,
-        outputTokens: 7,
-        cacheReadTokens: 0,
-        cacheWrite5mTokens: 0,
-        cacheWrite1hTokens: 0,
-        messages: 1,
-        contextTokens: 9,
-        firstAt: 'not-a-date-at-all',
-        lastAt: 'not-a-date-at-all',
-      },
-      payload: { messageIds: ['msg_legacy'] },
-      source: 'sidecar',
-    });
+    // The catalog now refuses an unparseable instant (zIso), so write the event the way those older logs hold it:
+    // with the usage meta schema lifted for this one append.
+    const def = EVENT_CATALOG.get('usage.recorded')! as { meta: z.ZodTypeAny };
+    const strict = def.meta;
+    def.meta = z.object({}).passthrough();
+    try {
+      store.append({
+        type: 'usage.recorded',
+        actor: { kind: 'agent', id: 'ses_h' },
+        scope: { sessionId: 'ses_h' },
+        meta: {
+          sessionId: 'ses_h',
+          model: 'claude-opus-5-5',
+          inputTokens: 5,
+          outputTokens: 7,
+          cacheReadTokens: 0,
+          cacheWrite5mTokens: 0,
+          cacheWrite1hTokens: 0,
+          messages: 1,
+          contextTokens: 9,
+          firstAt: 'not-a-date-at-all',
+          lastAt: 'not-a-date-at-all',
+        },
+        payload: { messageIds: ['msg_legacy'] },
+        source: 'sidecar',
+      });
+    } finally {
+      def.meta = strict;
+    }
     healthy();
     const row = () => store.db.prepare('SELECT date, output FROM sess_usage_daily WHERE session_id = ?').get('ses_h');
     expect(row()).toEqual({ date: '2026-10-09', output: 7 });

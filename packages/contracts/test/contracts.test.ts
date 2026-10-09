@@ -125,6 +125,24 @@ describe('event catalog', () => {
     expect(validateEvent('session.nudged', { sessionId: 'ses_1' }, { text: 'x' })).toEqual([]);
     expect(validateEvent('nope.nope', {}, null)[0]).toMatch(/unknown/);
   });
+
+  it('refuses an instant that does not parse, so no projector ever meets one', () => {
+    const usage = (at: string) => ({
+      sessionId: 'ses_1',
+      model: 'claude-opus-5-5',
+      inputTokens: 1,
+      outputTokens: 1,
+      cacheReadTokens: 0,
+      cacheWrite5mTokens: 0,
+      cacheWrite1hTokens: 0,
+      messages: 1,
+      contextTokens: 1,
+      firstAt: at,
+      lastAt: at,
+    });
+    expect(validateEvent('usage.recorded', usage('2026-10-09T05:42:00.000Z'), { messageIds: ['msg_1'] })).toEqual([]);
+    expect(validateEvent('usage.recorded', usage('not-a-date-at-all'), { messageIds: ['msg_1'] })[0]).toMatch(/not an ISO instant/);
+  });
 });
 
 describe('diagnosis root-cause class', () => {
