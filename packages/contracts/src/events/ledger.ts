@@ -1,7 +1,7 @@
 /** Build-ledger events (owner: mod-ledger). Plan manifests, tasks with evidence, phases, drift, enhancements (§1, §4, §9). */
 import { z } from 'zod';
 import { EVIDENCE_KINDS, PLAYBOOK_STEP_STATES, TASK_SIZES } from '../mcp';
-import { defineEvent, meta, payload, zId, zLabel, zNonNeg } from './define';
+import { defineEvent, meta, payload, zHash, zId, zLabel, zNonNeg, zSha } from './define';
 
 const task = z.object({ id: zId, title: z.string(), size: z.enum(TASK_SIZES), acceptance: z.string().optional() });
 
@@ -38,7 +38,13 @@ export const LEDGER_EVENTS = [
     type: 'thread.writer_released',
     owner: 'ledger',
     description: 'The active writer released the thread.',
-    meta: meta({ threadId: zId, sessionId: zId, reason: z.enum(['ended', 'rollover', 'failed', 'stopped']) }),
+    meta: meta({
+      threadId: zId,
+      sessionId: zId,
+      reason: z.enum(['ended', 'rollover', 'failed', 'stopped']),
+      /** true when auto-released because the holder's session had already ended/failed/retired. */
+      stale: z.boolean().optional(),
+    }),
     payload: null,
   }),
   defineEvent({
@@ -53,6 +59,13 @@ export const LEDGER_EVENTS = [
       phaseCount: z.number().int().min(1),
       taskCount: z.number().int().min(1),
       totalWeight: zNonNeg,
+      /** Session owner the tasks are attributed to (§9: work lands under the developer's name). */
+      ownerId: zId.nullable().optional(),
+      /** HEAD and working-tree fingerprint at declaration: baseline for evidence and file-change checks. */
+      baseHead: zSha.nullable().optional(),
+      treeFingerprint: zHash.nullable().optional(),
+      /** Open tasks of a predecessor writer session in the same thread taken over by re-declaring their ids (rollover). */
+      carriedOver: z.number().int().min(0).optional(),
     }),
     payload: payload({ summary: z.string().optional(), phases: z.array(z.object({ id: zId, name: z.string(), tasks: z.array(task) })) }),
   }),
@@ -69,6 +82,8 @@ export const LEDGER_EVENTS = [
       resized: z.number().int().min(0),
       prevTotalWeight: zNonNeg,
       newTotalWeight: zNonNeg,
+      ownerId: zId.nullable().optional(),
+      carriedOver: z.number().int().min(0).optional(),
     }),
     payload: payload({
       reason: z.string(),
@@ -91,6 +106,11 @@ export const LEDGER_EVENTS = [
       evidenceVerified: z.boolean(),
       flag: z.enum(['no_file_change', 'evidence_unverified']).nullable(),
       fileChangesSinceLast: z.number().int().min(0),
+      /** Working-tree state at close (baseline for the next close's file-change check). */
+      headSha: zSha.nullable().optional(),
+      treeFingerprint: zHash.nullable().optional(),
+      /** Working tree / HEAD changed since the previous close (catches Bash-made changes). */
+      treeChanged: z.boolean().optional(),
     }),
     payload: payload({ evidence: z.object({ kind: z.enum(EVIDENCE_KINDS), ref: z.string(), detail: z.string().optional() }) }),
   }),
@@ -110,6 +130,8 @@ export const LEDGER_EVENTS = [
       projectId: zId,
       kind: z.enum(['off_plan_change', 'playbook_deviation', 'scope_growth', 'overrun']),
       severity: z.enum(['low', 'medium', 'high']),
+      /** The overrunning task (overrun only). */
+      taskId: zId.nullable().optional(),
     }),
     payload: payload({ detail: z.string() }),
   }),
@@ -124,7 +146,15 @@ export const LEDGER_EVENTS = [
     type: 'playbook.step_reported',
     owner: 'ledger',
     description: 'Agent reported progress through a playbook step.',
-    meta: meta({ sessionId: zId, playbookId: zId.nullable(), state: z.enum(PLAYBOOK_STEP_STATES) }),
+    meta: meta({
+      sessionId: zId,
+      playbookId: zId.nullable(),
+      state: z.enum(PLAYBOOK_STEP_STATES),
+      projectId: zId.nullable().optional(),
+      /** Matched step of the active playbook (null = not in the playbook / no active playbook). */
+      stepId: zId.nullable().optional(),
+      stepIndex: z.number().int().min(0).nullable().optional(),
+    }),
     payload: payload({ step: z.string(), note: z.string().optional() }),
   }),
 ] as const;
