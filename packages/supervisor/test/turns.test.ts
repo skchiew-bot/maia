@@ -280,6 +280,7 @@ describe('turn end: crash, auto-continue, completion, credit cap', () => {
     await h.waitLifecycle(id, 'ended');
     // The session token is in the model's environment: it dies with the session (G-44).
     expect(h.t.identity!.verifyIngestToken(h.callsFor(id)[0]!.env.AOC_INGEST_TOKEN!)).toBeNull();
+    await h.waitFor(() => h!.sidecarCalls().length > 0, 'the fake sidecar to record its start');
     const token = h.sidecarCalls()[0]!.env.AOC_INGEST_TOKEN!;
     // The sidecar reports the last turn's usage only after claude has exited: refusing it would lose that usage.
     expect(h.t.identity!.verifyIngestToken(token)).toMatchObject({ kind: 'sidecar', sessionId: id });
