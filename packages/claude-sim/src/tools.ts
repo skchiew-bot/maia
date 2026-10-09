@@ -11,6 +11,8 @@ export interface ToolOutcome {
   content: string | McpContentBlock[];
   isError: boolean;
   toolUseResult: unknown;
+  /** What PostToolUse hooks get as `tool_response` when it is not `toolUseResult` (MCP results with structuredContent). */
+  hookResponse?: unknown;
   /** Value stored under the step's `saveAs`. */
   saveValue?: unknown;
   /** Line counts of a file change (the cost-state ledger tracks them). */

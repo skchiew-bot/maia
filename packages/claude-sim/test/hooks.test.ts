@@ -132,23 +132,30 @@ describe('hooks', () => {
       session_id: SESSION_A,
       transcript_path: transcriptFile(box, SESSION_A),
       cwd: box.cwd,
-      permission_mode: 'acceptEdits',
     };
     for (const call of calls) expect(call).toMatchObject(common);
     const [start, submit, pre, post, batch, , failure, , notification, compact, compactStart, stop, end] =
       calls;
-    expect(start).toEqual({
+    // Observed on 2.1.295: a fresh SessionStart carries only its source — no model, no permission mode.
+    expect(start).toEqual({ ...common, hook_event_name: 'SessionStart', source: 'startup' });
+    expect(submit).toEqual({
       ...common,
-      hook_event_name: 'SessionStart',
-      source: 'startup',
-      model: 'claude-sonnet-5-5',
+      prompt_id: expect.any(String),
+      permission_mode: 'acceptEdits',
+      hook_event_name: 'UserPromptSubmit',
+      prompt: 'hello hooks',
     });
-    expect(submit).toMatchObject({ prompt: 'hello hooks', source: 'sdk', prompt_id: expect.any(String) });
     for (const call of calls.slice(1)) expect(call!.prompt_id).toBe(submit!.prompt_id);
+    expect(end).not.toHaveProperty('permission_mode');
+    // Tool and Stop events carry the permission mode and the effort level.
+    for (const call of [pre, post, batch, failure, stop])
+      expect(call).toMatchObject({ permission_mode: 'acceptEdits', effort: { level: 'medium' } });
     const file = path.join(box.cwd, 'notes.txt');
     expect(pre).toEqual({
       ...common,
       prompt_id: submit!.prompt_id,
+      permission_mode: 'acceptEdits',
+      effort: { level: 'medium' },
       hook_event_name: 'PreToolUse',
       tool_name: 'Write',
       tool_input: { file_path: file, content: 'one\n' },
@@ -166,7 +173,8 @@ describe('hooks', () => {
           tool_name: 'Write',
           tool_input: pre!.tool_input,
           tool_use_id: pre!.tool_use_id,
-          tool_response: post!.tool_response,
+          // PostToolBatch carries the rendered result: the text the model was given.
+          tool_response: `File created successfully at: ${file}`,
         },
       ],
     });
@@ -275,7 +283,11 @@ describe('hooks', () => {
     });
     expect(run.code).toBe(0);
     const [bash, write, edit] = toolResults(SESSION_A);
-    expect(bash).toMatchObject({ is_error: true, content: 'Pushing to main needs a decision card' });
+    // The model reads a JSON deny as "PreToolUse:<tool> hook error: <reason>" (observed on 2.1.295).
+    expect(bash).toMatchObject({
+      is_error: true,
+      content: 'PreToolUse:Bash hook error: Pushing to main needs a decision card',
+    });
     expect(write).toMatchObject({ is_error: true, content: 'Writing here needs approval' });
     expect(edit).toMatchObject({ is_error: false });
     expect(fs.readFileSync(path.join(box.cwd, 'b.txt'), 'utf8')).toBe('b');

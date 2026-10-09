@@ -119,6 +119,7 @@ describe('claude argv', () => {
       'RULES',
       '--allowedTools',
       'mcp__aoc',
+      'Bash',
       'Bash(git log:*)',
       '--disallowedTools',
       'WebFetch',
@@ -158,11 +159,22 @@ describe('claude argv', () => {
   });
 
   it('always allows the AOC MCP server and denies file-changing tools to read-only types', () => {
-    expect(toolPolicy(type({})).allowedTools).toEqual(['mcp__aoc']);
     expect(toolPolicy(type({})).disallowedTools).toEqual([]);
     const ro = toolPolicy(type({ class: 'triage', readOnly: true, tools: { deny: ['Bash'] } }));
+    expect(ro.allowedTools).toEqual(['mcp__aoc']);
     expect(ro.disallowedTools).toEqual(['Bash', ...FILE_CHANGING_TOOLS]);
     expect(ro.builtinTools).toBeUndefined();
+  });
+
+  // Claude Code 2.1.295 under -p (acceptEdits): `git add`, `git commit`, `npm test` all answer "This command requires
+  // approval" and nobody can approve, so a writer without the grant cannot commit or run its tests (real-CLI check).
+  it('grants Bash to writer types (print mode cannot prompt), never to read-only ones, and respects a registry deny', () => {
+    expect(toolPolicy(type({})).allowedTools).toEqual(['mcp__aoc', 'Bash']);
+    expect(toolPolicy(type({ tools: { allow: ['Bash', 'WebFetch'] } })).allowedTools).toEqual(['mcp__aoc', 'Bash', 'WebFetch']);
+    expect(toolPolicy(type({ class: 'triage', readOnly: true })).allowedTools).toEqual(['mcp__aoc']);
+    const noShell = toolPolicy(type({ tools: { deny: ['Bash'] } }));
+    expect(noShell.allowedTools).toEqual(['mcp__aoc']);
+    expect(noShell.disallowedTools).toEqual(['Bash']);
   });
 
   it('redacts the system prompt and the prompt from the recorded argv', () => {

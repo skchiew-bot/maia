@@ -18,12 +18,19 @@ export interface ToolPolicy {
 }
 
 /**
- * MCP tools are denied in -p mode unless allowed, so the AOC server is always allowed (server-level rule).
- * Read-only types additionally deny every file-changing tool, whatever the registry says (defence in depth).
+ * Nobody can answer a permission prompt under -p, so whatever is not allowed up front is denied. Verified on 2.1.295
+ * (acceptEdits): MCP tools are denied unless allowed, so the AOC server is always allowed (server-level rule); and so
+ * is every Bash command beyond read-only ones (`ls`, `git status`, ...) and plain file commands (`touch`, `mv`, ...):
+ * `git add`, `git commit`, `npm test` all answer "This command requires approval". A writer that cannot commit or run
+ * its tests cannot do the work, and the gate on its commands is AOC's own (PreToolUse guards, credential isolation —
+ * a hook deny still wins over an allow rule), so writer types are granted Bash unless their registry entry denies it.
+ * Read-only types never get it and additionally deny every file-changing tool, whatever the registry says (defence in depth).
  */
 export function toolPolicy(t: ProcessType): ToolPolicy {
-  const allowed = unique([`mcp__${AOC_MCP_SERVER_NAME}`, ...(t.tools.allow ?? [])]);
-  const disallowed = unique([...(t.tools.deny ?? []), ...(t.readOnly ? FILE_CHANGING_TOOLS : [])]);
+  const deny = t.tools.deny ?? [];
+  const bash = !t.readOnly && !deny.includes('Bash') ? ['Bash'] : [];
+  const allowed = unique([`mcp__${AOC_MCP_SERVER_NAME}`, ...bash, ...(t.tools.allow ?? [])]);
+  const disallowed = unique([...deny, ...(t.readOnly ? FILE_CHANGING_TOOLS : [])]);
   return {
     ...(t.builtinTools ? { builtinTools: t.builtinTools } : {}),
     allowedTools: allowed,

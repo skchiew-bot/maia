@@ -341,7 +341,9 @@ describe('turn-ending instructions', () => {
     expect(END_TURN_FOR_DECISION).toBe(
       'END YOUR TURN NOW. The supervisor will resume this session with the human answer.',
     );
-    expect(r.structuredContent).toEqual(reply);
+    // The real CLI shows the model only the structured data, so the order is in it too, first.
+    expect(r.structuredContent).toEqual({ notice: END_TURN_FOR_DECISION, ...reply });
+    expect(Object.keys(r.structuredContent as object)[0]).toBe('notice');
   });
 
   it('a rejected request_decision does not tell the agent to wait for an answer', async () => {
@@ -373,7 +375,12 @@ describe('turn-ending instructions', () => {
       expect(textOf(r)).toBe(
         `${pretty(reply)}\n\nSTOP — AOC task boundary (${reason}). Do not start another task.\n${instruction}`,
       );
-      expect(r.structuredContent).toEqual(reply);
+      // ... and what the real CLI actually shows the model (the structured data) carries the order as its first key.
+      expect(r.structuredContent).toEqual({
+        notice: `STOP — AOC task boundary (${reason}). Do not start another task.\n${instruction}`,
+        ...reply,
+      });
+      expect(Object.keys(r.structuredContent as object)[0]).toBe('notice');
     },
   );
 
@@ -382,5 +389,6 @@ describe('turn-ending instructions', () => {
     const d = await daemon(() => ({ status: 200, body: reply }));
     const r = await call(await connect(d.url), 'task_done', VALID.task_done);
     expect(textOf(r)).toBe(pretty(reply));
+    expect(r.structuredContent).toEqual(reply);
   });
 });

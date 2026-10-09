@@ -30,8 +30,12 @@ export interface PermissionPolicy {
 
 export type HookVerdict = { behavior: 'allow' } | { behavior: 'deny' | 'ask'; message: string };
 
+/** Why the permission layer itself refused (`source: 'prompt'`): the `decision_reason_type` of the stream's permission_denied line. */
+export type DenialReason = 'other' | 'subcommandResults';
+
 export type PermissionVerdict =
-  { behavior: 'allow' } | { behavior: 'deny'; message: string; source: 'rule' | 'hook' | 'prompt' };
+  | { behavior: 'allow' }
+  | { behavior: 'deny'; message: string; source: 'rule' | 'hook' | 'prompt'; reason?: DenialReason };
 
 /** Split "Bash(git log:*),Edit Read" into rules, keeping commas and spaces inside parentheses. */
 export function splitRuleList(values: readonly string[]): string[] {
@@ -195,19 +199,105 @@ export function isWholeToolDenied(policy: PermissionPolicy, toolName: string): b
 function allowedByRules(policy: PermissionPolicy, toolName: string, input: Record<string, unknown>): boolean {
   const candidates = policy.allow.filter((rule) => toolMatches(rule, toolName));
   if (candidates.some((rule) => rule.content === undefined)) return true;
-  if (toolName === 'Bash') {
-    // Every sub-command of a compound command needs its own grant.
-    const parts = splitShellCommand(String(input.command ?? ''));
-    return (
-      parts.length > 0 &&
-      parts.every((part) => candidates.some((rule) => bashPatternMatches(rule.content!, part)))
-    );
-  }
   return candidates.some((rule) => contentMatches(rule, toolName, input, policy, 'all'));
+}
+
+// ── Bash under print mode (observed on Claude Code 2.1.295, research "Verified against the real CLI") ──────────────
+// Nobody can answer a prompt, so a command runs only if it is read-only, a plain file command that acceptEdits waves
+// through inside the working directory, or covered by an allow rule. Committing, running tests or scripts, curl and
+// `bash -c` all answer "This command requires approval".
+
+/** Commands Claude Code runs without asking in every mode. */
+const READ_ONLY_COMMANDS = new Set([
+  'ls', 'cat', 'head', 'tail', 'wc', 'stat', 'grep', 'egrep', 'fgrep', 'diff', 'du', 'df', 'echo', 'strings', 'hexdump',
+  'od', 'nl', 'cut', 'column', 'tr', 'tac', 'rev', 'cmp', 'basename', 'dirname', 'realpath', 'readlink', 'sha256sum',
+  'sha1sum', 'md5sum', 'cd', 'pwd', 'which', 'whoami', 'true', 'false',
+]);
+const READ_ONLY_GIT = new Set([
+  'status', 'diff', 'log', 'show', 'branch', 'rev-parse', 'ls-files', 'blame', 'describe', 'shortlog', 'ls-tree',
+  'cat-file', 'rev-list',
+]);
+/** Tools whose version query is read-only (`curl --version` and `make --version` still need approval). */
+const VERSION_QUERY = new Set(['node', 'python', 'python3', 'git']);
+/** What acceptEdits approves inside the working directory (Claude Code's own list). */
+const ACCEPT_EDITS_COMMANDS = new Set(['mkdir', 'touch', 'rm', 'rmdir', 'mv', 'cp', 'sed']);
+
+function tokenize(part: string): string[] {
+  const out: string[] = [];
+  const re = /"((?:[^"\\]|\\.)*)"|'([^']*)'|(\S+)/g;
+  for (let m = re.exec(part); m; m = re.exec(part)) out.push(m[1] ?? m[2] ?? m[3]!);
+  return out;
+}
+
+function isReadOnlyCommand(tokens: string[]): boolean {
+  const [cmd, sub] = tokens;
+  if (!cmd) return false;
+  if (tokens.length === 2 && (sub === '--version' || sub === '-v') && VERSION_QUERY.has(cmd)) return true;
+  if (cmd === 'git') return sub !== undefined && READ_ONLY_GIT.has(sub);
+  if (cmd === 'find') return !tokens.some((t) => /^-(delete|exec|execdir|ok|okdir|fprint0?|fls|fprintf)$/.test(t));
+  return READ_ONLY_COMMANDS.has(cmd);
+}
+
+/** A command's output redirections (file targets) and its remaining words. */
+function redirectTargets(tokens: string[]): { files: string[]; rest: string[] } {
+  const files: string[] = [];
+  const rest: string[] = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i]!;
+    const m = /^(\d?>>?|&>>?)(.*)$/.exec(t);
+    if (!m) {
+      rest.push(t);
+      continue;
+    }
+    const target = m[2] || tokens[++i] || '';
+    if (!target.startsWith('&') && target !== '/dev/null') files.push(target);
+  }
+  return { files, rest };
 }
 
 function insideWorkingDirs(policy: PermissionPolicy, file: string | undefined): boolean {
   return file === undefined || policy.workingDirs.some((dir) => isWithin(dir, file));
+}
+
+/** One sub-command that runs without a grant: read-only, or a file command acceptEdits approves inside the working directory. */
+function bashPartNeedsNoGrant(policy: PermissionPolicy, part: string): boolean {
+  const { files, rest } = redirectTargets(tokenize(part));
+  const inCwd = (p: string) => insideWorkingDirs(policy, path.resolve(policy.cwd, p));
+  const acceptEdits = policy.mode === 'acceptEdits' || policy.mode === 'auto';
+  if (files.length > 0 && !(acceptEdits && files.every(inCwd))) return false;
+  if (isReadOnlyCommand(rest)) return true;
+  const [cmd, ...args] = rest;
+  if (!acceptEdits || !cmd || !ACCEPT_EDITS_COMMANDS.has(cmd)) return false;
+  return args.filter((a) => !a.startsWith('-')).every(inCwd);
+}
+
+function bashDenial(policy: PermissionPolicy, parts: string[], pending: string[]): PermissionVerdict {
+  if (policy.mode === 'dontAsk') {
+    return {
+      behavior: 'deny',
+      message:
+        "Permission to use Bash has been denied because Claude Code is running in don't ask mode. If you believe this capability is essential to complete the user's request, STOP and explain to the user what you were trying to do and why you need this permission. Let the user decide how to proceed.",
+      source: 'prompt',
+    };
+  }
+  if (parts.length > 1) {
+    return {
+      behavior: 'deny',
+      message: `This Bash command contains multiple operations. The following ${pending.length === 1 ? 'part requires' : 'parts require'} approval: ${pending.join(', ')}`,
+      source: 'prompt',
+      reason: 'subcommandResults',
+    };
+  }
+  return { behavior: 'deny', message: 'This command requires approval', source: 'prompt', reason: 'other' };
+}
+
+function decideBash(policy: PermissionPolicy, input: Record<string, unknown>): PermissionVerdict {
+  const parts = splitShellCommand(String(input.command ?? ''));
+  const candidates = policy.allow.filter((rule) => toolMatches(rule, 'Bash'));
+  const granted = (part: string) =>
+    candidates.some((rule) => rule.content === undefined || bashPatternMatches(rule.content, part));
+  const pending = parts.filter((part) => !granted(part) && !bashPartNeedsNoGrant(policy, part));
+  return parts.length > 0 && pending.length === 0 ? { behavior: 'allow' } : bashDenial(policy, parts, pending);
 }
 
 export function decidePermission(
@@ -230,15 +320,17 @@ export function decidePermission(
   // Only bypassPermissions skips grants; MCP tools in particular need an allow rule otherwise.
   if (policy.mode === 'bypassPermissions') return { behavior: 'allow' };
 
+  if (toolName === 'Bash') return decideBash(policy, input);
   const file = targetPath(toolName, input, policy.cwd);
   if (NO_PERMISSION_TOOLS.includes(toolName) && insideWorkingDirs(policy, file)) return { behavior: 'allow' };
   const editsAccepted = policy.mode === 'acceptEdits' || policy.mode === 'auto';
   if (editsAccepted && FILE_EDIT_TOOLS.includes(toolName) && insideWorkingDirs(policy, file))
     return { behavior: 'allow' };
   if (allowedByRules(policy, toolName, input)) return { behavior: 'allow' };
+  const what = FILE_EDIT_TOOLS.includes(toolName) && file !== undefined ? `write to ${file}` : `use ${toolName}`;
   return {
     behavior: 'deny',
-    message: `Claude requested permissions to use ${toolName}, but you haven't granted it yet.`,
+    message: `Claude requested permissions to ${what}, but you haven't granted it yet.`,
     source: 'prompt',
   };
 }

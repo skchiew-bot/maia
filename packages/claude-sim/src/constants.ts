@@ -51,6 +51,7 @@ export const HOOK_EVENTS = [
   'PostToolUse',
   'PostToolUseFailure',
   'PostToolBatch',
+  'PermissionRequest',
   'Notification',
   'Stop',
   'StopFailure',
@@ -64,6 +65,7 @@ export const TOOL_HOOK_EVENTS: ReadonlySet<HookEventName> = new Set([
   'PreToolUse',
   'PostToolUse',
   'PostToolUseFailure',
+  'PermissionRequest',
 ]);
 
 export const DEFAULT_HOOK_TIMEOUT_SECONDS = 60;

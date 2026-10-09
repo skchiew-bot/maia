@@ -132,6 +132,18 @@ class TurnStop extends Error {
 const MAX_STEPS_PER_TURN = 10_000;
 /** Consecutive Stop-hook blocks honoured before the turn ends regardless (Claude Code relies on stop_hook_active). */
 const MAX_STOP_HOOK_CONTINUATIONS = 3;
+/** Observed on 2.1.295 (research §4.2): lifecycle events (SessionStart/End, compaction, subagent start) carry neither field. */
+const PERMISSION_MODE_EVENTS: ReadonlySet<HookEventName> = new Set([
+  'UserPromptSubmit',
+  'PreToolUse',
+  'PostToolUse',
+  'PostToolUseFailure',
+  'PostToolBatch',
+  'PermissionRequest',
+  'Stop',
+  'StopFailure',
+]);
+const EFFORT_EVENTS: ReadonlySet<HookEventName> = new Set([...PERMISSION_MODE_EVENTS].filter((e) => e !== 'UserPromptSubmit'));
 const SCENARIO_COMPLETE_TEXT = 'All scenario steps are complete; there is nothing further to do.';
 const STOP_FEEDBACK_TEXT = 'Noted the Stop hook feedback; there is nothing further to do.';
 const FIVE_HOURS_MS = 5 * 60 * 60 * 1000;
@@ -209,7 +221,7 @@ export class SimSession {
   async start(): Promise<TurnResult | null> {
     const outcome = await this.runHooks(
       'SessionStart',
-      { source: this.deps.source, model: this.deps.model, ...this.deps.resumeContext },
+      { source: this.deps.source, ...this.deps.resumeContext },
       this.deps.source,
     );
     this.pendingStartContext = outcome;
@@ -227,7 +239,7 @@ export class SimSession {
     this.stopContinuations = 0;
     this.promptId = this.deps.ids.uuid();
 
-    const submit = await this.runHooks('UserPromptSubmit', { prompt, source: 'sdk' });
+    const submit = await this.runHooks('UserPromptSubmit', { prompt });
     if (submit.blocking.length > 0) {
       this.flushStartContext();
       return {
@@ -734,6 +746,18 @@ export class SimSession {
   private async mcpOutcome(name: string, input: Record<string, unknown>): Promise<ToolOutcome> {
     try {
       const result = await this.deps.mcp.call(name, input, this.deps.signal);
+      // Claude Code 2.1.295 (observed with the AOC server, which answers with structuredContent): the model gets
+      // JSON.stringify(structuredContent) and the text blocks are dropped; hooks see that same string.
+      if (!result.isError && result.structuredContent !== undefined) {
+        const text = JSON.stringify(result.structuredContent);
+        return {
+          content: text,
+          isError: false,
+          toolUseResult: { content: text, structuredContent: result.structuredContent },
+          hookResponse: text,
+          saveValue: mcpPayload(result),
+        };
+      }
       return {
         content: result.content.length > 0 ? result.content : [{ type: 'text', text: '' }],
         isError: result.isError,
@@ -816,6 +840,19 @@ export class SimSession {
     );
     if (verdict.behavior === 'deny') {
       this.denials.push({ tool_name: call.name, tool_use_id: toolUseId, tool_input: call.input });
+      // The permission layer (not a rule or a hook) refused: nobody can approve in print mode, but a
+      // PermissionRequest hook still sees the request (never in dontAsk) and the stream says why it was denied.
+      if (verdict.source === 'prompt') {
+        if (this.deps.policy.mode !== 'dontAsk')
+          await this.runHooks('PermissionRequest', { tool_name: call.name, tool_input: call.input, permission_suggestions: [], ...serverField }, call.name);
+        this.emitSystem('permission_denied', {
+          tool_name: call.name,
+          tool_use_id: toolUseId,
+          ...(verdict.reason && { decision_reason_type: verdict.reason }),
+          ...(verdict.reason === 'other' && { decision_reason: verdict.message }),
+          message: verdict.message,
+        });
+      }
       this.writeToolResult(toolUseId, toolUseBlock.uuid, {
         content: verdict.message,
         isError: true,
@@ -860,7 +897,7 @@ export class SimSession {
           {
             tool_name: call.name,
             tool_input: call.input,
-            tool_response: outcome.toolUseResult,
+            tool_response: outcome.hookResponse ?? outcome.toolUseResult,
             tool_use_id: toolUseId,
             duration_ms: durationMs,
             ...serverField,
@@ -868,7 +905,8 @@ export class SimSession {
           call.name,
         );
     this.recordFeedback(post, toolUseId, event);
-    if (!outcome.isError) batchEntry.tool_response = outcome.toolUseResult;
+    // PostToolBatch carries the rendered result: the text the model was given.
+    if (!outcome.isError) batchEntry.tool_response = contentText(outcome.content);
     await this.postToolBatch(batchEntry);
 
     if (call.mcp?.obey && !outcome.isError) return this.obey(call.mcp.tool, outcome.saveValue);
@@ -932,8 +970,12 @@ export class SimSession {
 
   private preToolVerdict(outcome: HookOutcome, toolName: string): HookVerdict | undefined {
     const deny = outcome.permissionDecisions.find((decision) => decision.behavior === 'deny');
+    // Observed on 2.1.295: the model reads a hook's JSON deny as "PreToolUse:<tool> hook error: <reason>".
     if (deny)
-      return { behavior: 'deny', message: deny.reason || `Hook PreToolUse:${toolName} denied this tool` };
+      return {
+        behavior: 'deny',
+        message: `PreToolUse:${toolName} hook error: ${deny.reason || `Hook PreToolUse:${toolName} denied this tool`}`,
+      };
     const blocking = outcome.blocking[0];
     if (blocking) return { behavior: 'deny', message: `PreToolUse:${toolName} hook error: ${blocking.text}` };
     const ask = outcome.permissionDecisions.find((decision) => decision.behavior === 'ask');
@@ -1192,7 +1234,8 @@ export class SimSession {
         transcript_path: this.deps.transcriptPath,
         cwd: this.deps.cwd,
         ...(this.promptId && { prompt_id: this.promptId }),
-        permission_mode: this.deps.permissionMode,
+        ...(PERMISSION_MODE_EVENTS.has(event) && { permission_mode: this.deps.permissionMode }),
+        ...(EFFORT_EVENTS.has(event) && { effort: { level: 'medium' } }),
         hook_event_name: event,
         ...fields,
       },

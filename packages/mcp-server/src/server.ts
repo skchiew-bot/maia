@@ -85,13 +85,14 @@ function fromReply(tool: AocMcpToolName, status: number, data: unknown): CallToo
     const text = typeof data.error === 'string' && data.error ? data.error : pretty(data);
     return { isError: true, content: [{ type: 'text', text }], structuredContent: data };
   }
-  let text = pretty(data);
-  if (tool === 'request_decision') text += `\n\n${END_TURN_FOR_DECISION}`;
-  if (tool === 'task_done') {
-    const stop = boundaryStop(data);
-    if (stop) text += `\n\n${stop}`;
-  }
-  return { content: [{ type: 'text', text }], structuredContent: data };
+  const notice = tool === 'request_decision' ? END_TURN_FOR_DECISION : tool === 'task_done' ? boundaryStop(data) : null;
+  if (!notice) return { content: [{ type: 'text', text: pretty(data) }], structuredContent: data };
+  // Claude Code 2.1.295 shows the model JSON.stringify(structuredContent) and drops the text blocks of a result that
+  // has one, so an order the agent must not miss travels in the structured data too, as its first key (real-CLI check).
+  return {
+    content: [{ type: 'text', text: `${pretty(data)}\n\n${notice}` }],
+    structuredContent: { notice, ...data },
+  };
 }
 
 /** Credit caps and rollover are enforced only at task boundaries (§5, §10), so a stop order must be unmissable. */

@@ -61,6 +61,7 @@ describe('launch', () => {
       h.file(id, 'system-prompt.md'),
       '--allowedTools',
       'mcp__aoc',
+      'Bash',
       '--session-id',
       uuid,
       '--model',
