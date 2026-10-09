@@ -175,35 +175,46 @@ export default function CreditsPage() {
       ) : (
         <>
           <KpiStrip label="Credits at a glance">
-            {approver ? (
-              <>
-                <KpiTile label="Allocated" value={formatUsd(team.allocatedUsd, { decimals: 0 })} footnote={`${list.length} accounts · ${periodLabel(viewPeriod)}`} />
-                <KpiTile
-                  label="Used"
-                  value={formatUsd(team.usedUsd)}
-                  footnote={`${team.allocatedUsd > 0 ? formatPercent(team.usedUsd / team.allocatedUsd) : '—'} of allocations · notional`}
-                />
-                <KpiTile
-                  label="Granted"
-                  value={formatUsd(team.grantedUsd)}
-                  footnote={`${trail.filter((g) => g.kind === 'auto').length} auto-grants · ${trail.filter((g) => g.kind === 'topup').length} top-ups`}
-                  href="#trail"
-                />
-              </>
-            ) : (
-              <>
-                <KpiTile
-                  label="Your balance"
-                  value={mine ? formatUsd(mine.balanceUsd) : '—'}
-                  footnote={mine ? `of ${formatUsd(mine.allocationUsd + mine.grantedUsd)} · ${formatPercent(mine.allocationUsd > 0 ? mine.usedUsd / mine.allocationUsd : 0)} used` : undefined}
-                />
-                <KpiTile
-                  label="25% auto-grant"
-                  value={mine ? (mine.autoGrantUsed ? 'Used' : formatUsd(mine.autoGrantAvailableUsd)) : '—'}
-                  footnote={mine ? (mine.autoGrantUsed ? 'once per period' : 'added once, at your first cap') : undefined}
-                />
-              </>
-            )}
+            {approver
+              ? [
+                  <KpiTile
+                    key="allocated"
+                    label="Allocated"
+                    value={formatUsd(team.allocatedUsd, { decimals: 0 })}
+                    footnote={`${list.length} accounts · ${periodLabel(viewPeriod)}`}
+                  />,
+                  <KpiTile
+                    key="used"
+                    label="Used"
+                    value={formatUsd(team.usedUsd)}
+                    footnote={`${team.allocatedUsd > 0 ? formatPercent(team.usedUsd / team.allocatedUsd) : '—'} of allocations · notional`}
+                  />,
+                  <KpiTile
+                    key="granted"
+                    label="Granted"
+                    value={formatUsd(team.grantedUsd)}
+                    footnote={`${trail.filter((g) => g.kind === 'auto').length} auto-grants · ${trail.filter((g) => g.kind === 'topup').length} top-ups`}
+                    href="#trail"
+                  />,
+                ]
+              : [
+                  <KpiTile
+                    key="balance"
+                    label="Your balance"
+                    value={mine ? formatUsd(mine.balanceUsd) : '—'}
+                    footnote={
+                      mine
+                        ? `of ${formatUsd(mine.allocationUsd + mine.grantedUsd)} · ${formatPercent(mine.allocationUsd > 0 ? mine.usedUsd / mine.allocationUsd : 0)} used`
+                        : undefined
+                    }
+                  />,
+                  <KpiTile
+                    key="auto"
+                    label="25% auto-grant"
+                    value={mine ? (mine.autoGrantUsed ? 'Used' : formatUsd(mine.autoGrantAvailableUsd)) : '—'}
+                    footnote={mine ? (mine.autoGrantUsed ? 'once per period' : 'added once, at your first cap') : undefined}
+                  />,
+                ]}
             <KpiTile
               label="Top-ups waiting"
               value={pending.length}
