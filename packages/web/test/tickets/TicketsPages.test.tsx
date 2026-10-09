@@ -2,7 +2,7 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { DecisionCardView, InternalTicket } from '@aoc/contracts';
+import type { DecisionCardView, InternalTicket, PromotionDTO } from '@aoc/contracts';
 import { AuthProvider, type AuthUser } from '../../src/api';
 import { ClockProvider, ToastProvider, fixedClock } from '../../src/components';
 import TicketPage from '../../src/pages/tickets/TicketPage';
@@ -40,7 +40,9 @@ interface Posts {
   body: unknown;
 }
 
-function installApi(opts: { tickets?: InternalTicket[]; one?: InternalTicket | null } = {}): Posts[] {
+function installApi(
+  opts: { tickets?: InternalTicket[]; one?: InternalTicket | null; promotions?: PromotionDTO[] } = {},
+): Posts[] {
   const posts: Posts[] = [];
   mockFetch((raw, init) => {
     const url = new URL(raw, 'http://aoc.test');
@@ -63,6 +65,7 @@ function installApi(opts: { tickets?: InternalTicket[]; one?: InternalTicket | n
         nextToSeq: null,
       });
     }
+    if (url.pathname === '/api/promotions') return jsonResponse({ items: opts.promotions ?? [] });
     if (url.pathname === '/api/decisions')
       return jsonResponse({ generatedAt: new Date(NOW).toISOString(), decisions: [fixPlanCard()] });
     if (url.pathname === '/api/users')
@@ -75,6 +78,26 @@ function installApi(opts: { tickets?: InternalTicket[]; one?: InternalTicket | n
   });
   return posts;
 }
+
+const failedPromotion = (ticketId: string): PromotionDTO => ({
+  promotionId: 'prm_01',
+  projectId: 'prj_claims',
+  fromRef: `uat/${ticketId}`,
+  fromSha: 'a'.repeat(40),
+  targetBranch: 'main',
+  ticketId,
+  changeId: null,
+  breakglassId: null,
+  breakglass: false,
+  status: 'failed',
+  requestedBy: 'system:intake',
+  requestedAt: new Date(NOW - 15 * 60_000).toISOString(),
+  decisionId: 'dec_golive',
+  refusal: null,
+  rejection: null,
+  failure: { reason: 'credential_profile_missing', detail: null, at: new Date(NOW - 10 * 60_000).toISOString() },
+  completion: null,
+});
 
 function renderAt(path: string, user: AuthUser = CEO) {
   return render(
@@ -125,6 +148,24 @@ describe('Tickets list', { timeout: 15_000 }, () => {
     expect(within(rows[1]!).getByText(/compares a seconds timestamp/)).toBeInTheDocument();
     expect(within(rows[0]!).getByTitle('Go-live: not started')).toBeInTheDocument();
     expect(screen.getByText('Go-live did not start after a UAT pass')).toBeInTheDocument();
+  });
+
+  it('shows a failed go-live promotion in the gates, as the ticket page does', async () => {
+    const atGate = ticket({
+      ticketId: 'tkt_01M4FC5A9KQ7XW2N3D8RBZT6HE',
+      title: 'Claim totals round down to the nearest ringgit',
+      projectId: 'prj_claims',
+      stage: 'go_live_gate',
+      publicStatus: 'ready_for_testing',
+      buildSessionId: 'ses_build_2',
+      openDecisionIds: [],
+    });
+    installApi({ tickets: [atGate], promotions: [failedPromotion(atGate.ticketId)] });
+    renderAt('/tickets');
+    const table = await screen.findByRole('table', { name: 'Intake tickets' });
+    const row = within(table).getAllByRole('row')[1]!;
+    expect(await within(row).findByTitle('Go-live: promotion failed')).toBeInTheDocument();
+    expect(within(row).getByTitle('UAT: passed')).toBeInTheDocument();
   });
 
   it('filters by stage from the chips and the KPI links', async () => {
