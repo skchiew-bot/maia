@@ -1,0 +1,113 @@
+{
+  "name": "decision",
+  "description": "Declares a plan, does the work, raises request_decision (test=main, 2 options) and ends its turn. When resumed it branches on the answer: a resume prompt containing \"option b\" holds the merge, anything else merges; then it finishes.",
+  "steps": [
+    { "kind": "think", "ms": 1500, "outputTokens": 380 },
+    { "kind": "text", "text": "Declaring the plan first." },
+    {
+      "kind": "mcp",
+      "server": "aoc",
+      "tool": "declare_plan",
+      "args": {
+        "summary": "Ship the greeting feature to main.",
+        "phases": [
+          {
+            "id": "p1",
+            "name": "Ship",
+            "tasks": [
+              { "id": "t1", "title": "Implement the greeting feature", "size": "m" },
+              { "id": "t2", "title": "Merge the feature into main", "size": "s" },
+              { "id": "t3", "title": "Write the release note", "size": "xs" }
+            ]
+          }
+        ]
+      }
+    },
+    { "kind": "think", "ms": 1200, "outputTokens": 300 },
+    {
+      "kind": "tool",
+      "name": "Write",
+      "input": { "file_path": "src/greeting.ts", "content": "export const greeting = (name: string) => `Hello, ${name}`;\n" }
+    },
+    {
+      "kind": "mcp",
+      "server": "aoc",
+      "tool": "task_done",
+      "args": { "task_id": "t1", "evidence": { "kind": "diff", "ref": "src/greeting.ts" } }
+    },
+    { "kind": "think", "ms": 900, "outputTokens": 240 },
+    { "kind": "text", "text": "Merging into main needs a human decision, so I'm raising one." },
+    {
+      "kind": "mcp",
+      "server": "aoc",
+      "tool": "request_decision",
+      "saveAs": "decision",
+      "args": {
+        "test": "main",
+        "question": "Merge feature/greeting into main now?",
+        "options": [
+          { "id": "a", "label": "Merge now", "description": "Fast-forward main to the feature branch." },
+          { "id": "b", "label": "Hold the merge", "description": "Keep the branch open until the release freeze ends." }
+        ],
+        "recommendation": {
+          "option_id": "a",
+          "rationale": "The change is isolated and its task is done with diff evidence."
+        },
+        "context": "Branch feature/greeting; one file changed."
+      }
+    },
+    { "kind": "text", "text": "Decision {{decision.decision_id}} is waiting for an answer, so I'm ending my turn." },
+    { "kind": "endTurn" },
+    { "kind": "think", "ms": 800, "outputTokens": 200 },
+    { "kind": "branch", "onResumeTextIncludes": ["option b"], "goto": "hold" },
+    { "kind": "text", "text": "The decision came back as option a: merging into main." },
+    {
+      "kind": "bash",
+      "command": "git merge --ff-only feature/greeting",
+      "description": "Merge the feature branch",
+      "stdout": "Updating 1a2b3c4..5d6e7f8\nFast-forward\n src/greeting.ts | 1 +\n 1 file changed, 1 insertion(+)"
+    },
+    {
+      "kind": "mcp",
+      "server": "aoc",
+      "tool": "task_done",
+      "args": { "task_id": "t2", "evidence": { "kind": "commit", "ref": "5d6e7f8" } }
+    },
+    {
+      "kind": "tool",
+      "name": "Write",
+      "input": { "file_path": "RELEASE_NOTES.md", "content": "## Unreleased\n\n- Added a greeting.\n" }
+    },
+    {
+      "kind": "mcp",
+      "server": "aoc",
+      "tool": "task_done",
+      "args": { "task_id": "t3", "evidence": { "kind": "diff", "ref": "RELEASE_NOTES.md" } }
+    },
+    { "kind": "text", "text": "Merged and documented; all three tasks are done." },
+    { "kind": "endTurn", "final": true },
+    { "kind": "text", "label": "hold", "text": "The decision came back as option b: holding the merge." },
+    {
+      "kind": "tool",
+      "name": "Write",
+      "input": {
+        "file_path": "RELEASE_NOTES.md",
+        "content": "## Unreleased\n\n- Greeting feature ready; the merge is on hold until the release freeze ends.\n"
+      }
+    },
+    {
+      "kind": "mcp",
+      "server": "aoc",
+      "tool": "amend_plan",
+      "args": { "reason": "The merge is on hold by decision; it leaves this session's plan.", "remove": ["t2"] }
+    },
+    {
+      "kind": "mcp",
+      "server": "aoc",
+      "tool": "task_done",
+      "args": { "task_id": "t3", "evidence": { "kind": "diff", "ref": "RELEASE_NOTES.md" } }
+    },
+    { "kind": "text", "text": "The merge is on hold as decided; the plan is amended and the release note records it." },
+    { "kind": "endTurn", "final": true }
+  ]
+}

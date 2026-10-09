@@ -1,0 +1,25 @@
+{
+  "name": "triage-low-confidence",
+  "description": "Read-only triage of a vague report: Glob and Grep only, then report_diagnosis with confidence 0.35 (should bounce to a human) and end the turn.",
+  "steps": [
+    { "kind": "think", "ms": 1500, "outputTokens": 400 },
+    { "kind": "text", "text": "The report is vague; looking around read-only." },
+    { "kind": "tool", "name": "Glob", "input": { "pattern": "**/*" } },
+    { "kind": "tool", "name": "Grep", "input": { "pattern": "slow|timeout|retry", "-i": true } },
+    { "kind": "think", "ms": 1800, "outputTokens": 520 },
+    {
+      "kind": "mcp",
+      "server": "aoc",
+      "tool": "report_diagnosis",
+      "args": {
+        "root_cause": "Possibly retry storms against the upstream API under load, but nothing in the code or logs confirms it.",
+        "confidence": 0.35,
+        "fix_plan": "Collect request timings from production, reproduce the slowdown on UAT, then decide between backoff tuning and caching.",
+        "affected_areas": ["api/client.ts"],
+        "root_cause_class": "unknown"
+      }
+    },
+    { "kind": "text", "text": "Diagnosis reported with low confidence (0.35); it needs a human to confirm. Ending my turn." },
+    { "kind": "endTurn", "final": true }
+  ]
+}

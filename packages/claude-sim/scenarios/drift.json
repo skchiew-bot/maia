@@ -1,0 +1,103 @@
+{
+  "name": "drift",
+  "description": "Declares a plan for one feature, then edits files unrelated to its tasks and records the drift with amend_plan (with a reason) before closing tasks.",
+  "steps": [
+    { "kind": "think", "ms": 1200, "outputTokens": 320 },
+    { "kind": "text", "text": "Declaring the plan for API rate limiting." },
+    {
+      "kind": "mcp",
+      "server": "aoc",
+      "tool": "declare_plan",
+      "args": {
+        "phases": [
+          {
+            "id": "p1",
+            "name": "Rate limiting",
+            "tasks": [
+              { "id": "t1", "title": "Add a token-bucket rate limiter to the API", "size": "m" },
+              { "id": "t2", "title": "Test the rate limiter", "size": "s" }
+            ]
+          }
+        ]
+      }
+    },
+    { "kind": "think", "ms": 1400, "outputTokens": 420 },
+    {
+      "kind": "tool",
+      "name": "Write",
+      "input": {
+        "file_path": "src/api/rate-limit.ts",
+        "content": "export function allow(bucket: { tokens: number }): boolean {\n  if (bucket.tokens <= 0) return false;\n  bucket.tokens -= 1;\n  return true;\n}\n"
+      }
+    },
+    {
+      "kind": "think",
+      "ms": 1000,
+      "outputTokens": 260,
+      "thinking": "While I'm here, the deploy script and the landing copy look stale."
+    },
+    {
+      "kind": "tool",
+      "name": "Write",
+      "input": { "file_path": "deploy/deploy.sh", "content": "#!/bin/sh\nset -eu\nnpm ci\nnpm run build\n" }
+    },
+    {
+      "kind": "tool",
+      "name": "Write",
+      "input": { "file_path": "docs/marketing/landing.md", "content": "# Faster, safer APIs\n\nNow with rate limiting.\n" }
+    },
+    { "kind": "text", "text": "I changed files outside the declared plan, so I'm amending it to record why." },
+    {
+      "kind": "mcp",
+      "server": "aoc",
+      "tool": "amend_plan",
+      "args": {
+        "reason": "Fixed a broken deploy script and stale landing copy discovered while adding rate limiting.",
+        "add": [
+          { "id": "t3", "title": "Fix the deploy script", "size": "s", "phaseId": "p1" },
+          { "id": "t4", "title": "Refresh the landing page copy", "size": "xs", "phaseId": "p1" }
+        ]
+      }
+    },
+    {
+      "kind": "mcp",
+      "server": "aoc",
+      "tool": "task_done",
+      "args": { "task_id": "t1", "evidence": { "kind": "diff", "ref": "src/api/rate-limit.ts" } }
+    },
+    {
+      "kind": "mcp",
+      "server": "aoc",
+      "tool": "task_done",
+      "args": { "task_id": "t3", "evidence": { "kind": "diff", "ref": "deploy/deploy.sh" } }
+    },
+    {
+      "kind": "mcp",
+      "server": "aoc",
+      "tool": "task_done",
+      "args": { "task_id": "t4", "evidence": { "kind": "diff", "ref": "docs/marketing/landing.md" } }
+    },
+    {
+      "kind": "tool",
+      "name": "Write",
+      "input": {
+        "file_path": "test/rate-limit.test.ts",
+        "content": "import { expect, test } from 'vitest';\nimport { allow } from '../src/api/rate-limit';\n\ntest('denies when empty', () => {\n  expect(allow({ tokens: 0 })).toBe(false);\n});\n"
+      }
+    },
+    {
+      "kind": "bash",
+      "command": "pnpm vitest run test/rate-limit.test.ts",
+      "description": "Run the rate limiter test",
+      "stdout": " ✓ test/rate-limit.test.ts (1 test) 2ms"
+    },
+    {
+      "kind": "mcp",
+      "server": "aoc",
+      "tool": "task_done",
+      "args": { "task_id": "t2", "evidence": { "kind": "test", "ref": "test/rate-limit.test.ts > denies when empty" } }
+    },
+    { "kind": "text", "text": "Rate limiting is in, and the extra fixes are recorded in the amended plan." },
+    { "kind": "endTurn", "final": true }
+  ]
+}

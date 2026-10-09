@@ -1,0 +1,56 @@
+{
+  "name": "throttle",
+  "description": "Works on its plan, then hits the 5-hour usage limit (synthetic error message, is_error result, exit 1). Resuming after the reset finishes the work.",
+  "steps": [
+    { "kind": "think", "ms": 1200, "outputTokens": 320 },
+    { "kind": "text", "text": "Declaring the plan." },
+    {
+      "kind": "mcp",
+      "server": "aoc",
+      "tool": "declare_plan",
+      "args": {
+        "phases": [
+          {
+            "id": "p1",
+            "name": "Build",
+            "tasks": [
+              { "id": "t1", "title": "Add request logging", "size": "s" },
+              { "id": "t2", "title": "Add log redaction", "size": "m" }
+            ]
+          }
+        ]
+      }
+    },
+    { "kind": "think", "ms": 1400, "outputTokens": 1800, "cacheWrite": 22000 },
+    {
+      "kind": "tool",
+      "name": "Write",
+      "input": { "file_path": "src/log.ts", "content": "export const logRequest = (path: string) => console.log(`-> ${path}`);\n" }
+    },
+    {
+      "kind": "mcp",
+      "server": "aoc",
+      "tool": "task_done",
+      "args": { "task_id": "t1", "evidence": { "kind": "diff", "ref": "src/log.ts" } }
+    },
+    { "kind": "rateLimit", "resetsInMinutes": 95 },
+    { "kind": "think", "ms": 1000, "outputTokens": 400 },
+    { "kind": "text", "text": "The usage limit has reset; continuing with redaction." },
+    {
+      "kind": "tool",
+      "name": "Write",
+      "input": {
+        "file_path": "src/redact.ts",
+        "content": "export const redact = (line: string) => line.replace(/token=\\w+/g, 'token=[redacted]');\n"
+      }
+    },
+    {
+      "kind": "mcp",
+      "server": "aoc",
+      "tool": "task_done",
+      "args": { "task_id": "t2", "evidence": { "kind": "diff", "ref": "src/redact.ts" } }
+    },
+    { "kind": "text", "text": "Logging and redaction are both done." },
+    { "kind": "endTurn", "final": true }
+  ]
+}
