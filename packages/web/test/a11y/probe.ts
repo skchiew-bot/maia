@@ -300,9 +300,11 @@ export function charts(): ChartInfo[] {
     const marks = svg.querySelectorAll('rect, path, circle, line, polyline, polygon, ellipse');
     if (marks.length === 0) continue;
 
-    const role = svg.getAttribute('role');
+    // A role="img" wrapper (the svg itself or an ancestor) makes everything inside it one named image.
+    const image = svg.closest('[role="img"]');
+    const role = image ? 'img' : svg.getAttribute('role');
     const hidden = svg.closest('[aria-hidden="true"]') !== null || role === 'presentation' || role === 'none';
-    const name = hidden ? '' : accessibleName(svg);
+    const name = hidden ? '' : accessibleName(image ?? svg);
     const nameHasNumber = /\d/.test(name);
     const adjacentNumbers = hasAdjacentNumbers(svg);
     let problem: string | null = null;

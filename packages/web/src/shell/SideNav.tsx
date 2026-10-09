@@ -1,4 +1,4 @@
-import { Fragment } from 'react';
+import { Fragment, useId } from 'react';
 import { NavLink } from 'react-router-dom';
 import { CountBadge } from '../components/Badge';
 import { IconButton } from '../components/Button';
@@ -20,7 +20,21 @@ export interface SideNavProps {
   id?: string;
 }
 
-/** Primary operator navigation. Active item gets `aria-current="page"` (NavLink). */
+/** Consecutive items of the same group, in nav order. */
+function sections(items: readonly NavItem[]): { group: NavItem['group']; items: NavItem[] }[] {
+  const out: { group: NavItem['group']; items: NavItem[] }[] = [];
+  for (const it of items) {
+    const last = out[out.length - 1];
+    if (last && last.group === it.group) last.items.push(it);
+    else out.push({ group: it.group, items: [it] });
+  }
+  return out;
+}
+
+/**
+ * Primary operator navigation: one list per group, named by its group label (a list may only contain list
+ * items, so the labels and dividers sit between the lists). Active item gets `aria-current="page"` (NavLink).
+ */
 export function SideNav({
   items,
   collapsed = false,
@@ -29,44 +43,51 @@ export function SideNav({
   onNavigate,
   id,
 }: SideNavProps) {
+  const labelPrefix = useId();
   return (
     <nav id={id} className={cx('aoc-nav', collapsed && 'is-collapsed')} aria-label="Primary">
-      <ul className="aoc-nav__list">
-        {items.map((it, i) => {
-          const prev = items[i - 1];
-          const groupStart = !prev || prev.group !== it.group;
-          const heading = groupStart ? NAV_GROUP_LABEL[it.group] : undefined;
-          const link = (
-            <NavLink
-              to={it.to}
-              className={({ isActive }) =>
-                cx('aoc-nav__link', isActive && 'is-active', it.deemphasised && 'is-quiet')
-              }
-              onClick={onNavigate}
-            >
-              <Icon name={it.icon} size={16} className="aoc-nav__icon" />
-              <span className="aoc-nav__label">{it.label}</span>
-              {it.to === '/decisions' && !collapsed && <CountBadge count={inboxCount} />}
-              {it.to === '/decisions' && collapsed && inboxCount ? (
-                <span className="aoc-nav__dot" aria-hidden="true" />
-              ) : null}
-            </NavLink>
-          );
+      <div className="aoc-nav__list">
+        {sections(items).map((section, si) => {
+          const heading = NAV_GROUP_LABEL[section.group];
+          const labelId = `${labelPrefix}-${section.group}`;
+          const showHeading = Boolean(heading) && !collapsed;
           return (
-            <Fragment key={it.to}>
-              {groupStart && i > 0 && (!heading || collapsed) && (
-                <li className="aoc-nav__divider" role="presentation" />
-              )}
-              {heading && !collapsed && (
-                <li className="aoc-nav__group" role="presentation">
+            <Fragment key={section.group}>
+              {si > 0 && !showHeading && <div className="aoc-nav__divider" aria-hidden="true" />}
+              {showHeading && (
+                <div className="aoc-nav__group" id={labelId}>
                   {heading}
-                </li>
+                </div>
               )}
-              <li>{collapsed ? <Tooltip content={it.label}>{link}</Tooltip> : link}</li>
+              <ul
+                className="aoc-nav__items"
+                aria-labelledby={showHeading ? labelId : undefined}
+                aria-label={!showHeading ? heading : undefined}
+              >
+                {section.items.map((it) => {
+                  const link = (
+                    <NavLink
+                      to={it.to}
+                      className={({ isActive }) =>
+                        cx('aoc-nav__link', isActive && 'is-active', it.deemphasised && 'is-quiet')
+                      }
+                      onClick={onNavigate}
+                    >
+                      <Icon name={it.icon} size={16} className="aoc-nav__icon" />
+                      <span className="aoc-nav__label">{it.label}</span>
+                      {it.to === '/decisions' && !collapsed && <CountBadge count={inboxCount} />}
+                      {it.to === '/decisions' && collapsed && inboxCount ? (
+                        <span className="aoc-nav__dot" aria-hidden="true" />
+                      ) : null}
+                    </NavLink>
+                  );
+                  return <li key={it.to}>{collapsed ? <Tooltip content={it.label}>{link}</Tooltip> : link}</li>;
+                })}
+              </ul>
             </Fragment>
           );
         })}
-      </ul>
+      </div>
       {onToggleCollapsed && (
         <div className="aoc-nav__footer">
           <IconButton
