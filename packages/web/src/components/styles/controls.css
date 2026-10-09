@@ -414,11 +414,12 @@
   font-size: var(--fs-xs);
   font-weight: 600;
 }
+/* The boundary is the only thing that marks the field, so it clears 3:1 (WCAG 1.4.11), unlike hairlines. */
 .aoc-input {
   width: 100%;
   height: 32px;
   padding: 0 10px;
-  border: 1px solid var(--border-strong);
+  border: 1px solid color-mix(in srgb, var(--text-3) 80%, var(--surface));
   border-radius: var(--radius-sm);
   background: var(--surface);
   color: var(--text);
@@ -429,7 +430,7 @@
   color: var(--text-3);
 }
 .aoc-input:hover {
-  border-color: var(--text-3);
+  border-color: var(--text-2);
 }
 .aoc-input:focus-visible {
   border-color: var(--accent);

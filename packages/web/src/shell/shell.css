@@ -232,8 +232,10 @@
   flex: 1;
   padding: var(--sp-2);
   overflow-y: auto;
-  list-style: none;
   scrollbar-width: thin;
+}
+.aoc-nav__items {
+  list-style: none;
 }
 .aoc-nav__group {
   padding: 10px 8px 4px;
