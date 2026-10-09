@@ -99,12 +99,8 @@ describe('break-glass (§8): the most audited path, straight to the approver, pr
       breakglassId: bg.breakglassId,
       fromSha: hotfix,
     });
-    expect(
-      h.sup
-        .gitCalls()
-        .filter((c) => c.profile === 'prod-promote')
-        .every((c) => c.env.includes('AOC_SUPERVISOR_PUSH=1')),
-    ).toBe(true);
+    // No remote anywhere: the project's own branch moved as the session user; no credential was used.
+    expect(h.sup.calls.every((c) => c.credentialProfile === null)).toBe(true);
 
     // The mandatory post-incident change record: production scope, owned by the invoker, due in 24h.
     const post = await h.t.json<ChangeRequestDTO>('GET', `/api/changes/${done.postIncidentChangeId}`, {
