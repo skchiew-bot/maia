@@ -534,7 +534,7 @@ function apply(db: DatabaseSync, e: StoredEvent, p: Payload): void {
     }
     case 'plan.declared': {
       const m = metaOf(e, 'plan.declared');
-      const phases = Array.isArray(p?.phases) ? (p.phases as { tasks?: PlanTask[] }[]) : null;
+      const phases = Array.isArray(p?.phases) ? (p.phases as { tasks?: PlanTask[] }[]) : (m.shape ?? null);
       const tasks = phases?.flatMap((ph) => ph.tasks ?? []) ?? null;
       run(
         `INSERT INTO twr_manifests (session_id, project_id, thread_id, task_count, total_weight, has_tasks) VALUES (?, ?, ?, ?, ?, ?)
@@ -575,22 +575,24 @@ function apply(db: DatabaseSync, e: StoredEvent, p: Payload): void {
         m.newTotalWeight,
         m.sessionId,
       );
-      if (p) {
+      // The body when there is one, else the shape the ledger chained in meta (sizes and ids survive an erasure).
+      const change: { add?: unknown; remove?: unknown; resize?: unknown } | null = p ?? m.shape ?? null;
+      if (change) {
         addTasks(
           m.sessionId,
           m.projectId,
           man.thread_id,
-          Array.isArray(p.add) ? (p.add as PlanTask[]) : [],
+          Array.isArray(change.add) ? (change.add as PlanTask[]) : [],
           m.carriedOver,
         );
-        for (const id of Array.isArray(p.remove) ? p.remove : []) {
+        for (const id of Array.isArray(change.remove) ? change.remove : []) {
           run(
             "UPDATE twr_tasks SET status = 'removed' WHERE session_id = ? AND task_id = ? AND status = 'open'",
             m.sessionId,
             String(id),
           );
         }
-        for (const r of Array.isArray(p.resize) ? (p.resize as { taskId?: unknown; size?: unknown }[]) : []) {
+        for (const r of Array.isArray(change.resize) ? (change.resize as { taskId?: unknown; size?: unknown }[]) : []) {
           run(
             "UPDATE twr_tasks SET weight = ? WHERE session_id = ? AND task_id = ? AND status = 'open'",
             weightOf(r.size),

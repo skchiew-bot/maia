@@ -155,11 +155,17 @@ export class BodyStore {
     return open(dek, { nonce: Buffer.from(row.n), ct, tag: Buffer.from(row.t) }, `aoc-blob:${blobId}`);
   }
 
+  /** Bodies and blobs a scope holds (what erasing it removes). */
+  countScope(scope: string): number {
+    return (
+      (this.db.prepare('SELECT COUNT(*) AS n FROM bodies WHERE scope = ?').get(scope) as { n: number }).n +
+      (this.db.prepare('SELECT COUNT(*) AS n FROM blobs WHERE scope = ?').get(scope) as { n: number }).n
+    );
+  }
+
   /** Crypto-shred a scope: destroy every key generation and delete the ciphertexts (rows + blob files). Returns items removed. */
   eraseScope(scope: string, nowIso: string): number {
-    const n =
-      (this.db.prepare('SELECT COUNT(*) AS n FROM bodies WHERE scope = ?').get(scope) as { n: number }).n +
-      (this.db.prepare('SELECT COUNT(*) AS n FROM blobs WHERE scope = ?').get(scope) as { n: number }).n;
+    const n = this.countScope(scope);
     this.db.exec('BEGIN IMMEDIATE');
     try {
       this.db

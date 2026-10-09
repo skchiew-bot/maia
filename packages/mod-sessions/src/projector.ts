@@ -78,6 +78,7 @@ const HANDLES = [
 
 type P = Record<string, JsonValue> | null;
 const str = (v: unknown): string | null => (typeof v === 'string' ? v : null);
+const ERASED = '[erased]';
 
 export function minuteOf(iso: string): string {
   return iso.slice(0, 16); // YYYY-MM-DDTHH:MM (UTC)
@@ -100,8 +101,11 @@ export function createSessionsProjector(timezone: () => string): Projector {
     },
     onErase(db, scopeId) {
       db.prepare("UPDATE sess_sessions SET title = '[erased]', cwd = NULL, transcript_path = NULL WHERE session_id = ?").run(scopeId);
-      db.prepare("UPDATE sess_users SET name = '[erased]' WHERE user_id = ?").run(scopeId);
+      // A person's identity data lives in the body scope `user:<id>` (mod-identity's userBodyScope).
+      db.prepare("UPDATE sess_users SET name = '[erased]' WHERE user_id = ? OR 'user:' || user_id = ?").run(scopeId, scopeId);
       db.prepare("UPDATE sess_projects SET name = '[erased]', repo_path = NULL WHERE project_id = ?").run(scopeId);
+      // The ids came out of the erased usage bodies, and a rebuild cannot restore them: live and rebuilt agree on none.
+      db.prepare('DELETE FROM sess_seen_messages WHERE session_id = ?').run(scopeId);
     },
   };
 }
@@ -174,7 +178,11 @@ function apply(db: DatabaseSync, e: StoredEvent, p: P, tz: string): void {
         str(m.projectId),
         str(p?.cwd),
         str(p?.transcriptPath),
-        p?.cwd ? `Observed · ${String(p.cwd).split('/').filter(Boolean).pop() ?? '/'}` : 'Observed session',
+        p?.cwd
+          ? `Observed · ${String(p.cwd).split('/').filter(Boolean).pop() ?? '/'}`
+          : e.payloadHash !== null
+            ? ERASED
+            : 'Observed session',
         e.ts,
       );
       break;
@@ -233,7 +241,9 @@ function apply(db: DatabaseSync, e: StoredEvent, p: P, tz: string): void {
       bump(db, m.sessionId as string, e.ts);
       break;
     case 'usage.recorded': {
-      const date = localDate(Date.parse(m.lastAt as string), tz);
+      // A batch whose lastAt is unreadable (a log written before ingest checked it) still counts, on the day it arrived.
+      const lastAt = Date.parse(m.lastAt as string);
+      const date = localDate(Number.isNaN(lastAt) ? Date.parse(e.ts) : lastAt, tz);
       db.prepare(
         `INSERT INTO sess_usage_daily (session_id, date, model, input, output, cache_read, cache_w5, cache_w1) VALUES (?,?,?,?,?,?,?,?)
          ON CONFLICT(session_id, date, model) DO UPDATE SET input = input + excluded.input, output = output + excluded.output,
@@ -285,7 +295,7 @@ function apply(db: DatabaseSync, e: StoredEvent, p: P, tz: string): void {
       if (e.type === 'user.created' || p?.name) {
         db.prepare('INSERT INTO sess_users (user_id, name) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET name = COALESCE(excluded.name, name)').run(
           m.userId as string,
-          str(p?.name),
+          str(p?.name) ?? (p === null && e.payloadHash !== null ? ERASED : null),
         );
       }
       break;
@@ -294,7 +304,7 @@ function apply(db: DatabaseSync, e: StoredEvent, p: P, tz: string): void {
       db.prepare(
         `INSERT INTO sess_projects (project_id, name, repo_path) VALUES (?, ?, ?)
          ON CONFLICT(project_id) DO UPDATE SET name = COALESCE(excluded.name, name), repo_path = COALESCE(excluded.repo_path, repo_path)`,
-      ).run(m.projectId as string, str(p?.name), str(p?.repoPath));
+      ).run(m.projectId as string, str(p?.name) ?? (p === null && e.payloadHash !== null ? ERASED : null), str(p?.repoPath));
       break;
   }
 }

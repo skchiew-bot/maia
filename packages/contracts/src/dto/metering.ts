@@ -248,7 +248,10 @@ export interface OutcomeCostItemDTO {
   projectId: string | null;
   completedAt: string;
   notionalUsd: number;
-  /** Σ per usage day (US$ × that day's stamped FX rate). null when usage exists but no usage day has a rate. */
+  /**
+   * Σ per usage day (US$ × that day's stamped FX rate). null when the outcome has priced usage and no usage day has a
+   * rate; 0 when its usage cost US$0, which needs no rate.
+   */
   notionalRm: number | null;
   /** false when a day with usage had no stamped FX rate (notionalRm then excludes those days, as in the totals rows). */
   rmComplete: boolean;

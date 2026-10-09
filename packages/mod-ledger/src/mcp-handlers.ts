@@ -148,6 +148,7 @@ export async function declarePlan(
       treeFingerprint: base ? valueOr(base.fingerprint, null) : null,
       ...(base && timedOut(base.head, base.fingerprint) ? { baselineReason: 'git_timeout' as const } : {}),
       carriedOver: carry.carried,
+      shape: input.phases.map((ph) => ({ id: ph.id, tasks: ph.tasks.map((t) => ({ id: t.id, size: t.size })) })),
     },
     payload: {
       ...(input.summary !== undefined ? { summary: input.summary } : {}),
@@ -259,6 +260,11 @@ export async function amendPlan(
       newTotalWeight,
       ownerId: session.ownerId ?? manifest.owner_id,
       carriedOver: carry.carried,
+      shape: {
+        ...(add.length ? { add: add.map((t) => ({ id: t.id, phaseId: t.phaseId, size: t.size })) } : {}),
+        ...(remove.length ? { remove } : {}),
+        ...(resize.length ? { resize: resize.map((r) => ({ taskId: r.taskId, size: r.size })) } : {}),
+      },
     },
     payload: {
       reason: input.reason,

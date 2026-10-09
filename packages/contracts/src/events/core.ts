@@ -5,7 +5,7 @@
 import { z } from 'zod';
 import { DECISION_KINDS, LIVENESS_STATES, ROLES, SESSION_LIFECYCLE } from '../domain';
 import { DECISION_TESTS } from '../mcp';
-import { defineEvent, meta, payload, zId, zIso, zLabel, zNonNeg, zSha } from './define';
+import { defineEvent, meta, payload, zHash, zId, zIso, zLabel, zNonNeg, zSha } from './define';
 
 const liveness = z.enum(LIVENESS_STATES).nullable();
 
@@ -180,7 +180,7 @@ export const SESSION_EVENTS = [
     type: 'session.rollover_started',
     owner: 'supervisor',
     description: 'Context rollover began at a clean task boundary; handoff brief distilled and validated (§5).',
-    meta: meta({ threadId: zId, fromSessionId: zId, contextTokens: zNonNeg, contextPct: zNonNeg, briefHash: z.string() }),
+    meta: meta({ threadId: zId, fromSessionId: zId, contextTokens: zNonNeg, contextPct: zNonNeg, briefHash: zHash }),
     payload: payload({ brief: z.string() }),
   }),
   defineEvent({

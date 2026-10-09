@@ -27,7 +27,8 @@ export const payload = <T extends z.ZodRawShape>(shape: T) => z.object(shape).pa
 
 // Shared field schemas
 export const zId = z.string().min(1).max(64);
-export const zIso = z.string().min(10).max(40);
+/** An ISO instant: a string that parses as a date, so a projector never meets one it cannot read. */
+export const zIso = z.string().min(10).max(40).refine((v) => Number.isFinite(Date.parse(v)), 'not an ISO instant');
 export const zSha = z.string().regex(/^[0-9a-f]{7,64}$/);
 export const zHash = z.string().regex(/^[0-9a-f]{64}$/);
 export const zLabel = z.string().min(1).max(80).regex(/^[a-z0-9_.:/-]+$/i, 'machine label');

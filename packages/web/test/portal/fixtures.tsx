@@ -32,6 +32,7 @@ export function ticket(overrides: Partial<PublicTicket> = {}): PublicTicket {
     updatedAt: '2026-10-09T05:00:00Z',
     attachments: [],
     canSignOffUat: false,
+    fixConfirmed: false,
     ...overrides,
   };
 }
