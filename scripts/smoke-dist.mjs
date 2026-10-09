@@ -106,7 +106,7 @@ check(
 const sidecar = run([bin('aoc-sidecar')]);
 check(
   'aoc-sidecar prints its usage',
-  sidecar.code === 2 && sidecar.stderr.includes('usage: aoc-sidecar'),
+  sidecar.code === 2 && sidecar.stderr.includes('aoc-sidecar --session'),
   show(sidecar),
 );
 const mcp = run([bin('aoc-mcp')]);
