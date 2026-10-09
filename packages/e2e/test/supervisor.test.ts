@@ -136,10 +136,13 @@ describe('supervisor + claude-sim: a managed session end to end', () => {
     expect(h.events({ types: ['plan.amended'], sessionId }).map((e) => e.meta.removed)).toEqual([1]);
     expect(h.events({ types: ['task.done'], sessionId }).map((e) => e.meta.taskId)).toEqual(['t1', 't3']);
     expect(h.events({ types: ['session.ended'], sessionId }).map((e) => e.meta.outcome)).toEqual(['completed']);
-    expect(typesOf(sessionId)).toEqual(expect.arrayContaining(['thread.writer_released', 'token.revoked', 'usage.recorded', 'prompt.submitted']));
-    // The session's ingest token died with it.
+    // The session's ingest token dies with it, once its last sidecar has reported the final turn's usage.
     const issued = h.events({ types: ['token.issued'], sessionId })[0]!;
-    expect(h.events({ types: ['token.revoked'] }).some((e) => e.meta.tokenId === issued.meta.tokenId)).toBe(true);
+    await waitFor(() => h.events({ types: ['token.revoked'] }).some((e) => e.meta.tokenId === issued.meta.tokenId), {
+      timeout: 20_000,
+      what: "the session's token revoked after its last sidecar",
+    });
+    expect(typesOf(sessionId)).toEqual(expect.arrayContaining(['thread.writer_released', 'token.revoked', 'usage.recorded', 'prompt.submitted']));
     expect(h.store.verifyChain().ok).toBe(true);
   });
 });
