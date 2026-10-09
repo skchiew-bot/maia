@@ -5,6 +5,9 @@ import {
   computeProgress,
   deriveLiveness,
   hasPermission,
+  INTAKE_ENVELOPE_BYTES,
+  intakeRequestBytes,
+  intakeTotalBytes,
   newId,
   requiredRoleFor,
   requiresPasskey,
@@ -161,5 +164,21 @@ describe('registry + config + misc', () => {
     // Non-ASCII characters count as one UTF-16 unit each and become '-'.
     expect(projectSlug('/srv/wörk/' + 'x'.repeat(195))).toBe('-srv-w-rk-' + 'x'.repeat(190) + '-q0c2ns');
     expect(projectSlug('/tmp/aoc-capture/work')).toBe('-tmp-aoc-capture-work');
+  });
+});
+
+describe('intake upload allowance', () => {
+  it('has one total, shared by the published limits and every request-body cap: one maximum-size video', () => {
+    const defaults = AocConfigSchema.parse({}).intake;
+    expect(intakeTotalBytes(defaults)).toBe(200 * 1024 * 1024);
+    expect(INTAKE_ENVELOPE_BYTES).toBe(1024 * 1024);
+    expect(intakeRequestBytes(defaults)).toBe(200 * 1024 * 1024 + INTAKE_ENVELOPE_BYTES);
+
+    // Not attachments x the largest single allowance: more attachments never raise the total.
+    const many = AocConfigSchema.parse({
+      intake: { maxVideoBytes: 4096, maxImageBytes: 1024, maxAttachments: 9 },
+    }).intake;
+    expect(intakeTotalBytes(many)).toBe(4096);
+    expect(intakeRequestBytes(many)).toBe(4096 + INTAKE_ENVELOPE_BYTES);
   });
 });

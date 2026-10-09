@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import type { Context, MiddlewareHandler } from 'hono';
-import { INGEST_PATHS, type AocConfig } from '@aoc/contracts';
+import { INGEST_PATHS, intakeRequestBytes, type AocConfig } from '@aoc/contracts';
 import { HttpError, type AppEnv } from '@aoc/kernel';
 
 type Ctx = Context<AppEnv>;
@@ -34,10 +34,13 @@ export function isApiPath(path: string): boolean {
   return API_PREFIXES.some((p) => path === p || path.startsWith(`${p}/`));
 }
 
-/** Max request body for a path: intake uploads up to the video cap (+1 MiB for the multipart envelope), JSON 1 MiB. */
+/**
+ * Max request body for a path: intake uploads up to the intake total allowance plus the form envelope (the number
+ * the kernel caps at and `GET /portal/api/limits` publishes), JSON 1 MiB.
+ */
 export function bodyLimitFor(path: string, config: AocConfig): number {
   if (path === INTAKE_UPLOAD_PATH || path.startsWith(`${INTAKE_UPLOAD_PATH}/`))
-    return config.intake.maxVideoBytes + JSON_BODY_LIMIT;
+    return intakeRequestBytes(config.intake);
   if (path === INGEST_PATHS.spool) return SPOOL_BODY_LIMIT;
   return JSON_BODY_LIMIT;
 }

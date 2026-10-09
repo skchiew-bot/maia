@@ -2,9 +2,10 @@ import { randomBytes } from 'node:crypto';
 import { existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { silentLogger, type AocModule } from '@aoc/kernel';
-import { createIntakeModule } from '@aoc/mod-intake';
-import { CONTENT_SECURITY_POLICY, JSON_BODY_LIMIT } from '../src/http';
+import { INTAKE_ENVELOPE_BYTES } from '@aoc/contracts';
+import { bodyLimitFor as kernelBodyLimitFor, silentLogger, type AocModule } from '@aoc/kernel';
+import { createIntakeModule, intakeLimits } from '@aoc/mod-intake';
+import { bodyLimitFor, CONTENT_SECURITY_POLICY, INTAKE_UPLOAD_PATH, JSON_BODY_LIMIT } from '../src/http';
 import { createDefaultModules, MODULE_ORDER } from '../src/modules';
 import { createAocServer } from '../src/server';
 import { bootTestServer, removeTempDirs, tempDir, testConfig, type TestServer } from './helpers';
@@ -227,6 +228,15 @@ describe('aocd HTTP surface', () => {
       duplex: 'half',
     } as RequestInit);
     expect(tooBig.status).toBe(413);
+  });
+
+  it('caps the intake upload at the total the portal is told plus the form envelope, in aocd and in the kernel alike', () => {
+    const intake = { maxVideoBytes: 3 * 1024 * 1024, maxImageBytes: 1024 * 1024, maxAttachments: 4 };
+    const config = testConfig(tempDir(), { intake });
+    const published = intakeLimits(config.intake).maxTotalBytes;
+    expect(published).toBe(3 * 1024 * 1024);
+    expect(bodyLimitFor(INTAKE_UPLOAD_PATH, config)).toBe(published + INTAKE_ENVELOPE_BYTES);
+    expect(kernelBodyLimitFor(INTAKE_UPLOAD_PATH, config)).toBe(published + INTAKE_ENVELOPE_BYTES);
   });
 
   it('refuses cross-site writes that ride on the session cookie', async () => {

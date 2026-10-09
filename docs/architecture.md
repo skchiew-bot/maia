@@ -151,7 +151,8 @@ aocd's parts:
   ingest token is refused (401) **before any body is parsed**, and observed-mode events can never target a managed
   session.
 - **Request limits.** Every body is capped before authentication or parsing: 64 MiB for the spool, 16 MiB for
-  other ingest, 4 MiB for the API, and the attachment allowance plus 1 MiB for the portal. A larger body gets 413.
+  other ingest, 4 MiB for the API, and the intake total allowance plus 1 MiB for the portal (one maximum-size video,
+  `intake.maxVideoBytes`, the same total `GET /portal/api/limits` publishes). A larger body gets 413.
   A single huge request therefore cannot stall the sole writer, and with it every managed session's hooks.
 - **SSE.** Event headers, liveness changes, notifications and activity ticks. Never bodies (§5.8).
 - **Scheduler.** Interval jobs and daily jobs at a local time in `config.timezone` (default
