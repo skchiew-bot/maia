@@ -114,6 +114,11 @@ export interface DecisionRequestInput {
   dueAt?: string | null;
   /** Override computed role (only to escalate, never to lower). */
   requiredRole?: Role;
+  /**
+   * Body scope for the card's free text (e.g. a ticket id, so erasing the ticket also erases the decision text).
+   * Default: the ticket when the subject is a ticket, else the store default (session → ticket → project → global).
+   */
+  bodyScope?: string;
 }
 
 export interface DecisionResolveInput {

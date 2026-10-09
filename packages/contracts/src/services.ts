@@ -222,6 +222,8 @@ export interface LaunchRequest {
   prompt: string;
   cwd?: string | null;
   ticketId?: string | null;
+  /** Change record the session works under: exported as AOC_CHANGE_ID in that session's env only. */
+  changeId?: string | null;
   parentSessionId?: string | null;
   /** For rollover: brief injected as the opening context. */
   brief?: string | null;
