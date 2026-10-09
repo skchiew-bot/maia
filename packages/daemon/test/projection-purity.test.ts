@@ -13,14 +13,14 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { forSeeds, type EventStore } from '@aoc/kernel';
 import { bodiesByScope, ftsOrphanTerms, plaintextOnlyIn, scanFiles, scanTables } from './support/erasure';
-import { cleanupHistoryDirs, copyHistory, openHistory, seedDemoHistory, type SeededHistory } from './support/history';
+import { cleanupHistoryDirs, copyHistory, discardHistory, openHistory, seedDemoHistory, type SeededHistory } from './support/history';
 import { describeDiffs, diffSnapshots, snapshotProjections, undeclaredTables } from './support/snapshot';
 
 let seeded: SeededHistory;
-beforeAll(() => {
-  seeded = seedDemoHistory(2);
-}, 120_000);
-afterAll(() => cleanupHistoryDirs());
+beforeAll(async () => {
+  seeded = await seedDemoHistory();
+}, 300_000);
+afterAll(() => cleanupHistoryDirs(), 120_000);
 
 /** State the modules keep outside the log on purpose (alert dedupe), so a rebuild does not need to restore it. */
 const KNOWN_UNDECLARED = ['dec_notices'];
@@ -112,7 +112,7 @@ describe('erasing a scope (§13)', () => {
           const orphans = ftsOrphanTerms(store.db);
           if (orphans.length) problems.push(`the knowledge index still holds terms of no remaining document: ${orphans.slice(0, 8).join(', ')}`);
           const files = scanFiles(h.aocData, needles);
-          if (files.length) problems.push(`${files.length} erased string(s) are still in the database file or WAL, e.g. ${JSON.stringify(files[0]!.needle.slice(0, 50))}`);
+          if (files.length) problems.push(`${files.length} erased string(s) are still in ${[...new Set(files.map((f) => f.where))].join(' and ')}, e.g. ${JSON.stringify(files[0]!.needle.slice(0, 50))}`);
 
           const live = snapshotProjections(store.db, o.projectors);
           store.rebuildProjections();
@@ -126,10 +126,11 @@ describe('erasing a scope (§13)', () => {
           if (problems.length) failures.push(`erasing ${kind} scope ${scope} (seed ${seed}, ${needles.length} text values):\n - ${problems.join('\n - ')}`);
         } finally {
           await o.close();
+          await discardHistory(h);
         }
       },
       { count: 5 },
     );
     expect(failures.join('\n\n')).toBe('');
-  });
+  }, 900_000);
 });

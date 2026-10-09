@@ -4,8 +4,9 @@
  * run as a child process into a temp directory and reopened here with the production module list. The supervisor
  * contributes only its projector: reopening must never start a claude process.
  */
-import { spawnSync } from 'node:child_process';
-import { cpSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { cpSync, mkdtempSync, readFileSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -31,8 +32,17 @@ import { createSupervisorModule } from '@aoc/supervisor';
 import { repoRoot } from '../helpers';
 
 const tmpDirs: string[] = [];
-export function cleanupHistoryDirs(): void {
-  for (const d of tmpDirs.splice(0)) rmSync(d, { recursive: true, force: true });
+
+/** Removing tens of history copies is long: asynchronously, so the vitest worker keeps answering its RPC calls. */
+export async function cleanupHistoryDirs(): Promise<void> {
+  await Promise.all(tmpDirs.splice(0).map((d) => rm(d, { recursive: true, force: true })));
+}
+
+/** Drop a private copy as soon as its test is done: one per seed would otherwise pile up on disk. */
+export async function discardHistory(h: SeededHistory): Promise<void> {
+  const i = tmpDirs.indexOf(h.root);
+  if (i >= 0) tmpDirs.splice(i, 1);
+  await rm(h.root, { recursive: true, force: true });
 }
 
 export interface SeededHistory {
@@ -42,8 +52,11 @@ export interface SeededHistory {
   config: AocConfig;
 }
 
-/** Run the demo seeder for `days` days of history into a fresh temp directory. */
-export function seedDemoHistory(days = 2): SeededHistory {
+/**
+ * Run the demo seeder for `days` days of history into a fresh temp directory. Asynchronous on purpose: a minute of
+ * blocked event loop starves vitest's worker of its RPC replies and fails the run with a timeout.
+ */
+export async function seedDemoHistory(days = 14): Promise<SeededHistory> {
   const root = mkdtempSync(join(tmpdir(), 'aoc-history-'));
   tmpDirs.push(root);
   const tsx = pathToFileURL(createRequire(join(repoRoot, 'package.json')).resolve('tsx')).href;
@@ -52,12 +65,20 @@ export function seedDemoHistory(days = 2): SeededHistory {
     if (k.startsWith('AOC_') || k.startsWith('CLAUDE_SIM_') || ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN'].includes(k)) continue;
     env[k] = v;
   }
-  const r = spawnSync(
+  const child = spawn(
     process.execPath,
     ['--import', tsx, join(repoRoot, 'packages', 'demo', 'src', 'seed.ts'), '--data-dir', join(root, 'demo'), '--days', String(days), '--reset'],
-    { cwd: repoRoot, env, encoding: 'utf8', timeout: 120_000 },
+    { cwd: repoRoot, env, stdio: ['ignore', 'pipe', 'pipe'] },
   );
-  if (r.status !== 0) throw new Error(`the demo seeder failed (${r.status}):\n${r.stdout}\n${r.stderr}`);
+  let output = '';
+  child.stdout.on('data', (chunk: Buffer) => (output += chunk));
+  child.stderr.on('data', (chunk: Buffer) => (output += chunk));
+  const timer = setTimeout(() => child.kill('SIGKILL'), 240_000);
+  const status = await new Promise<number | null>((resolve, reject) => {
+    child.once('error', reject);
+    child.once('close', resolve);
+  }).finally(() => clearTimeout(timer));
+  if (status !== 0) throw new Error(`the demo seeder failed (${status}):\n${output}`);
   return loadHistory(join(root, 'demo'));
 }
 
