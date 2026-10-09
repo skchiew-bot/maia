@@ -1,8 +1,8 @@
 {
-  "name": "@aoc/mod-learning",
+  "name": "@aoc/distill",
   "version": "0.1.0",
   "private": true,
-  "description": "Error learning: root-cause classes, repeat offences, lessons registry, model dimension",
+  "description": "The one distillation core shared by playbooks and lessons: validated model call, deterministic fallback, Approver gate",
   "type": "module",
   "exports": {
     ".": "./src/index.ts"
@@ -13,10 +13,10 @@
   },
   "dependencies": {
     "@aoc/contracts": "workspace:*",
-    "@aoc/distill": "workspace:*",
-    "@aoc/kernel": "workspace:*",
     "@aoc/llm": "workspace:*",
-    "hono": "4.13.13",
     "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@aoc/kernel": "workspace:*"
   }
 }

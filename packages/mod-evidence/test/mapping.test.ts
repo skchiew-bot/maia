@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { EVENT_CATALOG } from '@aoc/contracts';
 import {
@@ -9,6 +10,7 @@ import {
   loadMapping,
   mappingHash,
   parseMapping,
+  type LoadedMapping,
   type MappingFile,
   type MappingRow,
 } from '../src';
@@ -240,5 +242,62 @@ describe('mapping file loading', () => {
     expect(mappingHash(a.mapping)).toBe(mappingHash(b.mapping));
     expect(mappingHash(a.mapping)).not.toBe(mappingHash(c.mapping));
     expect(loadMapping(file(valid())).hash).toBe(mappingHash(a.mapping));
+  });
+});
+
+/** The mapping aocd loads by default (config.compliance.mappingFile). */
+const SHIPPED_MAPPING = fileURLToPath(new URL('../../../config/iso42001-mapping.json', import.meta.url));
+/** Change control, rollback and break-glass (§8), the provenance gate (§14) and credits (§10). */
+const GOVERNED_FAMILIES = ['change.', 'rollback.', 'breakglass.', 'promotion.', 'credit.'];
+const governedTypes = [...EVENT_CATALOG.keys()].filter((t) => GOVERNED_FAMILIES.some((p) => t.startsWith(p)));
+
+/** Catalog event types an evidence text names (`family.*` and `family.prefix_*` expand to the catalog). */
+function citedTypes(text: string): string[] {
+  const out = new Set<string>();
+  for (const [token] of text.matchAll(/\b[a-z][a-z0-9_]*\.[a-z0-9_]*\*?/g)) {
+    if (token.endsWith('*')) {
+      for (const t of EVENT_CATALOG.keys()) if (t.startsWith(token.slice(0, -1))) out.add(t);
+    } else if (EVENT_CATALOG.has(token)) out.add(token);
+  }
+  return [...out];
+}
+
+describe('catalog coverage of governance events', () => {
+  it('includes the event types change control added after the first mapping', () => {
+    expect(governedTypes).toEqual(
+      expect.arrayContaining([
+        'promotion.rejected',
+        'promotion.failed',
+        'breakglass.rejected',
+        'rollback.failed',
+      ]),
+    );
+  });
+
+  it.each<[string, () => LoadedMapping]>([
+    ['the built-in default', () => builtinMapping()],
+    ['config/iso42001-mapping.json', () => loadMapping(SHIPPED_MAPPING)],
+  ])(
+    '%s cites every change, rollback, break-glass, promotion and credit event type in a row',
+    (_name, load) => {
+      const mapped = new Set(load().mapping.rows.flatMap((r) => r.eventTypes));
+      expect(governedTypes.filter((t) => !mapped.has(t))).toEqual([]);
+    },
+  );
+
+  it('loads the shipped file itself (a rejected file would silently fall back to the built-in default)', () => {
+    const m = loadMapping(SHIPPED_MAPPING);
+    expect(m.warnings).toEqual([]);
+    expect(m.source).toBe('config');
+    expect(m.hash).not.toBe(builtinMapping().hash);
+    // Without eventTypes every control would be "documentary evidence only" and map nothing in a pack.
+    expect(m.mapping.rows.filter((r) => r.eventTypes.length === 0).map((r) => r.id)).toEqual([]);
+  });
+
+  it('every row of the shipped file counts exactly the event types its evidence names', () => {
+    for (const r of loadMapping(SHIPPED_MAPPING).mapping.rows) {
+      const cited = [...new Set(r.evidence.flatMap(citedTypes))].sort();
+      expect(cited, r.id).toEqual([...r.eventTypes].sort());
+    }
   });
 });
