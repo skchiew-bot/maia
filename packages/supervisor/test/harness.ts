@@ -277,6 +277,8 @@ export interface HarnessOptions {
   ledger?: boolean;
   services?: Partial<ServiceMap>;
   log?: Logger;
+  /** The fake sidecar runs until SIGTERM, then holds its exit until `releaseSidecars()` (its last-report window). */
+  sidecarHold?: boolean;
   /** Process types added to the stub registry. */
   types?: ProcessType[];
   /** aocd environment entries added to (or, with undefined, removed from) the default one (e.g. FAKE_SIDECAR_LINGER=1). */
@@ -297,6 +299,7 @@ export async function createHarness(o: HarnessOptions = {}) {
   const sessionsDir = dir('sessions');
   const callLog = join(root, 'claude-calls.jsonl');
   const sidecarLog = join(root, 'sidecar-calls.jsonl');
+  const sidecarHoldDir = dir('sidecar-hold');
   const profilesFile = join(root, 'credential-profiles.json');
   writeFileSync(
     profilesFile,
@@ -336,7 +339,7 @@ export async function createHarness(o: HarnessOptions = {}) {
         claudeArgsPrefix: [FAKE_CLAUDE],
         mcpCommand: ['node', '/opt/aoc/mcp-server.js'],
         hookCommand: ['node', '/opt/aoc/aoc-hook.js'],
-        sidecarCommand: [process.execPath, FAKE_SIDECAR, sidecarLog],
+        sidecarCommand: [process.execPath, FAKE_SIDECAR, sidecarLog, ...(o.sidecarHold ? ['--hold', sidecarHoldDir] : [])],
         envAllowlist: [...defaultConfig().supervisor.envAllowlist, 'FAKE_CLAUDE_LOG', 'FAKE_SIDECAR_LINGER'],
         credentialProfilesFile: profilesFile,
         maxConcurrentSessions: 4,
@@ -390,6 +393,8 @@ export async function createHarness(o: HarnessOptions = {}) {
     callsFor: (sessionId: string): FakeCall[] =>
       readJsonl<FakeCall>(callLog).filter((c) => c.env.AOC_SESSION_ID === sessionId),
     sidecarCalls: () => readJsonl<{ args: string[]; env: Record<string, string> }>(sidecarLog),
+    sidecarSignals: () => readJsonl<{ pid: number; signal: string; at: number }>(`${sidecarLog}.signals`),
+    releaseSidecars: () => writeFileSync(join(sidecarHoldDir, 'release'), 'go'),
     events: (type: string, sessionId?: string): StoredEvent[] =>
       t.rt.store.list({ types: [type], ...(sessionId ? { sessionId } : {}) }),
     payload: (e: StoredEvent) => t.rt.store.readPayload(e) as Record<string, unknown> | null,

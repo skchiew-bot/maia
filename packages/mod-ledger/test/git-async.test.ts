@@ -1,7 +1,7 @@
 /**
  * The ledger's git calls never hold aocd's thread (a hook with ~2.5 s must still be answered while some repository is
- * slow), a check git cannot finish is recorded unverified with its reason, and the one read that may open a working
- * copy another OS user owns trusts exactly that path and nothing the repository says.
+ * slow), a check git cannot finish is recorded unverified with its reason, and a working copy another OS user owns is
+ * read as that user (G-04), never as root and never through `safe.directory`.
  */
 import { spawnSync } from 'node:child_process';
 import {
@@ -50,15 +50,19 @@ afterEach(async () => {
 interface Call {
   args: string;
   env: string[];
+  /** The OS user the call ran as. */
+  uid: number;
 }
 const SEP = '  ##  ';
 
 /**
- * A `git` first on PATH that logs every call (arguments and GIT_* environment) and, while `slow(seconds)` is on,
- * sleeps first: a repository on a stalled disk or a very large tree.
+ * A `git` first on PATH that logs every call (arguments, GIT_* environment, uid) and, while `slow(seconds)` is on,
+ * sleeps first: a repository on a stalled disk or a very large tree. World-readable and -writable, so that git
+ * started as another OS user can run it.
  */
 function installShim() {
   const dir = temp();
+  chmodSync(dir, 0o755);
   const log = join(dir, 'calls.log');
   const flag = join(dir, 'sleep-seconds');
   const file = join(dir, 'git');
@@ -66,13 +70,14 @@ function installShim() {
     file,
     // One write per call: git runs in parallel and the records must not interleave.
     `#!/bin/sh
-printf '%s\\n' "$*${SEP}$(env | grep '^GIT_' | sort | tr '\\n' ' ')" >> '${log}'
+printf '%s\\n' "$*${SEP}$(env | grep '^GIT_' | sort | tr '\\n' ' ')${SEP}$(id -u)" >> '${log}'
 if [ -s '${flag}' ]; then sleep "$(cat '${flag}')"; fi
 exec '${realGit}' "$@"
 `,
   );
   chmodSync(file, 0o755);
   writeFileSync(log, '');
+  chmodSync(log, 0o666);
   process.env.PATH = `${dir}:${savedPath}`;
   // Unique, so a leftover sleep can only be one of ours.
   const sleepFor = `7.${process.pid}`;
@@ -86,8 +91,8 @@ exec '${realGit}' "$@"
         .split('\n')
         .filter(Boolean)
         .map((line) => {
-          const [args, env] = line.split(SEP);
-          return { args: args!, env: (env ?? '').split(' ').filter(Boolean) };
+          const [args, env, uid] = line.split(SEP);
+          return { args: args!, env: (env ?? '').split(' ').filter(Boolean), uid: Number(uid) };
         });
     },
     /** Shim sleeps still running (a zombie is not running). */
@@ -269,7 +274,10 @@ describe('a slow repository costs only the request that asked about it', () => {
   });
 });
 
-/** Root can prove the ownership check: a working copy owned by another uid is refused by plain git. */
+/**
+ * With session isolation aocd is root and the session user owns the working copy. The kernel runs git there as that
+ * owner (G-04), so root never parses what an agent can write and git's ownership check passes by itself.
+ */
 describe.skipIf(!isRoot)('a working copy another OS user owns (session isolation, G-01)', () => {
   function chownTree(path: string, uid: number): void {
     lchownSync(path, uid, uid);
@@ -279,34 +287,35 @@ describe.skipIf(!isRoot)('a working copy another OS user owns (session isolation
       else lchownSync(p, uid, uid);
     }
   }
-  /** Test-only: root reading or committing in the foreign repository, trusting its exact path and nothing else. */
-  const asRoot = (repo: string, ...args: string[]) => {
+  /** Test-only setup: git in the foreign repository as its owner, with the planted programs switched off. */
+  const asOwner = (repo: string, ...args: string[]) => ownerGit(repo, true, args);
+  /** The same without any safety setting: plain git, as the owner, runs whatever the repository configures. */
+  const unsafe = (repo: string, ...args: string[]) => ownerGit(repo, false, args);
+  const ownerGit = (repo: string, safe: boolean, args: string[]) => {
     const r = spawnSync(
       realGit,
-      [
-        '-c',
-        `safe.directory=${repo}`,
-        '-c',
-        'core.hooksPath=/dev/null',
-        '-c',
-        'core.fsmonitor=false',
-        ...args,
-      ],
+      [...(safe ? ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false'] : []), ...args],
       {
         cwd: repo,
         encoding: 'utf8',
-        env: { ...process.env, GIT_NO_LAZY_FETCH: '1', GIT_ALLOW_PROTOCOL: '' },
+        uid: FOREIGN_UID,
+        gid: FOREIGN_UID,
+        env: {
+          PATH: process.env.PATH,
+          HOME: '/nonexistent',
+          GIT_CONFIG_GLOBAL: '/dev/null',
+          ...(safe ? { GIT_NO_LAZY_FETCH: '1' } : {}),
+        },
       },
     );
     return { code: r.status, out: r.stdout.trim(), err: r.stderr };
   };
-  /** The same read without any of the hardening: what exact-path trust alone would do. */
-  const unhardened = (repo: string, ...args: string[]) =>
-    spawnSync(realGit, ['-c', `safe.directory=${repo}`, ...args], { cwd: repo, encoding: 'utf8' });
 
   /** What a hostile session could leave in its own repository: each trap records that it ran. */
   function plantTraps(repo: string) {
     const dir = temp();
+    // The owner must be able to run them and leave the marker: a trap that cannot fire proves nothing.
+    chmodSync(dir, 0o777);
     const markers = {
       transport: join(dir, 'ran-transport'),
       fsmonitor: join(dir, 'ran-fsmonitor'),
@@ -341,7 +350,7 @@ describe.skipIf(!isRoot)('a working copy another OS user owns (session isolation
     };
   }
 
-  it('verifies commit evidence there by trusting exactly that path, and runs nothing the repository configures', async () => {
+  it('reads it as its owner: commit evidence, baseline and fingerprint work, and nothing the repository configures runs', async () => {
     const shim = installShim();
     h = await createHarness();
     const projectId = h.project();
@@ -350,38 +359,39 @@ describe.skipIf(!isRoot)('a working copy another OS user owns (session isolation
     chownTree(repo, FOREIGN_UID);
     h.session({ sessionId: 'ses_a', projectId, cwd: repo });
 
-    // Premises: root's own git refuses this repository; an unhardened exact-path trust would run the planted
-    // promisor transport as root as soon as a cited commit is missing.
+    // Premises: root's own git refuses this repository, and the planted promisor transport is live: plain git, as
+    // the owner and without the kernel's settings, runs it as soon as a cited commit is missing.
     const MISSING = '1'.repeat(40);
     expect(spawnSync(realGit, ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).stderr).toMatch(
       /dubious ownership/,
     );
-    unhardened(repo, 'rev-list', '-n1', `${MISSING}^{commit}`);
+    unsafe(repo, 'rev-list', '-n1', `${MISSING}^{commit}`);
     expect(traps.ran()).toEqual(['transport']);
     rmSync(traps.markers.transport);
 
-    const base = asRoot(repo, 'rev-parse', 'HEAD').out;
+    const base = asOwner(repo, 'rev-parse', 'HEAD').out;
     shim.reset();
     await h.mcp('declare_plan', 'ses_a', PLAN);
-    // The baseline HEAD is read; the working-tree fingerprint (status, diff) is not: plain git refuses.
-    expect(h.events('plan.declared')[0]!.meta).toMatchObject({ baseHead: base, treeFingerprint: null });
+    // The baseline is read in full: HEAD and the working-tree fingerprint (so diff evidence is judged, not assumed).
+    expect(h.events('plan.declared')[0]!.meta).toMatchObject({
+      baseHead: base,
+      treeFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/),
+    });
     expect(h.events('plan.declared')[0]!.meta.baselineReason).toBeUndefined();
 
-    asRoot(
+    asOwner(
       repo,
       '-c',
       'user.name=Agent',
       '-c',
       'user.email=agent@localhost',
-      '-c',
-      'commit.gpgsign=false',
       'commit',
       '-q',
       '--allow-empty',
       '-m',
       'work',
     );
-    const work = asRoot(repo, 'rev-parse', 'HEAD').out;
+    const work = asOwner(repo, 'rev-parse', 'HEAD').out;
     shim.reset();
 
     h.toolUsed('ses_a');
@@ -400,69 +410,38 @@ describe.skipIf(!isRoot)('a working copy another OS user owns (session isolation
     ]);
     expect(traps.ran()).toEqual([]);
 
-    // Exactly the path, never '*'; hooks and fsmonitor off; no system or user config, no lazy fetch, no transport.
+    // Every call ran as the owner, never as root, with the kernel's safety settings and no safe.directory at all.
     const calls = shim.calls();
-    const trusted = calls.filter((c) => c.args.includes('safe.directory'));
-    expect(trusted.length).toBeGreaterThan(0);
-    for (const c of trusted) {
-      expect(c.args).toContain(`safe.directory=${repo} `);
-      expect(c.args).not.toMatch(/safe\.directory=\*/);
-      expect(c.args.match(/safe\.directory/g)).toHaveLength(1);
+    expect(calls.length).toBeGreaterThan(0);
+    for (const c of calls) {
+      expect(c.uid, c.args).toBe(FOREIGN_UID);
+      expect(c.args).not.toContain('safe.directory');
       expect(c.args).toContain('core.hooksPath=/dev/null');
       expect(c.args).toContain('core.fsmonitor=false');
-      expect(c.args).toMatch(/ (rev-parse|rev-list) /);
-      expect(c.env).toEqual(
-        expect.arrayContaining([
-          'GIT_CONFIG_GLOBAL=/dev/null',
-          'GIT_CONFIG_NOSYSTEM=1',
-          'GIT_CONFIG_SYSTEM=/dev/null',
-          'GIT_NO_LAZY_FETCH=1',
-          'GIT_ALLOW_PROTOCOL=',
-          'GIT_OPTIONAL_LOCKS=0',
-        ]),
+      expect(c.args).toContain('protocol.ext.allow=never');
+      expect(c.env, c.args).toEqual(
+        expect.arrayContaining(['GIT_CONFIG_GLOBAL=/dev/null', 'GIT_CONFIG_NOSYSTEM=1']),
       );
     }
-    // The commands that can start filters, textconv and fsmonitor are never trusted.
-    const plain = calls.filter((c) => !c.args.includes('safe.directory'));
-    expect(plain.length).toBeGreaterThan(0);
-    for (const c of plain) expect(c.args).toMatch(/^(status|diff|ls-files|tag) /);
+    // The plumbing reads of the evidence path (HEAD, "is this commit new?") also drop lazy fetch and every transport
+    // by environment; the kernel's own fingerprint reads rely on the settings above alone.
+    const READ_ENV = ['GIT_NO_LAZY_FETCH=1', 'GIT_ALLOW_PROTOCOL=', 'GIT_OPTIONAL_LOCKS=0'];
+    const commitChecks = calls.filter((c) => / rev-list /.test(c.args));
+    expect(commitChecks.length).toBeGreaterThan(0);
+    for (const c of commitChecks) expect(c.env, c.args).toEqual(expect.arrayContaining(READ_ENV));
+    // The kernel's fingerprint asks git for HEAD in the same words, so the ledger's own read is one of those calls.
+    const headReads = calls.filter((c) => c.args.includes('--verify --quiet HEAD^{commit}'));
+    expect(headReads.some((c) => READ_ENV.every((e) => c.env.includes(e)))).toBe(true);
 
-    // Phase P1 closed: HEAD is pinned by sha; the tag (a write) was refused like any plain git call.
+    // Phase P1 closed: HEAD is pinned by an annotated tag the owner created, and the repository's own hook did not run.
     const [pin] = h.events('phase.completed');
-    expect(pin!.meta).toMatchObject({ phaseId: 'P1', pinnedSha: work, pinnedTag: null });
+    expect(pin!.meta).toMatchObject({
+      phaseId: 'P1',
+      pinnedSha: work,
+      pinnedTag: expect.stringMatching(/^aoc\//),
+    });
+    expect(asOwner(repo, 'cat-file', '-t', String(pin!.meta.pinnedTag)).out).toBe('tag');
     expect(traps.ran()).toEqual([]);
     expect(h.t.rt.store.verifyChain().ok).toBe(true);
-  });
-
-  it('a working copy whose path could be read as a pattern is not trusted', async () => {
-    installShim();
-    h = await createHarness();
-    const projectId = h.project();
-    const parent = temp();
-    const repo = join(parent, 'repo*star');
-    mkdirSync(repo);
-    git(repo, 'init', '-q', '-b', 'main');
-    writeFileSync(join(repo, 'f'), 'x\n');
-    git(repo, 'add', '-A');
-    git(
-      repo,
-      '-c',
-      'user.name=n',
-      '-c',
-      'user.email=e@l',
-      '-c',
-      'commit.gpgsign=false',
-      'commit',
-      '-q',
-      '-m',
-      'one',
-    );
-    const sha = git(repo, 'rev-parse', 'HEAD');
-    chownTree(repo, FOREIGN_UID);
-    h.session({ sessionId: 'ses_a', projectId, cwd: repo });
-    await h.mcp('declare_plan', 'ses_a', PLAN);
-    expect(h.events('plan.declared')[0]!.meta).toMatchObject({ baseHead: null });
-    h.toolUsed('ses_a');
-    expect(await close('ses_a', 't1', 'commit', sha)).toMatchObject({ flagged: 'evidence_unverified' });
   });
 });

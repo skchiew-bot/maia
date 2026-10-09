@@ -1,5 +1,14 @@
-import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -129,7 +138,7 @@ describe('GitService.runAsync (aocd runs everything on one thread)', () => {
     expect(r.stderr).not.toBe('');
   });
 
-  it('shares the fingerprint with the sync reader (baselines already in the log stay comparable)', () => {
+  it('hashes like the sync reader (baselines already in the log stay comparable)', () => {
     const repo = join(temp(), 'repo');
     const head = initRepo(repo);
     writeFileSync(join(repo, 'new.txt'), 'x\n');
@@ -140,6 +149,125 @@ describe('GitService.runAsync (aocd runs everything on one thread)', () => {
     expect(workingTreeFingerprintOf({ head: null, status: '', diff: '' })).not.toBe(
       workingTreeFingerprintOf({ head, status: '', diff: '' }),
     );
-    expect(existsSync(join(repo, 'new.txt'))).toBe(true);
   });
 });
+
+/** A script that records that it ran in `marker`. */
+function tripwire(path: string, marker: string, name: string): string {
+  writeFileSync(path, `#!/bin/sh\necho "${name} $*" >> '${marker}'\nexit 1\n`);
+  chmodSync(path, 0o755);
+  return path;
+}
+const raw = (dir: string, ...args: string[]) =>
+  execFileSync(realGit, args, {
+    cwd: dir,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: { PATH: process.env.PATH ?? '', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' },
+  }).trim();
+
+describe('the async twins keep the kernel git rules (T-2, G-04)', () => {
+  it('workingTreeFingerprintAsync is the sync fingerprint, and null where git cannot describe a tree', async () => {
+    const git = createGitService();
+    const repo = join(temp(), 'repo');
+    initRepo(repo, { files: { 'a.txt': 'one\n' } });
+    writeFileSync(join(repo, 'a.txt'), 'two\n');
+    writeFileSync(join(repo, 'new.txt'), 'x\n');
+    const sync = git.workingTreeFingerprint(repo);
+    expect(sync).toMatch(/^[0-9a-f]{64}$/);
+    expect(await git.workingTreeFingerprintAsync(repo)).toEqual({ fingerprint: sync, timedOut: false });
+    expect(await git.workingTreeFingerprintAsync(temp())).toEqual({ fingerprint: null, timedOut: false });
+
+    // No commit yet: still a fingerprint (the status), as before.
+    const fresh = join(temp(), 'fresh');
+    raw(temp(), 'init', '-q', '-b', 'main', fresh);
+    writeFileSync(join(fresh, 'f.txt'), 'x\n');
+    const unborn = git.workingTreeFingerprint(fresh);
+    expect(unborn).toMatch(/^[0-9a-f]{64}$/);
+    expect(await git.workingTreeFingerprintAsync(fresh)).toEqual({ fingerprint: unborn, timedOut: false });
+  });
+
+  it('a fingerprint that git did not finish is timedOut, never a hash of half an answer', async () => {
+    const repo = join(temp(), 'repo');
+    initRepo(repo);
+    shim(`sleep 30\nexec ${realGit} "$@"`);
+    const t0 = Date.now();
+    const r = await createGitService().workingTreeFingerprintAsync(repo, { timeoutMs: 300 });
+    expect(r).toEqual({ fingerprint: null, timedOut: true });
+    expect(Date.now() - t0).toBeLessThan(5_000);
+  });
+
+  it('runs no hook, signing program, filter, fsmonitor or transport the repository configures', async () => {
+    const dir = temp();
+    const repo = join(dir, 'repo');
+    const marker = join(dir, 'MARK');
+    const head = initRepo(repo, { files: { 'a.txt': 'one\n' } });
+    const hooks = join(dir, 'hooks');
+    mkdirSync(hooks);
+    tripwire(join(hooks, 'reference-transaction'), marker, 'hook');
+    raw(repo, 'config', 'core.hooksPath', hooks);
+    raw(repo, 'config', 'core.fsmonitor', tripwire(join(dir, 'fsmonitor'), marker, 'fsmonitor'));
+    raw(repo, 'config', 'gpg.program', tripwire(join(dir, 'gpg'), marker, 'gpg'));
+    raw(repo, 'config', 'tag.gpgSign', 'true');
+    raw(repo, 'config', 'filter.evil.clean', tripwire(join(dir, 'clean'), marker, 'filter'));
+    writeFileSync(join(repo, '.gitattributes'), '*.txt filter=evil\n');
+    // A partial clone whose remote is a program: a missing object would run it.
+    raw(repo, 'config', 'core.repositoryformatversion', '1');
+    raw(repo, 'config', 'extensions.partialClone', 'origin');
+    raw(repo, 'config', 'remote.origin.url', `ext::${tripwire(join(dir, 'transport'), marker, 'transport')}`);
+    raw(repo, 'config', 'remote.origin.promisor', 'true');
+    raw(repo, 'config', 'protocol.ext.allow', 'always');
+    writeFileSync(join(repo, 'a.txt'), 'two\n');
+
+    const git = createGitService();
+    expect((await git.workingTreeFingerprintAsync(repo)).fingerprint).toMatch(/^[0-9a-f]{64}$/);
+    expect((await git.runAsync(repo, ['tag', '-a', 'aoc/pin/1', head, '-m', 'pin'])).code).toBe(0);
+    expect((await git.runAsync(repo, ['rev-list', '-n1', `${'1'.repeat(40)}^{commit}`])).code).not.toBe(0);
+    expect(existsSync(marker) ? readFileSync(marker, 'utf8') : '').toBe('');
+
+    // Control: plain git trips them.
+    const attempt = (fn: () => unknown) => {
+      try {
+        fn();
+      } catch {
+        // only the side effects matter
+      }
+    };
+    attempt(() => raw(repo, 'status', '--porcelain'));
+    attempt(() => raw(repo, 'tag', '-a', 'control', head, '-m', 'control'));
+    attempt(() => raw(repo, '-c', 'tag.gpgSign=false', 'tag', '-a', 'control2', head, '-m', 'control'));
+    attempt(() => raw(repo, 'rev-list', '-n1', `${'1'.repeat(40)}^{commit}`));
+    const tripped = readFileSync(marker, 'utf8');
+    for (const name of ['fsmonitor', 'filter', 'hook', 'transport']) expect(tripped, name).toContain(name);
+  });
+});
+
+const NOBODY = (() => {
+  const line = spawnSync('getent', ['passwd', 'nobody'], { encoding: 'utf8' }).stdout.split('\n')[0] ?? '';
+  const [, , uid, gid] = line.split(':');
+  return uid && gid ? { uid: Number(uid), gid: Number(gid) } : null;
+})();
+
+describe.skipIf(process.getuid?.() !== 0 || !NOBODY)(
+  'a repository owned by the session user (G-01, G-04)',
+  () => {
+    it('is read, async too, as its owner: no dubious-ownership refusal, and what git writes stays the owner’s', async () => {
+      const dir = temp();
+      chmodSync(dir, 0o755);
+      const repo = join(dir, 'repo');
+      const head = initRepo(repo, { files: { 'a.txt': 'one\n' } });
+      execFileSync('chown', ['-R', `${NOBODY!.uid}:${NOBODY!.gid}`, repo]);
+      expect(() => raw(repo, 'rev-parse', 'HEAD')).toThrow(/dubious ownership/);
+      const git = createGitService();
+      expect(await git.runAsync(repo, ['rev-parse', 'HEAD'])).toMatchObject({ code: 0, stdout: `${head}\n` });
+      writeFileSync(join(repo, 'a.txt'), 'two\n');
+      const sync = git.workingTreeFingerprint(repo);
+      expect(sync).toMatch(/^[0-9a-f]{64}$/);
+      expect(await git.workingTreeFingerprintAsync(repo)).toEqual({ fingerprint: sync, timedOut: false });
+      expect(await git.runAsync(repo, ['tag', '-a', 'aoc/pin/1', head, '-m', 'pin'])).toMatchObject({
+        code: 0,
+      });
+      expect(statSync(join(repo, '.git', 'refs', 'tags', 'aoc', 'pin', '1')).uid).toBe(NOBODY!.uid);
+    });
+  },
+);

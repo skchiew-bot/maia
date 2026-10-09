@@ -78,9 +78,14 @@ describe('(i) intake portal', () => {
     expect(reported).toMatchObject({ source: 'mcp', actor: { kind: 'agent', id: triage.sessionId } });
     // The diagnosis is where triage ends: this scenario declares no plan, and the session still completes on its own
     // turn end instead of being auto-continued and parked as Waiting on you.
-    const ended = await waitFor(() => h.events({ types: ['session.ended'], sessionId: triage.sessionId })[0], { what: 'the triage session to end' });
+    const ended = await waitFor(
+      () => h.events({ types: ['session.ended'], sessionId: triage.sessionId })[0],
+      { what: 'the triage session to end' },
+    );
     expect(ended.meta).toEqual({ sessionId: triage.sessionId, outcome: 'completed' });
-    expect(h.events({ types: ['session.turn_started'], sessionId: triage.sessionId }).map((e) => e.meta.reason)).toEqual(['launch']);
+    expect(
+      h.events({ types: ['session.turn_started'], sessionId: triage.sessionId }).map((e) => e.meta.reason),
+    ).toEqual(['launch']);
 
     // The fix-plan gate is an Approver decision; the requester only ever sees abstracted status.
     expect(gated.openDecisionIds).toHaveLength(1);
@@ -125,13 +130,22 @@ const DIAGNOSE = {
   },
 };
 
-async function submit(requester: TestUser, projectId: string, title: string, scenario: string): Promise<string> {
+async function submit(
+  requester: TestUser,
+  projectId: string,
+  title: string,
+  scenario: string,
+): Promise<string> {
   const form = new FormData();
   form.set('title', title);
   form.set('description', `I get kicked out at once after logging in. [[scenario:${scenario}]]`);
   form.set('severity', 'medium');
   form.set('projectId', projectId);
-  const res = await fetch(`${h.url}/portal/api/intakes`, { method: 'POST', headers: requester.headers, body: form });
+  const res = await fetch(`${h.url}/portal/api/intakes`, {
+    method: 'POST',
+    headers: requester.headers,
+    body: form,
+  });
   expect(res.status).toBe(201);
   return ((await res.json()) as PublicTicket).ticketId;
 }
@@ -148,7 +162,18 @@ describe('(i) triage sessions end at their diagnosis', () => {
         kind: 'mcp',
         server: 'aoc',
         tool: 'declare_plan',
-        args: { phases: [{ id: 'd', name: 'Diagnose', tasks: [{ id: 'd1', title: 'Find the root cause', size: 's' }, { id: 'd2', title: 'Confirm it', size: 's' }] }] },
+        args: {
+          phases: [
+            {
+              id: 'd',
+              name: 'Diagnose',
+              tasks: [
+                { id: 'd1', title: 'Find the root cause', size: 's' },
+                { id: 'd2', title: 'Confirm it', size: 's' },
+              ],
+            },
+          ],
+        },
       },
       { kind: 'tool', name: 'Grep', input: { pattern: 'session' } },
       DIAGNOSE,
@@ -157,18 +182,27 @@ describe('(i) triage sessions end at their diagnosis', () => {
     ]);
     const ticketId = await submit(requester, projectId, 'Kicked out after login (plan)', file);
 
-    const gated = await waitFor(async () => {
-      const t = await h.api<InternalTicket>('GET', `/api/tickets/${ticketId}`, { as: dev });
-      return t.stage === 'fix_plan_gate' && t;
-    }, { timeout: 60_000, interval: 100, what: 'the fix-plan gate' });
+    const gated = await waitFor(
+      async () => {
+        const t = await h.api<InternalTicket>('GET', `/api/tickets/${ticketId}`, { as: dev });
+        return t.stage === 'fix_plan_gate' && t;
+      },
+      { timeout: 60_000, interval: 100, what: 'the fix-plan gate' },
+    );
     const sessionId = gated.diagnoses[0]!.sessionId;
-    const ended = await waitFor(() => h.events({ types: ['session.ended'], sessionId })[0], { what: 'the triage session to end' });
+    const ended = await waitFor(() => h.events({ types: ['session.ended'], sessionId })[0], {
+      what: 'the triage session to end',
+    });
     expect(ended.meta).toEqual({ sessionId, outcome: 'completed' });
     // The plan was declared and left open, and nothing asked the session to continue it.
     expect(h.events({ types: ['plan.declared'], sessionId })).toHaveLength(1);
     expect(h.events({ types: ['task.done'], sessionId })).toEqual([]);
-    expect(h.events({ types: ['session.turn_started'], sessionId }).map((e) => e.meta.reason)).toEqual(['launch']);
-    expect(h.events({ types: ['session.turn_ended'], sessionId }).map((e) => e.meta.outcome)).toEqual(['end_turn']);
+    expect(h.events({ types: ['session.turn_started'], sessionId }).map((e) => e.meta.reason)).toEqual([
+      'launch',
+    ]);
+    expect(h.events({ types: ['session.turn_ended'], sessionId }).map((e) => e.meta.outcome)).toEqual([
+      'end_turn',
+    ]);
     const detail = await sessionDetail(h, sessionId, dev);
     expect(detail.lifecycle).toBe('ended');
     expect(detail.liveness?.state ?? null).toBeNull(); // no badge: not Waiting on you
@@ -186,13 +220,26 @@ describe('(i) triage sessions end at their diagnosis', () => {
     ]);
     const ticketId = await submit(requester, projectId, 'Kicked out after login (silent)', file);
 
-    const launch = await waitFor(() => h.events({ types: ['session.launch_requested'], ticketId })[0], { what: 'the triage session' });
+    const launch = await waitFor(() => h.events({ types: ['session.launch_requested'], ticketId })[0], {
+      what: 'the triage session',
+    });
     const sessionId = String(launch.meta.sessionId);
-    await untilSession(h, sessionId, dev, (d) => d.lifecycle === 'idle', 'the session to wait on the operator');
-    expect(h.events({ types: ['session.turn_started'], sessionId }).map((e) => e.meta.reason)).toEqual(['launch', 'continue']);
+    await untilSession(
+      h,
+      sessionId,
+      dev,
+      (d) => d.lifecycle === 'idle',
+      'the session to wait on the operator',
+    );
+    expect(h.events({ types: ['session.turn_started'], sessionId }).map((e) => e.meta.reason)).toEqual([
+      'launch',
+      'continue',
+    ]);
     expect(h.events({ types: ['session.ended'], sessionId })).toEqual([]);
     expect(h.events({ types: ['ticket.diagnosis_reported'], ticketId })).toEqual([]);
-    expect((await h.api<InternalTicket>('GET', `/api/tickets/${ticketId}`, { as: dev })).stage).toBe('triage');
+    expect((await h.api<InternalTicket>('GET', `/api/tickets/${ticketId}`, { as: dev })).stage).toBe(
+      'triage',
+    );
     expect(h.store.verifyChain().ok).toBe(true);
   });
 });

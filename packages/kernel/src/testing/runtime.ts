@@ -49,6 +49,8 @@ export interface TestRuntime {
   user(role: Role, name?: string, opts?: { complianceLead?: boolean }): TestUser;
   /** Ingest headers for a session (session token) or the observer. */
   ingestHeaders(sessionId: string | 'observer' | 'system'): Record<string, string>;
+  /** Ingest headers of a session's sidecar (its heartbeats, activity, usage, throttles and process exits). */
+  sidecarHeaders(sessionId: string): Record<string, string>;
   request(method: string, path: string, opts?: { headers?: Record<string, string>; body?: unknown }): Promise<Response>;
   json<T = unknown>(method: string, path: string, opts?: { headers?: Record<string, string>; body?: unknown; expect?: number }): Promise<T>;
   drain(): Promise<void>;
@@ -131,6 +133,10 @@ export async function createTestRuntime(opts: TestRuntimeOptions): Promise<TestR
             ? identity.issueSystemToken()
             : identity.issueIngestToken(sessionId, { kind: 'system', id: 'test' });
       return { authorization: `Bearer ${token}` };
+    },
+    sidecarHeaders(sessionId) {
+      if (!identity) throw new Error('sidecarHeaders() needs the DevIdentityService');
+      return { authorization: `Bearer ${identity.issueSidecarToken(sessionId, { kind: 'system', id: 'test' })}` };
     },
     async request(method, path, ropts = {}) {
       const headers: Record<string, string> = { ...ropts.headers };

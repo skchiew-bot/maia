@@ -2,7 +2,8 @@
  * Change control engine (§8, §14): change records with AI-drafted fields the developer must edit or affirm,
  * gated rollback, break-glass and the provenance-guaranteed promotion path. Every state change is an event.
  */
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
   BLIND_AFFIRM_DWELL_MS,
@@ -27,9 +28,16 @@ import {
   type RollbackDTO,
   type Scope,
   type StoredEvent,
+  type SupervisorService,
   type User,
 } from '@aoc/contracts';
-import { HttpError, type ModuleContext } from '@aoc/kernel';
+import {
+  GIT_SAFETY_ARGS,
+  GIT_SERVICE_ENV,
+  HttpError,
+  filterDriverOverrides,
+  type ModuleContext,
+} from '@aoc/kernel';
 import {
   acceptanceCommandOf,
   isClean,
@@ -55,6 +63,7 @@ import {
   type PromotionRow,
   type RollbackRow,
 } from './projection';
+import { ServiceClone, clonePathFor } from './clone';
 import {
   FILES_LOG_ARGS,
   LOG_FORMAT,
@@ -64,12 +73,15 @@ import {
   type ProvenanceLookups,
 } from './provenance';
 import {
+  AOC_GIT_IDENTITY,
   RepoOpError,
-  createRestoreCommit,
-  fastForward,
-  revParse,
-  withVerificationCheckout,
+  displayUrl,
+  pushOutcome,
+  transportOf,
+  updateProjectBranch,
+  type CommitSpec,
   type GitRunner,
+  type PublishResult,
 } from './repo';
 
 export interface ProjectSettings {
@@ -77,6 +89,12 @@ export interface ProjectSettings {
   defaultBranch?: string;
   /** Shell command that runs the project's acceptance tests (rollback verification fallback). */
   acceptanceCommand?: string;
+  /**
+   * The protected remote promotions and rollbacks are pushed to (ssh, https or an absolute local path). Wins over
+   * the `origin` an operator set in the project's service clone. Never read from the project repository: agents
+   * can write its config.
+   */
+  promotionRemote?: string;
 }
 
 export interface ChangeModuleOptions {
@@ -84,8 +102,10 @@ export interface ChangeModuleOptions {
   projects?: Record<string, ProjectSettings>;
   /** Branch patterns the protected-op guard treats as protected (default main, master, production, release/*). */
   protectedBranches?: string[];
-  /** Supervisor credential profile for every write to the default branch (rollback, promotion, break-glass). */
+  /** Credential profile of the push to the protected remote (promotion, rollback, break-glass): its only holder. */
   promoteCredentialProfile?: string;
+  /** Where the per-project service clones live (default `<dataDir>/git`; a temp dir when the store is in memory). */
+  serviceClonesDir?: string;
   verifyTimeoutMs?: number;
   gitTimeoutMs?: number;
   /** Deadline for the post-incident change record after a break-glass approval. */
@@ -119,6 +139,26 @@ function scopeOf(
   };
 }
 
+/** SupervisorService.runIsolated as the supervisor package implements it, with its `sandbox` option (G-04). */
+type IsolatedRun = Parameters<SupervisorService['runIsolated']>[0] & { sandbox?: { handOver?: string[] } };
+
+/** Where a promotion lands: the protected remote, the project's own branch (no remote anywhere), or nowhere yet. */
+type PromotionTarget =
+  | { kind: 'remote'; url: string }
+  | { kind: 'local' }
+  | { kind: 'unconfigured'; remotes: string[] };
+
+/** The commit a candidate is compared with, and where it was read. */
+interface Base {
+  sha: string;
+  ref: string;
+  /** AOC's own record in the service clone of where it last moved the branch, not the project repository's view. */
+  recorded: boolean;
+}
+
+/** The service clone's record of where AOC last moved a branch of the protected remote. */
+const targetRef = (branch: string) => `refs/aoc/target/${branch}`;
+
 interface DraftInput {
   projectId: string;
   scope: ChangeScope;
@@ -134,9 +174,12 @@ export class ChangeEngine implements ChangeService {
   readonly read: ChangeReadModel;
   private ctxRef: ModuleContext | null = null;
   private readonly inflight = new Map<string, Promise<void>>();
+  private clonesRootRef: string | null = null;
+  private ownsClonesRoot = false;
   private readonly o: {
     projects: Record<string, ProjectSettings>;
     promoteCredentialProfile: string;
+    serviceClonesDir: string | null;
     verifyTimeoutMs: number;
     gitTimeoutMs: number;
     postIncidentDueMs: number;
@@ -147,6 +190,7 @@ export class ChangeEngine implements ChangeService {
     this.o = {
       projects: opts.projects ?? {},
       promoteCredentialProfile: opts.promoteCredentialProfile ?? 'prod-promote',
+      serviceClonesDir: opts.serviceClonesDir ?? null,
       verifyTimeoutMs: opts.verifyTimeoutMs ?? 15 * 60_000,
       gitTimeoutMs: opts.gitTimeoutMs ?? 2 * 60_000,
       postIncidentDueMs: opts.postIncidentDueMs ?? 24 * 3_600_000,
@@ -207,6 +251,274 @@ export class ChangeEngine implements ChangeService {
     if (!repo || !this.ctx.services.get('git').isRepo(repo))
       throw new HttpError(422, 'project_repo_unknown', `No git repository is known for project ${projectId}`);
     return repo;
+  }
+
+  // ── the service-owned clone (G-04) ───────────────────────────────────────
+  /** Directory of the service clones: in aocd's data directory, never in a project. */
+  private get clonesRoot(): string {
+    if (!this.clonesRootRef) {
+      if (this.o.serviceClonesDir) this.clonesRootRef = resolve(this.o.serviceClonesDir);
+      else if (this.ctx.dataDir === ':memory:') {
+        this.clonesRootRef = mkdtempSync(join(tmpdir(), 'aoc-clones-'));
+        this.ownsClonesRoot = true;
+      } else this.clonesRootRef = join(resolve(this.ctx.dataDir), 'git');
+    }
+    return this.clonesRootRef;
+  }
+
+  /** Where the project's service clone lives (operators set its `origin` there). */
+  serviceClonePath(projectId: string): string {
+    return clonePathFor(this.clonesRoot, projectId);
+  }
+
+  /** Removes a temporary clones directory (in-memory store). */
+  dispose(): void {
+    if (this.ownsClonesRoot && this.clonesRootRef) rmSync(this.clonesRootRef, { recursive: true, force: true });
+  }
+
+  private serviceClone(projectId: string, repo: string): ServiceClone {
+    const r = this.ctx.services
+      .get('git')
+      .run(repo, ['rev-parse', '--path-format=absolute', '--show-toplevel', '--git-common-dir', '--show-object-format']);
+    const [top, gitDir, objectFormat] = r.stdout.trim().split('\n');
+    if (r.code !== 0 || !top || !gitDir)
+      throw new RepoOpError('project_repo_unknown', `${repo} is not a git working tree`);
+    return ServiceClone.open(
+      this.clonesRoot,
+      projectId,
+      { top, gitDir, objectFormat: objectFormat || 'sha1' },
+      this.o.gitTimeoutMs,
+    );
+  }
+
+  /** The service clone, holding commit `sha` copied in from the project repository by id. */
+  private withCommit(projectId: string, repo: string, sha: string): ServiceClone {
+    const clone = this.serviceClone(projectId, repo);
+    clone.fetchCommit(repo, sha);
+    return clone;
+  }
+
+  /** The project's service clone when it exists: read paths never create one. */
+  private existingClone(projectId: string, repo: string): ServiceClone | null {
+    if (!existsSync(this.serviceClonePath(projectId))) return null;
+    try {
+      return this.serviceClone(projectId, repo);
+    } catch {
+      return null;
+    }
+  }
+
+  /** Request paths: a service-clone problem becomes an HTTP error. */
+  private cloneOrFail<T>(fn: () => T): T {
+    try {
+      return fn();
+    } catch (err) {
+      if (err instanceof RepoOpError)
+        throw new HttpError(err.reason === 'commit_unavailable' ? 422 : 500, err.reason, err.message);
+      throw err;
+    }
+  }
+
+  /**
+   * Where promotions of the project land. The remote comes from AOC's configuration (ProjectSettings, or the service
+   * clone's `origin`), never from the project repository, whose config agents can write: pushing where it points
+   * would let an agent redirect the credentialed push. With remotes there and none configured, nothing is pushed.
+   */
+  private target(projectId: string, repo: string, clone: ServiceClone): PromotionTarget {
+    const url = this.o.projects[projectId]?.promotionRemote ?? clone.remoteUrl();
+    if (url) return { kind: 'remote', url };
+    const remotes = this.ctx.services
+      .get('git')
+      .run(repo, ['remote'])
+      .stdout.split('\n')
+      .map((r) => r.trim())
+      .filter(Boolean);
+    return remotes.length ? { kind: 'unconfigured', remotes } : { kind: 'local' };
+  }
+
+  /** Refuses up front what could only fail after approval: a project with remotes but no promotion remote. */
+  private requireTarget(projectId: string, repo: string, clone: ServiceClone): void {
+    const target = this.target(projectId, repo, clone);
+    if (target.kind === 'unconfigured')
+      throw new HttpError(422, 'promotion_remote_unconfigured', this.unconfiguredDetail(target, clone));
+  }
+
+  private unconfiguredDetail(target: { remotes: string[] }, clone: ServiceClone): string {
+    return (
+      `the project repository has the remote(s) ${target.remotes.join(', ')} but AOC has no promotion remote for it, ` +
+      `and never pushes where the project's own config points. As the aocd user: ` +
+      `git --git-dir=${clone.path} remote add origin <protected remote url>`
+    );
+  }
+
+  /**
+   * The commit a candidate is compared with. Remote target: where AOC last moved the branch (the service clone's
+   * record), else — first use, or after the remote moved without AOC — the project's view of it; the push's lease
+   * then proves the remote is really there. Local target: the project's own branch.
+   */
+  private base(repo: string, clone: ServiceClone, branch: string, target: PromotionTarget): Base | null {
+    if (target.kind === 'remote') {
+      const recorded = clone.revParse(targetRef(branch));
+      if (recorded) return { sha: recorded, ref: `refs/heads/${branch}`, recorded: true };
+    }
+    const refs =
+      target.kind === 'remote'
+        ? [`refs/remotes/origin/${branch}`, `refs/heads/${branch}`]
+        : [`refs/heads/${branch}`, `refs/remotes/origin/${branch}`];
+    const git = this.ctx.services.get('git');
+    for (const ref of refs) {
+      const sha = git.revParse(repo, ref);
+      if (sha) {
+        clone.fetchCommit(repo, sha);
+        return { sha, ref, recorded: false };
+      }
+    }
+    return null;
+  }
+
+  /** Every commit in `<base>..<sha>`, read in the service clone, must trace through a gate (§14). */
+  private trace(projectId: string, repo: string, clone: ServiceClone, base: Base, sha: string): ProvenanceDTO {
+    const fail = (reason: string): ProvenanceDTO => ({
+      projectId,
+      sha,
+      baseRef: base.ref,
+      ok: false,
+      commits: [],
+      orphanShas: [],
+      reasons: [reason],
+    });
+    const log = clone.run(['log', LOG_FORMAT, `-n${MAX_PROVENANCE_COMMITS + 1}`, `${base.sha}..${sha}`]);
+    if (log.code !== 0) return fail(`git log failed: ${log.stderr.trim().slice(0, 300)}`);
+    const logged = parseLog(log.stdout);
+    if (logged.length > MAX_PROVENANCE_COMMITS) return fail(`more than ${MAX_PROVENANCE_COMMITS} commits to trace`);
+    const look = this.lookups(projectId, repo, base.sha);
+    const commits = logged.map((c) => classifyCommit(c, projectId, look));
+    const orphans = commits.filter((c) => !c.traced);
+    return {
+      projectId,
+      sha,
+      baseRef: base.ref,
+      ok: orphans.length === 0,
+      commits,
+      orphanShas: orphans.map((c) => c.sha),
+      reasons: orphans.map((c) => `${short(c.sha)}: ${c.reason}`),
+    };
+  }
+
+  /** The supervisor's runIsolated, with its sandbox option (requested for the SupervisorService contract, G-04). */
+  private isolated(input: IsolatedRun) {
+    return this.ctx.services.get('supervisor').runIsolated(input);
+  }
+
+  /**
+   * git in the project repository — the agents' workspace — as the session user, never with a credential, and with
+   * every filter driver the repository defines switched off (a checkout would run its smudge command).
+   */
+  private sandboxedGit(repo: string): GitRunner {
+    const noFilters = filterDriverOverrides(repo);
+    return async (cwd, args, env = {}) => {
+      const r = await this.isolated({
+        cwd,
+        command: ['git', ...GIT_SAFETY_ARGS, ...args],
+        credentialProfile: null,
+        timeoutMs: this.o.gitTimeoutMs,
+        env: { ...GIT_SERVICE_ENV, ...noFilters, ...env },
+        sandbox: {},
+      });
+      return { code: r.exitCode, stdout: r.stdout, stderr: r.stderr };
+    };
+  }
+
+  /**
+   * One credentialed process: `git push` from the service clone to the configured remote, leased on the verified
+   * base, so the branch only moves from exactly the state whose delta was checked (a compare-and-swap of a
+   * fast-forward, never a rewrite). The clone then records where the branch is.
+   */
+  private async pushToRemote(
+    clone: ServiceClone,
+    url: string,
+    branch: string,
+    base: Base,
+    next: string,
+  ): Promise<PublishResult> {
+    const transport = transportOf(url);
+    if (!transport)
+      return {
+        ok: false,
+        failed: 'promotion_remote_invalid',
+        detail: `${displayUrl(url)} is not an ssh, https or absolute local-path remote`,
+      };
+    const push = async (expected: string) =>
+      pushOutcome(
+        await this.isolated({
+          cwd: clone.path,
+          command: [
+            'git',
+            ...GIT_SAFETY_ARGS,
+            '-c',
+            `protocol.${transport}.allow=user`,
+            `--git-dir=${clone.path}`,
+            'push',
+            '--porcelain',
+            '--no-verify',
+            `--force-with-lease=refs/heads/${branch}:${expected}`,
+            '--',
+            url,
+            `${next}:refs/heads/${branch}`,
+          ],
+          credentialProfile: this.o.promoteCredentialProfile,
+          timeoutMs: this.o.gitTimeoutMs,
+          env: { ...GIT_SERVICE_ENV },
+        }).then((r) => ({ code: r.exitCode, stdout: r.stdout, stderr: r.stderr })),
+      );
+    let out = await push(base.sha);
+    // An earlier attempt may have pushed before AOC recorded it (a crash): then the remote already holds `next`.
+    if (!out.ok && out.stale && base.sha !== next) {
+      const again = await push(next);
+      if (again.ok) out = again;
+    }
+    if (out.ok) {
+      clone.setRef(targetRef(branch), next);
+      return { ok: true, before: base.sha, after: next, warning: null };
+    }
+    if (!out.stale) return { ok: false, failed: 'push_failed', detail: out.detail };
+    if (base.recorded) clone.deleteRef(targetRef(branch));
+    return {
+      ok: false,
+      failed: 'default_branch_moved',
+      detail:
+        `the remote's ${branch} is not at ${base.sha}, where AOC ${base.recorded ? 'last moved it' : `read it (${base.ref} in the project repository)`}. ` +
+        `A push to ${branch} outside AOC is an R1 breach (docs/runbooks/credential-isolation.md §7); otherwise fetch in the project repository and request again.\n${out.detail}`,
+    };
+  }
+
+  /**
+   * Moves the default branch from `base` to `next` (verified by the caller). Remote target: the push above, then the
+   * project repository follows as a courtesy. Local target (no remote anywhere): the project repository's own
+   * branch, compare-and-swapped, written as the session user.
+   */
+  private async publish(i: {
+    repo: string;
+    clone: ServiceClone;
+    target: Exclude<PromotionTarget, { kind: 'unconfigured' }>;
+    branch: string;
+    base: Base;
+    next: string;
+    restore?: CommitSpec;
+  }): Promise<PublishResult> {
+    if (i.target.kind === 'local')
+      return updateProjectBranch(this.sandboxedGit(i.repo), i.repo, i.branch, i.base.sha, i.next, i.restore);
+    const pushed = await this.pushToRemote(i.clone, i.target.url, i.branch, i.base, i.next);
+    if (!pushed.ok) return pushed;
+    const local = await updateProjectBranch(this.sandboxedGit(i.repo), i.repo, i.branch, null, i.next, i.restore).catch(
+      (err): PublishResult => ({ ok: false, failed: 'local_update_failed', detail: errText(err) }),
+    );
+    return local.ok
+      ? pushed
+      : {
+          ...pushed,
+          warning: `pushed to the protected remote; the project repository's ${i.branch} was not updated: ${local.detail}`,
+        };
   }
 
   defaultBranch(projectId: string): string {
@@ -375,14 +687,19 @@ export class ChangeEngine implements ChangeService {
       throw new HttpError(403, 'not_owner', 'Only the owner of the change record or an approver may do this');
   }
 
-  /** A rollback plan must name an exact, immutable ref: a tag or a commit SHA that resolves in the project repo. */
+  /**
+   * A rollback plan must name an exact, immutable ref: a tag or a commit SHA. Change pins live in the service clone;
+   * phase pins (mod-ledger) and older change pins in the project repository.
+   */
   resolveRollbackRef(projectId: string, ref: string): string {
     const repo = this.requireRepo(projectId);
     const git = this.ctx.services.get('git');
-    const viaTag = git.revParse(repo, `refs/tags/${ref.replace(/^refs\/tags\//, '')}`);
+    const clone = this.cloneOrFail(() => this.serviceClone(projectId, repo));
+    const tag = `refs/tags/${ref.replace(/^refs\/tags\//, '')}`;
+    const viaTag = clone.revParse(tag) ?? git.revParse(repo, tag);
     if (viaTag) return viaTag;
-    if (/^[0-9a-f]{7,64}$/i.test(ref) && git.commitExists(repo, ref)) {
-      const sha = git.revParse(repo, ref);
+    if (/^[0-9a-f]{7,64}$/i.test(ref)) {
+      const sha = (git.commitExists(repo, ref) ? git.revParse(repo, ref) : null) ?? clone.revParse(ref);
       if (sha) return sha;
     }
     if (git.revParse(repo, ref))
@@ -571,27 +888,15 @@ export class ChangeEngine implements ChangeService {
     const sha = ref ? git.revParse(repo, ref) : git.head(repo);
     if (!sha) throw new HttpError(422, 'unknown_ref', `${ref ?? 'HEAD'} does not resolve to a commit`);
     const tag = `aoc/change/${changeId}`;
-    const existing = git.revParse(repo, `refs/tags/${tag}`);
-    if (existing && existing !== sha)
-      throw new HttpError(409, 'pin_conflict', `${tag} already pins ${existing}`);
-    if (!existing) {
-      const ident = git.run(repo, ['config', 'user.email']);
-      const identity =
-        ident.code === 0 && ident.stdout.trim()
-          ? []
-          : ['-c', 'user.name=AOC', '-c', 'user.email=aoc@localhost'];
-      const r = git.run(repo, [
-        ...identity,
-        'tag',
-        '-a',
-        tag,
-        sha,
-        '-m',
-        `AOC change record ${changeId} completed`,
-      ]);
-      if (r.code !== 0)
-        throw new HttpError(500, 'pin_failed', `Could not create ${tag}: ${r.stderr.trim().slice(0, 300)}`);
-    }
+    // The pin is made in the service clone, where no agent can move or delete it (G-04).
+    this.cloneOrFail(() => {
+      const clone = this.withCommit(c.project_id, repo, sha);
+      const existing = clone.revParse(`refs/tags/${tag}`);
+      if (existing && existing !== sha)
+        throw new HttpError(409, 'pin_conflict', `${tag} already pins ${existing}`);
+      if (!existing)
+        clone.tag(tag, sha, `AOC change record ${changeId} completed`, AOC_GIT_IDENTITY, this.ctx.clock.now() / 1000);
+    });
     const actor = human(user);
     this.ctx.store.appendMany([
       {
@@ -651,7 +956,14 @@ export class ChangeEngine implements ChangeService {
     const usable = !!repo && git.isRepo(repo);
     const branch = usable ? this.defaultBranch(projectId) : null;
     const head = usable && branch ? git.revParse(repo!, `refs/heads/${branch}`) : null;
-    const tags = usable ? this.tagCommits(repo!) : new Map<string, string>();
+    // Change pins live in the service clone (G-04); phase pins and older change pins in the project repository.
+    const clone = usable ? this.existingClone(projectId, repo!) : null;
+    const tags = usable
+      ? new Map([
+          ...this.tagCommits((args) => git.run(repo!, args)),
+          ...(clone ? this.tagCommits((args) => clone.run(args)) : []),
+        ])
+      : new Map<string, string>();
     const byState = new Map<string, PinDTO>();
     for (const r of this.read.pinRows(projectId)) {
       const by = { source: r.source, sourceId: r.source_id, at: r.at, seq: r.seq };
@@ -664,7 +976,7 @@ export class ChangeEngine implements ChangeService {
           sha: r.sha,
           pinnedBy: [by],
           ...(usable
-            ? this.resolvePin(repo!, tags, r.tag, r.sha)
+            ? this.resolvePin(repo!, clone, tags, r.tag, r.sha)
             : { resolvedSha: null, problem: 'repo_unknown' }),
         });
     }
@@ -675,6 +987,7 @@ export class ChangeEngine implements ChangeService {
 
   private resolvePin(
     repo: string,
+    clone: ServiceClone | null,
     tags: Map<string, string>,
     tag: string | null,
     sha: string | null,
@@ -686,19 +999,15 @@ export class ChangeEngine implements ChangeService {
       return { resolvedSha: commit, problem: null };
     }
     const git = this.ctx.services.get('git');
-    const commit = sha && git.commitExists(repo, sha) ? git.revParse(repo, sha) : null;
+    const commit =
+      (sha && git.commitExists(repo, sha) ? git.revParse(repo, sha) : null) ??
+      (sha && clone ? clone.revParse(sha) : null);
     return commit ? { resolvedSha: commit, problem: null } : { resolvedSha: null, problem: 'commit_missing' };
   }
 
-  /** Every tag of the repository with the commit it points at (annotated tags peeled), in one git call. */
-  private tagCommits(repo: string): Map<string, string> {
-    const r = this.ctx.services
-      .get('git')
-      .run(repo, [
-        'for-each-ref',
-        '--format=%(refname:strip=2)%00%(objectname)%00%(*objectname)',
-        'refs/tags',
-      ]);
+  /** Every tag of a repository with the commit it points at (annotated tags peeled), in one git call. */
+  private tagCommits(git: (args: string[]) => { code: number; stdout: string }): Map<string, string> {
+    const r = git(['for-each-ref', '--format=%(refname:strip=2)%00%(objectname)%00%(*objectname)', 'refs/tags']);
     const out = new Map<string, string>();
     if (r.code !== 0) return out;
     for (const line of r.stdout.split('\n')) {
@@ -709,30 +1018,38 @@ export class ChangeEngine implements ChangeService {
   }
 
   // ── rollback ─────────────────────────────────────────────────────────────
-  /** Rollback targets are immutable: a pinned tag (still pointing at its pinned SHA) or a SHA recorded in the chain. */
+  /**
+   * Rollback targets are immutable: a pinned tag (still pointing at its pinned SHA) or a SHA recorded in the chain.
+   * The target is copied into the service clone, which verification and execution read from.
+   */
   resolvePinnedTarget(projectId: string, ref: string): string {
     const repo = this.requireRepo(projectId);
     const git = this.ctx.services.get('git');
+    const clone = this.cloneOrFail(() => this.serviceClone(projectId, repo));
     const tag = ref.replace(/^refs\/tags\//, '');
     const pins = this.read.pinsByTag(projectId, tag);
+    let sha: string | null = null;
     if (pins.length) {
-      const sha = git.revParse(repo, `refs/tags/${tag}`);
+      sha = clone.revParse(`refs/tags/${tag}`) ?? git.revParse(repo, `refs/tags/${tag}`);
       if (!sha)
         throw new HttpError(422, 'pin_missing', `Pinned tag ${tag} no longer exists in the repository`);
+      const pinned = sha;
       const recorded = pins.map((p) => p.sha).filter((s): s is string => !!s);
-      if (recorded.length && !recorded.some((r) => sha.startsWith(r)))
+      if (recorded.length && !recorded.some((r) => pinned.startsWith(r)))
         throw new HttpError(409, 'pin_moved', `Tag ${tag} was moved away from its pinned SHA`);
-      return sha;
+    } else if (/^[0-9a-f]{7,64}$/i.test(ref)) {
+      const found = (git.commitExists(repo, ref) ? git.revParse(repo, ref) : null) ?? clone.revParse(ref);
+      if (found && this.read.isPinnedSha(projectId, found)) sha = found;
     }
-    if (/^[0-9a-f]{7,64}$/i.test(ref) && git.commitExists(repo, ref)) {
-      const sha = git.revParse(repo, ref);
-      if (sha && this.read.isPinnedSha(projectId, sha)) return sha;
-    }
-    throw new HttpError(
-      422,
-      'target_not_pinned',
-      'A rollback target must be a pinned tag or a SHA recorded by a phase completion or change record',
-    );
+    if (!sha)
+      throw new HttpError(
+        422,
+        'target_not_pinned',
+        'A rollback target must be a pinned tag or a SHA recorded by a phase completion or change record',
+      );
+    const target = sha;
+    this.cloneOrFail(() => clone.fetchCommit(repo, target));
+    return target;
   }
 
   requestRollback(
@@ -743,6 +1060,8 @@ export class ChangeEngine implements ChangeService {
     if (changeId && this.change(changeId).project_id !== input.projectId)
       throw new HttpError(422, 'change_project_mismatch', 'The change record belongs to another project');
     const targetSha = this.resolvePinnedTarget(input.projectId, input.targetRef);
+    const repo = this.requireRepo(input.projectId);
+    this.cloneOrFail(() => this.requireTarget(input.projectId, repo, this.serviceClone(input.projectId, repo)));
     const rollbackId = newId('rollback', this.ctx.clock.now());
     this.ctx.store.append({
       type: 'rollback.requested',
@@ -846,6 +1165,11 @@ export class ChangeEngine implements ChangeService {
     }
   }
 
+  /**
+   * The target is checked out of the service clone — on the new branch, kept there as evidence — into a fresh,
+   * standalone checkout, and that state's acceptance tests run there as the session user (sandboxed, never with a
+   * credential). Nothing runs in the project repository.
+   */
   private async runVerification(r: RollbackRow, branch: string): Promise<VerificationOutcome> {
     const base: VerificationOutcome = {
       rollbackId: r.rollback_id,
@@ -860,45 +1184,48 @@ export class ChangeEngine implements ChangeService {
       output: '',
       problem: null,
     };
-    const supervisor = this.ctx.services.maybe('supervisor');
-    if (!supervisor) return { ...base, problem: 'no supervisor is available to run the verification' };
+    if (!this.ctx.services.maybe('supervisor'))
+      return { ...base, problem: 'no supervisor is available to run the verification' };
     const repo = this.repoPath(r.project_id);
     if (!repo) return { ...base, problem: 'the project repository is unknown' };
+    let root: string | null = null;
     try {
-      return await withVerificationCheckout(
-        this.isolatedGit(false),
-        repo,
-        branch,
-        r.target_sha,
-        async (dir) => {
-          const cmd = this.acceptanceCommandFor(r, dir);
-          if (!cmd)
-            return {
-              ...base,
-              problem:
-                'no acceptance command: the change acceptance test is not a command, the project has no acceptanceCommand and there is no package.json',
-            };
-          const started = this.ctx.clock.now();
-          const res = await supervisor.runIsolated({
-            cwd: dir,
-            command: ['env', 'CI=1', 'sh', '-c', cmd.command],
-            credentialProfile: null,
-            timeoutMs: this.o.verifyTimeoutMs,
-          });
-          const output = [res.stdout, res.stderr].filter((s) => s.trim()).join('\n');
-          return {
-            ...base,
-            command: cmd.command,
-            commandSource: cmd.source,
-            exitCode: res.exitCode,
-            durationMs: this.ctx.clock.now() - started,
-            counts: parseTestCounts(output),
-            output,
-          };
-        },
-      );
+      const clone = this.withCommit(r.project_id, repo, r.target_sha);
+      clone.setRef(`refs/heads/${branch}`, r.target_sha);
+      root = mkdtempSync(join(tmpdir(), 'aoc-rollback-verify-'));
+      const dir = join(root, 'checkout');
+      for (const d of [dir, join(root, 'home'), join(root, 'tmp')]) mkdirSync(d);
+      clone.checkoutTo(dir, r.target_sha);
+      const cmd = this.acceptanceCommandFor(r, dir);
+      if (!cmd)
+        return {
+          ...base,
+          problem:
+            'no acceptance command: the change acceptance test is not a command, the project has no acceptanceCommand and there is no package.json',
+        };
+      const started = this.ctx.clock.now();
+      const res = await this.isolated({
+        cwd: dir,
+        command: ['sh', '-c', cmd.command],
+        credentialProfile: null,
+        timeoutMs: this.o.verifyTimeoutMs,
+        env: { CI: '1', HOME: join(root, 'home'), TMPDIR: join(root, 'tmp') },
+        sandbox: { handOver: [root] },
+      });
+      const output = [res.stdout, res.stderr].filter((s) => s.trim()).join('\n');
+      return {
+        ...base,
+        command: cmd.command,
+        commandSource: cmd.source,
+        exitCode: res.exitCode,
+        durationMs: this.ctx.clock.now() - started,
+        counts: parseTestCounts(output),
+        output,
+      };
     } catch (err) {
       return { ...base, problem: `verification could not run: ${errText(err)}` };
+    } finally {
+      if (root) rmSync(root, { recursive: true, force: true });
     }
   }
 
@@ -918,24 +1245,6 @@ export class ChangeEngine implements ChangeService {
     if (existsSync(join(dir, 'package.json')))
       return { command: 'npm test --silent', source: 'package.json' };
     return null;
-  }
-
-  /**
-   * Git through the supervisor's isolated runner. Writes to the default branch use the promotion credential profile
-   * and AOC_SUPERVISOR_PUSH=1 (what the repo's pre-push gating expects); reads run with no credentials at all.
-   */
-  private isolatedGit(write: boolean): GitRunner {
-    return async (cwd, args) => {
-      const supervisor = this.ctx.services.get('supervisor');
-      const command = write ? ['env', 'AOC_SUPERVISOR_PUSH=1', 'git', ...args] : ['git', ...args];
-      const r = await supervisor.runIsolated({
-        cwd,
-        command,
-        credentialProfile: write ? this.o.promoteCredentialProfile : null,
-        timeoutMs: this.o.gitTimeoutMs,
-      });
-      return { code: r.exitCode, stdout: r.stdout, stderr: r.stderr };
-    };
   }
 
   private rollbackFailed(r: RollbackRow, reason: string, detail: string, causationId?: string): void {
@@ -959,7 +1268,10 @@ export class ChangeEngine implements ChangeService {
     });
   }
 
-  /** On approval: a NEW commit restoring the target tree on the default branch, published fast-forward only (never a force push). */
+  /**
+   * On approval: a NEW commit on the default branch whose tree is the verified target's (history preserved), made in
+   * the service clone and published by `publish` — a fast-forward, compare-and-swapped, never a rewrite.
+   */
   async executeRollback(rollbackId: string, causationId: string): Promise<void> {
     const r = this.read.rollback(rollbackId);
     if (!r || r.status !== 'approved') return;
@@ -978,7 +1290,6 @@ export class ChangeEngine implements ChangeService {
         'No supervisor is available to execute the rollback',
         causationId,
       );
-    const git = this.isolatedGit(true);
     const branch = this.defaultBranch(r.project_id);
     const marker = `AOC-Rollback: ${rollbackId}`;
     const executed = (before: string, after: string) => {
@@ -993,25 +1304,51 @@ export class ChangeEngine implements ChangeService {
       });
     };
     try {
-      const tip = await revParse(git, repo, `refs/heads/${branch}`);
-      if (tip && (await git(repo, ['log', '-1', '--format=%B', tip])).stdout.includes(marker)) {
-        // An earlier attempt already published this rollback (crash before the event was recorded).
-        return executed((await revParse(git, repo, `${tip}^`)) ?? tip, tip);
-      }
-      const { parent, commit } = await createRestoreCommit(git, repo, branch, r.target_sha, [
-        `Rollback to ${r.target_ref} (AOC ${rollbackId})`,
-        `${marker}\nAOC-Decision: ${r.decision_id ?? 'none'}`,
-      ]);
-      const ff = await fastForward(git, repo, branch, commit, parent);
-      if (!ff.ok)
+      const clone = this.withCommit(r.project_id, repo, r.target_sha);
+      const target = this.target(r.project_id, repo, clone);
+      if (target.kind === 'unconfigured')
         return this.rollbackFailed(
           r,
-          'refused' in ff ? 'default_branch_moved' : ff.failed,
-          ff.detail,
+          'promotion_remote_unconfigured',
+          this.unconfiguredDetail(target, clone),
           causationId,
         );
-      executed(ff.before, ff.after);
-      if (ff.warning)
+      const head = this.base(repo, clone, branch, target);
+      if (!head) return this.rollbackFailed(r, 'branch_missing', `${branch} does not exist`, causationId);
+      if (clone.message(head.sha).includes(marker)) {
+        // An earlier attempt already published this rollback (crash before the event was recorded).
+        return executed(clone.firstParent(head.sha) ?? head.sha, head.sha);
+      }
+      const tree = clone.treeOf(r.target_sha);
+      if (clone.treeOf(head.sha) === tree)
+        return this.rollbackFailed(
+          r,
+          'already_at_target',
+          `${branch} already has the tree of ${r.target_sha}`,
+          causationId,
+        );
+      const restore: CommitSpec = {
+        tree,
+        parent: head.sha,
+        message: [
+          `Rollback to ${r.target_ref} (AOC ${rollbackId})`,
+          `${marker}\nAOC-Decision: ${r.decision_id ?? 'none'}`,
+        ],
+        identity: AOC_GIT_IDENTITY,
+        // The approval time: a retry after a crash makes the very same commit.
+        time: Date.parse(r.approved_at ?? this.ctx.clock.iso()) / 1000,
+      };
+      const next = clone.commit(restore);
+      const res = await this.publish({ repo, clone, target, branch, base: head, next, restore });
+      if (!res.ok)
+        return this.rollbackFailed(
+          r,
+          'refused' in res ? 'default_branch_moved' : res.failed,
+          res.detail,
+          causationId,
+        );
+      executed(res.before, res.after);
+      if (res.warning)
         this.ctx.notify({
           kind: 'info',
           title: 'Rollback pushed, local branch not updated',
@@ -1181,6 +1518,8 @@ export class ChangeEngine implements ChangeService {
     const repo = this.requireRepo(input.projectId);
     const sha = this.ctx.services.get('git').revParse(repo, input.ref);
     if (!sha) throw new HttpError(422, 'unknown_ref', `${input.ref} does not resolve to a commit`);
+    // Copied into the service clone now, so the emergency promotion never depends on the agents' repository.
+    this.cloneOrFail(() => this.requireTarget(input.projectId, repo, this.withCommit(input.projectId, repo, sha)));
     const decisions = this.ctx.services.maybe('decisions');
     if (!decisions)
       throw new HttpError(503, 'decisions_unavailable', 'The decision service is not available');
@@ -1349,7 +1688,8 @@ export class ChangeEngine implements ChangeService {
 
   /**
    * Every commit in `<default>..<sha>` must trace through an approved change record or an approved fix plan, via a
-   * session the platform linked to that gate and whose recorded HEADs contain the commit (provenance.ts).
+   * session the platform linked to that gate and whose recorded HEADs contain the commit (provenance.ts). The
+   * commits are read in the service clone, against the branch as AOC last moved it when it pushes to a remote.
    */
   provenanceDetail(projectId: string, ref: string): ProvenanceDTO {
     const fail = (reason: string, sha = ref, baseRef: string | null = null): ProvenanceDTO => ({
@@ -1367,26 +1707,14 @@ export class ChangeEngine implements ChangeService {
     const sha = git.revParse(repo, ref);
     if (!sha) return fail(`${ref} does not resolve to a commit`);
     const branch = this.defaultBranch(projectId);
-    const baseRef =
-      [`refs/heads/${branch}`, `refs/remotes/origin/${branch}`].find((b) => git.revParse(repo, b)) ?? null;
-    if (!baseRef) return fail(`default branch ${branch} not found`, sha);
-    const log = git.run(repo, ['log', LOG_FORMAT, `-n${MAX_PROVENANCE_COMMITS + 1}`, `${baseRef}..${sha}`]);
-    if (log.code !== 0) return fail(`git log failed: ${log.stderr.trim().slice(0, 300)}`, sha, baseRef);
-    const logged = parseLog(log.stdout);
-    if (logged.length > MAX_PROVENANCE_COMMITS)
-      return fail(`more than ${MAX_PROVENANCE_COMMITS} commits to trace`, sha, baseRef);
-    const look = this.lookups(projectId, repo, baseRef);
-    const commits = logged.map((c) => classifyCommit(c, projectId, look));
-    const orphans = commits.filter((c) => !c.traced);
-    return {
-      projectId,
-      sha,
-      baseRef,
-      ok: orphans.length === 0,
-      commits,
-      orphanShas: orphans.map((c) => c.sha),
-      reasons: orphans.map((c) => `${short(c.sha)}: ${c.reason}`),
-    };
+    try {
+      const clone = this.withCommit(projectId, repo, sha);
+      const base = this.base(repo, clone, branch, this.target(projectId, repo, clone));
+      if (!base) return fail(`default branch ${branch} not found`, sha);
+      return this.trace(projectId, repo, clone, base, sha);
+    } catch (err) {
+      return fail(`the service clone could not check it: ${errText(err)}`, sha);
+    }
   }
 
   /**
@@ -1394,14 +1722,19 @@ export class ChangeEngine implements ChangeService {
    * selfModification.protectedPaths, with those files; null when it is not one. 'unchecked' when an AOC repo cannot
    * be checked (callers fail closed).
    */
-  private coreChanges(repo: string, range: string): { sha: string; files: string[] }[] | null | 'unchecked' {
+  private coreChanges(
+    repo: string,
+    clone: ServiceClone,
+    range: string,
+  ): { sha: string; files: string[] }[] | null | 'unchecked' {
     const selfmod = this.ctx.services.maybe('selfmod');
     if (!selfmod) {
       const listed = this.ctx.config.selfModification.aocRepoPaths.some((p) => resolve(p) === resolve(repo));
       return listed ? 'unchecked' : null;
     }
     if (selfmod.coreFiles(repo, []) === null) return null;
-    const log = this.ctx.services.get('git').run(repo, [...FILES_LOG_ARGS, range]);
+    // The range is read in the service clone, which holds exactly the commits that were verified.
+    const log = clone.run([...FILES_LOG_ARGS, range]);
     if (log.code !== 0) return 'unchecked';
     const byCommit = parseFilesLog(log.stdout);
     const core = new Set(selfmod.coreFiles(repo, [...new Set([...byCommit.values()].flat())]) ?? []);
@@ -1424,9 +1757,15 @@ export class ChangeEngine implements ChangeService {
   }
 
   /** Every promotion that lands core changes in an AOC repo (break-glass included) is recorded outside AOC (§13). */
-  private recordCorePromotion(p: PromotionRow, before: string, after: string, decisionId: string | null): void {
+  private recordCorePromotion(
+    p: PromotionRow,
+    clone: ServiceClone,
+    before: string,
+    after: string,
+    decisionId: string | null,
+  ): void {
     const repo = this.repoPath(p.project_id);
-    const core = repo ? this.coreChanges(repo, `${before}..${after}`) : null;
+    const core = repo ? this.coreChanges(repo, clone, `${before}..${after}`) : null;
     if (core === null || (core !== 'unchecked' && !core.length)) return;
     this.recordSelfChange({
       kind: 'selfmod.promoted',
@@ -1448,12 +1787,16 @@ export class ChangeEngine implements ChangeService {
     const ticketId = input.ticketId ?? null;
     const changeId = input.changeId ?? null;
     const repo = this.requireRepo(input.projectId);
-    const git = this.ctx.services.get('git');
-    const fromSha = git.revParse(repo, input.fromRef);
+    const fromSha = this.ctx.services.get('git').revParse(repo, input.fromRef);
     if (!fromSha) throw new HttpError(422, 'unknown_ref', `${input.fromRef} does not resolve to a commit`);
     const branch = this.defaultBranch(input.projectId);
-    const head = git.revParse(repo, `refs/heads/${branch}`);
-    if (!head) throw new HttpError(422, 'default_branch_missing', `Default branch ${branch} not found`);
+    const { clone, base } = this.cloneOrFail(() => {
+      const c = this.withCommit(input.projectId, repo, fromSha);
+      this.requireTarget(input.projectId, repo, c);
+      return { clone: c, base: this.base(repo, c, branch, this.target(input.projectId, repo, c)) };
+    });
+    if (!base) throw new HttpError(422, 'default_branch_missing', `Default branch ${branch} not found`);
+    const head = base.sha;
     const promotionId = newId('promotion', this.ctx.clock.now());
     const scope = scopeOf(input.projectId, { ticketId, changeId });
     const source = actor.kind === 'human' ? ('api' as const) : ('system' as const);
@@ -1476,10 +1819,10 @@ export class ChangeEngine implements ChangeService {
           [`change ${changeId} is not an approved change record of ${input.projectId}`],
         );
     }
-    const prov = this.provenanceDetail(input.projectId, fromSha);
+    const prov = this.trace(input.projectId, repo, clone, base, fromSha);
     if (!prov.ok) return refuse('provenance_gap', prov.orphanShas, prov.reasons);
     // §13: AOC's own agents never change its governance core; such a promotion is refused and recorded outside AOC.
-    const core = this.coreChanges(repo, `${prov.baseRef}..${fromSha}`);
+    const core = this.coreChanges(repo, clone, `${base.sha}..${fromSha}`);
     if (core === 'unchecked')
       return refuse('self_modification', [], [
         'the self-modification boundary could not be checked for this AOC repository',
@@ -1509,13 +1852,13 @@ export class ChangeEngine implements ChangeService {
     }
     if (ticketId && this.read.ticketUat(ticketId) !== 'pass')
       return refuse('uat_missing', [], [`ticket ${ticketId} has no passing UAT sign-off`]);
-    if (head === fromSha || git.isAncestor(repo, fromSha, head))
+    if (head === fromSha || clone.isAncestor(fromSha, head))
       return refuse(
         'not_fast_forward',
         [],
         [`nothing to promote: ${short(fromSha)} is already on ${branch}`],
       );
-    if (!git.isAncestor(repo, head, fromSha))
+    if (!clone.isAncestor(head, fromSha))
       return refuse(
         'not_fast_forward',
         [],
@@ -1561,7 +1904,11 @@ export class ChangeEngine implements ChangeService {
     return { promotionId, decisionId: card.id, refused: null };
   }
 
-  /** Fast-forward the default branch to the promoted SHA in the supervisor's environment (prod-promote profile). */
+  /**
+   * Moves the default branch to the approved SHA. Re-checked in the service clone first: it must fast-forward the
+   * branch as AOC knows it now, and (except for break-glass) every commit it adds must still trace through a gate —
+   * whatever the project repository's own view of the branch says. Published by `publish`.
+   */
   private async executePromotion(
     p: PromotionRow,
     decisionId: string | null,
@@ -1586,50 +1933,68 @@ export class ChangeEngine implements ChangeService {
         refs: { promotionId: p.promotion_id, projectId: p.project_id },
       });
     };
+    const refuse = (reason: 'not_fast_forward' | 'provenance_gap', orphanShas: string[]) => {
+      this.ctx.store.append({
+        ...base,
+        type: 'promotion.refused',
+        meta: {
+          promotionId: p.promotion_id,
+          reason,
+          orphanShas,
+          projectId: p.project_id,
+          ...(p.from_sha ? { fromSha: p.from_sha } : {}),
+        },
+      });
+    };
     const repo = this.repoPath(p.project_id);
     if (!repo || !p.from_sha || !p.target_branch)
       return fail('project_repo_unknown', 'No git repository is known for the project');
     if (!this.ctx.services.maybe('supervisor'))
       return fail('supervisor_unavailable', 'No supervisor is available to execute the promotion');
     try {
-      const ff = await fastForward(this.isolatedGit(true), repo, p.target_branch, p.from_sha);
-      if (ff.ok) {
-        this.ctx.store.append({
-          ...base,
-          type: 'promotion.completed',
-          meta: {
-            promotionId: p.promotion_id,
-            mainShaBefore: ff.before,
-            mainShaAfter: ff.after,
-            breakglass: !!p.breakglass_id,
-            decisionId,
-            ticketId: p.ticket_id,
-          },
-        });
-        this.recordCorePromotion(p, ff.before, ff.after, decisionId);
-        if (ff.warning)
-          this.ctx.notify({
-            kind: 'info',
-            title: 'Promotion pushed, local branch not updated',
-            audience: ['approver', 'builder'],
-            severity: 'warn',
-            refs: { promotionId: p.promotion_id },
-          });
-      } else if ('refused' in ff) {
-        this.ctx.store.append({
-          ...base,
-          type: 'promotion.refused',
-          meta: {
-            promotionId: p.promotion_id,
-            reason: 'not_fast_forward',
-            orphanShas: [],
-            projectId: p.project_id,
-            fromSha: p.from_sha,
-          },
-        });
-      } else {
-        fail(ff.failed, ff.detail);
+      const clone = this.withCommit(p.project_id, repo, p.from_sha);
+      const target = this.target(p.project_id, repo, clone);
+      if (target.kind === 'unconfigured')
+        return fail('promotion_remote_unconfigured', this.unconfiguredDetail(target, clone));
+      const head = this.base(repo, clone, p.target_branch, target);
+      if (!head) return fail('branch_missing', `${p.target_branch} does not exist`);
+      if (head.sha !== p.from_sha) {
+        if (!clone.isAncestor(head.sha, p.from_sha)) return refuse('not_fast_forward', []);
+        if (!p.breakglass_id) {
+          const prov = this.trace(p.project_id, repo, clone, head, p.from_sha);
+          if (!prov.ok) return refuse('provenance_gap', prov.orphanShas);
+        }
       }
+      const res = await this.publish({
+        repo,
+        clone,
+        target,
+        branch: p.target_branch,
+        base: head,
+        next: p.from_sha,
+      });
+      if (!res.ok) return 'refused' in res ? refuse('not_fast_forward', []) : fail(res.failed, res.detail);
+      this.ctx.store.append({
+        ...base,
+        type: 'promotion.completed',
+        meta: {
+          promotionId: p.promotion_id,
+          mainShaBefore: res.before,
+          mainShaAfter: res.after,
+          breakglass: !!p.breakglass_id,
+          decisionId,
+          ticketId: p.ticket_id,
+        },
+      });
+      this.recordCorePromotion(p, clone, res.before, res.after, decisionId);
+      if (res.warning)
+        this.ctx.notify({
+          kind: 'info',
+          title: 'Promotion pushed, local branch not updated',
+          audience: ['approver', 'builder'],
+          severity: 'warn',
+          refs: { promotionId: p.promotion_id },
+        });
     } catch (err) {
       fail(err instanceof RepoOpError ? err.reason : 'execution_error', errText(err));
     }

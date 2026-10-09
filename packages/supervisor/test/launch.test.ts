@@ -143,9 +143,16 @@ describe('launch', () => {
       'http://localhost:7420',
     ]);
     expect(String(h.payload(launched)!.transcriptPath)).toMatch(new RegExp(`/projects/.+/${uuid}\\.jsonl$`));
-    expect(sc.env.AOC_INGEST_TOKEN).toBe(env.AOC_INGEST_TOKEN);
     expect(sc.env.GIT_PUSH_TOKEN).toBeUndefined();
-    expect(sc.args).not.toContain(env.AOC_INGEST_TOKEN);
+    // G-44: the sidecar reports with a token of its own, which is nowhere the model can read it: not in the claude
+    // env (hooks, MCP server and Bash inherit it), not in the session files; and the sidecar holds no session token
+    const sidecarToken = sc.env.AOC_INGEST_TOKEN!;
+    expect(h.t.identity!.verifyIngestToken(sidecarToken)).toMatchObject({ kind: 'sidecar', sessionId: id });
+    expect(sidecarToken).not.toBe(env.AOC_INGEST_TOKEN);
+    expect(JSON.stringify(env)).not.toContain(sidecarToken);
+    for (const f of ['mcp.json', 'settings.json', 'system-prompt.md']) expect(h.file(id, f)).not.toContain(sidecarToken);
+    expect(JSON.stringify(sc.env)).not.toContain(env.AOC_INGEST_TOKEN!);
+    expect(sc.args.join(' ')).not.toContain(sidecarToken);
 
     // liveness signals, writer lock, credit boundary at launch, and no secret ever logged
     expect(h.liveness.processes[0]).toMatchObject({ sessionId: id, alive: true });
@@ -153,7 +160,7 @@ describe('launch', () => {
     expect(h.ledger.writerCalls).toContain(`acquire ${id}`);
     expect(h.credits.calls).toContain(`${id}:null`);
     const logged = lines.join('\n');
-    for (const secret of [...Object.values(SECRETS), env.AOC_INGEST_TOKEN!])
+    for (const secret of [...Object.values(SECRETS), env.AOC_INGEST_TOKEN!, sidecarToken])
       expect(logged).not.toContain(secret);
     expect(logged).toContain('GIT_PUSH_TOKEN'); // names only
   });

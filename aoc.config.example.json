@@ -137,7 +137,7 @@
   },
 
   "selfModification": {
-    "//": "Repos that are AOC itself; changes under protectedPaths (governance, audit, credit core) are refused to agents and logged outside AOC (§13).",
+    "//": "Repos that are AOC itself; changes under protectedPaths (the Tier 1 core in docs/compliance/self-modification-boundary.md: governance, audit, credit, ingest, supervisor, build and rule files) are refused to agents and logged outside AOC (§13). Set aocRepoPaths to every clone of the AOC repo that managed sessions can reach; the guard protects no core code while it is empty.",
     "aocRepoPaths": [],
     "protectedPaths": [
       "packages/kernel/",
@@ -147,7 +147,28 @@
       "packages/mod-decisions/",
       "packages/mod-identity/",
       "packages/hooks/",
-      "config/"
+      "config/",
+      "packages/supervisor/",
+      "packages/mod-change/",
+      "packages/mod-sessions/",
+      "packages/mod-ledger/",
+      "packages/mod-metering/",
+      "packages/mod-registry/",
+      "packages/distill/",
+      "packages/mod-evidence/",
+      "packages/daemon/",
+      "packages/client/",
+      "packages/mcp-server/",
+      "packages/sidecar/",
+      "package.json",
+      "packages/*/package.json",
+      "pnpm-lock.yaml",
+      "pnpm-workspace.yaml",
+      "scripts/",
+      ".github/",
+      "CLAUDE.md",
+      "docs/spec/",
+      "docs/compliance/"
     ],
     "externalAuditLog": ".aoc/selfmod-audit.log"
   },

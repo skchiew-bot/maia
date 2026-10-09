@@ -136,12 +136,21 @@ describe('supervisor + claude-sim: a managed session end to end', () => {
     expect(h.events({ types: ['plan.amended'], sessionId }).map((e) => e.meta.removed)).toEqual([1]);
     expect(h.events({ types: ['task.done'], sessionId }).map((e) => e.meta.taskId)).toEqual(['t1', 't3']);
     expect(h.events({ types: ['session.ended'], sessionId }).map((e) => e.meta.outcome)).toEqual(['completed']);
-    // The session's ingest token dies with it, once its last sidecar has reported the final turn's usage.
-    const issued = h.events({ types: ['token.issued'], sessionId })[0]!;
-    await waitFor(() => h.events({ types: ['token.revoked'] }).some((e) => e.meta.tokenId === issued.meta.tokenId), {
-      timeout: 20_000,
-      what: "the session's token revoked after its last sidecar",
-    });
+    // The session's ingest token dies with it; its sidecar token once its last sidecar has reported the final turn's
+    // usage (G-44).
+    for (const kind of ['ingest_session', 'ingest_sidecar']) {
+      const issued = h.events({ types: ['token.issued'], sessionId }).filter((e) => e.meta.kind === kind);
+      expect(issued.length, kind).toBeGreaterThan(0);
+      await waitFor(() => issued.every((t) => h.events({ types: ['token.revoked'] }).some((e) => e.meta.tokenId === t.meta.tokenId)), {
+        timeout: 20_000,
+        what: `the session's ${kind} tokens revoked`,
+      });
+    }
+    // Each turn's sidecar usage was checked against claude-sim's own result.modelUsage, and agreed.
+    expect(h.events({ types: ['usage.reconciled'], sessionId }).map((e) => [e.meta.turn, e.meta.status])).toEqual([
+      [1, 'match'],
+      [2, 'match'],
+    ]);
     expect(typesOf(sessionId)).toEqual(expect.arrayContaining(['thread.writer_released', 'token.revoked', 'usage.recorded', 'prompt.submitted']));
     expect(h.store.verifyChain().ok).toBe(true);
   });
@@ -149,15 +158,25 @@ describe('supervisor + claude-sim: a managed session end to end', () => {
   it('a launch into a project that does not exist is a 404 and conjures nothing; an unknown process type is a 422', async () => {
     const dev = await h.user('builder', 'Dev');
     const { projectId } = await h.project(dev, 'Real Project');
-    const projectIds = async () => (await h.api<{ projectId: string }[]>('GET', '/api/projects', { as: dev })).map((p) => p.projectId);
+    const projectIds = async () =>
+      (await h.api<{ projectId: string }[]>('GET', '/api/projects', { as: dev })).map((p) => p.projectId);
     const before = await projectIds();
-    const records = () => ['session.launch_requested', 'thread.created', 'project.created'].map((type) => h.events({ types: [type] }).length);
+    const records = () =>
+      ['session.launch_requested', 'thread.created', 'project.created'].map(
+        (type) => h.events({ types: [type] }).length,
+      );
     const recordsBefore = records();
 
-    const typo = await h.request('POST', '/api/sessions', { as: dev, body: { processType: 'feature-build', projectId: 'prj_typo', prompt: 'Work. [[scenario:happy-path]]' } });
+    const typo = await h.request('POST', '/api/sessions', {
+      as: dev,
+      body: { processType: 'feature-build', projectId: 'prj_typo', prompt: 'Work. [[scenario:happy-path]]' },
+    });
     expect(typo.status).toBe(404);
     expect(((await typo.json()) as { error: { code: string } }).error.code).toBe('unknown_project');
-    const badType = await h.request('POST', '/api/sessions', { as: dev, body: { processType: 'opus-please', projectId, prompt: 'Work.' } });
+    const badType = await h.request('POST', '/api/sessions', {
+      as: dev,
+      body: { processType: 'opus-please', projectId, prompt: 'Work.' },
+    });
     expect(badType.status).toBe(422);
     expect(((await badType.json()) as { error: { code: string } }).error.code).toBe('unknown_process_type');
 

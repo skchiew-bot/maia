@@ -394,6 +394,7 @@ function phaseIsDone(core: LedgerCore, sessionId: string, phaseId: string): bool
 /**
  * Pins a just-completed phase: annotated tag aoc/<slug>/<phase>/<seq> at HEAD when there is a repo (§8). The pin is
  * read and tagged first; the phase is completed afterwards if it still is complete and nobody else completed it.
+ * A caller that has just read HEAD passes it, so the pin costs one more git call, not two.
  */
 async function completePhaseIfDone(
   core: LedgerCore,
@@ -401,13 +402,14 @@ async function completePhaseIfDone(
   projectId: string,
   phaseId: string,
   cause: StoredEvent,
+  knownHead?: GitRead<string | null>,
 ): Promise<{ phaseId: string; pinnedRef: string | null } | null> {
   if (!phaseIsDone(core, sessionId, phaseId)) return null;
   const repo = await core.repoFor(sessionId, projectId);
   let sha: string | null = null;
   let tag: string | null = null;
   if (repo) {
-    const head = await core.repoGit.head(repo);
+    const head = knownHead ?? (await core.repoGit.head(repo));
     sha = valueOr(head, null);
     if (head.status !== 'ok')
       core.ctx.log.warn('phase not pinned: HEAD unreadable', { projectId, phaseId, git: head.status });
@@ -599,7 +601,14 @@ export async function taskDone(
     payload: { evidence: { kind, ref, ...(detail !== undefined ? { detail } : {}) } },
     source: 'mcp',
   });
-  const phaseCompleted = await completePhaseIfDone(core, sessionId, projectId, task.phase_id, done);
+  const phaseCompleted = await completePhaseIfDone(
+    core,
+    sessionId,
+    projectId,
+    task.phase_id,
+    done,
+    snap?.head,
+  );
   const p = sessionProgress(core, sessionId)!;
   return {
     ok: true,

@@ -15,6 +15,43 @@ const thresholds = z
 const LOCAL_TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
 const localTime = z.string().regex(LOCAL_TIME, 'expected HH:MM (24-hour local time)');
 
+/**
+ * Tier 1 of the self-modification boundary (docs/compliance/self-modification-boundary.md §1): the code and
+ * configuration that decide who may approve what, what is recorded and what is charged, plus the build,
+ * dependency and rule files that can change any of them. Relative to an AOC repo root; no `./` prefix.
+ */
+export const DEFAULT_PROTECTED_PATHS = [
+  'packages/kernel/',
+  'packages/contracts/',
+  'packages/mod-audit/',
+  'packages/mod-credits/',
+  'packages/mod-decisions/',
+  'packages/mod-identity/',
+  'packages/hooks/',
+  'config/',
+  'packages/supervisor/',
+  'packages/mod-change/',
+  'packages/mod-sessions/',
+  'packages/mod-ledger/',
+  'packages/mod-metering/',
+  'packages/mod-registry/',
+  'packages/distill/',
+  'packages/mod-evidence/',
+  'packages/daemon/',
+  'packages/client/',
+  'packages/mcp-server/',
+  'packages/sidecar/',
+  'package.json',
+  'packages/*/package.json',
+  'pnpm-lock.yaml',
+  'pnpm-workspace.yaml',
+  'scripts/',
+  '.github/',
+  'CLAUDE.md',
+  'docs/spec/',
+  'docs/compliance/',
+] as const;
+
 export const AocConfigSchema = z.object({
   /**
    * 'production' turns binding controls into startup refusals and withdraws development conveniences:
@@ -232,9 +269,7 @@ export const AocConfigSchema = z.object({
       /** Repo roots that ARE the AOC platform itself. */
       aocRepoPaths: z.array(z.string()).default([]),
       /** Governance/audit/credit core (glob-ish prefixes relative to an AOC repo root). */
-      protectedPaths: z
-        .array(z.string())
-        .default(['packages/kernel/', 'packages/contracts/', 'packages/mod-audit/', 'packages/mod-credits/', 'packages/mod-decisions/', 'packages/mod-identity/', 'packages/hooks/', 'config/']),
+      protectedPaths: z.array(z.string()).default([...DEFAULT_PROTECTED_PATHS]),
       externalAuditLog: z.string().default('.aoc/selfmod-audit.log'),
     })
     .default({}),

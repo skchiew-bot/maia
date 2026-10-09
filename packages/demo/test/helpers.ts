@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { createServer } from 'node:net';
 import { join } from 'node:path';
@@ -93,6 +93,41 @@ export function eventsAfter(aocData: string, afterSeq: number): { seq: number; t
   }
 }
 
+/** Event types worth reading when a flow stalls: the ticket, its sessions, their tasks and every refusal. */
+const FLOW_EVENT = /^(ticket|session|task|plan|decision|promotion|selfmod|tool\.denied|evidence|ledger|change)/;
+
+/**
+ * What a failing e2e test needs to see: the tail of the daemon log and the flow's events (clear meta only), so the
+ * failure message names the refusal instead of just a timeout.
+ */
+export function diagnostics(aocData: string, afterSeq: number, log: string, subjectId?: string): string {
+  const events = eventsAfter(aocData, afterSeq)
+    .filter((e) => FLOW_EVENT.test(e.type) && e.type !== 'session.liveness_changed')
+    .map((e) => `  #${e.seq} ${e.type} ${JSON.stringify(e.meta)}`);
+  // The demo's fake LLM answers nothing, so every learning pass logs one warning per unclassified error: skip that noise.
+  const tail = log.split('\n').filter((l) => !l.includes('learning.classify failed')).slice(-40).join('\n');
+  return [
+    `--- daemon log (last 40 lines) ---`,
+    tail,
+    `--- events after seq ${afterSeq} (${events.length}) ---`,
+    ...events.slice(-80),
+    ...(subjectId ? [`--- decision cards of ${subjectId} (an escalation's reason is in its question) ---`, ...decisionCards(aocData, subjectId)] : []),
+  ].join('\n');
+}
+
+/** The decision cards about one subject (a ticket), from the read-only projection. */
+function decisionCards(aocData: string, subjectId: string): string[] {
+  const db = new DatabaseSync(join(aocData, 'aoc.db'), { readOnly: true });
+  try {
+    const rows = db.prepare('SELECT id, kind, status, question FROM dec_decisions WHERE subject_id = ? ORDER BY requested_seq').all(subjectId) as { id: string; kind: string; status: string; question: string }[];
+    return rows.map((r) => `  ${r.id} ${r.kind} ${r.status}: ${r.question}`);
+  } catch {
+    return ['  (decision projection unreadable)'];
+  } finally {
+    db.close();
+  }
+}
+
 /** argv of every `session.launched` after `afterSeq` (decrypted payloads; only once aocd has stopped). */
 export function launchedArgv(aocData: string, afterSeq: number): string[][] {
   const store = new EventStore({ dataDir: aocData, clock: systemClock, log: createLogger({ level: 'error' }), masterKey: loadOrCreateMasterKey(join(aocData, 'master.key'), {}).key });
@@ -123,6 +158,14 @@ export function seedDemo(layout: DemoLayout, env: NodeJS.ProcessEnv): Promise<{ 
     child.once('error', reject);
     child.once('close', (code) => resolve({ code, output }));
   });
+}
+
+/**
+ * rm -rf for a test directory. A straggler's last write (an aocd sidecar's final spool file) can recreate a directory
+ * while it is being removed (ENOTEMPTY), so the removal retries with a backoff.
+ */
+export function removeTree(dir: string): void {
+  rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
 }
 
 /** Signals the child we spawned (its own PID) and waits for it to exit. */

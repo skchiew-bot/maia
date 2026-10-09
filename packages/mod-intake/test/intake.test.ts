@@ -82,12 +82,12 @@ function stubs(repoDir: string | null = null) {
   return { supervisor, learning, change, launches, stops, errors, promotions, ctl };
 }
 
-async function setup(config: Record<string, unknown> = {}, repoDir: string | null = null) {
+async function setup(config: Record<string, unknown> = {}, repoDir: string | null = null, before: AocModule[] = []) {
   const s = stubs(repoDir);
   const ledger: Partial<LedgerService> = { projectRepoPath: () => repoDir };
   mod = createIntakeModule({ scanner: (config.scanner as never) ?? builtinScanner });
   t = await createTestRuntime({
-    modules: [mod],
+    modules: [...before, mod],
     services: { supervisor: s.supervisor as SupervisorService, learning: s.learning as LearningService, change: s.change as ChangeService, ledger: ledger as LedgerService },
     config: { intake: { triageAgents: 2, maxImageBytes: 1024, ...(config.intake as object) } },
   });
@@ -112,6 +112,30 @@ const report = (sessionId: string, confidence: number, cls: string) =>
 
 const endBuild = (sessionId: string) =>
   t.rt.store.append({ type: 'session.ended', actor: { kind: 'system', id: 'supervisor' }, scope: { sessionId }, meta: { sessionId, outcome: 'completed' }, source: 'supervisor' });
+
+/**
+ * Another module's reactor, registered before intake as the ledger is in aocd: for each event it handles it appends
+ * its own event with that cause (the ledger's `thread.writer_released` on `session.ended`) before intake's reactor runs.
+ */
+const reactsFirstTo = (...types: string[]): AocModule => ({
+  name: 'reacts-first',
+  reactors: [
+    {
+      name: 'reacts-first.append',
+      handles: types,
+      react: (e, _payload, ctx) => {
+        ctx.store.append({
+          type: 'thread.writer_released',
+          actor: { kind: 'system', id: 'ledger' },
+          scope: { projectId: 'prj_1', threadId: 'thr_1' },
+          meta: { threadId: 'thr_1', sessionId: newId('session'), reason: 'ended' },
+          source: 'system',
+          causationId: e.id,
+        });
+      },
+    },
+  ],
+});
 
 /** Submit a ticket, let both triage agents agree and approve the fix plan: the first build session is running. */
 async function toBuild(s: ReturnType<typeof stubs>, approver: { user: Parameters<NonNullable<TestRuntime['decisions']>['resolve']>[2] }) {
@@ -286,6 +310,57 @@ describe('ticket lifecycle', () => {
       expect.objectContaining({ ticketId, uatRef: `uat/${ticketId}`, uatSha }),
     ]);
     expect(t.decisions!.list({ subjectId: ticketId, kind: ['uat_signoff'], status: ['open'] })).toHaveLength(1);
+  });
+
+  describe('events another module appended for the same cause do not count as intake having reacted', () => {
+    it('a finished build reaches UAT although the ledger already reacted to its session.ended', async () => {
+      const repo = projectRepo();
+      const s = await setup({}, repo.dir, [reactsFirstTo('session.ended')]);
+      const { ticketId, build } = await toBuild(s, t.user('approver', 'CEO'));
+      const uatSha = repo.pushUat(ticketId);
+      endBuild(build!.sessionId);
+      await t.drain();
+      expect(t.rt.store.list({ types: ['thread.writer_released'] })).toHaveLength(1); // it did react first
+      expect(t.rt.store.list({ types: ['ticket.uat_ready'] }).map((e) => e.meta)).toEqual([expect.objectContaining({ ticketId, uatSha })]);
+    });
+
+    it('a build that never pushed uat/<ticket> is still escalated, once', async () => {
+      const s = await setup({}, projectRepo().dir, [reactsFirstTo('session.ended')]);
+      const { build } = await toBuild(s, t.user('approver', 'CEO'));
+      endBuild(build!.sessionId);
+      await t.drain();
+      expect(t.rt.store.list({ types: ['ticket.uat_ready'] })).toHaveLength(0);
+      expect(t.rt.store.list({ types: ['ticket.escalated_to_human'] })).toHaveLength(1);
+    });
+
+    it('an approved fix plan starts the build', async () => {
+      const s = await setup({}, projectRepo().dir, [reactsFirstTo('decision.resolved')]);
+      const { ticketId, build } = await toBuild(s, t.user('approver', 'CEO'));
+      expect(build).toBeDefined();
+      expect(s.launches.filter((l) => l.ticketId === ticketId && l.processType === 'bug-fix')).toHaveLength(1);
+    });
+
+    it('a promotion refused at execution is escalated', async () => {
+      const repo = projectRepo();
+      const s = await setup({}, repo.dir, [reactsFirstTo('promotion.refused')]);
+      const { ticketId, req, build } = await toBuild(s, t.user('approver', 'CEO'));
+      repo.pushUat(ticketId);
+      endBuild(build!.sessionId);
+      await t.drain();
+      await t.json('POST', `/portal/api/tickets/${ticketId}/uat`, { headers: req.headers, body: { verdict: 'pass' } });
+      await t.drain();
+      expect(s.promotions).toHaveLength(1);
+      t.rt.store.append({
+        type: 'promotion.refused',
+        actor: { kind: 'system', id: 'change' },
+        scope: { projectId: 'prj_1', ticketId },
+        meta: { promotionId: s.promotions[0]!.promotionId, reason: 'not_fast_forward', orphanShas: [], projectId: 'prj_1' },
+        source: 'supervisor',
+      });
+      await t.drain();
+      expect(t.rt.store.list({ types: ['thread.writer_released'] })).toHaveLength(1);
+      expect(t.rt.store.list({ types: ['ticket.escalated_to_human'] }).map((e) => e.meta.reason)).toEqual(['golive_blocked']);
+    });
   });
 
   describe('go-live after a UAT pass', () => {

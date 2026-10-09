@@ -22,7 +22,7 @@ export interface LedgerModuleOptions {
   overrunScanEveryMs?: number;
   /** Rollover threshold when the registry has no process type (default 70%). */
   defaultRolloverContextPct?: number;
-  /** Time each git call may take before the check it serves is recorded as unknown (default 5 s). */
+  /** Time each git call may take before the check it serves is recorded as unknown (default 4 s). */
   gitTimeoutMs?: number;
 }
 
