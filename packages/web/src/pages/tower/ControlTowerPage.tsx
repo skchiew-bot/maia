@@ -74,7 +74,7 @@ function useNeedsYouAnnouncement(count: number | undefined): string {
 export default function ControlTowerPage() {
   const { user } = useAuth();
   const snapshot = useTowerSnapshot();
-  const { cards } = useOpenDecisions();
+  const { cards, error: cardsError } = useOpenDecisions();
   const owners = useSessionOwners(user?.role === 'builder');
   const actions = useAttentionActions(snapshot.data, snapshot.reload);
   const narrow = useMediaQuery(NARROW);
@@ -119,6 +119,7 @@ export default function ControlTowerPage() {
           ranked={ranked}
           narrow={narrow}
           cards={cards}
+          cardsFailed={cardsError !== undefined}
           actions={actions}
           driveBlock={driveBlock}
           staleError={snapshot.error}
@@ -138,6 +139,7 @@ function TowerBody({
   ranked,
   narrow,
   cards,
+  cardsFailed,
   actions,
   driveBlock,
   staleError,
@@ -147,6 +149,7 @@ function TowerBody({
   ranked: AttentionQueueProps['items'];
   narrow: boolean;
   cards: AttentionQueueProps['cards'];
+  cardsFailed: boolean;
   actions: AttentionQueueProps['actions'];
   driveBlock: AttentionQueueProps['driveBlock'];
   staleError: unknown;
@@ -171,7 +174,13 @@ function TowerBody({
       <Summary text={data.summary} />
       {!narrow && kpis}
       <div className="tower-main">
-        <AttentionQueue items={ranked} cards={cards} actions={actions} driveBlock={driveBlock} />
+        <AttentionQueue
+          items={ranked}
+          cards={cards}
+          cardsFailed={cardsFailed}
+          actions={actions}
+          driveBlock={driveBlock}
+        />
         {narrow && kpis}
         <div className="tower-rail">
           <FleetPanel fleet={data.fleet} />

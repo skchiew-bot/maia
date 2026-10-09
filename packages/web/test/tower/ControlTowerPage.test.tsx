@@ -4,7 +4,7 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ConsoleSnapshot, DecisionListResponse, TowerSnapshot } from '@aoc/contracts';
 import { AuthProvider, EventStreamProvider, type AuthUser } from '../../src/api';
-import { ClockProvider, fixedClock } from '../../src/components';
+import { ClockProvider, fixedClock, formatClock } from '../../src/components';
 import ControlTowerPage from '../../src/pages/tower/ControlTowerPage';
 import { FakeEventSource, FakeEventSourceCtor, jsonResponse, mockFetch } from '../helpers';
 import { FIXTURE_IDS, FIXTURE_NOW, FIXTURE_USERS, makeOpenDecisions, makeTowerSnapshot } from './fixture';
@@ -85,15 +85,19 @@ function emit(type: string, meta: Record<string, unknown> = {}) {
   return seq;
 }
 
-const rowOf = (title: string) => screen.getByRole('heading', { level: 3, name: title }).closest('li')!;
-const queue = () => screen.getByRole('list', { name: /Attention queue/ });
+/** Role queries over the whole page are slow in jsdom; rows are found by their title text instead. */
+const rowOf = (title: string) => screen.getByText(title, { selector: '.tower-q__title a' }).closest('li')!;
+const findRow = async (title: string) =>
+  (await screen.findByText(title, { selector: '.tower-q__title a' })).closest('li')!;
+const queue = () => screen.getByLabelText(/Attention queue, highest cost/);
 const withoutItem = (snap: TowerSnapshot, id: string): TowerSnapshot => ({
   ...snap,
   attention: snap.attention.filter((a) => a.id !== id),
   kpis: { ...snap.kpis, needsYou: snap.kpis.needsYou - 1 },
 });
 
-describe('Control Tower page', () => {
+// Full-page renders are heavy in jsdom; a generous budget keeps a parallel full-repo run from flaking.
+describe('Control Tower page', { timeout: 30_000 }, () => {
   let daemon: ReturnType<typeof fakeDaemon>;
 
   beforeEach(() => {
@@ -110,7 +114,7 @@ describe('Control Tower page', () => {
     expect(await screen.findByText(/led by two passkey gates/)).toBeInTheDocument();
     expect(screen.getByText('12 items need you')).toContainHTML('b');
 
-    const kpis = screen.getByRole('list', { name: 'Operation at a glance' });
+    const kpis = screen.getByLabelText('Operation at a glance');
     expect(within(kpis).getByRole('group', { name: 'Needs you' })).toHaveTextContent('12items');
     expect(within(kpis).getByRole('group', { name: 'Flow · verified tasks today' })).toHaveTextContent('+18%');
     expect(within(kpis).getByRole('group', { name: 'Human gate latency' })).toHaveTextContent('31m');
@@ -129,7 +133,7 @@ describe('Control Tower page', () => {
     expect(screen.getByRole('heading', { name: /Attention queue/ })).toHaveTextContent('12');
 
     // Fleet health: liveness as badges with counts, never a chart.
-    const fleet = screen.getByRole('list', { name: 'Live sessions by liveness' });
+    const fleet = screen.getByLabelText('Live sessions by liveness');
     expect(within(fleet).getAllByRole('listitem').map((li) => li.textContent)).toEqual([
       'Waiting on you2',
       'Throttled1',
@@ -166,7 +170,7 @@ describe('Control Tower page', () => {
     const user = userEvent.setup();
     renderTower();
     const title = 'Merge the retry-dedupe fix to main?';
-    await screen.findByRole('heading', { level: 3, name: title });
+    await findRow(title);
     await waitFor(() => expect(daemon.count('GET', '/api/decisions')).toBe(1));
     act(() => FakeEventSource.last.open());
 
@@ -193,7 +197,7 @@ describe('Control Tower page', () => {
     // The event confirms it; the refetched snapshot no longer lists the item, so the row goes.
     daemon.state.tower = withoutItem(daemon.state.tower, `decision:${FIXTURE_IDS.mainMerge}`);
     const s = emit('decision.resolved', { decisionId: FIXTURE_IDS.mainMerge, optionId: 'uat' });
-    await waitFor(() => expect(screen.queryByRole('heading', { level: 3, name: title })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText(title, { selector: '.tower-q__title a' })).not.toBeInTheDocument());
     expect(s).toBeGreaterThan(0);
     expect(daemon.count('GET', '/api/tower')).toBe(2);
   });
@@ -202,7 +206,7 @@ describe('Control Tower page', () => {
     const user = userEvent.setup();
     renderTower();
     const title = 'Tan Wei Jie at credit cap; US$100 top-up pending';
-    await screen.findByRole('heading', { level: 3, name: title });
+    await findRow(title);
     await waitFor(() => expect(daemon.count('GET', '/api/decisions')).toBe(1));
     const row = rowOf(title);
     expect(within(row).getByRole('button', { name: 'Approve top-up' })).toBeEnabled();
@@ -221,7 +225,7 @@ describe('Control Tower page', () => {
   it('sends passkey gates to the Decisions page, focused on the card', async () => {
     const user = userEvent.setup();
     renderTower();
-    const row = rowOf(await screen.findByText('Promote CX Copilot v1.4.0 to production').then((el) => el.textContent!));
+    const row = await findRow('Promote CX Copilot v1.4.0 to production');
     const link = within(row).getByRole('link', { name: 'Approve with passkey' });
     expect(link).toHaveAttribute('href', `/decisions?focus=${FIXTURE_IDS.goLive}`);
     expect(within(row).getByText('passkey')).toBeInTheDocument();
@@ -234,7 +238,7 @@ describe('Control Tower page', () => {
     const user = userEvent.setup();
     renderTower();
     const title = 'Rollback-runbook docs session exited with code 143';
-    await screen.findByRole('heading', { level: 3, name: title });
+    await findRow(title);
     act(() => FakeEventSource.last.open());
     expect(within(rowOf(title)).getByText('Dead')).toBeInTheDocument();
 
@@ -257,7 +261,7 @@ describe('Control Tower page', () => {
     // Its liveness moves on; the next snapshot drops the row.
     daemon.state.tower = withoutItem(daemon.state.tower, `session_dead:${FIXTURE_IDS.deadSession}`);
     emit('session.liveness_changed', { sessionId: FIXTURE_IDS.deadSession, from: 'dead', to: 'working' });
-    await waitFor(() => expect(screen.queryByRole('heading', { level: 3, name: title })).not.toBeInTheDocument(), {
+    await waitFor(() => expect(screen.queryByText(title, { selector: '.tower-q__title a' })).not.toBeInTheDocument(), {
       timeout: 3000,
     });
   });
@@ -266,7 +270,7 @@ describe('Control Tower page', () => {
     const user = userEvent.setup();
     renderTower();
     const title = 'Partitioned-table migration has produced no output';
-    await screen.findByRole('heading', { level: 3, name: title });
+    await findRow(title);
     await user.click(within(rowOf(title)).getByRole('button', { name: 'Nudge…' }));
     const box = within(rowOf(title)).getByLabelText(/Note for the session/);
     expect(box).toHaveFocus();
@@ -308,7 +312,7 @@ describe('Control Tower page', () => {
     };
     renderTower();
     const title = 'Rollback-runbook docs session exited with code 143';
-    await screen.findByRole('heading', { level: 3, name: title });
+    await findRow(title);
     await user.click(within(rowOf(title)).getByRole('button', { name: 'Restart' }));
     const alert = await within(rowOf(title)).findByRole('alert');
     expect(alert).toHaveTextContent("Couldn't restart the session");
@@ -335,7 +339,7 @@ describe('Control Tower page', () => {
     };
     renderTower(BUILDER);
     const merge = 'Merge the retry-dedupe fix to main?';
-    await screen.findByRole('heading', { level: 3, name: merge });
+    await findRow(merge);
     await waitFor(() => expect(within(rowOf(merge)).getByRole('button', { name: 'Approve' })).toBeDisabled());
     expect(rowOf(merge)).toHaveTextContent('Needs the Approver role');
     expect(within(rowOf('Promote CX Copilot v1.4.0 to production')).getByRole('link', { name: 'Open' })).toBeInTheDocument();
@@ -372,7 +376,7 @@ describe('Control Tower page', () => {
     renderTower();
     expect(screen.getByRole('status')).toHaveTextContent('Loading the Control Tower…');
     expect(await screen.findByText('Nothing needs you right now')).toBeInTheDocument();
-    expect(screen.queryByRole('list', { name: /Attention queue/ })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Attention queue, highest cost/)).not.toBeInTheDocument();
   });
 
   it('shows a retryable error when the first load fails', async () => {
@@ -392,13 +396,85 @@ describe('Control Tower page', () => {
     expect(screen.getByRole('link', { name: 'Open the Console' })).toHaveAttribute('href', '/console');
   });
 
+  it('counts down open break-glass records and flags a late off-host anchor', async () => {
+    const HOUR = 3_600_000;
+    const snap = daemon.state.tower;
+    daemon.state.tower = {
+      ...snap,
+      attention: [
+        ...snap.attention,
+        {
+          id: 'breakglass_open:bg_77',
+          kind: 'breakglass_open',
+          severity: 'high',
+          title: 'Break-glass promotion of claims hotfix 7f3a',
+          detail: null,
+          projectId: 'prj_claims',
+          projectName: 'Claims Intake Bot',
+          since: new Date(FIXTURE_NOW - 4 * HOUR).toISOString(),
+          ageMs: 4 * HOUR,
+          costOfDelay: { score: 60, basis: 'Break-glass · 4h · post-incident record due' },
+          action: { kind: 'open', label: 'Open', href: '/changes/bg_77' },
+          chips: ['break-glass'],
+        },
+      ],
+      kpis: { ...snap.kpis, anchorAgeMs: 27 * HOUR },
+      integrity: {
+        ...snap.integrity,
+        breakglassOpen: 1,
+        lastAnchorAt: new Date(FIXTURE_NOW - 27 * HOUR).toISOString(),
+        anchorAgeMs: 27 * HOUR,
+      },
+    };
+    renderTower();
+    const integrity = (await screen.findByText('Integrity and governance')).closest('section')!;
+    expect(integrity).toHaveTextContent('Break-glass promotion of claims hotfix 7f3a · post-incident record due in 20h');
+    expect(integrity).toHaveTextContent('1d 3h old');
+    expect(integrity).toHaveTextContent('Nightly anchor missed');
+    expect(within(screen.getByLabelText('Operation at a glance')).getByRole('group', { name: 'Integrity' })).toHaveTextContent(
+      'over 26 h',
+    );
+  });
+
+  it('applies the server-recommended option even when the decision card is unavailable', async () => {
+    const user = userEvent.setup();
+    const snap = daemon.state.tower;
+    daemon.state.tower = {
+      ...snap,
+      attention: snap.attention.map((a) =>
+        a.action.decisionId === FIXTURE_IDS.nric ? { ...a, action: { ...a.action, recommendedOptionId: 'ingest' } } : a,
+      ),
+    };
+    daemon.state.fail['GET /api/decisions'] = { status: 500, body: { error: { code: 'boom', message: 'Down' } } };
+    renderTower();
+    const nric = 'Mask NRIC numbers at ingest, or on screen only';
+    await findRow(nric);
+    await waitFor(() => expect(daemon.count('GET', '/api/decisions')).toBe(1));
+    await user.click(within(rowOf(nric)).getByRole('button', { name: 'Approve' }));
+    expect(within(rowOf(nric)).getByRole('group')).toHaveTextContent('applies the recommended option.');
+    await user.click(within(rowOf(nric)).getByRole('button', { name: 'Confirm approval' }));
+    await waitFor(() =>
+      expect(daemon.calls.find((c) => c.method === 'POST')).toMatchObject({
+        path: `/api/decisions/${FIXTURE_IDS.nric}/resolve`,
+        body: { optionId: 'ingest', comment: null },
+      }),
+    );
+
+    // A row without a server-named option cannot be approved inline while the cards are down.
+    const merge = 'Merge the retry-dedupe fix to main?';
+    await user.click(within(rowOf(merge)).getByRole('button', { name: 'Approve' }));
+    expect(rowOf(merge)).toHaveTextContent('The decision could not be loaded here. Open it on the Decisions page');
+  });
+
   it('keeps the last snapshot, labelled, when a refresh fails', async () => {
     renderTower();
     await screen.findByText(/led by two passkey gates/);
     act(() => FakeEventSource.last.open());
     daemon.state.towerStatus = 500;
     emit('decision.requested', { decisionId: 'dec_new' });
-    expect(await screen.findByText('Showing the snapshot from 13:42', {}, { timeout: 3000 })).toBeInTheDocument();
+    expect(
+      await screen.findByText(`Showing the snapshot from ${formatClock(FIXTURE_NOW)}`, {}, { timeout: 3000 }),
+    ).toBeInTheDocument();
     expect(screen.getByText('Roll claims-intake main back to p1-done (7c2e9d1)')).toBeInTheDocument();
   });
 });

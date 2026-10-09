@@ -1,5 +1,5 @@
 import type { TowerFlow, TowerKpis } from '@aoc/contracts';
-import { useElementWidth } from '../../charts';
+import { useElementWidth } from '../../charts/shared';
 import {
   ButtonLink,
   Icon,

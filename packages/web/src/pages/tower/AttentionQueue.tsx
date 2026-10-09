@@ -65,8 +65,10 @@ const isHandled = (p: PendingAction | undefined) => p?.phase === 'sent' || p?.ph
 export interface AttentionQueueProps {
   /** Ranked items (highest cost of delay first). */
   items: readonly TowerAttentionItem[];
-  /** Open decision cards by id; `null` while they load. */
+  /** Open decision cards by id; `null` while they load (or if they failed to load). */
   cards: ReadonlyMap<string, DecisionCardView> | null;
+  /** The decision cards could not be loaded: inline approve/deny sends people to the Decisions page instead. */
+  cardsFailed?: boolean;
   actions: AttentionActions;
   /** Why the viewer may not drive a session (null = allowed). */
   driveBlock: (sessionId: string) => string | null;
@@ -85,7 +87,7 @@ export function SeverityMark({ severity }: { severity: AttentionSeverity }) {
  * The hero: everything that needs a human, ranked by cost of delay (not age), each row with its score basis
  * and an inline action wired to the real API. Lower-cost items fold behind a disclosure.
  */
-export function AttentionQueue({ items, cards, actions, driveBlock }: AttentionQueueProps) {
+export function AttentionQueue({ items, cards, cardsFailed = false, actions, driveBlock }: AttentionQueueProps) {
   const { visible, folded } = foldAttention(items);
   const open = items.filter((it) => !isHandled(actions.pending[it.id])).length;
   // Scores are 0–100 today; if the backend's scale grows, bars stay comparable instead of clipping.
@@ -98,6 +100,7 @@ export function AttentionQueue({ items, cards, actions, driveBlock }: AttentionQ
       scoreMax={scoreMax}
       card={it.action.decisionId ? (cards?.get(it.action.decisionId) ?? null) : null}
       cardsLoaded={cards !== null}
+      cardsFailed={cards === null && cardsFailed}
       pending={actions.pending[it.id]}
       actions={actions}
       driveBlock={driveBlock}
@@ -169,12 +172,13 @@ interface QueueRowProps {
   scoreMax: number;
   card: DecisionCardView | null;
   cardsLoaded: boolean;
+  cardsFailed: boolean;
   pending: PendingAction | undefined;
   actions: AttentionActions;
   driveBlock: (sessionId: string) => string | null;
 }
 
-function QueueRow({ item, rank, scoreMax, card, cardsLoaded, pending, actions, driveBlock }: QueueRowProps) {
+function QueueRow({ item, rank, scoreMax, card, cardsLoaded, cardsFailed, pending, actions, driveBlock }: QueueRowProps) {
   const titleId = useId();
   const whyId = useId();
   const panelId = useId();
@@ -280,6 +284,7 @@ function QueueRow({ item, rank, scoreMax, card, cardsLoaded, pending, actions, d
               item={item}
               card={card}
               cardsLoaded={cardsLoaded}
+              cardsFailed={cardsFailed}
               sending={sending}
               onCancel={closePanel}
               onConfirm={(option, comment) => {
@@ -572,6 +577,7 @@ function DecisionPanel({
   item,
   card,
   cardsLoaded,
+  cardsFailed,
   sending,
   onConfirm,
   onCancel,
@@ -580,6 +586,7 @@ function DecisionPanel({
   item: TowerAttentionItem;
   card: DecisionCardView | null;
   cardsLoaded: boolean;
+  cardsFailed: boolean;
   sending: boolean;
   onConfirm: (option: OptionRef, comment: string) => void;
   onCancel: () => void;
@@ -598,6 +605,13 @@ function DecisionPanel({
 
   const href = subjectHref(item);
   if (!option) {
+    if (cardsFailed) {
+      return (
+        <p className="tower-q__panel-note" onKeyDown={onEscape(onCancel)}>
+          The decision could not be loaded here. <Link to={href}>Open it on the Decisions page</Link>
+        </p>
+      );
+    }
     if (!cardsLoaded) {
       return (
         <p className="tower-q__panel-note" role="status">

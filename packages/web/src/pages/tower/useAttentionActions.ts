@@ -129,13 +129,14 @@ export function useAttentionActions(snapshot: TowerSnapshot | undefined, reload:
     }
   });
 
-  // Reconcile with every new snapshot: an item that is gone is done; a settled one shows the truth again.
+  // Reconcile with every new snapshot: an item that is gone is done (or its error moot); a settled one shows the
+  // truth again.
   useEffect(() => {
     if (!snapshot) return;
     const present = new Set(snapshot.attention.map((i) => i.id));
     for (const [id, p] of Object.entries(pendingRef.current)) {
-      if (p.phase === 'sending' || p.phase === 'failed') continue;
-      if (!present.has(id) || p.settled) {
+      if (p.phase === 'sending') continue;
+      if (p.phase === 'failed' ? !present.has(id) : !present.has(id) || p.settled) {
         watches.current.delete(id);
         clearTimer(id);
         write(id, undefined);
