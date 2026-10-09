@@ -66,7 +66,7 @@ export default function PortalTicketPage() {
             title="We couldn't find that request"
             body="The link may be out of date, or the request belongs to someone else."
             action={
-              <ButtonLink to="/portal" variant="primary">
+              <ButtonLink to="/portal" variant="primary" className="portal-cta">
                 Back to my requests
               </ButtonLink>
             }

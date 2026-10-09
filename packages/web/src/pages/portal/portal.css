@@ -38,7 +38,8 @@
 
 .portal-cta.aoc-btn,
 .portal-form__send.aoc-btn,
-.portal-signoff__actions .aoc-btn {
+.portal-signoff__actions .aoc-btn,
+.portal-login .aoc-login__form .aoc-btn {
   min-height: 40px;
   padding-inline: var(--sp-4);
   font-size: var(--fs-md);
@@ -577,22 +578,20 @@
 .portal-drop__text {
   color: var(--text-2);
 }
-.portal-drop__choose {
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--accent);
-  font-weight: 600;
-  text-decoration: underline;
-  text-underline-offset: 2px;
+.portal-drop .aoc-btn {
+  min-height: 40px;
+  padding-inline: var(--sp-4);
+  font-size: var(--fs-md);
 }
-.portal-drop__choose:hover {
-  color: var(--accent-hover);
+.portal-drop__alt {
+  color: var(--text-3);
+  font-size: var(--fs-xs);
 }
-.portal-drop__choose:focus-visible {
-  border-radius: 2px;
-  outline: none;
-  box-shadow: var(--focus);
+/* Dragging and pasting are desk habits; on touch screens the button is the way in. */
+@media (pointer: coarse) {
+  .portal-drop__alt {
+    display: none;
+  }
 }
 .portal-attach__notice {
   display: flex;

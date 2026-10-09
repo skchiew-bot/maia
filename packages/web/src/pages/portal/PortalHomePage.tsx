@@ -45,7 +45,7 @@ export default function PortalHomePage() {
   }, [tickets.data, clock]);
 
   const newRequest = (
-    <ButtonLink to="/portal/new" variant="primary" icon="plus">
+    <ButtonLink to="/portal/new" variant="primary" icon="plus" className="portal-cta">
       New request
     </ButtonLink>
   );
@@ -71,7 +71,7 @@ export default function PortalHomePage() {
           title="You haven't reported anything yet"
           body="When something isn't working, tell us here. You can follow your request on this page and test the fix when it's ready."
           action={
-            <ButtonLink to="/portal/new" variant="primary" icon="plus">
+            <ButtonLink to="/portal/new" variant="primary" icon="plus" className="portal-cta">
               Report a problem
             </ButtonLink>
           }

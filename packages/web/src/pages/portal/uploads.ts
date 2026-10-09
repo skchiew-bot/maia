@@ -1,5 +1,6 @@
 import type { IntakeLimits } from '@aoc/contracts';
 import { ApiError } from '../../api/client';
+import { useResource } from '../../api/useResource';
 
 /**
  * Client-side mirror of the intake upload rules (mod-intake `upload.ts` and the intake route). It only spares
@@ -27,6 +28,11 @@ export const DEFAULT_LIMITS: IntakeLimits = {
     { mime: 'application/pdf', kind: 'document', extensions: ['.pdf'] },
   ],
 };
+
+/** Upload rules as configured on the server; the defaults stand in until (or unless) they load. */
+export function useIntakeLimits(enabled = true): IntakeLimits {
+  return useResource<IntakeLimits>('/portal/api/limits', { enabled }).data ?? DEFAULT_LIMITS;
+}
 
 /** Bytes the type check needs from the start of a file. */
 export const HEAD_BYTES = 16;

@@ -1,11 +1,18 @@
 import type { IntakeLimits } from '@aoc/contracts';
 import { useId, useRef, useState, type DragEvent } from 'react';
 import { Icon } from '../../components/Icon';
-import { IconButton } from '../../components/Button';
+import { Button, IconButton } from '../../components/Button';
 import { cx } from '../../lib/dom';
 import { FileGlyph } from './files';
 import type { AttachmentsState, CheckedAttachment } from './useAttachments';
-import { acceptAttribute, acceptedSummary, formatBytes, KIND_WORD, safeFileName } from './uploads';
+import {
+  acceptAttribute,
+  acceptedSummary,
+  formatBytes,
+  KIND_WORD,
+  safeFileName,
+  sniffMedia,
+} from './uploads';
 
 export interface AttachmentPickerProps {
   attachments: AttachmentsState;
@@ -46,27 +53,23 @@ export function AttachmentPicker({ attachments, limits, disabled }: AttachmentPi
           e.preventDefault();
           if (!disabled && !full) setDragging(true);
         }}
-        onDragLeave={() => setDragging(false)}
+        onDragLeave={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false);
+        }}
         onDrop={onDrop}
       >
         <Icon name="upload" size={20} className="portal-drop__icon" />
-        <p className="portal-drop__text">
-          {full ? (
-            <>That&apos;s the most files one request can carry.</>
-          ) : (
-            <>
-              Drag files here, paste a screenshot, or{' '}
-              <button
-                type="button"
-                className="portal-drop__choose"
-                onClick={() => inputRef.current?.click()}
-                disabled={disabled}
-              >
-                choose files
-              </button>
-            </>
-          )}
-        </p>
+        {full ? (
+          <p className="portal-drop__text">That&apos;s the most files one request can carry.</p>
+        ) : (
+          <>
+            <p className="portal-drop__text">Add screenshots, a screen recording or a PDF.</p>
+            <Button icon="plus" onClick={() => inputRef.current?.click()} disabled={disabled}>
+              Choose files
+            </Button>
+            <p className="portal-drop__alt">You can also drag files here, or paste a screenshot.</p>
+          </>
+        )}
         <input
           ref={inputRef}
           id={`${id}-input`}
@@ -121,7 +124,8 @@ function AttachmentRow({
 }) {
   const { check } = item;
   const problem = item.refused ?? (check && !check.ok ? check.message : null);
-  const kind = check?.ok ? check.kind : null;
+  // What the content is, even when a rule refuses it (a video that is too long still reads as a video).
+  const kind = item.head ? (sniffMedia(item.head)?.kind ?? null) : null;
   const name = safeFileName(item.file.name);
   return (
     <li className={cx('portal-attach__item', problem && 'is-invalid')}>

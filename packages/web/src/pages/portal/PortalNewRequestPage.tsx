@@ -5,12 +5,12 @@ import { useAuth } from '../../api/auth';
 import { loginPathFor } from '../../api/client';
 import { Button, Icon, PageHeader, TextArea, TextField } from '../../components';
 import { AttachmentPicker } from './AttachmentPicker';
-import { canUsePortal, useIntakeLimits } from './hooks';
+import { canUsePortal } from './hooks';
 import { SEVERITY_META, SEVERITY_ORDER } from './model';
 import { BuilderNotice } from './notices';
 import { sendIntake, type UploadHandle, type UploadProgress } from './sendIntake';
 import { useAttachments } from './useAttachments';
-import { describeSubmitError, formatBytes, type SubmitField } from './uploads';
+import { describeSubmitError, formatBytes, useIntakeLimits, type SubmitField } from './uploads';
 import './portal.css';
 
 const DRAFT_KEY = 'aoc.portal.draft';
