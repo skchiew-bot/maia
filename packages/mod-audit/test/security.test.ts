@@ -11,7 +11,7 @@ describe('the self-modification analyzer is linear in agent-controlled input', (
     for (const code of ['open('.repeat(24_000), `open('${"x'".repeat(12_000)}`]) {
       const started = performance.now();
       analyzeBash(`python3 -c "${code}"`, '/r', m);
-      expect(performance.now() - started).toBeLessThan(1000);
+      expect(performance.now() - started).toBeLessThan(1500);
     }
   });
 

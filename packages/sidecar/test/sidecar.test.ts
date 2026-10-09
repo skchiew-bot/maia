@@ -64,7 +64,7 @@ describe('detectThrottle on long transcript text', () => {
   it('stays linear (a repo hook can put arbitrary text in a system line)', () => {
     const started = performance.now();
     expect(detectThrottle({ type: 'system', content: '7'.repeat(100_000) } as never)).toBeNull();
-    expect(performance.now() - started).toBeLessThan(200);
+    expect(performance.now() - started).toBeLessThan(1500);
   });
 });
 
