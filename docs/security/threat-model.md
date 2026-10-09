@@ -142,7 +142,7 @@ unprivileged OS user (O-1).
 | I | Over-broad reads | A permission check per route (`requirePermission`); Requesters see only their own tickets (404 otherwise); internal notifications are never sent to Requesters | Built | Builders see everything internal by design (a transparent team console, §6) |
 | I | aocd exposed beyond localhost | The default bind is `127.0.0.1:7420`. Any wider exposure goes through a TLS reverse proxy with a host allowlist; `publicUrl` and the WebAuthn origin must match | Ops | — |
 | D | Slow handlers block the single event loop, so managed hooks time out and fail closed | Bounded and indexed queries; projection rebuilds only in maintenance; request rate limits | Required (O-16) | aocd remains one process (ADR-0001) |
-| E | Role confusion | `hasPermission(role, perm, flags)`; `mapping.stamp` also needs `complianceLead`; only the Approver manages users | Built (contracts) | — |
+| E | Role confusion | `hasPermission(role, perm, flags)`; `mapping.stamp` comes only from the `complianceLead` flag, never from a role; only the Approver manages users | Built | — |
 
 ### 3.2 aocd: ingest
 
@@ -151,7 +151,7 @@ unprivileged OS user (O-1).
 | S | The model forges hook, MCP or sidecar events with its own session token | Tokens are scoped to one session (403 otherwise); unknown managed session → exit 2; observer tokens cannot post managed events (403) | Built | Forgery **within its own session** remains possible ([T-3](#t-3-the-model-reads-its-own-environment)) |
 | T | Replays and duplicate flushes | Idempotency keys; spool replays deduplicated | Built | — |
 | R | A hook-relayed event is taken for a supervisor fact | Hook-sourced events must carry the agent as actor. Today a managed `UserPromptSubmit` is recorded as `{kind: system, id: supervisor}` | Required (O-4) | — |
-| I | Ingest responses leak data | Responses are acknowledgements and hook decisions; `get_status` returns only the caller's own session | Built / Contracted | — |
+| I | Ingest responses leak data | Responses are acknowledgements and hook decisions; `get_status` returns only the caller's own session | Built | — |
 | D | Event floods, decision-card spam through forged `PreToolUse` | Batch caps (spool ≤ 500 items, usage ≤ 200 batches); duplicate agent decisions collapse into one open card; per-session rate limits | Built / Required (O-16) | — |
 | E | System-token theft gives write access to every session | System tokens never leave aocd | Required | — |
 
@@ -663,8 +663,16 @@ copying a trailer.
 
 ## 6. Requested changes and open decisions
 
-"Change" means engineering work on a named package. "Decision" needs the CEO (or the named role) to choose. Items
-are ordered by importance within the table.
+"Change" means engineering work on a named package. "Decision" needs the CEO (or the named role) to choose. The
+numbers are stable identifiers that other documents cite; they are not a ranking.
+
+**Highest priority, before any real credential or real data:**
+
+1. O-1 and O-2: a separate sandbox user, and no privileged git or repository code in agent-writable trees.
+2. O-27: provenance from AOC's own records, not from commit messages.
+3. O-8: a deputy Approver, or an audited self-approval rule.
+4. O-10: the self-modification boundary switched on and complete, plus the human review of the core.
+5. O-11, O-12 and O-13: an off-host anchor, backup retention, and proper KEK custody.
 
 | # | Item | Type | Owner | Related |
 | --- | --- | --- | --- | --- |
