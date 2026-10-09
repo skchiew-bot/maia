@@ -129,6 +129,37 @@ describe('metering summary', () => {
     await t.close();
   });
 
+  it('attributes spend to the owner a launch recorded, not to the human who launched it; a recorded null is nobody; a rebuild agrees', async () => {
+    const t = await meteringRuntime({
+      fx: new StubFx({ '2026-10-09': { rate: 4, status: 'live', sourceDate: '2026-10-09' } }),
+    });
+    const approver = t.user('approver');
+    const alice = t.user('builder', 'Alice');
+    const bob = t.user('builder', 'Bob');
+    const carol = t.user('builder', 'Carol');
+    launch(t, { sessionId: 'ses_1', ownerId: alice.user.id, recordedOwnerId: bob.user.id }); // started for Bob
+    usage(t, 'ses_1', { input: 1_000_000 }); // 4
+    launch(t, { sessionId: 'ses_2', ownerId: alice.user.id, recordedOwnerId: null }); // nobody's
+    t.sessions!.add({ sessionId: 'ses_2', ownerId: alice.user.id }); // a directory that disagrees does not decide it
+    usage(t, 'ses_2', { input: 2_000_000 }); // 8
+    launch(t, { sessionId: 'ses_3', ownerId: carol.user.id }); // logged before ownerId existed: the launching human
+    usage(t, 'ses_3', { input: 3_000_000 }); // 12
+    launch(t, { sessionId: 'ses_4', parentSessionId: 'ses_3' }); // … or, with no human, the parent's owner
+    usage(t, 'ses_4', { input: 4_000_000 }); // 16
+
+    const people = async () => {
+      const r = await t.json<MeteringSummaryDTO>('GET', `/api/metering/summary?${DAY}&groupBy=actor`, {
+        headers: approver.headers,
+      });
+      return Object.fromEntries(r.rows.map((x) => [x.key ?? 'nobody', x.notionalUsd]));
+    };
+    const expected = { [bob.user.id]: 4, [carol.user.id]: 28, nobody: 8 };
+    expect(await people()).toEqual(expected);
+    t.rt.store.rebuildProjections(['metering']);
+    expect(await people()).toEqual(expected);
+    await t.close();
+  });
+
   it('enforces permissions and validates the range', async () => {
     const { t } = await seeded();
     const requester = t.user('requester');

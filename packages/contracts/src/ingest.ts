@@ -25,7 +25,7 @@ export const MAX_PUSH_BYTES = 256 * 1024 * 1024;
 
 /**
  * Env vars AOC sets on the processes it starts: managed claude sessions (inherited by hooks and the model's own Bash;
- * passed explicitly to the MCP server), the supervisor's promotion executor and @aoc/llm's own CLI calls.
+ * passed explicitly to the MCP server) and @aoc/llm's own CLI calls. None of them unlocks a push to a protected ref.
  */
 export const AOC_ENV = {
   sessionId: 'AOC_SESSION_ID',
@@ -41,8 +41,6 @@ export const AOC_ENV = {
   changeId: 'AOC_CHANGE_ID',
   /** Intake ticket a managed session works on (`AOC-Ticket` trailer). */
   ticketId: 'AOC_TICKET_ID',
-  /** "1" only in the supervisor's promotion executor (never a session env): the pre-push guard lets it through. */
-  supervisorPush: 'AOC_SUPERVISOR_PUSH',
   /** "1" on @aoc/llm's own claude CLI calls (FX extraction, distillation): not a session, observed hooks skip them. */
   internalLlm: 'AOC_INTERNAL_LLM',
 } as const;
@@ -129,6 +127,12 @@ export interface ProcessEventRequest {
   exitCode: number | null;
   signal: string | null;
   at: string;
+  /**
+   * The process the sidecar watched. The supervisor starts a sidecar per turn and one can outlive its process, so a
+   * report about a pid that is no longer the session's current one says nothing about the session. Absent or null:
+   * the report does not say which process it is about, and counts for the current one.
+   */
+  pid?: number | null;
 }
 export interface McpIngestRequest<TInput = unknown> {
   sessionId: string;

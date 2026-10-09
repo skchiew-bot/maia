@@ -38,8 +38,8 @@
    option ids (`approve`, `reject`, `pass`, `fail`, `retriage`, …).
 7. Every card shows its age. Reminders fire after `decisions.remindAfterMinutes`, with an opt-in webhook, and
    `ageMs` is chained on resolution. Per-kind SLAs (approved with the static mock on 2026-10-09: rollback 30 min,
-   agent decision 1 h, credit top-up 1 h, go-live 2 h, fix plan 4 h, lesson binding 2 days) drive breaches and the
-   gate-latency KPI.
+   agent decision 1 h, credit top-up 1 h, go-live 2 h, fix plan 4 h, lesson binding 2 days; a protected operation
+   keeps the agent decision's 1 h) drive breaches and the gate-latency KPI.
 8. **A single Approver gets no exception** (CEO decision, 2026-10-09). The sole-Approver fallback is **off**
    (`decisions.soleApproverFallback: false`). With one active Approver, an Approver-level request raised by that
    Approver, including one from their own session, waits until a second Approver exists. If the flag is ever

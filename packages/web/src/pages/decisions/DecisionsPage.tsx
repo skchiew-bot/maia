@@ -314,7 +314,7 @@ export default function DecisionsPage() {
             href="/decisions?aging=over"
             tone={overCount ? 'danger' : 'neutral'}
             footnote={`of ${openCards.length} open`}
-            info="SLAs approved by the CEO: rollback 30m, agent decision 1h, credit top-up 1h, go-live 2h, fix plan 4h, lesson binding 2 days."
+            info="SLAs approved by the CEO: rollback 30m, agent decision 1h (protected operations too), credit top-up 1h, go-live 2h, fix plan 4h, lesson binding 2 days."
           />
           <KpiTile
             label="Need a passkey"

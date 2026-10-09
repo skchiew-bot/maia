@@ -137,6 +137,20 @@ const sourceMs = (e: StoredEvent): number => {
   return Number.isFinite(t) ? t : Date.parse(e.ts);
 };
 
+/**
+ * The owner the supervisor recorded at launch (null: nobody). Events written before launch_requested carried ownerId
+ * have the launching human, else (a rollover successor) the parent session's owner.
+ */
+function launchOwner(db: DatabaseSync, e: StoredEvent, m: MetaOf<'session.launch_requested'>): string | null {
+  if (m.ownerId !== undefined) return m.ownerId;
+  if (e.actor.kind === 'human') return e.actor.id;
+  if (!m.parentSessionId) return null;
+  const parent = db.prepare('SELECT owner_id FROM mtr_sessions WHERE session_id = ?').get(m.parentSessionId) as
+    | { owner_id: string | null }
+    | undefined;
+  return parent?.owner_id ?? null;
+}
+
 interface SessionAttrs {
   ownerId: string | null;
   projectId: string | null;
@@ -147,9 +161,10 @@ interface SessionAttrs {
 export function createMeteringProjector(deps: ProjectorDeps): Projector {
   function sessionAttrs(db: DatabaseSync, sessionId: string, scope: Scope): SessionAttrs {
     const row = db
-      .prepare('SELECT owner_id, project_id, process_type, phase_id FROM mtr_sessions WHERE session_id = ?')
+      .prepare('SELECT mode, owner_id, project_id, process_type, phase_id FROM mtr_sessions WHERE session_id = ?')
       .get(sessionId) as
       | {
+          mode: string;
           owner_id: string | null;
           project_id: string | null;
           process_type: string | null;
@@ -162,7 +177,9 @@ export function createMeteringProjector(deps: ProjectorDeps): Projector {
       processType: row?.process_type ?? null,
       phaseId: row?.phase_id ?? null,
     };
-    if (!out.ownerId || !out.projectId || !out.processType) {
+    // A launch the log recorded settles who owns the session (nobody included): the directory, another module's
+    // state at the time of the lookup, only describes sessions the log does not (observed ones).
+    if (row?.mode !== 'managed' && (!out.ownerId || !out.projectId || !out.processType)) {
       let info: ReturnType<SessionDirectory['get']> = null;
       try {
         info = deps.directory()?.get(sessionId) ?? null;
@@ -348,6 +365,8 @@ export function createMeteringProjector(deps: ProjectorDeps): Projector {
     tables: TABLES,
     ddl: DDL,
     handles: HANDLES,
+    // 1: a session's owner is the one its launch recorded, and a managed session never asks the sessions directory.
+    version: 1,
     apply({ db }, e: StoredEvent, payload: JsonValue | null) {
       switch (e.type) {
         case 'ratecard.published': {
@@ -412,15 +431,7 @@ export function createMeteringProjector(deps: ProjectorDeps): Projector {
         }
         case 'session.launch_requested': {
           const m = metaOf(e, 'session.launch_requested');
-          let owner = e.actor.kind === 'human' ? e.actor.id : null;
-          if (!owner && m.parentSessionId) {
-            owner =
-              (
-                db
-                  .prepare('SELECT owner_id FROM mtr_sessions WHERE session_id = ?')
-                  .get(m.parentSessionId) as { owner_id: string | null } | undefined
-              )?.owner_id ?? null;
-          }
+          const owner = launchOwner(db, e, m);
           db.prepare(
             `INSERT INTO mtr_sessions (session_id, owner_id, project_id, process_type, model, ticket_id, phase_id, parent_session_id, mode, launched_at)
              VALUES (?,?,?,?,?,?,?,?,'managed',?)

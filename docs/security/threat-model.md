@@ -320,9 +320,10 @@ Where AOC runs git or repository code today (commit `a1c8a0c`):
   environment.
 - **Promotion.** `mod-change` merges and pushes through `supervisor.runIsolated` in the project repository, with
   the promotion credential profile. That is the repository the managed sessions work in: a session's working
-  directory defaults to its project's repository. `mod-change` sets `AOC_SUPERVISOR_PUSH=1` precisely so that the
-  repository's `pre-push` guard lets the push through, which means that the repository's `pre-push` hook **runs**,
-  with the promotion credential in its environment.
+  directory defaults to its project's repository. `mod-change` set `AOC_SUPERVISOR_PUSH=1` precisely so that the
+  repository's `pre-push` guard let the push through, which means that the repository's `pre-push` hook **ran**,
+  with the promotion credential in its environment. (Fixed with G-04: the push now comes from a service-owned clone
+  with hooks off, and the variable was removed, so no environment variable unlocks a push to a protected ref.)
 - **Rollback verification.** `mod-change` checks the target commit out into a temporary worktree of the project
   repository and runs the acceptance command there through `runIsolated`, as `sh -c`, without a credential profile
   but with the allowlisted environment (Claude credentials, `HOME`). The command comes from the change record's
@@ -681,7 +682,8 @@ charged (R14).
   - CODEOWNERS and required human review for core paths (Ops).
 - **Residual and findings (O-10):**
   - `selfModification.aocRepoPaths` defaults to empty, which leaves the core protection inert. The audit-state
-    protection applies regardless.
+    protection applies regardless. Production mode refuses to start from a source checkout of AOC while the list is
+    empty; a dist install carries no checkout to see, so its clones are listed by hand (gap P-18).
   - The default `protectedPaths` list now covers every Tier 1 path (governance, audit, credits, ingest, supervisor, dependency and build files, the rules and the spec); review it for the production configuration.
   - The Bash analysis is a speed bump: a script, a build step or an interpreter fed from a file changes files
     the guard never sees. While agents run as the aocd user (O-1), nothing at the file-system level stops them.

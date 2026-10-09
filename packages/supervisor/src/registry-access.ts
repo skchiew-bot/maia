@@ -27,6 +27,11 @@ export class RegistryAccess {
     return this.fromFile().get(id) ?? null;
   }
 
+  listTypes(): ProcessType[] {
+    const svc = this.ctx.services.maybe('registry');
+    return svc ? svc.listTypes() : [...this.fromFile().values()];
+  }
+
   /** Discovery-class types always run on their declared model: credits and playbooks never change it (§10, R8). */
   modelFor(t: ProcessType): ModelTier {
     if (t.class === 'discovery') return t.model;
