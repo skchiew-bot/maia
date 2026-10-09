@@ -317,3 +317,37 @@ describe('runIsolated (rollback verification / promotion)', () => {
     ).rejects.toThrow(/absolute/);
   });
 });
+
+describe('session.ended is terminal for recovery', () => {
+  it('never fails or resumes a session whose log says it ended, even without a lifecycle change to ended', async () => {
+    const h = await createHarness();
+    cleanups.push(() => h.t.close());
+    const sessionId = 'ses_imported';
+    const sys = { kind: 'system' as const, id: 'importer' };
+    h.t.rt.store.appendMany([
+      {
+        type: 'session.launch_requested',
+        actor: sys,
+        scope: { sessionId, projectId: 'prj_x', threadId: 'thr_x' },
+        meta: { sessionId, projectId: 'prj_x', threadId: 'thr_x', processType: 'feature-build', model: 'sonnet', readOnly: false, credentialProfile: null, ticketId: null, parentSessionId: null, phaseId: null },
+        payload: { prompt: 'done long ago', cwd: h.root },
+        source: 'supervisor',
+      },
+      {
+        type: 'session.lifecycle_changed',
+        actor: sys,
+        scope: { sessionId },
+        meta: { sessionId, from: 'launching', to: 'running', reason: 'launched' },
+        source: 'supervisor',
+      },
+      { type: 'session.ended', actor: sys, scope: { sessionId }, meta: { sessionId, outcome: 'completed' }, source: 'supervisor' },
+    ]);
+    expect(h.sup.session(sessionId)?.lifecycle).toBe('ended');
+    await h.sup.recover();
+    expect(h.sup.session(sessionId)?.lifecycle).toBe('ended');
+    const failed = h.t.rt.store
+      .list({ types: ['session.lifecycle_changed'] })
+      .filter((e) => e.meta.sessionId === sessionId && e.meta.to === 'failed');
+    expect(failed).toEqual([]);
+  });
+});
