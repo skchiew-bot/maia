@@ -219,6 +219,10 @@ export const AocConfigSchema = z.object({
       anchorRemote: z.string().optional(),
       tsaUrl: z.string().default('https://freetsa.org/tsr'),
       anchorAtLocalTime: z.string().default('02:00'),
+      /** Anchor between nightly runs when anything new was logged (G-40); 0 leaves only the nightly and event anchors. */
+      anchorIntervalMinutes: z.number().int().min(0).max(1440).default(60),
+      /** Anchor right after break-glass, human decisions, promotions, rollbacks, erasure and config changes (G-40). */
+      anchorAfterEvents: z.boolean().default(true),
       /** OpenPGP key (id or fingerprint) that signs git anchor commits; Verify then requires its valid signature. */
       gpgKeyId: z.string().min(1).optional(),
       /** GNUPGHOME used to sign and verify anchor commits (default: aocd's environment). */

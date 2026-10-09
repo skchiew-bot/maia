@@ -28,7 +28,11 @@ export async function auditRuntime(
   const t = await createTestRuntime({
     modules: [mod],
     onDisk: o.onDisk ?? true,
-    config: o.config as never,
+    // Anchoring stays manual unless a test turns the interval job or the event trigger on (G-40).
+    config: {
+      ...o.config,
+      audit: { anchorIntervalMinutes: 0, anchorAfterEvents: false, ...(o.config?.audit as object) },
+    } as never,
     now: o.now,
   });
   const notes: Notification[] = [];

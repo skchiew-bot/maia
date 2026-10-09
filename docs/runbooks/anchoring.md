@@ -20,7 +20,8 @@
   only commits to a local repository on the same host. Configure §2 or §3 before production.
 - **What is built** (`mod-audit`): one provider at a time (`audit.anchorProvider`: `git`, `rfc3161` or `none`);
   the nightly `audit.anchor` job at `audit.anchorAtLocalTime` (governed-config check, anchor with two retries
-  30 s apart, then Verify); `aoc anchor` and `aoc verify` on demand. Anchoring **refuses** a chain that no longer
+  30 s apart, then Verify); an anchor every `audit.anchorIntervalMinutes` (60) and right after high-value events
+  (§4); `aoc anchor` and `aoc verify` on demand. Anchoring **refuses** a chain that no longer
   matches the anchors already made (`anchor_mismatch`, `chain_invalid`), so a rewritten history is never
   laundered into a fresh anchor.
 
@@ -59,7 +60,9 @@
        "anchorProvider": "git",
        "anchorRepoPath": "/var/lib/aoc/anchor-repo",
        "anchorRemote": "git@github.com:<anchor-org>/aoc-anchors.git",
-       "anchorAtLocalTime": "02:00"
+       "anchorAtLocalTime": "02:00",
+       "anchorIntervalMinutes": 60,
+       "anchorAfterEvents": true
      }
    }
    ```
@@ -109,15 +112,16 @@ remote; choose `rfc3161` where an independently signed time matters more and its
 
 | Setting | Gives | Recommendation |
 | --- | --- | --- |
-| Nightly (`anchorAtLocalTime`, the spec minimum) | Up to about 24 h of unprotected events | Acceptable only during development |
-| Hourly | Up to 1 h | **Production baseline** |
-| After high-value events | Gates are protected within minutes | Anchor after `decision.resolved` for go-live, rollback or break-glass, and after `promotion.completed`, `rollback.executed`, `body.erased` and `config.changed` |
+| Nightly (`anchorAtLocalTime`, the spec minimum; job `audit.anchor`) | Up to about 24 h of unprotected events | Always on; also runs Verify |
+| Every `anchorIntervalMinutes` (default 60; job `audit.anchor_interval`) | Up to that long | **Production baseline**. `0` turns it off |
+| After high-value events (`anchorAfterEvents`, default on) | Gates are protected within seconds | Anchors after `breakglass.invoked` / `.approved`, `change.approved`, `promotion.completed`, `rollback.executed`, every `decision.resolved` by a person, `body.erased`, `config.changed` and `selfmod.blocked` |
 
-Hourly and event-triggered anchoring are a requested change to `mod-audit` (threat model O-11). Until they ship,
-run `aoc anchor` hourly from cron. It needs the `audit.verify` permission (Builders and the Approver), so use a
-dedicated user for it, run the cron job under an OS account other than the aocd service user (whose home
-sessions can read today, O-1), and keep that token at mode 0600 (see
-[operations](operations.md#7-running-a-job-by-hand)).
+The interval and event anchors (G-40) skip when nothing but anchoring's own records (`anchor.created`,
+`anchor.failed`, `chain.verified`) was logged since the newest anchor, so an idle log gains nothing, and a burst of
+high-value events yields one anchor. Each anchor recomputes the whole chain first, as the nightly one does. While
+the anchor store is unreachable, these anchors record `anchor.failed` and alert once per outage (not every hour);
+the nightly run still records its own failure every night. An event anchor lost to a crash before it ran is
+covered by the next interval run.
 
 Run the nightly backup **after** an anchor, so every backup is covered ([key custody](key-custody.md#4-backups-off-host-nightly)).
 

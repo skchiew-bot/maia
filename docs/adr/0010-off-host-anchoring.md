@@ -56,7 +56,10 @@
   check, anchor with two retries, then Verify); `aoc anchor` and `aoc verify`; Verify fetches the remote and
   compares it with the local anchor repository; anchoring refuses a chain that no longer matches earlier
   anchors, so a rewritten history is never anchored; RFC 3161 imprint and time checks (at most 1 h of skew).
-- **Not yet:** hourly and event-triggered anchors (gap G-40). Anchor-commit signing and the TSA certificate
+- **Done since:** hourly anchors and anchors right after high-value events (gap G-40,
+  `audit.anchorIntervalMinutes`, `audit.anchorAfterEvents`); every decision a person resolves counts, not only
+  go-live, rollback and break-glass.
+- **Not yet:** anchor-commit signing and the TSA certificate
   check exist as module options that `aocd`'s configuration cannot set, so the default build signs nothing and
   checks no TSA signature.
 - **Done since:** evidence packs confirm anchors against the external records through mod-audit's Verify, and

@@ -570,8 +570,10 @@ An in-file chain alone is defeatable by anyone who can write the file: drop the 
 Real verification compares recomputed hashes with **off-host anchors** (`mod-audit`, ADR-0010):
 
 - The job `audit.anchor` runs daily at `audit.anchorAtLocalTime` (02:00). It checks governed config for changes,
-  anchors the head (two retries, 30 s apart), then runs Verify. `aoc anchor` and `aoc verify` do the
-  same on demand.
+  anchors the head (two retries, 30 s apart), then runs Verify. `audit.anchor_interval` anchors every
+  `audit.anchorIntervalMinutes` (60), and the `audit.anchor_after` reactor right after high-value events
+  (break-glass, approvals, promotions, rollbacks, erasure, config changes); both skip when nothing but anchoring's
+  own records is new (G-40). `aoc anchor` and `aoc verify` do the same on demand.
 - **git provider:** one commit per anchor in a separate repository (`anchors/<date>-<seq>.json` holding
   `{chainId, seq, hash, anchoredAt, previousAnchor}`), pushed to `audit.anchorRemote`. Commits use explicit
   identity and signing settings, so the host's global git config never applies. **rfc3161 provider:** a timestamp
@@ -1123,7 +1125,8 @@ Open items found while writing this document. Owners and details are in the
    once `selfModification.aocRepoPaths` is set (the default is empty). The default `protectedPaths` list now covers
    all of Tier 1 (see the [self-modification boundary](compliance/self-modification-boundary.md)).
 6. Default anchoring (`anchorProvider: git` with no `anchorRemote`) is local only and does not mitigate R2 until a
-   remote is configured, and it runs nightly only (gap G-40). Anchor-commit signing and TSA certificate checks
+   remote is configured. Events newer than the last anchor (at most an hour by default) can still be rewritten.
+   Anchor-commit signing and TSA certificate checks
    are module options that the aocd configuration does not expose yet. Evidence packs confirm anchors against
    the off-host records through the `audit` service, as `aoc verify` does (threat model O-29, gap G-42, closed).
 7. FX now follows the BNM research (§11, gap G-36): the 1700 middle rate from 18:00 MYT. The CEO has yet to

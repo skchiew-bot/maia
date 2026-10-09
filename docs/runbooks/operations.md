@@ -252,7 +252,9 @@ check, the FX fetch (`fx.daily` at 18:00 MYT, which first re-checks the previous
 and `fx.retry@21:00` while BNM's 1700 rate is unpublished; architecture §11), the metering day close and lesson
 retirement. `SELECT name FROM job_runs` lists the jobs that have run.
 
-**Anchoring now:** the nightly `audit.anchor` job runs at `audit.anchorAtLocalTime` (02:00 by default).
+**Anchoring now:** the nightly `audit.anchor` job runs at `audit.anchorAtLocalTime` (02:00 by default);
+`audit.anchor_interval` anchors every `audit.anchorIntervalMinutes` (60) when anything new was logged, and
+high-value events are anchored as they happen.
 `aoc anchor` anchors the current chain head immediately. Use it after a missed anchor, before a backup, or
 after a high-value event ([anchoring](anchoring.md)).
 
