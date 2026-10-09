@@ -74,6 +74,8 @@ const COMMIT = {
     { kind: 'think', ms: 300, outputTokens: 100 },
     { kind: 'mcp', server: 'aoc', tool: 'declare_plan', args: { phases: [{ id: 'p1', name: 'Hello', tasks: [{ id: 't1', title: 'Create hello.txt and commit it', size: 'xs' }] }] } },
     { kind: 'tool', name: 'Write', input: { file_path: 'hello.txt', content: 'hi\n' } },
+    // The protected-operation guard bounces a commit while main is checked out: branch first, in its own step.
+    { kind: 'bash', command: 'git switch -c feature/hello', stdout: '', exec: true },
     { kind: 'bash', command: 'git add hello.txt && git commit -q -m "Add hello.txt" && git rev-parse HEAD', stdout: '', saveAs: 'sha', exec: true },
     { kind: 'mcp', server: 'aoc', tool: 'task_done', args: { task_id: 't1', evidence: { kind: 'commit', ref: '{{sha.stdout}}' } } },
     { kind: 'text', text: 'Committed.' },
@@ -253,6 +255,7 @@ describe('supervisor + claude-sim: what a writer may run (print mode cannot prom
         steps: [
           { kind: 'mcp', server: 'aoc', tool: 'declare_plan', args: { phases: [{ id: 'p1', name: 'Hello', tasks: [{ id: 't1', title: 'Create hello.txt and commit it', size: 'xs' }] }] } },
           { kind: 'tool', name: 'Write', input: { file_path: 'hello.txt', content: 'hi\n' } },
+          { kind: 'bash', command: 'git switch -c feature/hello', stdout: '', exec: true },
           { kind: 'bash', command: 'git add hello.txt && git commit -q -m "Add hello.txt" && git rev-parse HEAD', stdout: '', saveAs: 'sha', exec: true },
           { kind: 'bash', command: 'git switch main && git branch -D scratch', stdout: '', saveAs: 'widened', exec: true },
           { kind: 'bash', command: 'git reset --hard HEAD~1', stdout: '', saveAs: 'reset', exec: true },

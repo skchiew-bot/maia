@@ -40,6 +40,8 @@ const SCENARIO = {
       },
     },
     { kind: 'tool', name: 'Write', input: { file_path: 'push.txt', content: 'x\n' } },
+    // The protected-operation guard bounces a commit while main is checked out: branch first, in its own step.
+    { kind: 'bash', command: 'git switch -c feature/push', stdout: '', exec: true },
     {
       kind: 'bash',
       command: 'git add push.txt && git commit -q -m "Add push.txt" && git rev-parse HEAD',
