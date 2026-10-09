@@ -2,14 +2,17 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { LearningService, RollbackDTO } from '@aoc/contracts';
+import { isWithin } from '../src/clone';
 import {
   ACCEPTANCE_SCRIPT,
   PASSKEY,
   addGuardedRemote,
+  cloneRef,
   draftAndAffirm,
   harness,
   makeRepo,
   remoteHead,
+  setPromotionRemote,
   type Harness,
   type TestRepo,
 } from './helpers';
@@ -73,11 +76,19 @@ describe('gated rollback (§8): verify on a branch, passkey decision only when c
     });
     expect(verified.verification!.report).toContain('Result: CLEAN');
     expect(verified.verification!.report).toContain('node test.js [from project]');
-    expect(repo.head(branch)).toBe(good);
+    // The new branch is kept in the service clone, where no agent can move it; the project repository has none.
+    expect(cloneRef(h, PROJECT, `refs/heads/${branch}`)).toBe(good);
+    expect(() => repo.head(branch)).toThrow();
     expect(repo.head('main')).toBe(bad);
-    // Verification ran with no credentials at all.
+    // The acceptance test ran sandboxed, with no credential, in a fresh checkout outside the project repository.
     expect(h.sup.calls.every((c) => c.credentialProfile === null)).toBe(true);
-    expect(h.sup.calls.some((c) => c.command.join(' ') === 'env CI=1 sh -c node test.js')).toBe(true);
+    const run = h.sup.calls.find((c) => c.command.join(' ') === 'sh -c node test.js')!;
+    expect(run).toMatchObject({
+      env: { CI: '1' },
+      sandbox: { handOver: [expect.stringContaining('aoc-rollback-verify-')] },
+    });
+    expect(isWithin(run.cwd, repo.dir)).toBe(false);
+    expect(existsSync(run.cwd)).toBe(false);
 
     const card = h.t.decisions!.get(verified.decisionId!)!;
     expect(card).toMatchObject({
@@ -116,13 +127,13 @@ describe('gated rollback (§8): verify on a branch, passkey decision only when c
     expect(readFileSync(join(repo.dir, 'state.txt'), 'utf8')).toBe('good v1\n');
     expect(existsSync(join(repo.dir, 'src/new.ts'))).toBe(false);
 
-    const writes = h.sup.gitCalls().filter((c) => c.profile === 'prod-promote');
-    expect(writes.length).toBeGreaterThan(0);
-    expect(writes.every((c) => c.env.includes('AOC_SUPERVISOR_PUSH=1'))).toBe(true);
-    const forced = (args: string[]) =>
-      args[0] === 'push' && args.some((a) => a.startsWith('--force') || a === '-f' || a.startsWith('+'));
+    // No remote anywhere: the project's own branch moved, written as the session user; no credential, no push.
+    expect(h.sup.calls.every((c) => c.credentialProfile === null)).toBe(true);
+    const inProject = h.sup.gitCalls().filter((c) => isWithin(c.cwd, repo.dir));
+    expect(inProject.length).toBeGreaterThan(0);
+    expect(inProject.every((c) => c.sandboxed)).toBe(true);
     expect(
-      h.sup.gitCalls().some((c) => forced(c.args) || (c.args[0] === 'reset' && c.args.includes('--hard'))),
+      h.sup.gitCalls().some((c) => c.args[0] === 'push' || (c.args[0] === 'reset' && c.args.includes('--hard'))),
     ).toBe(false);
     expect(h.types('rollback.')).toEqual([
       'rollback.requested',
@@ -134,12 +145,14 @@ describe('gated rollback (§8): verify on a branch, passkey decision only when c
     expect(h.t.rt.store.verifyChain().ok).toBe(true);
   });
 
-  it('pushes through the remote’s supervisor-only pre-push gate, never forcing', async () => {
+  it('pushes the restore commit from the service clone: one credentialed push, leased on the verified base, never forced', async () => {
     await setup();
     const remote = addGuardedRemote(repo);
+    // The developers' speed bump in the project repository still refuses them; AOC never runs it.
     expect(() => repo.git('push', 'origin', 'aoc/phase/p1:refs/heads/attempt')).toThrow(
       /only the AOC supervisor/,
     );
+    const clone = setPromotionRemote(h, PROJECT, remote);
     const rb = await request({ targetRef: good.slice(0, 10) });
     await h.settle();
     await h.t.decisions!.resolve(
@@ -149,15 +162,28 @@ describe('gated rollback (§8): verify on a branch, passkey decision only when c
     );
     await h.settle();
     const done = await get(rb.rollbackId);
-    expect(done.status).toBe('executed');
-    expect(remoteHead(remote)).toBe(repo.head('main'));
-    expect(remoteHead(remote)).toBe(done.execution!.mainShaAfter);
-    const push = h.sup.gitCalls().find((c) => c.args[0] === 'push')!;
-    expect(push).toMatchObject({
-      profile: 'prod-promote',
-      env: ['AOC_SUPERVISOR_PUSH=1'],
-      args: ['push', 'origin', `${done.execution!.mainShaAfter}:refs/heads/main`],
-    });
+    expect(done).toMatchObject({ status: 'executed', execution: { mainShaBefore: bad } });
+    const after = done.execution!.mainShaAfter;
+    expect(remoteHead(remote)).toBe(after);
+    expect(repo.head('main')).toBe(after); // the project repository followed
+    expect(cloneRef(h, PROJECT, 'refs/aoc/target/main')).toBe(after);
+    expect(h.sup.calls.filter((c) => c.credentialProfile !== null)).toHaveLength(1);
+    expect(h.sup.gitCalls().filter((c) => c.args[0] === 'push')).toEqual([
+      {
+        profile: 'prod-promote',
+        cwd: clone,
+        sandboxed: false,
+        args: [
+          'push',
+          '--porcelain',
+          '--no-verify',
+          `--force-with-lease=refs/heads/main:${bad}`,
+          '--',
+          remote,
+          `${after}:refs/heads/main`,
+        ],
+      },
+    ]);
   });
 
   it('a target whose acceptance tests fail is reported back and never reaches the approver', async () => {

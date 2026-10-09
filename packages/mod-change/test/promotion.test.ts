@@ -8,6 +8,7 @@ import {
   harness,
   makeRepo,
   remoteHead,
+  setPromotionRemote,
   type Harness,
   type TestRepo,
 } from './helpers';
@@ -290,6 +291,7 @@ describe('provenance guarantee and promotion (§14)', () => {
   it('promotes a fully traced SHA after the passkey go-live gate: fast-forward only, via the prod-promote profile', async () => {
     await setup();
     const remote = addGuardedRemote(repo);
+    const clone = setPromotionRemote(h, PROJECT, remote);
     const [, tip] = branch('feature/y', [
       ['feat: one\n\nAOC-Session: ses_change', { 'a.ts': '1' }],
       [`feat: two\n\nAOC-Session: ses_change\nAOC-Change: ${changeId}`, { 'b.ts': '2' }],
@@ -338,12 +340,24 @@ describe('provenance guarantee and promotion (§14)', () => {
       decisionId: card.id,
       ticketId: null,
     });
-    const push = h.sup.gitCalls().find((c) => c.args[0] === 'push')!;
-    expect(push).toMatchObject({
-      profile: 'prod-promote',
-      env: ['AOC_SUPERVISOR_PUSH=1'],
-      args: ['push', 'origin', `${tip}:refs/heads/main`],
-    });
+    // One credentialed process: the push from the service clone, leased on the verified base.
+    expect(h.sup.calls.filter((c) => c.credentialProfile !== null)).toHaveLength(1);
+    expect(h.sup.gitCalls().filter((c) => c.args[0] === 'push')).toEqual([
+      {
+        profile: 'prod-promote',
+        cwd: clone,
+        sandboxed: false,
+        args: [
+          'push',
+          '--porcelain',
+          '--no-verify',
+          `--force-with-lease=refs/heads/main:${base}`,
+          '--',
+          remote,
+          `${tip}:refs/heads/main`,
+        ],
+      },
+    ]);
   });
 
   it('ticket-driven promotions also require a passing UAT; the change service reports refusals', async () => {

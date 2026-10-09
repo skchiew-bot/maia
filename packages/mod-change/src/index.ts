@@ -103,6 +103,7 @@ export function createChangeModule(opts: ChangeModuleOptions = {}): ChangeModule
         new Promise<void>((resolve) => (timer = setTimeout(resolve, STOP_GRACE_MS))),
       ]);
       clearTimeout(timer);
+      engine.dispose();
     },
     whenIdle: () => engine.whenIdle(),
   };

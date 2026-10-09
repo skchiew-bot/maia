@@ -80,6 +80,7 @@ import {
   type CredentialProfile,
 } from './launch-config';
 import { killProcessGroup, processMatches, runCommand, signalProcess, signalTree } from './process-utils';
+import { handOver, isolatedRunEnv, secretValues } from './sandbox';
 import { SupervisorView, TERMINAL_LIFECYCLES, type SupervisedSession } from './projection';
 import {
   CONTINUE_TEXT,
@@ -443,14 +444,23 @@ export class Supervisor implements SupervisorService {
     return !!s && s.stopRequested && !TERMINAL_LIFECYCLES.includes(s.lifecycle);
   }
 
-  /** Supervisor-controlled environment (rollback verification, promotion). No route or agent path reaches it. */
+  /**
+   * Commands run outside any session (promotion, rollback, rollback verification). No route or agent path reaches
+   * it. The environment is built from scratch (isolatedRunEnv): PATH, locale, TZ and proxy settings, then the
+   * caller's `env`, then the credential profile when one is named. A `sandbox` run is code AOC does not trust and
+   * never gets a credential profile.
+   */
   async runIsolated(input: {
     cwd: string;
     command: string[];
     credentialProfile: string | null;
     timeoutMs: number;
+    env?: Record<string, string>;
+    sandbox?: { handOver?: string[] };
   }): Promise<{ exitCode: number; stdout: string; stderr: string }> {
     const sup = this.ctx.config.supervisor;
+    if (input.sandbox && input.credentialProfile)
+      throw new Error('runIsolated: a sandboxed run never gets a credential profile');
     let credentials: Record<string, string> | null = null;
     if (input.credentialProfile) {
       if (!sup.credentialProfilesFile) {
@@ -463,35 +473,61 @@ export class Supervisor implements SupervisorService {
     // Isolation means aocd runs as root: commands without credentials (acceptance tests, git reads) execute code an
     // agent may have written (threat model T-2), so they run as the session user, never as root.
     if (this.isolation && !credentials) return this.runAsSessionUser(this.isolation, input);
-    const env = buildSessionEnv({
+    if (input.sandbox)
+      this.warnOnce(
+        'sandbox:aocd',
+        'session isolation is off: untrusted isolated runs (rollback acceptance tests) run as the aocd OS user, without credentials (development only; G-01)',
+      );
+    const env = isolatedRunEnv({
       source: this.sourceEnv(),
-      allowlist: sup.envAllowlist,
-      credentials,
-      readOnly: false,
-      aoc: {},
       timezone: this.ctx.config.timezone,
+      extra: input.env,
+      credentials,
     });
-    return runCommand({ cwd: input.cwd, command: input.command, env, timeoutMs: input.timeoutMs });
+    const r = await runCommand({ cwd: input.cwd, command: input.command, env, timeoutMs: input.timeoutMs });
+    // A failed push's output is stored in event payloads: the values of secret-named profile variables never are.
+    const secrets = secretsToRedact(secretValues(credentials ?? {}));
+    return { ...r, stdout: redactSecrets(r.stdout, secrets), stderr: redactSecrets(r.stderr, secrets) };
   }
 
-  /** One isolated command as the credentialed session user, with a throwaway HOME and TMPDIR and no credentials. */
+  /**
+   * One isolated command as the credentialed session user, with no credentials and a throwaway HOME and TMPDIR (the
+   * caller's `env` wins), after the fresh directories in `sandbox.handOver` are given to that user (G-04).
+   */
   private async runAsSessionUser(
     iso: SessionIsolation,
-    input: { cwd: string; command: string[]; timeoutMs: number },
+    input: {
+      cwd: string;
+      command: string[];
+      timeoutMs: number;
+      env?: Record<string, string>;
+      sandbox?: { handOver?: string[] };
+    },
   ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
     const [bin, ...args] = input.command;
     if (!bin) throw new Error('runIsolated: command is required');
     const id = `aoc-run-${randomUUID()}`;
     const dirs = prepareSessionDirs(iso, iso.writer, id);
     try {
-      const env = buildSessionEnv({
+      handOver(input.sandbox?.handOver ?? [], iso.writer);
+      const user = iso.writer.name;
+      const env = isolatedRunEnv({
         source: this.sourceEnv(),
-        allowlist: this.ctx.config.supervisor.envAllowlist,
-        credentials: null,
-        readOnly: true,
-        aoc: {},
         timezone: this.ctx.config.timezone,
-        isolated: { user: iso.writer.name, home: dirs.home, claudeConfigDir: dirs.claudeConfigDir, tmpDir: dirs.tmp },
+        extra: {
+          HOME: dirs.home,
+          TMPDIR: dirs.tmp,
+          USER: user,
+          LOGNAME: user,
+          GIT_CONFIG_GLOBAL: '/dev/null',
+          GIT_CONFIG_NOSYSTEM: '1',
+          GIT_TERMINAL_PROMPT: '0',
+          GIT_AUTHOR_NAME: 'AOC agent',
+          GIT_COMMITTER_NAME: 'AOC agent',
+          GIT_AUTHOR_EMAIL: `${user}@localhost`,
+          GIT_COMMITTER_EMAIL: `${user}@localhost`,
+          ...input.env,
+        },
       });
       const s = turnSpawn(iso, iso.writer, { sessionId: id, sessionDir: dirs.dir, cwd: input.cwd }, bin, args);
       return await runCommand({
