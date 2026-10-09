@@ -51,7 +51,6 @@ export function ticketList(): InternalTicket[] {
       severity: 'critical',
       projectId: 'prj_claims',
       stage: 'uat',
-      publicStatus: 'ready_for_testing',
       buildSessionId: 'ses_build',
       uatRef: 'uat/tkt_01M4FC4Z5R3DH27RWWMNACGQ0J',
       openDecisionIds: [],

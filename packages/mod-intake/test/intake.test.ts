@@ -859,6 +859,24 @@ describe('after the requester signs UAT off', () => {
     expect(await publicOf(ticketId, req)).toMatchObject({ status: 'ready_for_testing', canSignOffUat: true, fixConfirmed: false });
   });
 
+  it('reads "Being worked on" when the answer is that the problem remains, and requests no go-live', async () => {
+    const repo = projectRepo();
+    const s = await setup({}, repo.dir);
+    const { ticketId, req, build } = await toBuild(s, t.user('approver', 'CEO'));
+    repo.pushUat(ticketId);
+    endBuild(build.sessionId);
+    await t.drain();
+    expect(await publicOf(ticketId, req)).toMatchObject({ status: 'ready_for_testing', canSignOffUat: true });
+
+    await t.json('POST', `/portal/api/tickets/${ticketId}/uat`, { headers: req.headers, body: { verdict: 'fail', comment: 'Still blank on Safari' } });
+    await t.drain();
+    const failed = await publicOf(ticketId, req);
+    expect(failed).toMatchObject({ status: 'being_worked_on', statusLabel: 'Being worked on', canSignOffUat: false });
+    expect(JSON.stringify(failed)).not.toMatch(gateWords);
+    expect(statuses(ticketId)).toEqual(['being_worked_on', 'ready_for_testing', 'being_worked_on']);
+    expect(s.promotions).toHaveLength(0);
+  });
+
   it('delivered again, the answer changes nothing', async () => {
     const { s, ticketId } = await atGoLive();
     const answered = t.rt.store.list({ types: ['decision.resolved'] }).find((e) => e.meta.kind === 'uat_signoff')!;
