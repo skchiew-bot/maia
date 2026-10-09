@@ -3,6 +3,7 @@
  * (owner: mod-evidence, §13, §14). Packs carry ids, enums, numbers and hashes only — never payloads.
  */
 import { z } from 'zod';
+import type { ResolutionAssurance } from '../decisions';
 import type { Actor, JsonObject, Scope } from '../envelope';
 
 export const ISO42001_STANDARD = 'ISO/IEC 42001:2023';
@@ -369,6 +370,9 @@ export interface EvidenceGate {
   resolvedBy: string;
   method: string;
   passkeyVerified: boolean;
+  /** §6: a button under a bearer token is attribution, a verified passkey a signature (RESOLUTION_ASSURANCE_LABEL). */
+  assurance: ResolutionAssurance;
+  assuranceLabel: string;
   selfApproved: boolean;
   ageMs: number;
   resolvedAt: string;
@@ -381,6 +385,8 @@ export interface EvidenceGate {
 export interface EvidenceGates {
   count: number;
   byKind: Record<string, number>;
+  /** Resolutions per assurance: signature (passkey), attribution (bearer token), policy. */
+  byAssurance: Record<ResolutionAssurance, number>;
   passkeyVerified: number;
   selfApproved: number;
   byPolicy: number;

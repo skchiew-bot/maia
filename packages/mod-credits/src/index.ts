@@ -22,7 +22,7 @@ export function createCreditsModule(_opts: CreditsModuleOptions = {}): AocModule
 
   const topupResolution: Reactor = {
     name: 'credits.topup_resolution',
-    handles: ['decision.resolved', 'decision.withdrawn'],
+    handles: ['decision.resolved', 'decision.withdrawn', 'decision.expired'],
     react(e) {
       if (e.type === 'decision.resolved') get().onDecisionResolved(e);
       else get().onDecisionWithdrawn(e);

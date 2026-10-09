@@ -1,5 +1,7 @@
 import {
   MAPPING_PROVISIONAL_BANNER,
+  RESOLUTION_ASSURANCE_LABEL,
+  RESOLUTION_ASSURANCES,
   type EvidenceBreakglassFile,
   type EvidenceChanges,
   type EvidenceControls,
@@ -47,6 +49,10 @@ const ENTITIES: Record<string, string> = {
 export function esc(v: unknown): string {
   return String(v ?? '').replace(/[&<>"']/g, (c) => ENTITIES[c]!);
 }
+
+/** §6 in the pack's own words: what each resolution method proves (gates.json carries it per gate). */
+export const ASSURANCE_NOTE =
+  'Attribution (bearer token): a button press shows which token resolved the decision, not who held it. Signed (passkey): a per-decision WebAuthn assertion bound to the decision and option was verified. Platform policy: resolved by an explicit platform rule, no person.';
 
 const yesNo = (b: boolean) => (b ? 'yes' : 'no');
 const row = (cells: unknown[]) => `<tr>${cells.map((c) => `<td>${esc(c)}</td>`).join('')}</tr>`;
@@ -229,11 +235,16 @@ ${dl([
 ${dl([
   ['Decisions resolved', r.gates.count],
   ['By kind', counts(r.gates.byKind)],
+  ...RESOLUTION_ASSURANCES.map((a): [string, unknown] => [
+    RESOLUTION_ASSURANCE_LABEL[a],
+    r.gates.byAssurance[a],
+  ]),
   ['Passkey verified', r.gates.passkeyVerified],
   ['Self-approved', r.gates.selfApproved],
   ['Resolved by policy', r.gates.byPolicy],
   ['Flagged', r.gates.flagged],
 ])}
+<p class="muted">${esc(ASSURANCE_NOTE)}</p>
 </section>
 <section aria-labelledby="h-change">
 <h2 id="h-change">Change control, rollback and break-glass</h2>

@@ -3,6 +3,7 @@ import type { AuditModuleOptions } from './options';
 import { auditProjector } from './projector';
 import { registerAuditRoutes } from './routes';
 import { createSelfModificationGuard } from './selfmod/guard';
+import { createSelfModificationService } from './selfmod/service';
 import { AUDIT_SYSTEM_ACTOR, AuditService, tsrDirOf } from './service';
 
 export type { AuditModuleOptions, TsaFetch } from './options';
@@ -66,6 +67,7 @@ export function createAuditModule(opts: AuditModuleOptions = {}): AocModule & { 
       ctxRef = ctx;
       svc = new AuditService(ctx, opts);
       ctx.services.provide('audit', svc);
+      ctx.services.provide('selfmod', createSelfModificationService(ctx));
       // Nightly: governed-config check, anchor the head off-host, verify against every anchor.
       jobs.push({
         name: 'audit.anchor',

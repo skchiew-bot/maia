@@ -257,6 +257,39 @@ describe('runDoctor', () => {
     expect(r.verdict).toBe('fail');
   });
 
+  it('reports the intake malware scanner the daemon runs: only an AV engine passes (G-12)', async () => {
+    const scanner = async (intakeScanner: DaemonProbe['intakeScanner']) =>
+      (await runDoctor(input({ probe: async () => ({ ...okProbe, intakeScanner }) }))).checks.find(
+        (c) => c.id === 'intake-scanner',
+      );
+    expect(
+      await scanner({
+        ok: true,
+        scanner: 'clamdscan',
+        avEngine: true,
+        attachments: 'accepted',
+        reason: null,
+      }),
+    ).toMatchObject({ status: 'pass', detail: 'clamdscan scans every attachment' });
+    expect(
+      await scanner({ ok: true, scanner: 'builtin', avEngine: false, attachments: 'accepted', reason: null }),
+    ).toMatchObject({ status: 'warn', detail: expect.stringContaining('builtin only, not anti-virus') });
+    expect(
+      await scanner({
+        ok: false,
+        scanner: 'clamav',
+        avEngine: false,
+        attachments: 'refused',
+        reason: 'clamav_missing',
+      }),
+    ).toMatchObject({
+      status: 'warn',
+      detail: expect.stringContaining('attachments refused (clamav_missing)'),
+    });
+    expect(await scanner({ ok: false })).toMatchObject({ status: 'warn', detail: 'degraded' });
+    expect(await scanner(null)).toBeUndefined(); // no intake module: no row
+  });
+
   it('checks the client config is private', async () => {
     expect((await statusOf(input({}, { [CONFIG]: { content: '{}', mode: 0o644 } })))['config-perms']).toBe(
       'warn',

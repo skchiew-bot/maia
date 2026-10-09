@@ -177,10 +177,11 @@ export const CHANGE_EVENTS = [
   defineEvent({
     type: 'promotion.refused',
     owner: 'change',
-    description: 'Promotion refused (provenance guarantee, §14).',
+    description:
+      'Promotion refused (provenance guarantee, §14; self_modification: commits from managed sessions change the governance core of an AOC repo, §13).',
     meta: meta({
       promotionId: zId,
-      reason: z.enum(['provenance_gap', 'uat_missing', 'gate_missing', 'tests_failed', 'not_fast_forward']),
+      reason: z.enum(['provenance_gap', 'uat_missing', 'gate_missing', 'tests_failed', 'not_fast_forward', 'self_modification']),
       orphanShas: z.array(sha),
       projectId: zId.optional(),
       fromSha: sha.optional(),

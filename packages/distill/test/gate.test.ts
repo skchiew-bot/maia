@@ -107,6 +107,16 @@ describe('gateVerdict: only a person binds', () => {
     expect(gateVerdict(GATE, lastOf('decision.resolved'))).toBe('rejected');
     t.decisions!.withdraw(raise().id, 'playbook_retired', SYSTEM);
     expect(gateVerdict(GATE, lastOf('decision.withdrawn'))).toBe('withdrawn');
+    // A card that expires unanswered never binds either (decision.expired, G-33).
+    const lapsed = raise();
+    t.rt.store.append({
+      type: 'decision.expired',
+      actor: SYSTEM,
+      scope: { decisionId: lapsed.id },
+      meta: { decisionId: lapsed.id, ageMs: 86_400_000 },
+      source: 'system',
+    });
+    expect(gateVerdict(GATE, lastOf('decision.expired'))).toBe('withdrawn');
   });
 
   const resolved = (meta: Partial<MetaOf<'decision.resolved'>>, actor: Actor): StoredEvent =>

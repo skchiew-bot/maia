@@ -402,7 +402,7 @@ export class Supervisor implements SupervisorService {
 
   // ── reactors, job, startup, shutdown ──────────────────────────────────────
 
-  /** decision.resolved / decision.withdrawn → resume a session waiting on it once nothing is open any more. */
+  /** decision.resolved / .withdrawn / .expired → resume a session waiting on it once nothing is open any more. */
   async onDecisionSettled(e: StoredEvent): Promise<void> {
     await afterCaller();
     const card = this.ctx.services.maybe('decisions')?.get(String(e.meta.decisionId)) ?? null;
@@ -1686,12 +1686,12 @@ export class Supervisor implements SupervisorService {
     const decisions = this.ctx.services.maybe('decisions');
     if (!decisions) return [];
     return decisions
-      .list({ sessionId: s.sessionId, status: ['resolved', 'withdrawn'] })
+      .list({ sessionId: s.sessionId, status: ['resolved', 'withdrawn', 'expired'] })
       .filter(
         (c) =>
           (this.ctx.store.list({
             decisionId: c.id,
-            types: ['decision.resolved', 'decision.withdrawn'],
+            types: ['decision.resolved', 'decision.withdrawn', 'decision.expired'],
             order: 'desc',
             limit: 1,
           })[0]?.seq ?? 0) > s.turnStartedSeq,

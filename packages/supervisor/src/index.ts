@@ -39,7 +39,7 @@ export function createSupervisorModule(opts: SupervisorModuleOptions = {}): AocM
     reactors: [
       {
         name: 'supervisor.decision_settled',
-        handles: ['decision.resolved', 'decision.withdrawn'],
+        handles: ['decision.resolved', 'decision.withdrawn', 'decision.expired'],
         react: (e) => need().onDecisionSettled(e),
       },
       {
