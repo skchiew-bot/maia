@@ -76,7 +76,7 @@ describe('integrity', () => {
         severity: 'critical',
         since: iso(ago(h, hours(2))),
         costOfDelay: { score: 98.5, basis: 'Chain broken · 2h · first bad seq 42' }, // raw 332.2
-        action: { kind: 'open', label: 'Open audit', href: '/audit' },
+        action: { kind: 'open', label: 'Open audit', href: '/audit', recommendedOptionId: null },
       }),
     ]);
     expect(s.summary).toContain('Audit chain verification failed.');
@@ -228,7 +228,12 @@ describe('integrity', () => {
         title: 'Promotion refused: provenance gap',
         projectId: 'prj_a',
         costOfDelay: { score: 93.7, basis: 'Promotion refused · 3h · provenance gap · 2 orphan commits' }, // raw 55 × 3.81
-        action: { kind: 'open', label: 'Open promotion', href: '/changes?promotionId=prm_1' },
+        action: {
+          kind: 'open',
+          label: 'Open promotion',
+          href: '/changes?promotionId=prm_1',
+          recommendedOptionId: null,
+        },
       }),
     ]);
     promotion('prm_2', ago(h, hours(1)));
@@ -306,7 +311,7 @@ describe('integrity', () => {
           score: 97.7,
           basis: 'Post-incident record · 2h 20m overdue · open audit finding until filed',
         }, // raw 85 × 3.50
-        action: { kind: 'open', label: 'Open record', href: '/changes?id=chg_pi' },
+        action: { kind: 'open', label: 'Open record', href: '/changes?id=chg_pi', recommendedOptionId: null },
       }),
     ]);
     changeCompleted(h, 'chg_pi');
@@ -394,12 +399,14 @@ describe('integrity', () => {
         id: 'breakglass_open:brk_2',
         kind: 'breakglass_open',
         costOfDelay: { score: 82.8, basis: 'Break-glass promotion · 5m · production down' },
+        // Its options never reached the tower, so there is no recommendation to apply inline: review it.
         action: {
           kind: 'resolve_decision',
-          label: 'Approve with passkey',
+          label: 'Review',
           href: '/decisions?id=dec_lost',
           decisionId: 'dec_lost',
           requiresPasskey: true,
+          recommendedOptionId: null,
         },
       }),
     ]);

@@ -101,26 +101,37 @@ export function severityOf(score: number): AttentionSeverity {
   return 'low';
 }
 
-/** Decision SLA per kind (latency chart and breach counts), as approved with the mock; 24h where none was set. */
+/**
+ * Decision SLAs approved by the CEO with the mock (mocks/README.md, decision 3, 2026-10-09). They drive breaches,
+ * "open past SLA" and the gate-latency KPI; kinds without one never count as past an SLA (as in the Decisions inbox).
+ */
+export const DECISION_SLA_MS: Partial<Record<DecisionKind, number>> = {
+  rollback: 30 * MINUTE,
+  agent_decision: HOUR,
+  credit_topup: HOUR,
+  go_live: 2 * HOUR,
+  fix_plan: 4 * HOUR,
+  lesson_binding: 2 * DAY,
+};
+
+/**
+ * Time scale of a decision kind: its approved SLA, else a reference scale (break-glass 15m — production is down,
+ * protected operation 1h like an agent decision, otherwise 1 day). It ages the score and scales the latency chart;
+ * only approved SLAs (or a card's own due time) count breaches.
+ */
 export function decisionSlaMs(kind: string): number {
-  switch (kind) {
-    case 'break_glass':
-      return 15 * MINUTE;
-    case 'rollback':
-      return 30 * MINUTE;
-    case 'agent_decision':
-    case 'protected_operation':
-    case 'credit_topup':
-      return HOUR;
-    case 'go_live':
-      return 2 * HOUR;
-    case 'fix_plan':
-      return 4 * HOUR;
-    case 'lesson_binding':
-      return 2 * DAY;
-    default:
-      return DAY;
-  }
+  const approved = DECISION_SLA_MS[kind as DecisionKind];
+  if (approved !== undefined) return approved;
+  if (kind === 'break_glass') return 15 * MINUTE;
+  if (kind === 'protected_operation') return HOUR;
+  return DAY;
+}
+
+/** When an open card is due: its own `dueAt`, else requested + the approved SLA; null when neither exists. */
+export function decisionDueMs(kind: string, requestedMs: number, dueMs: number | null): number | null {
+  if (dueMs !== null) return dueMs;
+  const sla = DECISION_SLA_MS[kind as DecisionKind];
+  return sla === undefined ? null : requestedMs + sla;
 }
 
 /** SLA shown beside the human gate-latency KPI (the approved mock's 1h). */

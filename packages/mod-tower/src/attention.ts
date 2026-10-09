@@ -22,10 +22,11 @@ import {
   TICKET_BASE,
   TICKET_BLAST,
   TICKET_SLA_MS,
+  DECISION_SLA_MS,
   cleanTitle,
   costOfDelay,
   decisionBase,
-  decisionSlaMs,
+  decisionDueMs,
   displayScore,
   formatDuration,
   severityOf,
@@ -81,6 +82,36 @@ const plural = (n: number, word: string) => `${n.toLocaleString('en-US')} ${word
 const usd = (n: number) => `$${n.toFixed(2)}`;
 const decisionHref = (id: string) => `/decisions?id=${encodeURIComponent(id)}`;
 
+type Action = TowerAttentionItem['action'];
+/** A non-decision action: nothing to apply inline. */
+const go = (kind: 'open' | 'nudge' | 'restart', label: string, href: string, sessionId?: string): Action => ({
+  kind,
+  label,
+  href,
+  ...(sessionId ? { sessionId } : {}),
+  recommendedOptionId: null,
+});
+/**
+ * Inline resolution. Approve applies the decision's recommended option (approved default), so without one — or for a
+ * judgement call that needs reading — the action opens the card for review instead.
+ */
+function resolve(
+  decisionId: string,
+  passkey: boolean,
+  recommended: string | null,
+  approveLabel = passkey ? 'Approve with passkey' : 'Approve',
+  reviewLabel = 'Review',
+): Action {
+  return {
+    kind: 'resolve_decision',
+    label: recommended ? approveLabel : reviewLabel,
+    href: decisionHref(decisionId),
+    decisionId,
+    requiresPasskey: passkey,
+    recommendedOptionId: recommended,
+  };
+}
+
 interface Draft {
   id: string;
   kind: AttentionKind;
@@ -93,7 +124,7 @@ interface Draft {
   blast: number;
   /** Score basis in words, given the formatted age: kind · age · what the delay is blocking. */
   basis: (age: string) => string[];
-  action: TowerAttentionItem['action'];
+  action: Action;
   chips: string[];
 }
 
@@ -104,7 +135,9 @@ interface DecisionRow {
   project_id: string | null;
   requester_id: string | null;
   requires_passkey: number;
+  recommended_option_id: string | null;
   requested_ms: number;
+  due_ms: number | null;
   ticket_id: string | null;
   session_ticket_id: string | null;
   session_type: string | null;
@@ -164,8 +197,8 @@ export function buildAttention(r: ReadCtx, integrity: IntegrityFacts): TowerAtte
   const creditDecisions: DecisionRow[] = [];
   for (const d of all<DecisionRow>(
     r,
-    `SELECT d.decision_id, d.kind, d.test, d.project_id, d.requester_id, d.requires_passkey, d.requested_ms,
-       COALESCE(l.ticket_id, CASE WHEN d.subject_type = 'ticket' THEN d.subject_id END) AS ticket_id,
+    `SELECT d.decision_id, d.kind, d.test, d.project_id, d.requester_id, d.requires_passkey, d.recommended_option_id,
+       d.requested_ms, d.due_ms, COALESCE(l.ticket_id, CASE WHEN d.subject_type = 'ticket' THEN d.subject_id END) AS ticket_id,
        s.ticket_id AS session_ticket_id, s.process_type AS session_type
      FROM twr_decisions d
      LEFT JOIN twr_ticket_links l ON l.decision_id = d.decision_id
@@ -184,8 +217,9 @@ export function buildAttention(r: ReadCtx, integrity: IntegrityFacts): TowerAtte
     const passkey = d.requires_passkey === 1 || PASSKEY_KINDS.has(d.kind);
     const testInfo = d.kind === 'agent_decision' && d.test ? DECISION_TEST_INFO[d.test] : null;
     const label = testInfo ? `Agent decision (test ${testInfo.no}: ${d.test})` : DECISION_LABEL[d.kind];
-    const sla = decisionSlaMs(d.kind);
-    const pastSla = r.now - d.requested_ms > sla;
+    const due = decisionDueMs(d.kind, d.requested_ms, d.due_ms);
+    const pastSla = due !== null && r.now > due;
+    const sla = DECISION_SLA_MS[d.kind];
     const title = r.svc.decisionTitle(d.decision_id);
     drafts.push({
       id: `decision:${d.decision_id}`,
@@ -202,15 +236,15 @@ export function buildAttention(r: ReadCtx, integrity: IntegrityFacts): TowerAtte
         ...impact.blocks,
         ...(d.session_type ? [`holds a ${d.session_type} session`] : []),
         ...impact.extras,
-        ...(pastSla ? [`past the ${formatDuration(sla)} SLA`] : []),
+        ...(pastSla
+          ? [
+              d.due_ms === null && sla !== undefined
+                ? `past the ${formatDuration(sla)} SLA`
+                : 'past its due time',
+            ]
+          : []),
       ],
-      action: {
-        kind: 'resolve_decision',
-        label: passkey ? 'Approve with passkey' : REVIEW_KINDS.has(d.kind) ? 'Review' : 'Approve',
-        href: decisionHref(d.decision_id),
-        decisionId: d.decision_id,
-        requiresPasskey: passkey,
-      },
+      action: resolve(d.decision_id, passkey, REVIEW_KINDS.has(d.kind) ? null : d.recommended_option_id),
       chips: [
         ...(passkey ? ['Passkey'] : []),
         ...(d.test ? [`test ${d.test}`] : []),
@@ -242,13 +276,7 @@ export function buildAttention(r: ReadCtx, integrity: IntegrityFacts): TowerAtte
       base: BASE.breakglass_open,
       blast: 1,
       basis: (age) => ['Break-glass promotion', age, 'production down'],
-      action: {
-        kind: 'resolve_decision',
-        label: 'Approve with passkey',
-        href: decisionHref(b.decision_id),
-        decisionId: b.decision_id,
-        requiresPasskey: true,
-      },
+      action: resolve(b.decision_id, true, null),
       chips: ['Passkey', 'Production'],
     });
   }
@@ -276,11 +304,11 @@ export function buildAttention(r: ReadCtx, integrity: IntegrityFacts): TowerAtte
       base: BASE.post_incident_overdue,
       blast: 1,
       basis: (age) => ['Post-incident record', `${age} overdue`, 'open audit finding until filed'],
-      action: {
-        kind: 'open',
-        label: 'Open record',
-        href: b.change_id ? `/changes?id=${encodeURIComponent(b.change_id)}` : '/changes',
-      },
+      action: go(
+        'open',
+        'Open record',
+        b.change_id ? `/changes?id=${encodeURIComponent(b.change_id)}` : '/changes',
+      ),
       chips: ['Break-glass'],
     });
   }
@@ -314,7 +342,7 @@ export function buildAttention(r: ReadCtx, integrity: IntegrityFacts): TowerAtte
         base: BASE.session_throttled,
         blast: 1 + impact.blast,
         basis: (age) => ['Plan limit', `idle ${age}`, reset ?? 'reset time unknown', ...impact.extras],
-        action: { kind: 'open', label: 'Open', href, sessionId: s.session_id },
+        action: go('open', 'Open', href, s.session_id),
         chips: [...(reset ? [capital(reset)] : []), ...impact.chips],
       });
       continue;
@@ -336,9 +364,7 @@ export function buildAttention(r: ReadCtx, integrity: IntegrityFacts): TowerAtte
         ...(!dead && context !== null ? [`process alive but silent at ${context}% context`] : []),
         ...impact.extras,
       ],
-      action: dead
-        ? { kind: 'restart', label: 'Restart', href, sessionId: s.session_id }
-        : { kind: 'nudge', label: 'Nudge…', href, sessionId: s.session_id },
+      action: dead ? go('restart', 'Restart', href, s.session_id) : go('nudge', 'Nudge…', href, s.session_id),
       chips: impact.chips,
     });
   }
@@ -359,7 +385,7 @@ export function buildAttention(r: ReadCtx, integrity: IntegrityFacts): TowerAtte
       base: TICKET_BASE[t.severity],
       blast: 1,
       basis: (age) => [`${sev} ticket`, `${age} past the ${formatDuration(sla)} SLA`, STAGE_LABEL[t.stage]],
-      action: { kind: 'open', label: 'Open ticket', href: `/tickets/${encodeURIComponent(t.ticket_id)}` },
+      action: go('open', 'Open ticket', `/tickets/${encodeURIComponent(t.ticket_id)}`),
       chips: [sev, 'SLA breached'],
     });
   }
@@ -382,7 +408,7 @@ export function buildAttention(r: ReadCtx, integrity: IntegrityFacts): TowerAtte
           ? [`first bad seq ${integrity.firstBadSeq.toLocaleString('en-US')}`]
           : []),
       ],
-      action: { kind: 'open', label: 'Open audit', href: '/audit' },
+      action: go('open', 'Open audit', '/audit'),
       chips: ['Integrity'],
     });
   }
@@ -406,7 +432,7 @@ export function buildAttention(r: ReadCtx, integrity: IntegrityFacts): TowerAtte
           : 'never anchored',
         `${plural(integrity.unanchoredEvents, 'event')} unanchored`,
       ],
-      action: { kind: 'open', label: 'Open audit', href: '/audit' },
+      action: go('open', 'Open audit', '/audit'),
       chips: ['Integrity', ...(failed ? ['Anchor failing'] : [])],
     });
   }
@@ -426,7 +452,7 @@ export function buildAttention(r: ReadCtx, integrity: IntegrityFacts): TowerAtte
         age,
         ...(p.failedSeq !== null ? [`failed at seq ${p.failedSeq.toLocaleString('en-US')}`] : []),
       ],
-      action: { kind: 'open', label: 'Open audit', href: '/audit' },
+      action: go('open', 'Open audit', '/audit'),
       chips: ['Integrity'],
     });
   }
@@ -460,11 +486,7 @@ export function buildAttention(r: ReadCtx, integrity: IntegrityFacts): TowerAtte
         reason,
         ...(p.orphan_count ? [plural(p.orphan_count, 'orphan commit')] : []),
       ],
-      action: {
-        kind: 'open',
-        label: 'Open promotion',
-        href: `/changes?promotionId=${encodeURIComponent(p.promotion_id)}`,
-      },
+      action: go('open', 'Open promotion', `/changes?promotionId=${encodeURIComponent(p.promotion_id)}`),
       chips: ['Provenance'],
     });
   }
@@ -483,13 +505,7 @@ export function buildAttention(r: ReadCtx, integrity: IntegrityFacts): TowerAtte
       base: BASE.fx_discrepancy,
       blast: 1,
       basis: (age) => ['FX discrepancy', age, `${f.date} RM rollups stay provisional until reviewed`],
-      action: {
-        kind: 'resolve_decision',
-        label: 'Review',
-        href: decisionHref(f.decision_id),
-        decisionId: f.decision_id,
-        requiresPasskey: false,
-      },
+      action: resolve(f.decision_id, false, null),
       chips: ['FX'],
     });
   }
@@ -510,7 +526,7 @@ export function buildAttention(r: ReadCtx, integrity: IntegrityFacts): TowerAtte
       base: BASE.fx_carry_forward,
       blast: 1,
       basis: (age) => ['FX carried forward', plural(days, 'day'), `alert ${age} old`],
-      action: { kind: 'open', label: 'Check rate', href: '/fx' },
+      action: go('open', 'Check rate', '/fx'),
       chips: ['FX'],
     });
   }
@@ -631,6 +647,12 @@ function creditItems(r: ReadCtx, openTopups: DecisionRow[]): Draft[] {
         pendingUsd: null,
       });
   }
+  const recommended = new Map(
+    all<{ decision_id: string; recommended_option_id: string | null }>(
+      r,
+      "SELECT decision_id, recommended_option_id FROM twr_decisions WHERE kind = 'credit_topup' AND status = 'open'",
+    ).map((d) => [d.decision_id, d.recommended_option_id]),
+  );
   const blocked = all<{ user_id: string; session_id: string; project_id: string | null }>(
     r,
     'SELECT b.user_id, b.session_id, s.project_id FROM twr_credit_blocked b LEFT JOIN twr_sessions s ON s.session_id = b.session_id',
@@ -673,14 +695,8 @@ function creditItems(r: ReadCtx, openTopups: DecisionRow[]): Draft[] {
             ]
           : ['Credit top-up', age, 'waiting for approval'],
       action: pending
-        ? {
-            kind: 'resolve_decision',
-            label: 'Approve top-up',
-            href: decisionHref(pending),
-            decisionId: pending,
-            requiresPasskey: false,
-          }
-        : { kind: 'open', label: 'Open credits', href: `/credits?userId=${encodeURIComponent(userId)}` },
+        ? resolve(pending, false, recommended.get(pending) ?? null, 'Approve top-up', 'Review top-up')
+        : go('open', 'Open credits', `/credits?userId=${encodeURIComponent(userId)}`),
       chips: [...(n ? [`${n} blocked`] : []), ...(pending ? ['Top-up pending'] : [])],
     });
   }

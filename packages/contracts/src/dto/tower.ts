@@ -40,7 +40,11 @@ export interface TowerAttentionItem {
   /** When it started needing attention. */
   since: string;
   ageMs: number;
-  /** Ranking: higher = act first. `basis` explains it in words ("Go-live gate · 2h 14m · blocks a UAT-signed fix"). */
+  /**
+   * Ranking: higher = act first (the queue is already in this order). `score` is 0–100 on the approved scale
+   * (severity bands ≥75 critical, 50–74 high, 25–49 medium, <25 low) and rises with the share of the item's SLA
+   * consumed. `basis` explains it in words ("Go-live gate · 2h 14m · blocks a UAT-signed fix").
+   */
   costOfDelay: { score: number; basis: string };
   action: {
     kind: 'resolve_decision' | 'nudge' | 'restart' | 'open';
@@ -49,6 +53,12 @@ export interface TowerAttentionItem {
     decisionId?: string;
     sessionId?: string;
     requiresPasskey?: boolean;
+    /**
+     * resolve_decision labelled Approve…: the option the inline Approve applies (the decision's recommendation).
+     * null when the action opens the card instead (label "Review…": no recommendation, or a judgement call such as
+     * an FX discrepancy) and for every other action kind.
+     */
+    recommendedOptionId: string | null;
   };
   chips: string[];
 }
@@ -61,6 +71,8 @@ export interface TowerKpis {
   gateLatencyP50Ms: number | null;
   gateLatencyP90Ms: number | null;
   gateSlaMs: number;
+  /** Open human gates (every decision kind except the requester's UAT sign-off) past their due time or approved SLA. */
+  openPastSla: number;
   openTickets: number;
   oldestTicketSince: string | null;
   chainOk: boolean | null;
@@ -73,6 +85,11 @@ export interface TowerFlow {
   baselinePerHour: number[];
   wipByProject: { projectId: string; name: string; activeSessions: number; openTasks: number; progressPct: number }[];
   ticketFunnel: { stage: TicketStage; count: number; oldestSince: string | null; medianAgeMs: number | null; bottleneck: boolean }[];
+  /**
+   * `slaMs` is the kind's approved SLA; kinds without one carry a reference scale for drawing (break-glass 15m,
+   * protected operation 1h, others 1 day). `breaches` = open past due + resolved after due in 7d, where due is the
+   * card's own due time, else its approved SLA — so kinds without an approved SLA breach only a set due time.
+   */
   decisionLatency: { kind: string; open: number; resolved7d: number; p50Ms: number | null; p90Ms: number | null; slaMs: number; breaches: number }[];
 }
 
@@ -81,6 +98,11 @@ export interface TowerFleet {
   /** 2h, 5-minute buckets, oldest → newest. */
   trend: { at: string; working: number; thinking: number; stalled: number; dead: number; throttled: number; waiting_on_you: number }[];
   stallRatePct: number;
+  /**
+   * The mock's marker: the same rate over the previous 7 local days, pooled (stalled session-days ÷ live
+   * session-days); null when no session was live in those days.
+   */
+  stallRateAvg7dPct: number | null;
   throttleLostMsToday: number;
   rolloverPressure: number; // live sessions above 60% of their context window
 }
@@ -94,7 +116,10 @@ export interface TowerSpend {
   discoveryRuns7d: number;
   executionRuns7d: number;
   savingsPct: number | null;
-  /** Capacity planning (credits): developers projected to hit their cap before period end. */
+  /**
+   * Capacity planning (credits): runway of builders with usage this period, soonest cap first; projectedCapAt
+   * null = the balance lasts the period.
+   */
   capForecast: { userId: string; name: string | null; balanceUsd: number; burnPerDayUsd: number; projectedCapAt: string | null }[];
 }
 

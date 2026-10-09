@@ -1,4 +1,7 @@
-/** Fleet: liveness now, a 2h trend replayed from liveness changes, stall rate, throttle loss, rollover pressure. */
+/**
+ * Fleet: liveness now, a 2h trend replayed from liveness changes, today's stall rate against the previous 7 local
+ * days, throttle loss and rollover pressure.
+ */
 import {
   LIVENESS_STATES,
   MODEL_CONTEXT_TOKENS,
@@ -6,15 +9,18 @@ import {
   type LivenessState,
   type TowerFleet,
 } from '@aoc/contracts';
+import { addDays } from '@aoc/kernel';
 import { all, inProject, iso, one, type ReadCtx } from './read';
 import { pct } from './stats';
-import { MINUTE } from './zoned';
+import { MINUTE, zonedEpoch } from './zoned';
 
 export const TREND_BUCKETS = 24;
 export const TREND_BUCKET_MS = 5 * MINUTE;
 /** Live sessions above this share of their context window are approaching a rollover (§5). */
 export const ROLLOVER_PRESSURE_PCT = 60;
 const DEFAULT_CONTEXT_TOKENS = 1_000_000;
+/** Local days before today that the stall-rate average pools. */
+export const STALL_AVG_DAYS = 7;
 
 interface SessionState {
   session_id: string;
@@ -47,8 +53,15 @@ export function buildFleet(r: ReadCtx): TowerFleet {
 
   // Replay: the state before a session's first loaded change is that change's `from`; without changes it is the
   // current state. So only changes after the earliest instant of interest are needed, never the full history.
-  const windowStart = r.now - TREND_BUCKETS * TREND_BUCKET_MS;
-  const from = Math.min(windowStart, r.midnight);
+  // Day bounds are real local midnights: the previous 7 days, then today up to now.
+  const days = [
+    ...Array.from({ length: STALL_AVG_DAYS }, (_, i) =>
+      zonedEpoch(addDays(r.today, i - STALL_AVG_DAYS), '00:00', r.tz),
+    ),
+    r.midnight,
+    r.now,
+  ];
+  const from = Math.min(days[0]!, r.now - TREND_BUCKETS * TREND_BUCKET_MS);
   const sessions = all<SessionState>(
     r,
     `SELECT session_id, liveness, ended_ms FROM twr_sessions WHERE (ended_ms IS NULL OR ended_ms > ?)${where}`,
@@ -94,14 +107,23 @@ export function buildFleet(r: ReadCtx): TowerFleet {
     trend.push(point);
   }
 
-  let liveToday = 0;
-  let stalledToday = 0;
+  // Per local day: sessions live at some point (a state at its start or a change into one) and those that entered
+  // Stalled. Index STALL_AVG_DAYS is today.
+  const live = new Array<number>(STALL_AVG_DAYS + 1).fill(0);
+  const stalled = new Array<number>(STALL_AVG_DAYS + 1).fill(0);
   for (const s of sessions) {
-    if (s.ended_ms !== null && s.ended_ms <= r.midnight) continue;
-    const today = changes.get(s.session_id)!.filter((c) => c.ts_ms > r.midnight);
-    if (stateAt(s, r.midnight) !== null || today.some((c) => c.to_state !== null)) liveToday++;
-    if (today.some((c) => c.to_state === 'stalled')) stalledToday++;
+    const cs = changes.get(s.session_id)!;
+    for (let d = 0; d <= STALL_AVG_DAYS; d++) {
+      const start = days[d]!;
+      const end = days[d + 1]!;
+      if (s.ended_ms !== null && s.ended_ms <= start) continue;
+      const during = cs.filter((c) => c.ts_ms > start && c.ts_ms <= end);
+      if (stateAt(s, start) !== null || during.some((c) => c.to_state !== null)) live[d]!++;
+      if (during.some((c) => c.to_state === 'stalled')) stalled[d]!++;
+    }
   }
+  const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
+  const livePast = sum(live.slice(0, STALL_AVG_DAYS));
 
   const [sw, sa] = inProject(r, 's.project_id');
   const idleClosed = one<{ n: number }>(
@@ -133,7 +155,8 @@ export function buildFleet(r: ReadCtx): TowerFleet {
   return {
     byLiveness: { ...byLiveness, ended_today: endedToday },
     trend,
-    stallRatePct: pct(stalledToday, liveToday),
+    stallRatePct: pct(stalled[STALL_AVG_DAYS]!, live[STALL_AVG_DAYS]!),
+    stallRateAvg7dPct: livePast ? pct(sum(stalled.slice(0, STALL_AVG_DAYS)), livePast) : null,
     throttleLostMsToday: idleClosed + idleOpen,
     rolloverPressure,
   };

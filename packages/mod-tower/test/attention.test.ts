@@ -75,7 +75,7 @@ describe('attention queue: ranked by cost of delay', () => {
     });
   });
 
-  it('gives each kind its inline intervention; passkey only for go-live, rollback and break-glass', async () => {
+  it('gives each kind its inline intervention; passkey only for go-live, rollback and break-glass; Approve applies the recommendation', async () => {
     h = await setup();
     for (const [id, kind] of [
       ['dec_go', 'go_live'],
@@ -88,6 +88,9 @@ describe('attention queue: ranked by cost of delay', () => {
     ] as const) {
       decide(h, id, kind, { at: ago(h, minutes(5)) });
     }
+    // Without a recommendation there is nothing for an inline Approve to apply: the card opens for review.
+    decide(h, 'dec_go_open', 'go_live', { at: ago(h, minutes(5)), recommend: null });
+    decide(h, 'dec_cr_open', 'change_request', { at: ago(h, minutes(5)), recommend: null });
     launch(h, 'ses_mig', { at: ago(h, hours(1)), processType: 'migration' });
     decide(h, 'dec_main', 'agent_decision', { at: ago(h, minutes(5)), test: 'main', sessionId: 'ses_mig' });
     launch(h, 'ses_dead', { at: ago(h, hours(1)) });
@@ -124,7 +127,9 @@ describe('attention queue: ranked by cost of delay', () => {
       [
         'decision:dec_bg',
         'decision:dec_cr',
+        'decision:dec_cr_open',
         'decision:dec_go',
+        'decision:dec_go_open',
         'decision:dec_main',
         'decision:dec_po',
         'decision:dec_rb',
@@ -141,6 +146,7 @@ describe('attention queue: ranked by cost of delay', () => {
         href: `/decisions?id=${id}`,
         decisionId: id,
         requiresPasskey: true,
+        recommendedOptionId: 'approve',
       });
       expect(byId(s.attention, `decision:${id}`).chips).toContain('Passkey');
     }
@@ -149,12 +155,28 @@ describe('attention queue: ranked by cost of delay', () => {
         kind: 'resolve_decision',
         label: 'Approve',
         requiresPasskey: false,
+        recommendedOptionId: 'approve',
       });
     }
+    expect(byId(s.attention, 'decision:dec_go_open').action).toEqual({
+      kind: 'resolve_decision',
+      label: 'Review',
+      href: '/decisions?id=dec_go_open',
+      decisionId: 'dec_go_open',
+      requiresPasskey: true,
+      recommendedOptionId: null,
+    });
+    expect(byId(s.attention, 'decision:dec_cr_open').action).toMatchObject({
+      label: 'Review',
+      requiresPasskey: false,
+      recommendedOptionId: null,
+    });
+    // A judgement call (triage disagreement) is read before it is resolved, recommendation or not.
     expect(byId(s.attention, 'decision:dec_tr').action).toMatchObject({
       kind: 'resolve_decision',
       label: 'Review',
       requiresPasskey: false,
+      recommendedOptionId: null,
     });
     expect(byId(s.attention, 'decision:dec_main')).toMatchObject({
       detail: 'Touches main / protected branch',
@@ -166,6 +188,7 @@ describe('attention queue: ranked by cost of delay', () => {
       label: 'Restart',
       href: '/sessions/ses_dead',
       sessionId: 'ses_dead',
+      recommendedOptionId: null,
     });
     expect(byId(s.attention, 'session_stalled:ses_stall')).toMatchObject({
       title: 'Stalled session: bug-fix',
@@ -395,6 +418,7 @@ describe('attention queue: ranked by cost of delay', () => {
         href: '/decisions?id=dec_top',
         decisionId: 'dec_top',
         requiresPasskey: false,
+        recommendedOptionId: 'approve',
       },
       chips: ['2 blocked', 'Top-up pending'],
     });
@@ -405,8 +429,13 @@ describe('attention queue: ranked by cost of delay', () => {
     s = await h.snap();
     expect(s.attention).toEqual([]);
 
-    // A top-up decision the credit events never explained still surfaces as a credit item.
-    decide(h, 'dec_orphan', 'credit_topup', { at: ago(h, minutes(30)), requesterId: 'usr_other' });
+    // A top-up decision the credit events never explained still surfaces as a credit item; without a
+    // recommendation (a manual request) it opens for review rather than approving inline.
+    decide(h, 'dec_orphan', 'credit_topup', {
+      at: ago(h, minutes(30)),
+      requesterId: 'usr_other',
+      recommend: null,
+    });
     s = await h.snap();
     expect(s.attention.map((a) => [a.id, a.title, a.detail, a.costOfDelay.basis])).toEqual([
       [
@@ -416,6 +445,7 @@ describe('attention queue: ranked by cost of delay', () => {
         'Credit top-up · 30m · waiting for approval',
       ],
     ]);
+    expect(s.attention[0]!.action).toMatchObject({ label: 'Review top-up', recommendedOptionId: null });
   });
 
   it('decision titles come from the decision payload, PII-scrubbed and capped at 120 characters', async () => {
