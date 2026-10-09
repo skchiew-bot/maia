@@ -94,6 +94,7 @@ export const supervisorProjector: Projector = {
     'session.turn_started',
     'session.turn_ended',
     'session.lifecycle_changed',
+    'session.ended',
     'session.stop_requested',
     'session.rollover_completed',
     'throttle.hit',
@@ -161,6 +162,12 @@ function apply(db: DatabaseSync, e: StoredEvent, payload: JsonValue | null): voi
         m.reason as string,
         id,
       );
+      break;
+    case 'session.ended':
+      // Terminal whatever the lifecycle trail says: an ended session is never recovered or resumed.
+      db.prepare(
+        `UPDATE ${TABLE} SET lifecycle = 'ended', lifecycle_reason = ? WHERE session_id = ? AND lifecycle NOT IN ('ended', 'retired')`,
+      ).run(m.outcome as string, id);
       break;
     case 'session.stop_requested':
       db.prepare(`UPDATE ${TABLE} SET stop_requested = 1 WHERE session_id = ?`).run(id);
