@@ -4,8 +4,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { z } from 'zod';
-import { AOC_MCP_SERVER_NAME, FILE_CHANGING_TOOLS, type ProcessType } from '@aoc/contracts';
-import { builtinToolsOf, MANAGED_HOOK_EVENTS } from './claude-facts';
+import { AOC_MCP_SERVER_NAME, FILE_CHANGING_TOOLS, HOOK_EVENTS, type ProcessType } from '@aoc/contracts';
 
 /** Linux caps a single argv string at 128 KiB (MAX_ARG_STRLEN); prompts and the system prompt stay below it. */
 export const MAX_ARG_BYTES = 120_000;
@@ -24,9 +23,8 @@ export interface ToolPolicy {
 export function toolPolicy(t: ProcessType): ToolPolicy {
   const allowed = unique([`mcp__${AOC_MCP_SERVER_NAME}`, ...(t.tools.allow ?? [])]);
   const disallowed = unique([...(t.tools.deny ?? []), ...(t.readOnly ? FILE_CHANGING_TOOLS : [])]);
-  const builtin = builtinToolsOf(t);
   return {
-    ...(builtin ? { builtinTools: builtin } : {}),
+    ...(t.builtinTools ? { builtinTools: t.builtinTools } : {}),
     allowedTools: allowed,
     disallowedTools: disallowed,
   };
@@ -47,8 +45,9 @@ export interface ClaudeArgsInput extends ToolPolicy {
 export function buildClaudeArgs(i: ClaudeArgsInput): string[] {
   const a = ['-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages'];
   a.push('--mcp-config', i.mcpConfigPath, '--strict-mcp-config', '--settings', i.settingsPath);
-  // The registry's 'default' is the CLI's default mode, which 2.1.x names 'manual': omit the flag.
-  if (i.permissionMode !== 'default') a.push('--permission-mode', i.permissionMode);
+  // Always explicit, so the user's own settings (permissions.defaultMode) never pick a managed session's mode. The
+  // CLI names its default mode 'manual'; the registry also accepts 'default' for it.
+  a.push('--permission-mode', i.permissionMode === 'default' ? 'manual' : i.permissionMode);
   a.push('--append-system-prompt', i.systemPrompt);
   if (i.builtinTools) a.push('--tools', i.builtinTools.join(','));
   a.push('--allowedTools', ...i.allowedTools);
@@ -162,7 +161,7 @@ const DEFAULT_HOOK_TIMEOUT_S = 15;
 const HookSettingsSchema = z
   .object({
     hooks: z.record(
-      z.string().refine((k) => MANAGED_HOOK_EVENTS.includes(k), 'unknown hook event'),
+      z.string().refine((k) => (HOOK_EVENTS as readonly string[]).includes(k), 'unknown hook event'),
       z
         .array(
           z
@@ -196,7 +195,7 @@ export type HookSettings = z.infer<typeof HookSettingsSchema>;
 export function buildHookSettings(hookCommand: readonly string[]): HookSettings {
   const base = hookCommand.map(shellQuote).join(' ');
   const hooks: HookSettings['hooks'] = {};
-  for (const ev of MANAGED_HOOK_EVENTS) {
+  for (const ev of HOOK_EVENTS) {
     hooks[ev] = [
       {
         ...(TOOL_EVENTS.has(ev) ? { matcher: '' } : {}),

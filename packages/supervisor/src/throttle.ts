@@ -3,8 +3,8 @@
  * 1. stream-json `rate_limit_event` with status `rejected`, 2. a `throttle.hit` ingested from hooks/sidecar
  * (StopFailure `rate_limit`), 3. `result.api_error_status === 429`, 4. limit text from Claude Code itself.
  */
+import { RATE_LIMIT_429, THROTTLE_PATTERNS, THROTTLE_RESET } from '@aoc/contracts';
 import { addDays, localParts } from '@aoc/kernel';
-import { RATE_LIMIT_429, THROTTLE_RESET, THROTTLE_TEXT_PATTERNS } from './claude-facts';
 
 export interface ThrottleSignal {
   rank: 1 | 2 | 3 | 4;
@@ -18,7 +18,7 @@ const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', '
 
 /** CLI-generated text (error results, synthetic/API-error messages, stderr) that announces a usage limit. */
 export function isLimitNotice(text: string): boolean {
-  return THROTTLE_TEXT_PATTERNS.some((p) => p.test(text)) || RATE_LIMIT_429.test(text);
+  return THROTTLE_PATTERNS.some((p) => p.test(text)) || RATE_LIMIT_429.test(text);
 }
 
 /**
