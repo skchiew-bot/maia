@@ -203,20 +203,24 @@ for (const p of allProjects) {
   store.append({ type: 'project.created', actor: human(U('ceo')), scope: { projectId: p.id }, meta: { projectId: p.id, slug: p.slug }, payload: { name: p.name, description: p.description, repoPath: repoOf(p), defaultBranch: 'main' }, source: 'cli' });
 }
 
-// ── FX history: live weekdays, inherited weekends ─────────────────────────────
+// ── FX history: the BNM session rate, live weekdays, inherited weekends ───────
+// Each record is the day's BNM 1700 rate (config.fx.session), taken by the daily run at config.fx.runAtLocalTime
+// (MYT is UTC+8 all year). BNM publishes it at about 17:40, so a day whose run is still ahead has no record yet.
+const fxSession = config.fx.session;
 let rate = 4.215;
 let lastLive = localDate(t0 - DAY, TZ);
 for (let d = 0; d <= days; d++) {
-  const ms = t0 + d * DAY;
-  const date = localDate(ms, TZ);
+  const date = localDate(t0 + d * DAY, TZ);
+  const runAt = Date.parse(`${date}T${config.fx.runAtLocalTime}:00+08:00`);
+  if (runAt < t0 || runAt > now) continue;
   const wd = new Date(`${date}T00:00:00Z`).getUTCDay();
-  at(ms + 4.5 * 3600_000); // 12:30 local
+  at(runAt);
   if (wd === 0 || wd === 6) {
-    store.append({ type: 'fx.rate_recorded', actor: sys('scheduler:fx'), meta: { date, pair: 'USD/MYR', rate, status: 'inherited', sourceDate: lastLive, extractor: 'none', validation: 'not_applicable', reason: 'weekend_or_holiday' }, payload: { notes: 'Weekend — carried forward by design' }, source: 'scheduler' });
+    store.append({ type: 'fx.rate_recorded', actor: sys('scheduler:fx'), meta: { date, pair: 'USD/MYR', rate, status: 'inherited', sourceDate: lastLive, extractor: 'none', validation: 'not_applicable', reason: 'weekend_or_holiday', session: fxSession }, payload: { notes: 'Weekend — carried forward by design' }, source: 'scheduler' });
   } else {
     rate = Math.round((rate + (rnd() - 0.5) * 0.03) * 10_000) / 10_000;
     lastLive = date;
-    store.append({ type: 'fx.rate_recorded', actor: sys('scheduler:fx'), meta: { date, pair: 'USD/MYR', rate, status: 'live', sourceDate: date, extractor: d % 9 === 4 ? 'sonnet' : 'haiku', validation: 'pass', reason: 'fetched' }, payload: { sourceUrl: config.fx.pageUrl, notes: d % 9 === 4 ? 'Haiku output failed self-validation; Sonnet succeeded' : undefined }, source: 'scheduler' });
+    store.append({ type: 'fx.rate_recorded', actor: sys('scheduler:fx'), meta: { date, pair: 'USD/MYR', rate, status: 'live', sourceDate: date, extractor: d % 9 === 4 ? 'sonnet' : 'haiku', validation: 'pass', reason: 'fetched', session: fxSession }, payload: { sourceUrl: config.fx.pageUrl, notes: d % 9 === 4 ? 'Haiku output failed self-validation; Sonnet succeeded' : undefined }, source: 'scheduler' });
   }
 }
 

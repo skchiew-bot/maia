@@ -40,9 +40,15 @@ describe('intake on a seeded demo', () => {
     let stopped: { code: number | null; signal: NodeJS.Signals | null } | null = null;
     try {
       await waitFor('aocd to listen', () => (aocd.exitCode !== null ? Promise.reject(new Error(`aocd exited:\n${log}`)) : log.includes('aocd listening')), 180_000, 250);
+      const ceo = tokens.tokens.ceo.token;
+      // The seeded Working, Thinking and Stalled sessions are not part of this flow: stopping them keeps the test to
+      // the intake sessions, a lighter load on a shared host.
+      for (const kind of ['working', 'thinking', 'stalled'] as const) {
+        const stop = await call(base, 'POST', `/api/sessions/${tokens.sessions[kind]}/stop`, ceo, { immediate: true, reason: 'not part of the intake test' });
+        expect(stop.status, JSON.stringify(stop.data)).toBe(200);
+      }
 
       // The seeded triage left the fix plan with the Approver: approve it.
-      const ceo = tokens.tokens.ceo.token;
       const open = await call<{ decisions: { id: string }[] }>(base, 'GET', `/api/decisions?status=open&kind=fix_plan&subjectId=${ticketId}`, ceo);
       expect(open.data.decisions).toHaveLength(1);
       const approved = await call(base, 'POST', `/api/decisions/${open.data.decisions[0]!.id}/resolve`, ceo, { optionId: 'approve' });

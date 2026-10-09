@@ -31,10 +31,11 @@ describe('seed + aocd', () => {
     expect(seeded.code, seeded.output).toBe(0);
     const tokens = JSON.parse(readFileSync(layout.tokens, 'utf8')) as DemoTokens;
 
-    // Test only: a 15 s stall threshold instead of the 10 minutes the demo keeps, so the stall session's real
-    // silence is observable here. Same derivation, same process, shorter wait.
+    // Test only: a 60 s stall threshold instead of the 10 minutes the demo keeps, so the stall session's real
+    // silence is observable here. Same derivation, same process, shorter wait. Much shorter would let hook latency on
+    // a loaded host (seconds per hook process) read as a stall.
     const config = JSON.parse(readFileSync(layout.config, 'utf8')) as Record<string, unknown>;
-    writeFileSync(layout.config, JSON.stringify({ ...config, liveness: { stallAfterMs: 15_000 } }, null, 2));
+    writeFileSync(layout.config, JSON.stringify({ ...config, liveness: { stallAfterMs: 60_000 } }, null, 2));
 
     const port = await freePort();
     let log = '';
@@ -53,7 +54,7 @@ describe('seed + aocd', () => {
       await waitFor(
         'the six liveness states at once, the stall after its plan',
         async () => {
-          // On a loaded host a slow process start alone can outlast the 15 s threshold. The log is read before the
+          // On a loaded host a slow process start alone can outlast the threshold. The log is read before the
           // states, so Stalled counts only once the scenario has declared its plan: then it is the scenario's silence.
           const planned = eventsAfter(layout.aocData, tokens.head.seq).some((e) => e.type === 'plan.declared' && e.meta.sessionId === tokens.sessions.stalled);
           const r = await fetch(`http://127.0.0.1:${port}/api/sessions`, { headers: { authorization: `Bearer ${tokens.tokens.ceo.token}` } });
@@ -61,7 +62,7 @@ describe('seed + aocd', () => {
           snapshot = Object.fromEntries(rows.filter((s) => kindOf.has(s.sessionId)).map((s) => [kindOf.get(s.sessionId)!, s.liveness?.state ?? null]));
           return planned && Object.entries(EXPECTED).every(([k, state]) => snapshot[k] === state) ? snapshot : null;
         },
-        240_000,
+        360_000,
       ).catch((err: Error) => {
         throw new Error(`${err.message}; last snapshot ${JSON.stringify(snapshot)}`);
       });
@@ -80,12 +81,17 @@ describe('seed + aocd', () => {
       expect(of('prompt.submitted', kind), kind).not.toEqual([]);
     }
     // Working and Stalled acted through tools and the AOC MCP server before the stall went silent. Thinking makes no
-    // tool call for minutes: it read Thinking in the snapshot, taken after the stall session's 15 s of silence, so
+    // tool call for minutes: it read Thinking in the snapshot, taken after the stall session's 60 s of silence, so
     // its own stream output had kept it from Stalled.
     expect(of('tool.used', 'working')).not.toEqual([]);
     expect(of('plan.declared', 'stalled')).not.toEqual([]);
     expect(of('session.liveness_changed', 'stalled').some((e) => e.meta.to === 'stalled' && e.meta.reason === 'no_activity')).toBe(true);
     for (const argv of launchedArgv(layout.aocData, tokens.head.seq)) expect(argv.slice(0, 2)).toEqual([process.execPath, CLAUDE_SIM_BIN]);
     expect(existsSync(trip.invoked)).toBe(false);
-  }, 720_000);
+
+    // The seeded FX history is BNM's 1700 rate, each record stamped with its session (FinOps labels rates with it).
+    const fx = eventsAfter(layout.aocData, 0).filter((e) => e.type === 'fx.rate_recorded');
+    expect(fx.length).toBeGreaterThanOrEqual(10);
+    expect(fx.filter((e) => e.meta.session !== '1700')).toEqual([]);
+  }, 900_000);
 });

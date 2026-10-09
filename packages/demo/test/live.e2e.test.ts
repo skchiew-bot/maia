@@ -1,6 +1,7 @@
 /**
  * The live launcher end to end: seed → aocd (child process) → real managed sessions on claude-sim through
- * POST /api/sessions → Ctrl-C. Scenarios run at 5x speed (CLAUDE_SIM_SPEED) so the decision arrives quickly.
+ * POST /api/sessions → Ctrl-C. A small fleet for a shared host: the launcher runs only the decision slot
+ * (--slots decision), next to the seeded Working, Thinking and Stalled sessions that aocd's startup recovery launches.
  */
 import { spawn } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -22,8 +23,8 @@ describe('pnpm --filter @aoc/demo live', () => {
     let out = '';
     const live = spawn(
       process.execPath,
-      ['--import', tsxImport(), join(DEMO_SRC, 'live.ts'), '--data-dir', layout.root, '--port', String(port), '--no-ui', '--relaunch-after', '2'],
-      { env: childEnv(trip.binDir, { CLAUDE_SIM_SPEED: '0.2' }), stdio: ['ignore', 'pipe', 'pipe'] },
+      ['--import', tsxImport(), join(DEMO_SRC, 'live.ts'), '--data-dir', layout.root, '--port', String(port), '--no-ui', '--slots', 'decision'],
+      { env: childEnv(trip.binDir, {}), stdio: ['ignore', 'pipe', 'pipe'] },
     );
     live.stdout!.on('data', (d: Buffer) => (out += d.toString()));
     live.stderr!.on('data', (d: Buffer) => (out += d.toString()));
@@ -62,7 +63,7 @@ describe('pnpm --filter @aoc/demo live', () => {
 
     // Every managed process was claude-sim; nothing ran `claude` from PATH.
     const argvs = launchedArgv(layout.aocData, seededHead);
-    expect(argvs.length).toBeGreaterThanOrEqual(7);
+    expect(argvs.length).toBeGreaterThanOrEqual(4); // the decision run and the three seeded queued sessions
     for (const argv of argvs) expect(argv.slice(0, 2)).toEqual([process.execPath, CLAUDE_SIM_BIN]);
     expect(existsSync(trip.invoked)).toBe(false);
 

@@ -103,6 +103,13 @@ export const FLEET: readonly SlotSpec[] = [
   },
 ];
 
+/** The slots named in `keys`, in fleet order (the whole fleet when `keys` is empty); unknown names are refused. */
+export function selectSlots(keys: readonly string[]): SlotSpec[] {
+  const unknown = keys.filter((k) => !FLEET.some((s) => s.key === k));
+  if (unknown.length) throw new Error(`unknown slot ${unknown.join(', ')} (the slots are ${FLEET.map((s) => s.key).join(', ')})`);
+  return FLEET.filter((s) => !keys.length || keys.includes(s.key));
+}
+
 /** POST /api/sessions body for the slot's next run (a new thread each time: task ids never repeat in a thread). */
 export function launchBody(slot: SlotSpec, tokens: DemoTokens): Record<string, unknown> {
   const ticketId = slot.ticket ? tokens.tickets.find((t) => t.key === slot.ticket)?.ticketId : undefined;

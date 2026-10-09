@@ -1,6 +1,6 @@
 /**
  * Live demo launcher — `pnpm --filter @aoc/demo live -- --data-dir <abs dir> [--port 7420] [--reset] [--no-ui]
- * [--relaunch-after <seconds>]`
+ * [--relaunch-after <seconds>] [--slots <slot,...>]`
  *
  * One command for a genuinely live console: seeds the history when the directory is empty (or with --reset),
  * refuses to start unless managed sessions run on claude-sim, starts aocd as a child process, and keeps a fleet of
@@ -14,7 +14,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { AocConfigSchema } from '@aoc/contracts';
 import { daemonEnv } from './daemon-env';
-import { DEFAULT_TIMING, FLEET, launchBody, loadFleet, nextAction, saveFleet, type FleetState, type KeeperTiming, type SessionStatus, type SlotSpec } from './fleet';
+import { DEFAULT_TIMING, launchBody, loadFleet, nextAction, saveFleet, selectSlots, type FleetState, type KeeperTiming, type SessionStatus, type SlotSpec } from './fleet';
 import { demoLayout, isSeeded, readDemoTokens, resetDemoDir, type DemoLayout, type DemoTokens } from './layout';
 import { claudeSimProblem } from './sim-guard';
 
@@ -29,10 +29,11 @@ interface LiveOptions {
   reset: boolean;
   ui: boolean;
   timing: KeeperTiming;
+  slots: SlotSpec[];
 }
 
 function parseOptions(argv: readonly string[]): LiveOptions {
-  const o: LiveOptions = { dataDir: join(REPO, '.aoc/demo'), port: 7420, reset: false, ui: true, timing: { ...DEFAULT_TIMING } };
+  const o: LiveOptions = { dataDir: join(REPO, '.aoc/demo'), port: 7420, reset: false, ui: true, timing: { ...DEFAULT_TIMING }, slots: selectSlots([]) };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
     const value = () => {
@@ -46,6 +47,7 @@ function parseOptions(argv: readonly string[]): LiveOptions {
     else if (a === '--reset') o.reset = true;
     else if (a === '--no-ui') o.ui = false;
     else if (a === '--relaunch-after') o.timing.relaunchAfterMs = Number(value()) * 1000;
+    else if (a === '--slots') o.slots = selectSlots(value().split(',').map((k) => k.trim()).filter(Boolean));
     else throw new Error(`unknown argument ${a}`);
   }
   if (!Number.isInteger(o.port) || o.port < 1 || o.port > 65535) throw new Error('--port must be 1-65535');
@@ -181,14 +183,15 @@ class Keeper {
     private readonly file: string,
     private readonly timing: KeeperTiming,
     private readonly state: FleetState,
+    private readonly slots: readonly SlotSpec[],
   ) {
-    for (const slot of FLEET) {
+    for (const slot of slots) {
       this.state[slot.key] ??= { sessionId: slot.seeded ? tokens.sessions[slot.seeded] : null, runs: 0 };
     }
   }
 
   async tick(): Promise<void> {
-    for (const slot of FLEET) {
+    for (const slot of this.slots) {
       try {
         await this.step(slot);
       } catch (err) {
@@ -278,7 +281,7 @@ async function stopRunningSessions(api: Api, ceo: string): Promise<void> {
 // ── main ──────────────────────────────────────────────────────────────────────
 
 function banner(o: LiveOptions, layout: DemoLayout, tokens: DemoTokens, daemon: ChildProcess): string {
-  const slots = FLEET.map((s) => `    ${s.shows.padEnd(34)} ${s.key.padEnd(10)} ${s.title}`).join('\n');
+  const slots = o.slots.map((s) => `    ${s.shows.padEnd(34)} ${s.key.padEnd(10)} ${s.title}`).join('\n');
   return [
     '',
     'AOC live demo — every moving mark on the console comes from a real managed session',
@@ -347,7 +350,7 @@ async function main(): Promise<void> {
   });
 
   await waitHealthy(base, daemon, logFile);
-  const keeper = new Keeper(api, tokens, layout.fleet, o.timing, fleet);
+  const keeper = new Keeper(api, tokens, layout.fleet, o.timing, fleet, o.slots);
   console.log(banner(o, layout, tokens, daemon));
   await keeper.tick();
   timer = setInterval(() => void keeper.tick(), TICK_MS);

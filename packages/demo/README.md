@@ -7,7 +7,7 @@ real repository is touched.
 ## `live`: one command for a live console
 
 ```sh
-pnpm --filter @aoc/demo live -- --data-dir /abs/path/demo [--port 7420] [--reset] [--no-ui] [--relaunch-after 60]
+pnpm --filter @aoc/demo live -- --data-dir /abs/path/demo [--port 7420] [--reset] [--no-ui] [--relaunch-after 60] [--slots decision,triage]
 ```
 
 1. **Seeds** the directory when it is empty, or rebuilds it with `--reset` (see `seed` below). `--reset` only
@@ -22,7 +22,8 @@ pnpm --filter @aoc/demo live -- --data-dir /abs/path/demo [--port 7420] [--reset
    `POST /api/sessions` by a demo Builder and runs a claude-sim scenario through the real supervisor, hooks, AOC MCP
    server and sidecar. When a run finishes, the next one starts on a new thread after `--relaunch-after` seconds
    (triage waits ten times longer). A Dead session is replaced after 10 minutes, an idle one after 15. Sessions
-   waiting on you or throttled are never replaced.
+   waiting on you or throttled are never replaced. `--slots` keeps only the named slots (table below), for a
+   lighter fleet on a small machine.
 5. **Prints** the console URL and the CEO (Approver) token. Paste the token on the sign-in page.
 
 **Ctrl-C** first stops every managed session that has a process, through the API. It then stops aocd and waits for
@@ -64,7 +65,9 @@ pnpm --filter @aoc/demo seed -- --data-dir /abs/path/demo [--days 14] [--reset]
 Builds 14 days of catalog-valid history by driving the real runtime with a moving fake clock: users and tokens,
 projects with git repos, sessions with manifests, evidence and usage, decisions, playbooks, credits, FX, error
 learning and intake tickets. The hash chain and the projections are therefore genuine. The result is
-deterministic (seeded PRNG). Then run aocd on it, either with `live` or by hand with the command the seeder prints:
+deterministic (seeded PRNG). The FX history is BNM's 1700 USD/MYR rate, stamped with its session and recorded by
+the 18:00 MYT run, so today's rate appears only once that run has passed. Then run aocd on it, either with `live`
+or by hand with the command the seeder prints:
 
 ```sh
 AOC_CONFIG=<dir>/aoc.config.json CLAUDE_CONFIG_DIR=<dir>/claude CLAUDE_SIM_SCENARIO=<dir>/claude/demo-default-scenario.json \
@@ -134,12 +137,14 @@ managed processes, so there is nothing left to fake.
 
 - **unit:** the claude-sim guard, the fleet keeper's decisions, and the generated default scenario.
 - **`seed-daemon.e2e`:** seed, then aocd, then all six states at once. Working, Thinking and Stalled come from
-  launched claude-sim processes. The test shortens the stall threshold to 15 s; the demo keeps 10 minutes.
-- **`live.e2e`:** the launcher end to end. Real `session.launched`, `tool.used`, `task.done` and
-  `decision.requested` events appear. Every `session.launched` argv is node plus claude-sim, a `claude` tripwire
-  first on `PATH` is never run, and Ctrl-C leaves nothing running.
+  launched claude-sim processes. The test shortens the stall threshold to 60 s; the demo keeps 10 minutes.
+- **`live.e2e`:** the launcher end to end, with only the `decision` slot. Real `session.launched`, `tool.used`,
+  `task.done` and `decision.requested` events appear. Every `session.launched` argv is node plus claude-sim, a
+  `claude` tripwire first on `PATH` is never run, and Ctrl-C leaves nothing running.
 - **`intake.e2e`:** fix plan approved, then the build on claude-sim commits to `uat/<ticket>` (traced), then
   `ticket.uat_ready`, the requester's sign-off, `ticket.golive_requested` and the go-live decision.
+
+The test files run one at a time (`vitest.config.ts`): each e2e file runs aocd and several real sessions.
 
 Limitation: only the seeded receipts ticket can go live. A ticket filed during the demo is triaged with low
 confidence. Its build cannot name `uat/<ticketId>`, because the scenario is generated at seed time, so its go-live

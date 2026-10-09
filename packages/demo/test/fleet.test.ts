@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { builtInScenario, parseScenario, scenarioMarker } from '@aoc/claude-sim';
 import { defaultScenario } from '../src/default-scenario';
-import { DEFAULT_TIMING, FLEET, launchBody, nextAction, type SessionStatus } from '../src/fleet';
+import { DEFAULT_TIMING, FLEET, launchBody, nextAction, selectSlots, type SessionStatus } from '../src/fleet';
 import type { DemoTokens } from '../src/layout';
 import { simPrompt } from '../src/scenarios';
 
@@ -24,6 +24,12 @@ describe('the fleet', () => {
       expect(body).not.toHaveProperty('threadId');
     }
     expect(launchBody(FLEET.find((s) => s.key === 'triage')!, tokens)).toMatchObject({ processType: 'bug-triage', ticketId: 'tkt_2' });
+  });
+
+  it('selects a subset of the slots for --slots, in fleet order, and refuses unknown names', () => {
+    expect(selectSlots([]).map((s) => s.key)).toEqual(FLEET.map((s) => s.key));
+    expect(selectSlots(['triage', 'decision']).map((s) => s.key)).toEqual(['decision', 'triage']);
+    expect(() => selectSlots(['decision', 'nope'])).toThrow(/unknown slot nope/);
   });
 
   it('refuses prompts for scenarios claude-sim does not have', () => {
