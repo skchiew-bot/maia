@@ -97,8 +97,9 @@ audit state.
    4. pack and seal everything into `.aoc-backup-….partial`, fsync, rename to the final name;
    5. run `backupCopyCommand`, prune past retention, append `backup.completed`.
 
-A manual `aoc backup now` (permission `audit.verify`) runs the same steps; a second manual run within 10 minutes is
-refused (429), so repeated full copies cannot fill the disk.
+A manual `aoc backup now` (permission `audit.backup`, held by the Approver only: a Builder's `audit.verify` and
+`audit.view` do not reach it, and Builders can still list the backups) runs the same steps; a second manual run within
+10 minutes is refused (429), so repeated full copies cannot fill the disk.
 
 ## 4. Daily checks
 

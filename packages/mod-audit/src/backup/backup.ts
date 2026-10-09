@@ -211,8 +211,7 @@ export class BackupRunner {
     if (!audit.backupKeyFile) return { ok: false, skipped: 'not_configured' };
     const dataDir = resolve(ctx.dataDir);
     const backupDir = resolve(audit.backupDir);
-    // Same time-sortable shape as every other id; contracts has no `backup` id kind yet.
-    const backupId = `bkp_${newId('event', ctx.clock.now()).slice(4)}`;
+    const backupId = newId('backup', ctx.clock.now());
     const createdAt = ctx.clock.iso();
     const fail = (stage: BackupStage, reason: string, detail: string): BackupOutcome => {
       this.recordFailure(actor, source, backupId, stage, reason, detail);

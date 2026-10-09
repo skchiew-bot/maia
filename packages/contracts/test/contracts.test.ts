@@ -5,6 +5,8 @@ import {
   computeProgress,
   deriveLiveness,
   hasPermission,
+  ID_PREFIX,
+  idKindOf,
   INTAKE_ENVELOPE_BYTES,
   intakeRequestBytes,
   intakeTotalBytes,
@@ -89,6 +91,13 @@ describe('roles & decisions (§6)', () => {
     expect(hasPermission('requester', 'mapping.stamp', { complianceLead: true })).toBe(false);
   });
 
+  it('keeps an on-demand backup of the audit state with the Approver (audit.backup), apart from audit.verify', () => {
+    expect(hasPermission('approver', 'audit.backup')).toBe(true);
+    expect(hasPermission('builder', 'audit.backup')).toBe(false);
+    expect(hasPermission('requester', 'audit.backup')).toBe(false);
+    expect(hasPermission('builder', 'audit.verify')).toBe(true);
+  });
+
   it('labels a bearer-token button as attribution and only a verified passkey as a signature (G-29)', () => {
     const label = (method: 'button' | 'passkey' | 'policy', passkeyVerified: boolean) =>
       RESOLUTION_ASSURANCE_LABEL[resolutionAssurance({ method, passkeyVerified })];
@@ -151,6 +160,9 @@ describe('registry + config + misc', () => {
   it('defaults config and builds ids/paths', () => {
     expect(AocConfigSchema.parse({}).port).toBe(7420);
     expect(newId('session')).toMatch(/^ses_[0-9A-Z]{26}$/);
+    expect(ID_PREFIX.backup).toBe('bkp');
+    expect(newId('backup')).toMatch(/^bkp_[0-9A-Z]{26}$/);
+    expect(idKindOf(newId('backup'))).toBe('backup');
     expect(transcriptPathFor('/home/u/my.repo', 'abc', '/h/.claude')).toBe('/h/.claude/projects/-home-u-my-repo/abc.jsonl');
   });
   // Expected slugs were produced by the slug function embedded in the Claude Code 2.1.295 binary (research C11).
