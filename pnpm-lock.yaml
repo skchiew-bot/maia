@@ -128,6 +128,9 @@ importers:
 
   packages/demo:
     dependencies:
+      '@aoc/claude-sim':
+        specifier: workspace:*
+        version: link:../claude-sim
       '@aoc/contracts':
         specifier: workspace:*
         version: link:../contracts

@@ -1,0 +1,19 @@
+{
+  "name": "demo-dedupe-resume",
+  "description": "Continuation of the seeded \"duplicate claim submissions\" bug fix (plan t1 done; t2, t3 open) after its main-branch decision is answered: branches on \"Hold for UAT first\" versus \"Merge to main\" and closes t2 and t3 with evidence.",
+  "steps": [
+    {"kind":"think","ms":4000,"outputTokens":667},
+    {"kind":"branch","onResumeTextIncludes":["Hold for UAT"],"goto":"uat"},
+    {"kind":"text","text":"Merge approved: finishing the idempotency guard before the merge."},
+    {"kind":"branch","goto":"work"},
+    {"kind":"text","text":"Holding for UAT as decided: finishing the guard on the fix branch.","label":"uat"},
+    {"kind":"tool","name":"Read","input":{"file_path":"src/claims/submit.ts"},"label":"work"},
+    {"kind":"tool","name":"Write","input":{"file_path":"src/claims/idempotency.ts","content":"// Idempotency keys for claim submission\n// build {{sim.sessionId}}\nconst seen = new Map<string, string>();\n\nexport function claimOnce(key: string, claimId: string): string {\n  const prior = seen.get(key);\n  if (prior) return prior;\n  seen.set(key, claimId);\n  return claimId;\n}\n"}},
+    {"kind":"mcp","server":"aoc","tool":"task_done","args":{"task_id":"t2","evidence":{"kind":"diff","ref":"src/claims/idempotency.ts","detail":"Retries reuse the first claim id for the same idempotency key"}}},
+    {"kind":"tool","name":"Read","input":{"file_path":"test/claims/dedupe.test.ts"}},
+    {"kind":"tool","name":"Write","input":{"file_path":"test/claims/dedupe.test.ts","content":"// Duplicate submission regression test\n// build {{sim.sessionId}}\nimport { expect, it } from 'vitest';\nimport { claimOnce } from '../../src/claims/idempotency';\n\nit('rejects a duplicate submission on retry', () => {\n  expect(claimOnce('k1', 'CLM-1')).toBe('CLM-1');\n  expect(claimOnce('k1', 'CLM-2')).toBe('CLM-1');\n});\n"}},
+    {"kind":"mcp","server":"aoc","tool":"task_done","args":{"task_id":"t3","evidence":{"kind":"test","ref":"test/claims/dedupe.test.ts > rejects a duplicate submission on retry"}}},
+    {"kind":"text","text":"The retry-dedupe fix is complete with its regression test."},
+    {"kind":"endTurn","final":true}
+  ]
+}

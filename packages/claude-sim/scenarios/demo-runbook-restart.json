@@ -1,0 +1,17 @@
+{
+  "name": "demo-runbook-restart",
+  "description": "Continuation of the seeded \"document the rollback runbook\" docs session (plan t1 done; t2, t3 open) after an operator Restart: re-reads its status and closes t2 and t3 with diff evidence.",
+  "steps": [
+    {"kind":"think","ms":4000,"outputTokens":667},
+    {"kind":"text","text":"Restarted: re-reading my manifest before continuing."},
+    {"kind":"mcp","server":"aoc","tool":"get_status","args":{},"saveAs":"status"},
+    {"kind":"tool","name":"Read","input":{"file_path":"docs/runbooks/rollback.md"}},
+    {"kind":"tool","name":"Read","input":{"file_path":"docs/runbooks/rollback-diagrams.md"}},
+    {"kind":"tool","name":"Write","input":{"file_path":"docs/runbooks/rollback-diagrams.md","content":"# Rollback flow\n\n<!-- build {{sim.sessionId}} -->\n\n```\nCEO issues rollback -> supervisor checks out the pinned tag on a new branch -> acceptance tests -> report -> CEO approves -> main\n```\n"}},
+    {"kind":"mcp","server":"aoc","tool":"task_done","args":{"task_id":"t2","evidence":{"kind":"diff","ref":"docs/runbooks/rollback-diagrams.md"}}},
+    {"kind":"tool","name":"Edit","input":{"file_path":"docs/runbooks/rollback.md","old_string":"## See also","new_string":"## See also\n\n- [Rollback flow diagram](rollback-diagrams.md) (checked {{sim.sessionId}})"}},
+    {"kind":"mcp","server":"aoc","tool":"task_done","args":{"task_id":"t3","evidence":{"kind":"diff","ref":"docs/runbooks/rollback.md","detail":"Links reviewed; diagram linked"}}},
+    {"kind":"text","text":"The rollback runbook is complete."},
+    {"kind":"endTurn","final":true}
+  ]
+}

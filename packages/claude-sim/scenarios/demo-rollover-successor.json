@@ -1,0 +1,20 @@
+{
+  "name": "demo-rollover-successor",
+  "description": "Demo rollover successor (the live demo sets it as CLAUDE_SIM_SCENARIO, the default for prompts without a scenario marker): reads its status, re-declares the open tasks t3 and t4 of the legacy-report thread (carried over from its predecessor) and finishes them.",
+  "steps": [
+    {"kind":"think","ms":4000,"outputTokens":667},
+    {"kind":"text","text":"Picking up the thread from the handoff brief."},
+    {"kind":"mcp","server":"aoc","tool":"get_status","args":{},"saveAs":"status"},
+    {"kind":"think","ms":5000,"outputTokens":833},
+    {"kind":"mcp","server":"aoc","tool":"declare_plan","args":{"summary":"Remaining legacy reports, carried over from the previous session of this thread.","phases":[{"id":"port","name":"Port","tasks":[{"id":"t3","title":"Port the churn report","size":"m"},{"id":"t4","title":"Port the cohort report","size":"m"}]}]}},
+    {"kind":"tool","name":"Read","input":{"file_path":"src/reports/churn.ts"}},
+    {"kind":"tool","name":"Write","input":{"file_path":"src/reports/churn.ts","content":"// Churn report on the event store\n// build {{sim.sessionId}}\nexport const churnReport = (ended: number, active: number) => (active ? ended / active : 0);\n"}},
+    {"kind":"mcp","server":"aoc","tool":"task_done","args":{"task_id":"t3","evidence":{"kind":"diff","ref":"src/reports/churn.ts"}}},
+    {"kind":"think","ms":5000,"outputTokens":833},
+    {"kind":"tool","name":"Read","input":{"file_path":"src/reports/cohort.ts"}},
+    {"kind":"tool","name":"Write","input":{"file_path":"src/reports/cohort.ts","content":"// Cohort report on the event store\n// build {{sim.sessionId}}\nexport const cohortOf = (signupMonth: string) => signupMonth.slice(0, 7);\n"}},
+    {"kind":"mcp","server":"aoc","tool":"task_done","args":{"task_id":"t4","evidence":{"kind":"diff","ref":"src/reports/cohort.ts"}}},
+    {"kind":"text","text":"The remaining reports are ported; the thread is complete."},
+    {"kind":"endTurn","final":true}
+  ]
+}
