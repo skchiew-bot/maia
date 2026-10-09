@@ -8,7 +8,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AocConfigSchema, type AocConfig, type Role } from '@aoc/contracts';
-import { FakeClock, silentLogger, type AocModule, type EventStore } from '@aoc/kernel';
+import { createLogger, FakeClock, silentLogger, type AocModule, type EventStore, type Logger } from '@aoc/kernel';
 import {
   createIdentityModule,
   identityServiceOf,
@@ -28,6 +28,8 @@ export interface ProdOptions {
   masterKey?: Buffer;
   /** Swap or drop modules of the production list (by name). */
   modules?: (list: AocModule[]) => AocModule[];
+  /** Collect error-level log lines (name, error text) instead of dropping them. */
+  captureErrors?: boolean;
 }
 
 export interface Prod {
@@ -38,6 +40,8 @@ export interface Prod {
   masterKey: Buffer;
   ids: IdentityTestHelpers;
   config: AocConfig;
+  /** Error-level log lines (only with captureErrors). */
+  errors: string[];
   user(role: Role, name?: string, opts?: { complianceLead?: boolean }): IdentityTestUser;
   request(method: string, path: string, init?: { headers?: Record<string, string>; body?: unknown }): Promise<Response>;
   close(): Promise<void>;
@@ -68,8 +72,12 @@ export async function bootProd(opts: ProdOptions = {}): Promise<Prod> {
   const clock = new FakeClock(opts.now ?? '2026-10-09T02:00:00.000Z');
   const masterKey = opts.masterKey ?? randomBytes(32);
   const list = createDefaultModules().map((m) => (m.name === 'identity' ? createIdentityModule({ bootstrap: false }) : m));
+  const errors: string[] = [];
+  const log: Logger = opts.captureErrors
+    ? createLogger({ level: 'error', sink: (line) => errors.push(line) })
+    : silentLogger;
   const aoc = await createAocServer(config, {
-    log: silentLogger,
+    log,
     clock,
     masterKey,
     webDir: null,
@@ -84,6 +92,7 @@ export async function bootProd(opts: ProdOptions = {}): Promise<Prod> {
     masterKey,
     ids,
     config,
+    errors,
     user: (role, name, o) => ids.user(role, name, o),
     async request(method, path, init = {}) {
       const headers: Record<string, string> = { ...init.headers };
