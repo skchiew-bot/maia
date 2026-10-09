@@ -196,11 +196,11 @@ describe('daily FX run (session 1700: page scrape, BNM Open API cross-check)', (
     await t.close();
   });
 
-  it('records nothing before publication and says so to a manual run', async () => {
+  it('at 12:30 (the old run time) the page still shows yesterday: nothing is recorded, a retry follows, not a holiday', async () => {
     const t = await fxRuntime();
     t.http.page(octoberPage('2026-10-08')).api('2026-10-09', notPublished());
     t.llm.on('fx.extract@haiku', honestModel);
-    at(t, '2026-10-09', '10:00');
+    at(t, '2026-10-09', '12:30');
     const res = await t.json<FxRunResultDTO>('POST', '/api/fx/run', { headers: t.user('approver').headers });
     expect(res).toEqual({
       date: '2026-10-09',

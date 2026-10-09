@@ -74,6 +74,8 @@ For option 1, use the file path instead.
 Back up the data and the keys **separately**: different media, different custodians. A backup that contains both
 `bodies.db` and the KEK is a copy of all your personal data in clear, and it also defeats crypto-shred (§6).
 
+AOC has no backup or restore command yet (gap G-21): the steps below are a script you schedule yourself.
+
 **What to back up, in this order** (a body is written before its event commits, so this order guarantees every
 event in the copy has its body):
 
@@ -87,7 +89,9 @@ event in the copy has its body):
    sqlite3 /var/lib/aoc/data/bodies.db ".backup '/backup/stage/bodies.db'"
    ```
 3. `blobs/`. Files are immutable and named by id: `rsync -a /var/lib/aoc/data/blobs/ /backup/stage/blobs/`.
-4. Governed config: `config/` (registry, rate card, ISO mapping) and the aocd config file.
+   Copy `anchors/` (RFC 3161 records and tokens) the same way when that provider is used.
+4. Governed config: `config/` (registry, rate card, ISO mapping) and the aocd config file. The external
+   self-modification log too, unless it is already shipped off the host as it is written (gap P-07).
 5. **Not** the credential profiles file, and **not** the KEK. They go in the secret store and the escrow (§2, §3).
 
 Then:
@@ -130,7 +134,7 @@ Approver-only.
 1. **Identify the scope or scopes.** The `bodyScope` of the affected events:
    - a ticket `tkt_…`: the requester's text and media;
    - a session `ses_…`: prompts and tool summaries;
-   - a user `usr_…`: profile data, once identity events use it (threat model O-7);
+   - a user `user:<userId>`: the identity events about that person (profile data);
    - a project `prj_…`: shreds every project-scoped body, so use it only if intended;
    - **never `global`**, which is shared by everything without a narrower scope.
 
@@ -138,13 +142,17 @@ Approver-only.
 2. **Assess the impact.** Everything in the scope goes, not only the offending item. The chain still proves that
    each event existed (type, actor, time, ids). Evidence packs show `[erased]` for the text.
 3. **Raise a change request** (scope `data`) naming the scope ids, the reason, the impact, and the backup
-   retention date that will complete the erasure.
+   retention date that will complete the erasure. Whoever submits it cannot approve it, so while the CEO is the
+   only Approver, a Builder (or the DPO's delegate) submits it.
 4. **The Approver approves.** Record the decision id.
-5. **Execute** the erase action of `mod-audit` with the scope id, the reason and the decision id. It destroys every
-   DEK generation of the scope, deletes the ciphertext rows and blob files, checkpoints `bodies.db`, lets every
-   projector scrub its copies (`onErase`), and appends
-   `body.erased {scopeId, reason, erasedBy, bodyCount, decisionId}`.
-6. **Close the `aoc.db` gap** (until threat model O-24 is fixed): in the next maintenance window, run
+5. **Execute** the erasure: `POST /api/audit/erase {scopeId, reason, decisionId}` (permission `audit.erase`,
+   Approver only; `reason` is one of the four triggers above). It destroys every DEK generation of the scope,
+   deletes the ciphertext rows and blob files, checkpoints `bodies.db`, lets every projector scrub its copies
+   (`onErase`), appends `body.erased {scopeId, reason, erasedBy, bodyCount, decisionId}`, and answers with the
+   number of bodies erased and of events in the scope. **Always pass the approved change request's decision id.**
+   The API accepts an erasure without one, and checks only that a given decision is resolved, not that it
+   approved this erasure (threat model O-28): the procedure, not the code, ties the two together.
+6. **Close the `aoc.db` gap** (until threat model O-24, gap G-39, is fixed): in the next maintenance window, run
    `PRAGMA wal_checkpoint(TRUNCATE)` and then `VACUUM` on `aoc.db`, with aocd stopped, so that overwritten
    read-model text does not linger in free pages.
 7. **Verify:** the events of the scope read back with `payload: null`; the affected views show `[erased]`; the

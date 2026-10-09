@@ -53,7 +53,10 @@ describe('governed config change detection', () => {
     expect(first.changes.map((c) => c.key).sort()).toEqual([
       'audit_config',
       'credential_profiles',
+      'credits_config',
+      'decisions_config',
       'iso42001_mapping',
+      'liveness_config',
       'rate_card_file',
       'registry_file',
       'selfmod_config',
@@ -66,7 +69,7 @@ describe('governed config change detection', () => {
     );
     await first.stop();
     const second = await boot();
-    expect(second.changes).toHaveLength(6);
+    expect(second.changes).toHaveLength(9);
     await second.stop();
   });
 
@@ -75,7 +78,7 @@ describe('governed config change detection', () => {
     writeFileSync(f('rate-card.json'), '{"version":2,"rates":[]}');
     writeFileSync(f('process-types.json'), '{"version":"2","types":[]}');
     const run = await boot();
-    const latest = run.changes.slice(6);
+    const latest = run.changes.slice(9);
     expect(latest).toEqual([
       {
         key: 'registry_file',
@@ -95,21 +98,21 @@ describe('governed config change detection', () => {
     await (await boot()).stop();
     writeFileSync(f('profiles.json'), '{"profiles":{"deploy":{"env":{"TOKEN":"rotated"}}}}');
     let run = await boot();
-    expect(run.changes.slice(6)).toEqual([]);
+    expect(run.changes.slice(9)).toEqual([]);
     await run.stop();
 
     chmodSync(f('profiles.json'), 0o644);
     run = await boot();
-    expect(run.changes.slice(6).map((c) => c.key)).toEqual(['credential_profiles']);
+    expect(run.changes.slice(9).map((c) => c.key)).toEqual(['credential_profiles']);
     await run.stop();
 
     rmSync(f('profiles.json'));
     run = await boot();
-    expect(run.changes.slice(7)).toEqual([
+    expect(run.changes.slice(10)).toEqual([
       {
         key: 'credential_profiles',
         versionHash: expect.any(String),
-        previousHash: run.changes[6]!.versionHash,
+        previousHash: run.changes[9]!.versionHash,
       },
     ]);
     await run.stop();
@@ -123,9 +126,17 @@ describe('governed config change detection', () => {
       selfModification: { ...config.selfModification, protectedPaths: ['packages/kernel/'] },
     };
     const run = await boot();
-    const latest = run.changes.slice(6);
+    const latest = run.changes.slice(9);
     expect(latest.map((c) => c.key)).toEqual(['iso42001_mapping', 'selfmod_config']);
     expect(latest[0]!.versionHash).toBe(ABSENT_HASH);
+    await run.stop();
+  });
+
+  it('records turning on the sole-Approver fallback (decision policy is governed config)', async () => {
+    await (await boot()).stop();
+    config = { ...config, decisions: { ...config.decisions, soleApproverFallback: true } };
+    const run = await boot();
+    expect(run.changes.slice(9).map((c) => c.key)).toEqual(['decisions_config']);
     await run.stop();
   });
 
