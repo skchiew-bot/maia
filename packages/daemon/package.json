@@ -29,6 +29,7 @@
     "@aoc/mod-audit": "workspace:*",
     "@aoc/mod-evidence": "workspace:*",
     "@aoc/mod-intake": "workspace:*",
+    "@aoc/mod-tower": "workspace:*",
     "hono": "4.13.13",
     "@hono/node-server": "1.19.17",
     "zod": "3.25.76"
