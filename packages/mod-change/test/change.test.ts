@@ -277,6 +277,8 @@ describe('change requests (§8, §14)', () => {
     const submitted = await h.t.json<ChangeRequestDTO>('POST', `/api/changes/${changeId}/submit`, {
       headers: h.builder.headers,
     });
+    // The four typed fields reach the card as its context: it keeps them with the change record.
+    expect(h.requested.get(submitted.decisionId!)).toMatchObject({ bodyScope: changeId });
     const start = () =>
       h.t.request('POST', `/api/changes/${changeId}/start`, {
         headers: h.builder.headers,

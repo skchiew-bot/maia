@@ -61,6 +61,8 @@ describe('break-glass (§8): the most audited path, straight to the approver, pr
       subjectType: 'breakglass',
       subjectId: bg.breakglassId,
     });
+    // The justification is typed text: the card keeps it with the project, where the event body is kept too.
+    expect(h.requested.get(bg.decisionId)).toMatchObject({ bodyScope: PROJECT, context: bg.justification });
     expect(h.notifications).toContainEqual(
       expect.objectContaining({
         kind: 'breakglass',

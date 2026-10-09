@@ -144,7 +144,8 @@ export interface DecisionRequestInput {
   /** Override computed role (only to escalate, never to lower). */
   requiredRole?: Role;
   /**
-   * Body scope for the card's free text (e.g. a ticket id, so erasing the ticket also erases the decision text).
+   * Body scope for the card's free text (e.g. a ticket id, so erasing the ticket also erases the decision text; change
+   * control uses the change record's id, else the project's).
    * Default: the ticket when the subject is a ticket, else the store default (session → ticket → project → global).
    */
   bodyScope?: string;

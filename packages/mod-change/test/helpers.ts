@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type {
   ChangeScope,
+  DecisionRequestInput,
   IsolatedRunInput,
   LearningService,
   LedgerService,
@@ -206,6 +207,8 @@ export interface Harness {
   builder: TestUser;
   approver: TestUser;
   notifications: Extract<BroadcastMessage, { event: 'notification' }>['data'][];
+  /** What the change module asked the decision service for, by the id of the card it got. */
+  requested: Map<string, DecisionRequestInput>;
   /** Drain reactors and background verifications until everything is quiet. */
   settle(): Promise<void>;
   addProject(projectId: string, repo: string, extra?: Record<string, string>): void;
@@ -237,6 +240,16 @@ export async function harness(
     services,
     config: opts.config,
   });
+  const requested: Harness['requested'] = new Map();
+  const decisions = t.decisions;
+  if (decisions) {
+    const raise = decisions.request.bind(decisions);
+    decisions.request = (input, actor) => {
+      const card = raise(input, actor);
+      requested.set(card.id, input);
+      return card;
+    };
+  }
   const notifications: Harness['notifications'] = [];
   t.rt.broadcaster.subscribe({
     role: 'approver',
@@ -249,6 +262,7 @@ export async function harness(
     builder: t.user('builder', 'Bea Builder'),
     approver: t.user('approver', 'Ada Approver'),
     notifications,
+    requested,
     async settle() {
       for (let i = 0; i < 50; i++) {
         await t.drain();

@@ -275,6 +275,9 @@ describe('gated rollback (§8): verify on a branch, passkey decision only when c
     const pkg = await get(viaPackage.rollbackId);
     expect(pkg.verification!.report).toContain('Command: npm test --silent [from package.json]');
     expect(pkg.verification!.clean).toBe(true);
+    // The card's free text sits with the change record the rollback is for, else with the project.
+    expect(h.requested.get((await get(viaChange.rollbackId)).decisionId!)).toMatchObject({ bodyScope: changeId });
+    expect(h.requested.get(pkg.decisionId!)).toMatchObject({ bodyScope: PROJECT });
   });
 
   it('reports back when verification cannot run at all', async () => {

@@ -123,6 +123,11 @@ const PASSKEY_REQUIRED = 'Approval without a verified passkey is not accepted fo
 const MAX_PROVENANCE_COMMITS = 2000;
 
 const human = (u: User): Actor => ({ kind: 'human', id: u.id });
+/**
+ * Where a card's free text, and the comment typed on it, is kept: with the change record it is about, else with the
+ * project, as mod-intake keeps a ticket's cards under the ticket. Erasing that scope (PDPA) shreds the text.
+ */
+const cardScope = (projectId: string, changeId?: string | null): string => changeId ?? projectId;
 const short = (sha: string) => sha.slice(0, 12);
 const iso = (ms: number) => new Date(ms).toISOString();
 const errText = (err: unknown) => (err instanceof Error ? err.message : String(err));
@@ -838,6 +843,7 @@ export class ChangeEngine implements ChangeService {
         subjectId: changeId,
         projectId: c.project_id,
         requesterId: user.id,
+        bodyScope: cardScope(c.project_id, changeId),
       },
       actor,
     );
@@ -1118,6 +1124,7 @@ export class ChangeEngine implements ChangeService {
             subjectId: rollbackId,
             projectId: r.project_id,
             requesterId: r.requested_by,
+            bodyScope: cardScope(r.project_id, r.change_id),
           },
           SYSTEM,
         ).id;
@@ -1540,6 +1547,7 @@ export class ChangeEngine implements ChangeService {
         subjectId: breakglassId,
         projectId: input.projectId,
         requesterId: user.id,
+        bodyScope: cardScope(input.projectId),
       },
       actor,
     );
@@ -1900,6 +1908,7 @@ export class ChangeEngine implements ChangeService {
         subjectId: promotionId,
         projectId: input.projectId,
         requesterId: actor.id,
+        bodyScope: cardScope(input.projectId, changeId),
       },
       actor,
     );
