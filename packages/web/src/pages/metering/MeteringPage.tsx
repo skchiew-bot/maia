@@ -32,6 +32,7 @@ import {
   useToast,
 } from '../../components';
 import { formatMyr, formatPercent, formatShortDate, formatTokens, formatUsd } from '../../lib/format';
+import { useSectionScroll } from '../../lib/sectionScroll';
 import { isEvent } from '../registry/streamEvents';
 import { useNames } from '../registry/useNames';
 import { BreakdownPanel, TokenTypesPanel, type BreakdownDim } from './BreakdownPanels';
@@ -53,7 +54,6 @@ import { MigrationPanel } from './MigrationPanel';
 import { RateCardPanel } from './RateCardPanel';
 import type { RateCardDraft } from './RateCardDialog';
 import { ThrottlePanel } from './ThrottlePanel';
-import { useHashScroll } from './useHashScroll';
 import './metering.css';
 
 const USAGE_EVENTS = ['usage.recorded', 'rollup.closed', 'ratecard.published', 'subscription.updated', 'fx.rate_recorded', 'throttle.'];
@@ -104,7 +104,7 @@ export default function MeteringPage() {
     refreshOn: (m) => isEvent(m, ['decision.', 'fx.discrepancy_raised', 'fx.discrepancy_resolved']),
   });
   const projects = useResource<ProjectSummary[]>('/api/projects', { refreshOn: (m) => isEvent(m, ['project.']) });
-  useHashScroll(daily.data !== undefined);
+  useSectionScroll(daily);
 
   const fxByDate = useMemo(() => new Map((fxRates.data?.rates ?? []).map((r) => [r.date, r])), [fxRates.data]);
   const projectName = (id: string | null) => (id ? (projects.data?.find((p) => p.projectId === id)?.name ?? null) : null);

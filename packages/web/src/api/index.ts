@@ -28,6 +28,7 @@ export {
   type StreamMessage,
 } from './stream';
 export { REFRESH_COALESCE_MS, useResource, type ResourceState, type UseResourceOptions } from './useResource';
+export { combine } from './combine';
 export { useDocumentBadge, useDocumentTitle } from './useDocumentBadge';
 export {
   AuthProvider,
