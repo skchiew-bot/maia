@@ -7,6 +7,10 @@ Research note for `mod-fx` (spec §10, risk R13). Live captures were taken 2026-
 
 ## 0. Corrections to the Wave 0 FX config defaults (`packages/contracts/src/config.ts` at commit 3f585b8, `fx` block)
 
+> **Status: applied** ([gap G-36](../compliance/gaps.md), closed). The `fx` block of `packages/contracts/src/config.ts`
+> now follows this table: session 1700, run at 18:00 MYT with retries at 18:30 and 21:00, tolerance 0.0001, alert after
+> 3 weekdays. The table is kept as the reasoning. The CEO still has to confirm 1700 over 1200 (gap P-19).
+
 | Default today | Problem (evidence) | Recommended |
 | --- | --- | --- |
 | `apiUrl: https://api.bnm.gov.my/public/exchange-rate/USD` (no query) | With no `session` param the API returns **session 1130**. Those are best counter rates of selected commercial banks: `middle_rate: null`, a wide spread (4.069 / 4.094 on 2026-10-08) (OBS). Comparing a scraped interbank middle rate against it gives a false discrepancy every day. | Always pass the session explicitly: `…/exchange-rate/USD?session=1700` (or `1200`, §3). Add `fx.session` to the config and stamp it on every record. |

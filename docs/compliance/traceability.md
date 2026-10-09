@@ -54,7 +54,7 @@ Counts by status and spec section, computed from the rows below (`scripts/check-
 | **Total** | **193** | **7** | **0** | **2** | **7** | **209** |
 
 **Built 193 / Partial 7 / Open 7**, where Open is Missing plus Process: open (there are no Missing rows; two Process
-rows are done). What is open and who owns it is in [gaps.md](gaps.md): 11 open software gaps, 26 process items.
+rows are done). What is open and who owns it is in [gaps.md](gaps.md): 12 open software gaps, 26 process items.
 Compared with `a1c8a0c` (161 Implemented / 39 Partial / 0 Missing / 9 Process-only), 32 rows moved from Partial to
 Built.
 
