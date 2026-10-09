@@ -6,6 +6,7 @@ import {
   type AnchorDTO,
   type AnchorProviderName,
   type AuditHealthDTO,
+  type AuditService as AuditServiceContract,
   type EventSource,
   type MetaOf,
   type StoredEvent,
@@ -54,6 +55,33 @@ export function tsrDirOf(dataDir: string, opts: AuditModuleOptions): string | nu
   return dataDir === ':memory:' ? null : join(resolve(dataDir), 'anchors');
 }
 
+interface AnchorRow {
+  anchor_id: string;
+  provider: AnchorProviderName;
+  seq: number;
+  hash: string;
+  proof_ref: string;
+  signed: number | null;
+  pushed: number | null;
+  event_seq: number;
+  anchored_at: string;
+}
+
+function anchorFromRow(r: AnchorRow): AnchorDTO {
+  const bool = (v: number | null) => (v === null ? null : v === 1);
+  return {
+    anchorId: r.anchor_id,
+    provider: r.provider,
+    seq: r.seq,
+    hash: r.hash,
+    proofRef: r.proof_ref,
+    anchoredAt: r.anchored_at,
+    eventSeq: r.event_seq,
+    signed: bool(r.signed),
+    pushed: bool(r.pushed),
+  };
+}
+
 function toAnchorDTO(e: StoredEvent): AnchorDTO {
   const m = e.meta as MetaOf<'anchor.created'>;
   return {
@@ -72,9 +100,10 @@ function toAnchorDTO(e: StoredEvent): AnchorDTO {
 /**
  * Audit integrity (§13, R2): anchors the chain head off-host and verifies the whole chain against every anchor.
  * Anchor and verify runs are serialised; neither ever trusts the database alone — the off-host records are listed
- * independently, so deleted or rewritten anchor.created events are detected too.
+ * independently, so deleted or rewritten anchor.created events are detected too. Provided to other modules as the
+ * `audit` service.
  */
-export class AuditService {
+export class AuditService implements AuditServiceContract {
   readonly git: GitAnchorProvider;
   readonly rfc3161: Rfc3161AnchorProvider;
   private queue: Promise<unknown> = Promise.resolve();
@@ -133,29 +162,16 @@ export class AuditService {
   }
 
   anchorList(): AnchorDTO[] {
-    const rows = this.ctx.db.prepare('SELECT * FROM aud_anchors ORDER BY seq, event_seq').all() as {
-      anchor_id: string;
-      provider: AnchorProviderName;
-      seq: number;
-      hash: string;
-      proof_ref: string;
-      signed: number | null;
-      pushed: number | null;
-      event_seq: number;
-      anchored_at: string;
-    }[];
-    const bool = (v: number | null) => (v === null ? null : v === 1);
-    return rows.map((r) => ({
-      anchorId: r.anchor_id,
-      provider: r.provider,
-      seq: r.seq,
-      hash: r.hash,
-      proofRef: r.proof_ref,
-      anchoredAt: r.anchored_at,
-      eventSeq: r.event_seq,
-      signed: bool(r.signed),
-      pushed: bool(r.pushed),
-    }));
+    const rows = this.ctx.db.prepare('SELECT * FROM aud_anchors ORDER BY seq, event_seq').all() as unknown as AnchorRow[];
+    return rows.map(anchorFromRow);
+  }
+
+  /** The newest anchored position (highest seq) — the `audit` service's lastAnchor. */
+  lastAnchor(): AnchorDTO | null {
+    const row = this.ctx.db.prepare('SELECT * FROM aud_anchors ORDER BY seq DESC, event_seq DESC LIMIT 1').get() as
+      | AnchorRow
+      | undefined;
+    return row ? anchorFromRow(row) : null;
   }
 
   // ── config ─────────────────────────────────────────────────────────────────
@@ -305,6 +321,11 @@ export class AuditService {
   }
 
   // ── verification ───────────────────────────────────────────────────────────
+  /** The `audit` service's verify: recorded as chain.verified only when asked to. */
+  verify(record?: { actor: Actor; source: EventSource }): Promise<VerifyReportDTO> {
+    return record ? this.verifyNow(record.actor, record.source) : this.exclusive(() => this.computeVerify());
+  }
+
   /** Verify-against-anchor; appends chain.verified (and alerts when it fails). */
   verifyNow(actor: Actor, source: EventSource): Promise<VerifyReportDTO> {
     return this.exclusive(async () => {
@@ -328,7 +349,7 @@ export class AuditService {
       report.eventSeq = e.seq;
       if (!report.ok) {
         this.ctx.notify({
-          kind: 'info',
+          kind: 'audit.integrity',
           title: 'Audit chain verification FAILED',
           audience: ['approver', 'builder'],
           severity: 'danger',

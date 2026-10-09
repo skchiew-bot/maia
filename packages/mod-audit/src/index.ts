@@ -43,6 +43,7 @@ export function createAuditModule(opts: AuditModuleOptions = {}): AocModule & { 
     init(ctx) {
       ctxRef = ctx;
       svc = new AuditService(ctx, opts);
+      ctx.services.provide('audit', svc);
       // Nightly: governed-config check, anchor the head off-host, verify against every anchor.
       jobs.push({
         name: 'audit.anchor',

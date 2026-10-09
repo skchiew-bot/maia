@@ -143,7 +143,13 @@ describe('git anchors', () => {
       ok: false,
       anchorsMatched: 0,
     });
-    expect(a.notes.some((n) => n.severity === 'danger' && /verification FAILED/.test(n.title))).toBe(true);
+    expect(a.notes).toContainEqual(
+      expect.objectContaining({
+        kind: 'audit.integrity',
+        severity: 'danger',
+        title: 'Audit chain verification FAILED',
+      }),
+    );
   });
 
   it('R2: rewriting the anchor.created events as well is caught by the off-host record, and the forged head is never anchored', async () => {
