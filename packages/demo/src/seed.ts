@@ -304,7 +304,7 @@ function declare(s: SimSession, tree?: TreeState) {
     type: 'plan.declared',
     actor: agent(s.sessionId),
     scope: { sessionId: s.sessionId, projectId: s.project.id },
-    meta: { sessionId: s.sessionId, projectId: s.project.id, threadId: s.thread, manifestVersion: 1, phaseCount: s.plan.phases.length, taskCount: s.plan.phases.flatMap((p) => p.tasks).length, totalWeight: weight, ...(tree ? { baseHead: tree.head, treeFingerprint: tree.fingerprint } : {}) },
+    meta: { sessionId: s.sessionId, projectId: s.project.id, threadId: s.thread, manifestVersion: 1, phaseCount: s.plan.phases.length, taskCount: s.plan.phases.flatMap((p) => p.tasks).length, totalWeight: weight, ...(tree ? { baseHead: tree.head, treeFingerprint: tree.fingerprint } : {}), shape: s.plan.phases.map((ph) => ({ id: ph.id, tasks: ph.tasks.map((t) => ({ id: t.id, size: t.size })) })) },
     payload: { summary: `Plan for ${s.project.name}`, phases: s.plan.phases },
     source: 'mcp',
   });
@@ -535,8 +535,10 @@ for (const t of ticketSpecs) {
       type: 'ticket.diagnosis_reported',
       actor: agent(s.sessionId),
       scope: { ticketId, sessionId: s.sessionId },
-      meta: { ticketId, sessionId: s.sessionId, confidence, rootCauseClass: 'exif-orientation-dropped' },
+      // As mod-intake records it: the class is agent-written text, so it travels in the erasable body and meta keeps null.
+      meta: { ticketId, sessionId: s.sessionId, confidence, rootCauseClass: null },
       payload: {
+        rootCauseClass: 'exif-orientation-dropped',
         rootCause: 'normalizeImage() re-encodes uploads and strips all metadata without applying the EXIF orientation tag first, so portrait photos taken on phones are stored rotated 90 degrees.',
         fixPlan: "Apply the EXIF orientation (sharp().rotate()) before stripping metadata in src/uploads/normalize.ts, add a regression test with a rotated receipt, then verify on UAT with the reporter's receipt.",
         affectedAreas: ['src/uploads/normalize.ts', 'test/uploads/normalize.test.ts'],

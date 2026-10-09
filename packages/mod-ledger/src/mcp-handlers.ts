@@ -133,6 +133,7 @@ export function declarePlan(
       baseHead: repo ? core.git.head(repo) : null,
       treeFingerprint: repo ? core.git.workingTreeFingerprint(repo) : null,
       carriedOver: carry.carried,
+      shape: input.phases.map((ph) => ({ id: ph.id, tasks: ph.tasks.map((t) => ({ id: t.id, size: t.size })) })),
     },
     payload: {
       ...(input.summary !== undefined ? { summary: input.summary } : {}),
@@ -240,6 +241,11 @@ export function amendPlan(core: LedgerCore, sessionId: string, input: AmendPlanI
       newTotalWeight,
       ownerId: session.ownerId ?? manifest.owner_id,
       carriedOver: carry.carried,
+      shape: {
+        ...(add.length ? { add: add.map((t) => ({ id: t.id, phaseId: t.phaseId, size: t.size })) } : {}),
+        ...(remove.length ? { remove } : {}),
+        ...(resize.length ? { resize: resize.map((r) => ({ taskId: r.taskId, size: r.size })) } : {}),
+      },
     },
     payload: {
       reason: input.reason,

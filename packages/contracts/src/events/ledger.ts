@@ -4,6 +4,17 @@ import { EVIDENCE_KINDS, PLAYBOOK_STEP_STATES, TASK_SIZES } from '../mcp';
 import { defineEvent, meta, payload, zHash, zId, zLabel, zNonNeg, zSha } from './define';
 
 const task = z.object({ id: zId, title: z.string(), size: z.enum(TASK_SIZES), acceptance: z.string().optional() });
+/**
+ * What a plan or amendment is made of without its words: ids and sizes, never titles. The titles live in the erasable
+ * body; the shape is chained in clear (task and phase ids are already, on task.done) so that a manifest whose body
+ * was crypto-shredded (§13) still rebuilds to the same tasks, phases and denominator instead of losing every open task.
+ */
+const planShape = z.array(z.object({ id: zId, tasks: z.array(z.object({ id: zId, size: z.enum(TASK_SIZES) })) }));
+const amendShape = z.object({
+  add: z.array(z.object({ id: zId, phaseId: zId, size: z.enum(TASK_SIZES) })).optional(),
+  remove: z.array(zId).optional(),
+  resize: z.array(z.object({ taskId: zId, size: z.enum(TASK_SIZES) })).optional(),
+});
 
 export const LEDGER_EVENTS = [
   defineEvent({
@@ -66,6 +77,7 @@ export const LEDGER_EVENTS = [
       treeFingerprint: zHash.nullable().optional(),
       /** Open tasks of a predecessor writer session in the same thread taken over by re-declaring their ids (rollover). */
       carriedOver: z.number().int().min(0).optional(),
+      shape: planShape.optional(),
     }),
     payload: payload({ summary: z.string().optional(), phases: z.array(z.object({ id: zId, name: z.string(), tasks: z.array(task) })) }),
   }),
@@ -84,6 +96,7 @@ export const LEDGER_EVENTS = [
       newTotalWeight: zNonNeg,
       ownerId: zId.nullable().optional(),
       carriedOver: z.number().int().min(0).optional(),
+      shape: amendShape.optional(),
     }),
     payload: payload({
       reason: z.string(),
