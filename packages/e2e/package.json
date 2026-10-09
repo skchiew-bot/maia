@@ -1,0 +1,22 @@
+{
+  "name": "@aoc/e2e",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cross-module integration tests: the real hook, MCP-server and sidecar binaries against a real aocd composed of the real modules",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@aoc/contracts": "workspace:*",
+    "@aoc/daemon": "workspace:*",
+    "@aoc/kernel": "workspace:*",
+    "@aoc/mod-sessions": "workspace:*",
+    "@hono/node-server": "1.19.17",
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "fflate": "0.8.3",
+    "hono": "4.13.13",
+    "zod": "3.25.76"
+  }
+}
