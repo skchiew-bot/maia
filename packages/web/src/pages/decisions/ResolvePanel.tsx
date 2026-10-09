@@ -50,7 +50,10 @@ export function ResolvePanel({ card, directory, actions, passkeys }: ResolvePane
   if (!user || card.status !== 'open') return null;
 
   const busy = actions.busy;
-  const secondary = (card.viewer.canWithdraw || card.viewer.canEscalate) && (
+  // Intake gates (fix plan, triage decisions, go-live on a ticket) are answered or the ticket is closed:
+  // withdrawing one would leave the ticket waiting on a gate that no longer exists.
+  const canWithdraw = card.viewer.canWithdraw && card.subjectType !== 'ticket';
+  const secondary = (canWithdraw || card.viewer.canEscalate) && (
     <div className="dec-resolve__more">
       {card.viewer.canEscalate && (
         <Button
@@ -65,7 +68,7 @@ export function ResolvePanel({ card, directory, actions, passkeys }: ResolvePane
           Escalate to the Approver
         </Button>
       )}
-      {card.viewer.canWithdraw && !withdrawOpen && (
+      {canWithdraw && !withdrawOpen && (
         <Button
           size="sm"
           variant="ghost"

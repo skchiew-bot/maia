@@ -335,7 +335,7 @@ export default function TicketPage() {
         breadcrumbs={[{ label: 'Tickets', to: '/tickets' }, { label: shortId(t.ticketId) }]}
         actions={
           !done && (
-            <Button variant="danger" icon="close" onClick={() => setClosing(true)}>
+            <Button icon="close" onClick={() => setClosing(true)}>
               Close ticket…
             </Button>
           )
