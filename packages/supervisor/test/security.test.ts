@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { isLimitNotice } from '../src/throttle';
 import { createHarness, SECRETS, type Harness } from './harness';
 
 let h: Harness | null = null;
@@ -53,6 +54,15 @@ describe('managed turns never start with workspace settings that subvert AOC (§
     writeFileSync(join(cwd, '.claude', 'settings.local.json'), JSON.stringify({ disableAllHooks: true }));
     await expect(h.sup.nudge(id, 'carry on', h.ownerActor)).rejects.toMatchObject({ code: 'workspace_settings_override' });
     expect(h.callsFor(id)).toHaveLength(1);
+  });
+});
+
+describe('limit-notice detection stays linear (it runs on the daemon thread)', () => {
+  it('answers fast on long CLI text built to backtrack', () => {
+    const started = performance.now();
+    expect(isLimitNotice('7'.repeat(100_000))).toBe(false);
+    expect(performance.now() - started).toBeLessThan(200);
+    expect(isLimitNotice(`You've hit your session limit · resets 3pm (Asia/Kuala_Lumpur)\n${'x'.repeat(50_000)}`)).toBe(true);
   });
 });
 

@@ -4,7 +4,7 @@ import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { parseThrottle, parseTranscriptLine, Sidecar, TranscriptTailer, UsageAggregator } from '../src';
+import { detectThrottle, parseThrottle, parseTranscriptLine, Sidecar, TranscriptTailer, UsageAggregator } from '../src';
 
 const asst = (id: string, block: string, usage: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
   JSON.stringify({
@@ -57,6 +57,14 @@ describe('TranscriptTailer', () => {
     writeFileSync(f, '{"c":3}\n'); // truncated + rewritten
     t.poll();
     expect(lines.at(-1)).toBe('{"c":3}');
+  });
+});
+
+describe('detectThrottle on long transcript text', () => {
+  it('stays linear (a repo hook can put arbitrary text in a system line)', () => {
+    const started = performance.now();
+    expect(detectThrottle({ type: 'system', content: '7'.repeat(100_000) } as never)).toBeNull();
+    expect(performance.now() - started).toBeLessThan(200);
   });
 });
 
