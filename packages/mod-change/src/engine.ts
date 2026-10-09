@@ -315,6 +315,13 @@ export class ChangeEngine implements ChangeService {
     return remotes.length ? { kind: 'unconfigured', remotes } : { kind: 'local' };
   }
 
+  /** Refuses up front what could only fail after approval: a project with remotes but no promotion remote. */
+  private requireTarget(projectId: string, repo: string, clone: ServiceClone): void {
+    const target = this.target(projectId, repo, clone);
+    if (target.kind === 'unconfigured')
+      throw new HttpError(422, 'promotion_remote_unconfigured', this.unconfiguredDetail(target, clone));
+  }
+
   private unconfiguredDetail(target: { remotes: string[] }, clone: ServiceClone): string {
     return (
       `the project repository has the remote(s) ${target.remotes.join(', ')} but AOC has no promotion remote for it, ` +
@@ -962,6 +969,8 @@ export class ChangeEngine implements ChangeService {
     if (changeId && this.change(changeId).project_id !== input.projectId)
       throw new HttpError(422, 'change_project_mismatch', 'The change record belongs to another project');
     const targetSha = this.resolvePinnedTarget(input.projectId, input.targetRef);
+    const repo = this.requireRepo(input.projectId);
+    this.cloneOrFail(() => this.requireTarget(input.projectId, repo, this.serviceClone(input.projectId, repo)));
     const rollbackId = newId('rollback', this.ctx.clock.now());
     this.ctx.store.append({
       type: 'rollback.requested',
@@ -1419,7 +1428,7 @@ export class ChangeEngine implements ChangeService {
     const sha = this.ctx.services.get('git').revParse(repo, input.ref);
     if (!sha) throw new HttpError(422, 'unknown_ref', `${input.ref} does not resolve to a commit`);
     // Copied into the service clone now, so the emergency promotion never depends on the agents' repository.
-    this.cloneOrFail(() => this.withCommit(input.projectId, repo, sha));
+    this.cloneOrFail(() => this.requireTarget(input.projectId, repo, this.withCommit(input.projectId, repo, sha)));
     const decisions = this.ctx.services.maybe('decisions');
     if (!decisions)
       throw new HttpError(503, 'decisions_unavailable', 'The decision service is not available');
@@ -1615,6 +1624,7 @@ export class ChangeEngine implements ChangeService {
     const branch = this.defaultBranch(input.projectId);
     const { clone, base } = this.cloneOrFail(() => {
       const c = this.withCommit(input.projectId, repo, fromSha);
+      this.requireTarget(input.projectId, repo, c);
       return { clone: c, base: this.base(repo, c, branch, this.target(input.projectId, repo, c)) };
     });
     if (!base) throw new HttpError(422, 'default_branch_missing', `Default branch ${branch} not found`);

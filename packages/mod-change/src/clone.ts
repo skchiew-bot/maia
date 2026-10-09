@@ -75,7 +75,7 @@ export class ServiceClone {
         '--bare',
         '--template=',
         `--object-format=${project.objectFormat}`,
-        '--initial-branch=aoc',
+        '--initial-branch=aoc-service-clone',
         path,
       ]);
       if (init.code !== 0) throw new RepoOpError('clone_unusable', `could not create ${path}: ${output(init)}`);

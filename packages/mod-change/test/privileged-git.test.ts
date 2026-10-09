@@ -255,16 +255,40 @@ describe('G-04: privileged git never runs in agent-writable trees', { timeout: 6
 
   it('never pushes where the project repository points: with remotes there and none configured, nothing moves', async () => {
     await setup();
+    const local = feature('feature/local-first', 'l.ts');
+    const requested = await h.t.json<PromotionDTO>('POST', '/api/promotions', {
+      headers: h.builder.headers,
+      body: { projectId: PROJECT, fromRef: 'feature/local-first', changeId },
+      expect: 202,
+    });
+    // A remote appears in the project repository between request and approval: refused at execution.
     const remote = addGuardedRemote(repo);
-    feature('feature/unconfigured', 'u.ts');
-    const done = await promote('feature/unconfigured');
-    expect(done.status).toBe('failed');
+    await h.t.decisions!.resolve(requested.decisionId!, { optionId: 'approve', ...PASSKEY }, h.approver.user);
+    await h.settle();
     expect(h.t.rt.store.list({ types: ['promotion.failed'] })[0]!.meta).toMatchObject({
       reason: 'promotion_remote_unconfigured',
     });
-    expect(remoteHead(remote)).toBe(bad);
     expect(repo.head('main')).toBe(bad);
+    expect(remoteHead(remote)).toBe(bad);
+
+    // Requested while unconfigured: refused up front, before any gate is raised.
+    feature('feature/unconfigured', 'u.ts');
+    const res = await h.t.request('POST', '/api/promotions', {
+      headers: h.builder.headers,
+      body: { projectId: PROJECT, fromRef: 'feature/unconfigured', changeId },
+    });
+    expect(res.status).toBe(422);
+    const err = ((await res.json()) as { error: { code: string; message: string } }).error;
+    expect(err.code).toBe('promotion_remote_unconfigured');
+    expect(err.message).toContain(`git --git-dir=${h.mod.engine.serviceClonePath(PROJECT)} remote add origin`);
+    const rb = await h.t.request('POST', '/api/rollbacks', {
+      headers: h.builder.headers,
+      body: { projectId: PROJECT, targetRef: 'aoc/phase/p1', reason: 'x' },
+    });
+    expect(rb.status).toBe(422);
+    expect(h.t.decisions!.list({ kind: ['go_live', 'rollback'] })).toHaveLength(1);
     expect(h.sup.calls.some((c) => c.credentialProfile !== null)).toBe(false);
+    expect(local).not.toBe(bad);
   });
 
   it('takes the promotion remote from static settings, over the clone’s origin', async () => {
