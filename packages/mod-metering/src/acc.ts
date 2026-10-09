@@ -72,18 +72,22 @@ export class CostAcc {
     return this;
   }
 
-  /** A live aggregate row, converted to RM with that day's rate (null = FX missing). */
-  addUsage(r: UsageAggRow, fxRate: number | null): this {
+  /**
+   * A live aggregate row, converted to RM with that day's rate (null = FX missing). `share` is the part of the row this
+   * accumulator carries: an outcome takes its part of a session that served several outcomes.
+   */
+  addUsage(r: UsageAggRow, fxRate: number | null, share = 1): this {
+    const part = (n: number) => n * share;
     return this.add({
-      inputTokens: r.input,
-      outputTokens: r.output,
-      cacheReadTokens: r.cache_read,
-      cacheWrite5mTokens: r.cw5m,
-      cacheWrite1hTokens: r.cw1h,
-      messages: r.messages,
-      usd: r.usd,
-      rm: fxRate === null ? null : r.usd * fxRate,
-      unpricedTokens: r.unpriced_tokens,
+      inputTokens: part(r.input),
+      outputTokens: part(r.output),
+      cacheReadTokens: part(r.cache_read),
+      cacheWrite5mTokens: part(r.cw5m),
+      cacheWrite1hTokens: part(r.cw1h),
+      messages: part(r.messages),
+      usd: part(r.usd),
+      rm: fxRate === null ? null : part(r.usd) * fxRate,
+      unpricedTokens: part(r.unpriced_tokens),
       unpricedModels: models(r.unpriced_models),
       tierPricedModels: models(r.tier_models),
     });
