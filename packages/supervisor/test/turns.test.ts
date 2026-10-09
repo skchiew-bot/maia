@@ -238,6 +238,23 @@ describe('turn end: crash, auto-continue, completion, credit cap', () => {
     expect(h.callsFor(id).length).toBe(1);
   });
 
+  it('stops the sidecar as soon as its turn ends, and revokes its token once that last report is in', async () => {
+    h = await createHarness({ sidecarHold: true, supervisor: { autoContinueLimit: 1 } });
+    h.ledger.defaultPct = 100;
+    const id = await h.launch('Finish');
+    await h.waitLifecycle(id, 'ended');
+    const ended = Date.now();
+    // the session token dies with the session; the sidecar is told to report what is left at once, not after the grace
+    expect(h.t.identity!.verifyIngestToken(h.callsFor(id)[0]!.env.AOC_INGEST_TOKEN!)).toBeNull();
+    await h.waitFor(() => h!.sidecarSignals().length === 1, 'sidecar stopped', 3_000);
+    expect(h.sidecarSignals()[0]!.at - ended).toBeLessThan(2_000);
+    const sidecarToken = h.sidecarCalls()[0]!.env.AOC_INGEST_TOKEN!;
+    // … with its token still valid while it does
+    expect(h.t.identity!.verifyIngestToken(sidecarToken)).toMatchObject({ kind: 'sidecar', sessionId: id });
+    h.releaseSidecars();
+    await h.waitFor(() => h!.t.identity!.verifyIngestToken(sidecarToken) === null, 'sidecar token revoked');
+  });
+
   it('blocks when the credit cap is reached during a turn and resumes on a top-up', async () => {
     h = await createHarness();
     const gate = h.gate();

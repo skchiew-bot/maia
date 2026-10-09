@@ -189,7 +189,7 @@ describe('usage + throttle ingest', () => {
     await setup();
     const owner = t.user('builder');
     launch(owner);
-    const headers = t.ingestHeaders('ses_A');
+    const headers = t.sidecarHeaders('ses_A');
     const batch = (ids: string[], ctx: number) => ({ model: 'claude-opus-5-5', inputTokens: 10, outputTokens: 20, cacheReadTokens: 1000, cacheWrite5mTokens: 5, cacheWrite1hTokens: 0, messageIds: ids, firstAt: t.clock.iso(), lastAt: t.clock.iso(), contextTokens: ctx });
     const r1 = await t.json<{ recorded: number }>('POST', '/ingest/usage', { headers, body: { sessionId: 'ses_A', idempotencyKey: 'usage-key-1', batches: [batch(['m1', 'm2'], 50_000)] } });
     const r2 = await t.json<{ recorded: number; skipped: number }>('POST', '/ingest/usage', { headers, body: { sessionId: 'ses_A', idempotencyKey: 'usage-key-2', batches: [batch(['m1', 'm2'], 50_000), batch(['m3'], 120_000)] } });

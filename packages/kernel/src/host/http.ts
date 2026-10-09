@@ -30,11 +30,17 @@ export function requirePermission(c: Ctx, perm: Permission): AuthContext {
   return auth;
 }
 
-/** Ingest auth: session tokens may only write for their own session; observer tokens only observed events. */
-export function requireIngest(c: Ctx, opts: { sessionId?: string | null; allowObserver?: boolean; allowSystem?: boolean } = {}): IngestPrincipal {
+/**
+ * Ingest auth: session (and sidecar) tokens may only write for their own session; observer tokens only observed
+ * events. A sidecar token is refused unless the route asks for it (`allowSidecar`): it never posts hooks or MCP calls.
+ */
+export function requireIngest(
+  c: Ctx,
+  opts: { sessionId?: string | null; allowObserver?: boolean; allowSystem?: boolean; allowSidecar?: boolean } = {},
+): IngestPrincipal {
   const p = c.get('ingest');
   if (!p) throw new HttpError(401, 'unauthenticated', 'Ingest token required');
-  if (p.kind === 'session') {
+  if (p.kind === 'session' || (p.kind === 'sidecar' && opts.allowSidecar)) {
     if (opts.sessionId && opts.sessionId !== p.sessionId) throw new HttpError(403, 'forbidden', 'Token not valid for this session');
     return p;
   }

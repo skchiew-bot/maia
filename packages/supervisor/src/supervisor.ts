@@ -23,6 +23,7 @@ import {
   AOC_MCP_SERVER_NAME,
   MODEL_CONTEXT_TOKENS,
   MODEL_ID_BY_TIER,
+  SIDECAR_READY_LINE,
   claudeConfigDir,
   modelTierOf,
   newId,
@@ -118,6 +119,7 @@ type ContextInfo = { contextTokens: number; contextPct: number };
 
 const SYSTEM: Actor = { kind: 'system', id: 'supervisor' };
 const CLOSE_GRACE_MS = 2_000;
+/** A finished turn's sidecar is stopped (report what is left) once ready, else after this; killed after twice this. */
 const SIDECAR_GRACE_MS = 5_000;
 const MAX_BUFFERED_SESSIONS = 256;
 /** Turn outcomes that prove the model answered, so the conversation exists even when its transcript is not found. */
@@ -167,6 +169,8 @@ interface LiveTurn {
   interrupt: Interrupt | null;
   killTimer: NodeJS.Timeout | null;
   sidecar: ChildProcess | null;
+  /** Settles once the sidecar handles SIGTERM (its ready line) or has exited. */
+  sidecarReady: Promise<void> | null;
   exit: { code: number | null; signal: NodeJS.Signals | null } | null;
   settled: boolean;
   closed: Promise<void>;
@@ -180,7 +184,6 @@ interface SpawnPlan {
   prompt: string;
   claudeSessionId: string;
   transcriptPath: string;
-  token: string;
   dir: string;
 }
 
@@ -192,6 +195,10 @@ export class Supervisor implements SupervisorService {
   private readonly queue: TurnRequest[] = [];
   private readonly outputs = new Map<string, RingBuffer<SessionOutputItem>>();
   private readonly tokens = new Map<string, string>();
+  /** Sidecar tokens: only ever in a sidecar's environment, never in claude's (G-44). */
+  private readonly sidecarTokens = new Map<string, string>();
+  /** Per session: settles once the sidecars of its finished turns have exited, so their last reports are in. */
+  private readonly reports = new Map<string, Promise<void>>();
   private readonly claudeIds = new Map<string, string>();
   private readonly conversations = new Set<string>();
   private readonly lastContext = new Map<string, number>();
@@ -472,6 +479,11 @@ export class Supervisor implements SupervisorService {
    */
   async recover(): Promise<void> {
     const now = this.ctx.clock.now();
+    // A sidecar token outlives its session by the last report (seconds); a stop or crash in between must not leave it
+    // valid. Only sessions that ended last can be in that window.
+    const identity = this.ctx.services.maybe('identity');
+    const recent = this.ctx.store.list({ types: ['session.ended'], order: 'desc', limit: 64 });
+    for (const e of recent) identity?.revokeIngestTokensFor(String(e.meta.sessionId), SYSTEM, 'sidecar');
     for (const s of this.view.byLifecycle(['launching', 'running'])) {
       if (s.lifecycle === 'launching' && s.turn === 0) {
         const prompt = this.launchPrompt(s.sessionId);
@@ -790,6 +802,7 @@ export class Supervisor implements SupervisorService {
       interrupt: null,
       killTimer: null,
       sidecar: null,
+      sidecarReady: null,
       exit: null,
       settled: false,
       closed,
@@ -978,7 +991,6 @@ export class Supervisor implements SupervisorService {
       prompt,
       claudeSessionId,
       transcriptPath,
-      token,
       dir,
     };
   }
@@ -1116,8 +1128,9 @@ export class Supervisor implements SupervisorService {
     live.child?.stdout?.destroy();
     live.child?.stderr?.destroy();
     if (this.running.get(live.sessionId) === live) this.running.delete(live.sessionId);
-    const sidecar = live.sidecar;
-    if (sidecar) this.later(() => sidecar.exitCode === null && sidecar.kill('SIGTERM'), SIDECAR_GRACE_MS);
+    // Before the next turn can write to the same transcript: the sidecar reports exactly this turn's tail.
+    const reported = this.stopSidecar(live);
+    this.afterReports(live.sessionId, () => reported);
     live.markClosed();
     if (this.stopping) return;
     this.liveness()?.recordProcess(live.sessionId, false, null);
@@ -1694,9 +1707,60 @@ export class Supervisor implements SupervisorService {
     return token;
   }
 
+  private sidecarTokenFor(sessionId: string, actor: Actor): string {
+    const known = this.sidecarTokens.get(sessionId);
+    if (known) return known;
+    const token = this.ctx.services.get('identity').issueSidecarToken(sessionId, actor);
+    this.sidecarTokens.set(sessionId, token);
+    return token;
+  }
+
   private revokeToken(sessionId: string, actor: Actor): void {
     this.tokens.delete(sessionId);
-    this.ctx.services.maybe('identity')?.revokeIngestTokensFor(sessionId, actor);
+    const identity = this.ctx.services.maybe('identity');
+    identity?.revokeIngestTokensFor(sessionId, actor, 'session');
+    // The sidecar still reports the last turn's tail after its process exited: its token dies once that is in.
+    this.afterReports(sessionId, () => {
+      this.sidecarTokens.delete(sessionId);
+      if (!this.stopping) identity?.revokeIngestTokensFor(sessionId, actor, 'sidecar');
+    });
+  }
+
+  /** Runs `next` once the session's earlier reports are in (one chain per session, in turn order). */
+  private afterReports(sessionId: string, next: () => void | Promise<void>): void {
+    const run = (this.reports.get(sessionId) ?? Promise.resolve())
+      .then(next)
+      .catch((err) => this.log.warn('sidecar report handling failed', { sessionId, err: String(err) }));
+    this.reports.set(sessionId, run);
+    void run.then(() => {
+      if (this.reports.get(sessionId) === run) this.reports.delete(sessionId);
+    });
+  }
+
+  /**
+   * Stops a finished turn's sidecar as soon as it is ready for it: its process is gone, so it reports what is left and
+   * exits. Without a ready line it is stopped after the grace, and killed after twice that. Settles once it has exited.
+   */
+  private stopSidecar(live: LiveTurn): Promise<void> {
+    const sc = live.sidecar;
+    const running = () => !!sc && sc.exitCode === null && sc.signalCode === null;
+    if (!sc || !running()) return Promise.resolve();
+    return new Promise<void>((done) => {
+      const timers: NodeJS.Timeout[] = [];
+      const finish = () => {
+        for (const t of timers) this.cancel(t);
+        done();
+      };
+      const stop = (signal: NodeJS.Signals) => running() && sc.kill(signal);
+      sc.once('exit', finish);
+      sc.once('error', finish);
+      void live.sidecarReady?.then(() => stop('SIGTERM'));
+      timers.push(
+        this.later(() => stop('SIGTERM'), SIDECAR_GRACE_MS),
+        this.later(() => stop('SIGKILL'), 2 * SIDECAR_GRACE_MS),
+        this.later(finish, 2 * SIDECAR_GRACE_MS + 1_000),
+      );
+    });
   }
 
   private startSidecar(live: LiveTurn, plan: SpawnPlan): void {
@@ -1715,20 +1779,34 @@ export class Supervisor implements SupervisorService {
       this.ctx.config.publicUrl,
     ];
     args.push('--state-dir', join(plan.dir, 'sidecar'));
-    // The ingest token travels in the env, not argv: a command line is readable by every local user.
-    const env = buildSessionEnv({
-      source: this.sourceEnv(),
-      allowlist: sup.envAllowlist,
-      credentials: null,
-      readOnly: true,
-      aoc: { [AOC_ENV.ingestToken]: plan.token, [AOC_ENV.daemonUrl]: this.ctx.config.publicUrl },
-      timezone: this.ctx.config.timezone,
-    });
     try {
-      const child = spawn(bin, args, { env, stdio: 'ignore' });
+      // The session's sidecar token, in this env only (never argv, readable by every local user; never claude's env,
+      // readable by the model): heartbeats, usage, throttles and exits reach aocd only from this process (G-44).
+      const env = buildSessionEnv({
+        source: this.sourceEnv(),
+        allowlist: sup.envAllowlist,
+        credentials: null,
+        readOnly: true,
+        aoc: {
+          [AOC_ENV.ingestToken]: this.sidecarTokenFor(live.sessionId, live.req.actor),
+          [AOC_ENV.daemonUrl]: this.ctx.config.publicUrl,
+        },
+        timezone: this.ctx.config.timezone,
+      });
+      const child = spawn(bin, args, { env, stdio: ['ignore', 'pipe', 'ignore'] });
       child.on('error', (err) =>
         this.log.warn('sidecar failed', { sessionId: live.sessionId, err: err.message }),
       );
+      live.sidecarReady = new Promise<void>((ready) => {
+        let seen = '';
+        child.stdout!.setEncoding('utf8');
+        child.stdout!.on('data', (chunk: string) => {
+          seen = (seen + chunk).slice(-2 * SIDECAR_READY_LINE.length);
+          if (seen.includes(SIDECAR_READY_LINE)) ready();
+        });
+        child.once('exit', () => ready());
+        child.once('error', () => ready());
+      });
       child.on('exit', () => this.sidecars.delete(child));
       this.sidecars.add(child);
       live.sidecar = child;
@@ -1795,6 +1873,11 @@ export class Supervisor implements SupervisorService {
 
   private sourceEnv(): Record<string, string | undefined> {
     return this.opts.env ?? process.env;
+  }
+
+  private cancel(t: NodeJS.Timeout): void {
+    clearTimeout(t);
+    this.timers.delete(t);
   }
 
   private later(fn: () => void, ms: number): NodeJS.Timeout {

@@ -9,6 +9,7 @@ export const IDENTITY_TOKEN_PREFIX: Record<IdentityTokenKind, string> = {
   user: 'aoc_u_',
   web_session: 'aoc_w_',
   ingest_session: 'aoc_i_',
+  ingest_sidecar: 'aoc_c_',
   observer: 'aoc_o_',
   system: 'aoc_s_',
 };

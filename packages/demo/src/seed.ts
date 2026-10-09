@@ -483,10 +483,14 @@ sessions.refreshAll?.();
 await rt.tickJobs().catch((e) => console.warn('jobs:', String(e)));
 await rt.drain();
 
-// Per-session ingest tokens so the demo pulse can keep live sessions genuinely alive through the real ingest API.
+// Per-session ingest tokens so the demo pulse can keep live sessions genuinely alive through the real ingest API:
+// the session token relays hook events, the sidecar token heartbeats and activity (G-44).
 const identity = rt.services.get('identity');
 const liveTokens = Object.fromEntries(
-  Object.entries(live).map(([k, s]) => [k, { sessionId: s.sessionId, claudeSessionId: s.claude, token: identity.issueIngestToken(s.sessionId, sys('demo')) }]),
+  Object.entries(live).map(([k, s]) => [
+    k,
+    { sessionId: s.sessionId, claudeSessionId: s.claude, token: identity.issueIngestToken(s.sessionId, sys('demo')), sidecarToken: identity.issueSidecarToken(s.sessionId, sys('demo')) },
+  ]),
 );
 const out = {
   dataDir,

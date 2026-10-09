@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createTestRuntime, type TestRuntime, type TestUser } from '@aoc/kernel';
-import { createSessionsModule } from '../src';
+import { createSessionsModule, type SessionsEngine } from '../src';
 
 const CLAUDE_A = '11111111-1111-4111-8111-111111111111';
 let t: TestRuntime;
@@ -115,5 +115,97 @@ describe('observer tokens never write into managed sessions', () => {
     });
     expect(spool).toMatchObject({ accepted: 0, rejected: 3 });
     expect(t.rt.store.list({ fromSeq: before + 1 }).filter((e) => e.type !== 'session.liveness_changed')).toEqual([]);
+  });
+});
+
+describe('sidecar reports come only from the session’s own sidecar principal (G-44)', () => {
+  const AT = '2026-10-09T02:00:00.000Z';
+  const reports = (sid: string): [string, Record<string, unknown>][] => [
+    ['/ingest/heartbeat', { sessionId: sid, pid: 4242, alive: true, at: AT, transcriptBytes: 10, lastTranscriptWriteAt: AT }],
+    ['/ingest/activity', { sessionId: sid, kind: 'stream', at: AT }],
+    [
+      '/ingest/usage',
+      {
+        sessionId: sid,
+        idempotencyKey: `usage-${sid}-0001`,
+        batches: [
+          { model: 'claude-opus-5-5', inputTokens: 3, outputTokens: 40, cacheReadTokens: 900, cacheWrite5mTokens: 0, cacheWrite1hTokens: 60, messageIds: ['msg_1'], firstAt: AT, lastAt: AT, contextTokens: 963 },
+        ],
+      },
+    ],
+    ['/ingest/throttle', { sessionId: sid, resetAt: null, message: 'usage limit reached', source: 'transcript' }],
+    ['/ingest/process', { sessionId: sid, event: 'exited', exitCode: 0, signal: null, at: AT }],
+  ];
+  const engine = () => t.rt.services.get('sessions') as unknown as SessionsEngine;
+  const reported = () => t.rt.store.list({ types: ['usage.recorded', 'throttle.hit'] });
+
+  it('refuses the session token the model can read (403), and every principal but the sidecar of that session', async () => {
+    await setup();
+    const owner = t.user('builder');
+    launch(owner);
+    launch(owner, 'ses_B', randomUUID());
+    const refusals: [Record<string, string>, string][] = [
+      [t.ingestHeaders('ses_A'), 'sidecar_token_required'],
+      [t.ingestHeaders('system'), 'sidecar_token_required'],
+      [t.sidecarHeaders('ses_B'), 'forbidden'],
+    ];
+    for (const [headers, code] of refusals) {
+      for (const [path, body] of reports('ses_A')) {
+        const res = await t.request('POST', path, { headers, body });
+        expect(res.status, path).toBe(403);
+        expect(((await res.json()) as { error: { code: string } }).error.code, path).toBe(code);
+      }
+    }
+    for (const [path, body] of reports('ses_A'))
+      expect((await t.request('POST', path, { headers: t.ingestHeaders('observer'), body })).status, path).toBeGreaterThanOrEqual(403);
+    expect(reported()).toEqual([]);
+    expect(engine().signalsOf('ses_A')).toMatchObject({ lastHeartbeatAt: null, processAlive: null });
+
+    const sidecar = t.sidecarHeaders('ses_A');
+    for (const [path, body] of reports('ses_A')) expect((await t.request('POST', path, { headers: sidecar, body })).status, path).toBe(200);
+    expect(reported().map((e) => [e.type, e.scope.sessionId, e.source])).toEqual([
+      ['usage.recorded', 'ses_A', 'sidecar'],
+      ['throttle.hit', 'ses_A', 'sidecar'],
+    ]);
+    expect(engine().signalsOf('ses_A')).toMatchObject({ processAlive: false });
+  });
+
+  it('keeps observed sessions on the observer token', async () => {
+    await setup();
+    const claudeObs = randomUUID();
+    const observer = t.ingestHeaders('observer');
+    await t.json('POST', '/ingest/hook', { headers: observer, body: hook(null, claudeObs, 'SessionStart', { source: 'startup' }, 'observed') });
+    const [, usage] = reports(claudeObs)[2]!;
+    expect(await t.json('POST', '/ingest/usage', { headers: observer, body: usage })).toMatchObject({ recorded: 1 });
+    const obs = engine().byClaudeSessionId(claudeObs)!;
+    expect(reported().map((e) => [e.scope.sessionId, e.source])).toEqual([[obs.sessionId, 'hook']]);
+    // a sidecar token belongs to a managed session: it cannot report for an observed one
+    expect((await t.request('POST', '/ingest/usage', { headers: t.sidecarHeaders(obs.sessionId), body: { ...usage, sessionId: obs.sessionId } })).status).toBe(404);
+  });
+
+  it('never lets the sidecar post hook events, and holds spool replays to the same per-item rules', async () => {
+    await setup();
+    const owner = t.user('builder');
+    launch(owner);
+    const sidecar = t.sidecarHeaders('ses_A');
+    const tool = hook('ses_A', CLAUDE_A, 'PostToolUse', { tool_name: 'Edit', tool_input: { file_path: '/tmp/repo/a.ts' }, tool_response: { ok: true } });
+    expect((await t.request('POST', '/ingest/hook', { headers: sidecar, body: tool })).status).toBe(403);
+    expect(await t.json('POST', '/ingest/spool', { headers: sidecar, body: { items: [{ path: '/ingest/hook', body: tool, queuedAt: AT }] } })).toMatchObject({
+      accepted: 0,
+      rejected: 1,
+    });
+    // the session token cannot slip usage, a throttle or an exit in through a spool flush either
+    const spooled = reports('ses_A')
+      .filter(([path]) => ['/ingest/usage', '/ingest/throttle', '/ingest/process'].includes(path))
+      .map(([path, body]) => ({ path, body, queuedAt: AT }));
+    expect(await t.json('POST', '/ingest/spool', { headers: t.ingestHeaders('ses_A'), body: { items: spooled } })).toMatchObject({
+      accepted: 0,
+      rejected: 3,
+    });
+    expect(t.rt.store.list({ types: ['tool.used', 'usage.recorded', 'throttle.hit'] })).toEqual([]);
+    expect(engine().signalsOf('ses_A').processAlive).toBeNull();
+    // the session token still relays the hook itself
+    expect((await t.request('POST', '/ingest/hook', { headers: t.ingestHeaders('ses_A'), body: tool })).status).toBe(200);
+    expect(t.rt.store.list({ types: ['tool.used'] })).toHaveLength(1);
   });
 });

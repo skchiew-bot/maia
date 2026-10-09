@@ -1,6 +1,24 @@
 #!/usr/bin/env node
-// Fake per-session sidecar: `node fake-sidecar.mjs <log file> --session … --pid …`. Records argv and env names.
-import { appendFileSync } from 'node:fs';
+// Fake per-session sidecar: `node fake-sidecar.mjs <log file> [--hold <dir>] --session … --pid …`. Records argv and env.
+// With --hold it runs until SIGTERM (announced ready like the real one), records the signal in <log>.signals, then exits
+// once <dir>/release exists (or after 3 s): the window in which a real sidecar posts its turn's last report.
+import { appendFileSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
 
 const [log, ...args] = process.argv.slice(2);
 appendFileSync(log, JSON.stringify({ args, env: process.env }) + '\n');
+const hold = args.indexOf('--hold');
+if (hold >= 0) {
+  const release = join(args[hold + 1], 'release');
+  const keepAlive = setInterval(() => {}, 1000);
+  process.on('SIGTERM', () => {
+    appendFileSync(`${log}.signals`, JSON.stringify({ pid: process.pid, signal: 'SIGTERM', at: Date.now() }) + '\n');
+    const started = Date.now();
+    const poll = setInterval(() => {
+      if (!existsSync(release) && Date.now() - started < 3000) return;
+      clearInterval(poll);
+      clearInterval(keepAlive);
+    }, 10);
+  });
+  process.stdout.write('aoc-sidecar ready\n'); // SIDECAR_READY_LINE
+}

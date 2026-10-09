@@ -26,6 +26,12 @@ export const AOC_ENV = {
   readOnly: 'AOC_READ_ONLY',
 } as const;
 
+/**
+ * The sidecar prints this line on stdout once it handles SIGTERM (report what is left, then exit): the supervisor
+ * stops a finished turn's sidecar no earlier, or the signal would kill it before it reported anything.
+ */
+export const SIDECAR_READY_LINE = 'aoc-sidecar ready';
+
 export interface HookIngestRequest {
   mode: 'managed' | 'observed';
   /** AOC session id (managed: from env). Observed sessions are keyed by claude session id. */

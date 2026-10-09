@@ -54,6 +54,7 @@ export class Sidecar {
   private throttleActive: boolean;
   private stopped = false;
   private exiting: Promise<void> | null = null;
+  private flushing: Promise<unknown> = Promise.resolve();
   private readonly stateFile: string;
   private readonly isAlive: (pid: number) => boolean;
   private readonly now: () => Date;
@@ -135,7 +136,14 @@ export class Sidecar {
     }
   }
 
-  async flush(): Promise<number> {
+  /** One flush at a time: a later one (e.g. on shutdown) waits until an earlier one's report is delivered or spooled. */
+  flush(): Promise<number> {
+    const run = this.flushing.then(() => this.flushNow());
+    this.flushing = run.catch(() => 0);
+    return run;
+  }
+
+  private async flushNow(): Promise<number> {
     this.tailer.poll();
     this.pollSubagents();
     const batches = this.agg.drain();
@@ -182,5 +190,12 @@ export class Sidecar {
     if (this.hbTimer) clearInterval(this.hbTimer);
     if (this.flushTimer) clearInterval(this.flushTimer);
     this.tailer.stop();
+  }
+
+  /** Stop and report what is left (SIGTERM): an exit report already under way is finished, never cut off. */
+  async shutdown(): Promise<void> {
+    if (this.exiting) return this.exiting;
+    this.stop();
+    await this.flush();
   }
 }

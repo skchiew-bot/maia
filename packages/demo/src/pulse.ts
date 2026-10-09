@@ -1,7 +1,7 @@
 /**
  * Demo pulse — keeps the seeded "live" sessions behaving like real ones through the REAL ingest API:
  * working = heartbeats + tool calls, thinking = heartbeats + streaming, stalled = heartbeats only,
- * dead = nothing. `pnpm --filter @aoc/demo pulse -- --data-dir <dir> --daemon http://127.0.0.1:7420`
+ * dead = nothing. Heartbeats and activity go out with each session's sidecar token, hook events with its session token. `pnpm --filter @aoc/demo pulse -- --data-dir <dir> --daemon http://127.0.0.1:7420`
  */
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -14,7 +14,7 @@ const arg = (n: string, d: string) => {
 const dataDir = resolve(arg('data-dir', '.aoc/demo'));
 const daemon = arg('daemon', 'http://127.0.0.1:7420').replace(/\/+$/, '');
 const demo = JSON.parse(readFileSync(join(dataDir, 'demo-tokens.json'), 'utf8')) as {
-  live: Record<string, { sessionId: string; claudeSessionId: string; token: string }>;
+  live: Record<string, { sessionId: string; claudeSessionId: string; token: string; sidecarToken: string }>;
 };
 
 async function post(path: string, token: string, body: unknown): Promise<void> {
@@ -32,8 +32,8 @@ async function beat(): Promise<void> {
   const at = new Date().toISOString();
   for (const [kind, s] of Object.entries(demo.live)) {
     if (kind === 'dead' || kind === 'waiting' || kind === 'throttled') continue;
-    await post('/ingest/heartbeat', s.token, { sessionId: s.sessionId, pid: 4242, alive: true, at, transcriptBytes: 1000 + tick, lastTranscriptWriteAt: kind === 'stalled' ? null : at });
-    if (kind === 'thinking') await post('/ingest/activity', s.token, { sessionId: s.sessionId, kind: 'stream', at });
+    await post('/ingest/heartbeat', s.sidecarToken, { sessionId: s.sessionId, pid: 4242, alive: true, at, transcriptBytes: 1000 + tick, lastTranscriptWriteAt: kind === 'stalled' ? null : at });
+    if (kind === 'thinking') await post('/ingest/activity', s.sidecarToken, { sessionId: s.sessionId, kind: 'stream', at });
     if (kind === 'working' && Math.random() < 0.8) {
       const tool = TOOLS[tick % TOOLS.length]!;
       const base = { session_id: s.claudeSessionId, transcript_path: '/tmp/demo.jsonl', cwd: '/tmp/demo' };
