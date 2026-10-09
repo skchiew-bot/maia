@@ -37,6 +37,16 @@
   color: var(--text-3);
 }
 
+/* ---- States that need a human are solid (approved mock, decision 5); Working and Thinking stay soft ---- */
+.aoc-liveness:is([data-tone='waiting'], [data-tone='throttled'], [data-tone='dead'], [data-tone='stalled']) {
+  background: var(--lv-fg);
+  box-shadow: none;
+}
+.aoc-liveness:is([data-tone='waiting'], [data-tone='throttled'], [data-tone='dead'], [data-tone='stalled'])
+  :is(.aoc-liveness__icon, .aoc-liveness__word, .aoc-liveness__detail, .aoc-liveness__detail::before) {
+  color: var(--text-inverse);
+}
+
 /* ---- Alive indicator: static dot; one pulse per activity event ---- */
 .aoc-alive {
   position: relative;
