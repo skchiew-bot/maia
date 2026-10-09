@@ -282,9 +282,9 @@ The host that runs aocd and the supervisor. Items 1–3 are enforced by aocd whe
    sessions, so `git push` worked inside the session. Now those fields are the credential and stay with aocd: add
    `push.refs` for the branches the type may push, and move anything a session itself must read into `session`.
    Without `push`, sessions of the type have no way to push. A key path written straight into an env value still
-   works for aocd's own commands. The `prod-promote` profile (mod-change's `promoteCredentialProfile`) is used
-   only by the push from the service clone, as aocd (item 9); it has no `push` and its key never reaches a session
-   user.
+   works for aocd's own commands. The `prod-promote` profile (`promotion.promoteCredentialProfile` in aocd's
+   configuration, or a project's own `promoteCredentialProfile`) is used only by the push from the service clone, as
+   aocd (item 9); it has no `push` and its key never reaches a session user.
 
 6. **A per-session container instead of a uid switch.** Set `supervisor.runner` to an argv prefix that starts the
    command in a per-session container (or any other wrapper). aocd still runs as root, prepares the session
@@ -306,8 +306,13 @@ The host that runs aocd and the supervisor. Items 1–3 are enforced by aocd whe
    aocd does by itself when no runner is set).
 
 7. **No process type names the promotion profile.** Check:
-   `jq -r '.types[].credentialProfile' config/process-types.json | sort -u` must not list `prod-promote`.
-   `config/` is a protected path, and every edit is audited (`registry.changed`).
+   `jq -r '.types[].credentialProfile' config/process-types.json | sort -u` must not list `prod-promote` (nor any
+   other profile the `promotion` section of aocd's configuration names, item 9).
+   `config/` is a protected path, and every edit is audited (`registry.changed`). aocd enforces it too: at start,
+   for the registry it loads (production refuses to start, development warns), and on every launch whatever the
+   registry says, because the registry can change while aocd runs. A launch of a type that names a promotion profile
+   is refused (`promotion_profile_forbidden`, HTTP 500) before anything starts, and no session of it can use the push
+   gateway.
 8. **Environment allowlist.** Review `supervisor.envAllowlist`. Everything not on it is dropped from session
    environments. Remove what you do not need. The Claude credentials on the default list are readable by the model
    (threat model O-14). Helpers aocd starts itself get a fixed allowlist of their own, never `AOC_*`, API keys or
@@ -345,12 +350,30 @@ The host that runs aocd and the supervisor. Items 1–3 are enforced by aocd whe
      (a wildcard would let root's git read every agent-written repository).
    - **Provenance and the fast-forward checks** run in the clone, against where AOC last moved the branch, and run
      again when the approved promotion executes. The project repository's own view of `main` cannot hide an orphan.
-   - **The push target is AOC's configuration, never the project's.** It is the service clone's `origin`
+   - **The push target is AOC's configuration, never the project's.** It is
+     `promotion.projects.<projectId>.promotionRemote` in aocd's configuration, else the service clone's `origin`
      (`remote.origin.pushurl` wins over `url`). `remote.*`, `pushurl` and `url.*.insteadOf` in the project's
-     `.git/config` are ignored. Only ssh, https and absolute local paths are accepted. When the project repository
-     has remotes and the clone has none configured, promotions, rollbacks and break-glass are refused
+     `.git/config` are ignored. Only ssh, https and absolute local paths are accepted (aocd refuses to load a
+     configuration with any other, or with a credential in the URL: the profile carries that). When the project
+     repository has remotes and neither is configured, promotions, rollbacks and break-glass are refused
      (`promotion_remote_unconfigured`), already when they are requested, so no approver is asked first. A project
      with no remote at all has its own branch moved.
+   - **The credential profile is `promotion.promoteCredentialProfile`** (default `prod-promote`), or the project's
+     own `promoteCredentialProfile`:
+
+     ```json
+     "promotion": {
+       "promoteCredentialProfile": "prod-promote",
+       "projects": {
+         "prj_web": { "promotionRemote": "git@github.com:your-org/web.git", "promoteCredentialProfile": "web-promote" }
+       }
+     }
+     ```
+
+     Production mode refuses to start unless the credential profiles file defines every profile named there (a
+     promotion would otherwise fail only after an Approver's passkey was spent on it); development warns. An entry
+     for a project id that does not exist is warned about at start, not refused, since the project may come later.
+     A change to the section is chained as `config.changed` (`promotion_config`).
    - **The promotion credential reaches one process:** `git push --no-verify` from the service clone. The push is a
      compare-and-swap of a verified fast-forward (`--force-with-lease=<branch>:<verified base>`): the branch moves
      only from the commit whose delta passed the gate, and never backwards, so ruleset A needs no bypass. If the
@@ -373,9 +396,11 @@ The host that runs aocd and the supervisor. Items 1–3 are enforced by aocd whe
    read the profiles file or the key file, and cannot write the service clone. With `isolation: "none"` (the
    development default) any session can do all of that: never put a real credential in the profile there.
 
-   1. Define the `prod-promote` profile (item 5). The key file is root's, mode `0600` (item 2). The push runs as
-      aocd, so the key never reaches a session. Pin the host key (`UserKnownHostsFile`), as in the example.
-   2. Point each project's clone at the protected remote, once, as root:
+   1. Define the `prod-promote` profile, or the profiles the `promotion` section names (item 5). The key file is
+      root's, mode `0600` (item 2). The push runs as aocd, so the key never reaches a session. Pin the host key
+      (`UserKnownHostsFile`), as in the example.
+   2. Name each project's protected remote, once: `promotion.projects.<projectId>.promotionRemote` in aocd's
+      configuration (reviewed with the rest of it, and chained as `config.changed`), or, as root, on the clone:
       `git --git-dir=<dataDir>/git/<projectId>.git remote add origin git@github.com:<org>/<repo>.git`.
       AOC creates the clone on first use; the `promotion_remote_unconfigured` refusal prints its exact path. A
       local-path remote must belong to root too (git insists on it), because its hooks run inside the push, with

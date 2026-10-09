@@ -82,6 +82,7 @@ export const AocConfigSchema = z.object({
    * - managed sessions must run isolated from aocd (supervisor.isolation 'user', a separate read-only session user);
    * - the KEK must come from an existing keys.masterKeyFile outside dataDir (mode 0400/0600, owned by aocd's user) —
    *   never AOC_MASTER_KEY, never generated (docs/runbooks/credential-isolation.md §4, key-custody.md §3);
+   * - every credential profile of the `promotion` section must be defined in supervisor.credentialProfilesFile;
    * - with intake.requireScan, only an anti-virus engine counts as a scan (the builtin heuristic does not).
    */
   mode: z.enum(['development', 'production']).default('development'),
@@ -342,15 +343,22 @@ export const AocConfigSchema = z.object({
 export type AocConfig = z.infer<typeof AocConfigSchema>;
 export const defaultConfig = (): AocConfig => AocConfigSchema.parse({});
 
-/** Credential profiles that push to a protected remote: the default and every project's own. Never a session's. */
-export function promotionProfilesOf(config: Pick<AocConfig, 'promotion'>): string[] {
+/** Where the configuration names the credential profile of the push to a protected remote: the default and each project's. */
+export function promotionProfileUses(config: Pick<AocConfig, 'promotion'>): { profile: string; key: string }[] {
   const { promoteCredentialProfile, projects } = config.promotion;
   return [
-    ...new Set([
-      promoteCredentialProfile,
-      ...Object.values(projects).flatMap((p) => (p.promoteCredentialProfile ? [p.promoteCredentialProfile] : [])),
-    ]),
+    { profile: promoteCredentialProfile, key: 'promotion.promoteCredentialProfile' },
+    ...Object.entries(projects).flatMap(([projectId, p]) =>
+      p.promoteCredentialProfile
+        ? [{ profile: p.promoteCredentialProfile, key: `promotion.projects.${projectId}.promoteCredentialProfile` }]
+        : [],
+    ),
   ];
+}
+
+/** Credential profiles that push to a protected remote: the default and every project's own. Never a session's. */
+export function promotionProfilesOf(config: Pick<AocConfig, 'promotion'>): string[] {
+  return [...new Set(promotionProfileUses(config).map((u) => u.profile))];
 }
 
 /** The effective session isolation: explicit setting, else 'user' once a session user is named or in production. */

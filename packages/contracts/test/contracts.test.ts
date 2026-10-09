@@ -22,6 +22,7 @@ import {
   validateEvent,
   AocConfigSchema,
   projectSlug,
+  promotionProfileUses,
   promotionProfilesOf,
   promotionRemoteProblem,
   transcriptPathFor,
@@ -243,6 +244,11 @@ describe('promotion configuration (per-project remote and credential profile)', 
       promoteCredentialProfile: 'web-promote',
     });
     expect(promotionProfilesOf(config)).toEqual(['release-bot', 'web-promote']);
+    expect(promotionProfileUses(config)).toEqual([
+      { profile: 'release-bot', key: 'promotion.promoteCredentialProfile' },
+      { profile: 'web-promote', key: 'promotion.projects.prj_web.promoteCredentialProfile' },
+      { profile: 'web-promote', key: 'promotion.projects.prj_ops.promoteCredentialProfile' },
+    ]);
   });
 
   it('refuses a remote AOC would not push to, one with a credential in it, and a misspelt or malformed entry', () => {

@@ -83,10 +83,13 @@ repositories belong to the session user and root's git refuses them (dubious own
 walk, fingerprints, commit evidence, ledger phase pins) run as the repository's owner (supplementary groups dropped,
 no home, no system or global config); root never parses agent-written config. Provenance (G-25's recorded session
 heads, unchanged) and the fast-forward checks run in the clone against where AOC last moved the branch, and again at
-execution; governance-core changes (G-41) are read from the clone too. The push target is AOC's configuration (the
-clone's `origin`, or mod-change's `promotionRemote` option when embedded), never the project's `.git/config`; remotes
-there with none configured → `promotion_remote_unconfigured`, already when the promotion or rollback is requested. The
-`prod-promote` profile reaches one process: `git push --no-verify` from the clone, a compare-and-swap of a verified
+execution; governance-core changes (G-41) are read from the clone too. The push target is AOC's configuration
+(`promotion.projects.<projectId>.promotionRemote` in aocd's config, else the clone's `origin`), never the project's
+`.git/config`; remotes there with none configured → `promotion_remote_unconfigured`, already when the promotion or
+rollback is requested. The credential profile is `promotion.promoteCredentialProfile` (default `prod-promote`) or the
+project's own: production refuses to start unless `supervisor.credentialProfilesFile` defines each one (development
+warns), and no process type may name one (a launch is refused with `promotion_profile_forbidden`, whatever the registry
+says). The `prod-promote` profile reaches one process: `git push --no-verify` from the clone, a compare-and-swap of a verified
 fast-forward (`--force-with-lease=<branch>:<base>`; `default_branch_moved` when the remote moved outside AOC).
 Rollback verification checks out of the clone into a fresh standalone checkout, hands it to the session user, and
 runs the acceptance tests through `runIsolated` sandboxed: as the session user, never with a credential, with nothing
@@ -102,11 +105,11 @@ AOC's push only; an acceptance test that writes outside its checkout fails as th
 follows the rollback, written by its owner; skipped with the reason when aocd is not root or there is no `nobody`
 user); `packages/kernel/test/git.test.ts` › "runs git there as its owner: no dubious-ownership refusal…", › "fetches
 from it into a repository of aocd's through an upload-pack run as the owner…" (same skip rule) and the planted-config
-tests; `packages/supervisor/test/isolated.test.ts`.
+tests; `packages/supervisor/test/isolated.test.ts`; the promotion settings: `packages/contracts/test/contracts.test.ts`
+› "promotion configuration…", `packages/daemon/test/config.test.ts` › "reads the promotion section…",
+`packages/mod-change/test/promotion-config.test.ts`, `packages/supervisor/test/promotion-profiles.test.ts`,
+`packages/mod-audit/test/config-watch.test.ts` › "records a change of where promotions push…".
 **Still open:**
-- `SupervisorService.runIsolated` needs the `sandbox` field in the contract (`services.ts`, lead-owned; used through a
-  local type today), and `promotionRemote` / `promoteCredentialProfile` need a config section (the daemon passes
-  mod-change no options, so the clone's `origin` and the `prod-promote` default are the only operator interface).
 - Nothing fetches the protected remote: the clone learns a branch from AOC's own pushes and, for the first promotion,
   from the project repository's view. The push lease turns a wrong guess into `default_branch_moved`, never into an
   unchecked push.
@@ -166,7 +169,7 @@ tests; `packages/supervisor/test/isolated.test.ts`.
 | P-10 | **Enablement gates** (O-21): keep the intake portal and Builder surfaces off in production until the identity stage is signed off — the portal API was merged before identity | §6, §15, R5 | CEO | Open |
 | P-11 | **Separation of duties with one Approver** (O-8): the fallback is now off (CEO, 2026-10-09), so the only Approver's own requests have no eligible resolver — appoint a deputy Approver with a passkey | §6 | CEO | Decision made; deputy Approver open |
 | P-12 | **Malware scanning in production**: provision ClamAV on the portal host | §7, R4 | CEO / CX lead | Open |
-| P-13 | **Credential profiles file and OS users**: least-privilege `git-feature`, `uat-deploy`, `prod-promote` profiles, key files declared under `files` (`{{file:<name>}}`); aocd run as root (reduced capability set) with two session users, `aoc-agent` and `aoc-reader`, each with its own group; `"mode": "production"`; file ownership per `docs/runbooks/credential-isolation.md` §4; no process type may name `prod-promote`; each project's service clone given its protected remote (`git --git-dir=<dataDir>/git/<project>.git remote add origin …`, §4 item 9) | §3, R1 | Platform Architect | Open (G-01 and G-04 software done; host setup outstanding) |
+| P-13 | **Credential profiles file and OS users**: least-privilege `git-feature`, `uat-deploy`, `prod-promote` profiles, key files declared under `files` (`{{file:<name>}}`); aocd run as root (reduced capability set) with two session users, `aoc-agent` and `aoc-reader`, each with its own group; `"mode": "production"`; file ownership per `docs/runbooks/credential-isolation.md` §4; no process type may name a promotion profile (`prod-promote`, or what `promotion.promoteCredentialProfile` and `promotion.projects.<id>.promoteCredentialProfile` name: aocd refuses such a launch, and production refuses to start unless the profiles file defines each one); each project's protected remote set in aocd's `promotion.projects.<id>.promotionRemote`, or on its service clone (`git --git-dir=<dataDir>/git/<project>.git remote add origin …`), §4 item 9 | §3, R1 | Platform Architect | Open (G-01 and G-04 software done; host setup outstanding) |
 | P-14 | **Observed-session coverage**: observed hooks with each developer's own observer token, quarterly `aoc doctor` checklist (`docs/runbooks/credential-isolation.md` §5) | §2, R1 | CEO / DevEx | Open |
 | P-15 | Discovery-class build stages on Opus | §15 | CEO | Process |
 | P-16 | Credit policy: allocations, exemptions, top-up approvers | §10 | CEO / FinOps | Open |

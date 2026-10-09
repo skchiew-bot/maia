@@ -2,7 +2,7 @@
   "//": "aocd configuration. Copy to aoc.config.json where you start aocd, or point --config <file> / AOC_CONFIG at it. Every key is optional and the values below are the built-in defaults. Relative paths resolve against this file's directory (~ is your home). Keys starting with // are comments; a //key shows an optional setting without enabling it. Env overrides: AOC_PORT, AOC_HOST, AOC_DATA_DIR, AOC_PUBLIC_URL. Secrets never go here: see .env.example.",
 
   "mode": "development",
-  "//mode": "development | production. Production refuses to start unless managed sessions are isolated (supervisor.sessionUser + readOnlySessionUser, aocd as root) and the KEK comes from keys.masterKeyFile (outside dataDir, 0400/0600, owned by aocd's user; never AOC_MASTER_KEY, never generated), and with intake.requireScan refuses attachments (503) unless an anti-virus engine scans them. See docs/runbooks/credential-isolation.md §4.",
+  "//mode": "development | production. Production refuses to start unless managed sessions are isolated (supervisor.sessionUser + readOnlySessionUser, aocd as root) and the KEK comes from keys.masterKeyFile (outside dataDir, 0400/0600, owned by aocd's user; never AOC_MASTER_KEY, never generated), every promotion credential profile (see promotion) is defined in supervisor.credentialProfilesFile, and with intake.requireScan refuses attachments (503) unless an anti-virus engine scans them. See docs/runbooks/credential-isolation.md §4.",
 
   "dataDir": ".aoc/data",
   "host": "127.0.0.1",
@@ -139,6 +139,13 @@
     "lowConfidenceThreshold": 0.6,
     "triageProcessType": "bug-triage",
     "buildProcessType": "bug-fix"
+  },
+
+  "promotion": {
+    "//": "Where promotions, rollbacks and break-glass push, and with which credential profile (docs/runbooks/credential-isolation.md §4 item 9). A project without an entry pushes to the origin of its service clone (<dataDir>/git/<projectId>.git) with promoteCredentialProfile. Only aocd holds these profiles: no process type may name one (launches are refused), and production mode refuses to start unless supervisor.credentialProfilesFile defines every one named here. Governed configuration: a change is chained as config.changed.",
+    "promoteCredentialProfile": "prod-promote",
+    "projects": {},
+    "//projects": "{ \"prj_web\": { \"promotionRemote\": \"git@github.com:your-org/web.git\", \"promoteCredentialProfile\": \"web-promote\" } } — keyed by project id. promotionRemote is ssh, https or an absolute local path, never with a credential in it (the profile holds that), and wins over the clone's origin; it is never read from the project's own repository. A misspelt key is an error; an id no project has is only warned about at start."
   },
 
   "selfModification": {
