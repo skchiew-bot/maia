@@ -8,9 +8,18 @@ import {
   type EvidenceGates,
   type EvidencePackFileEntry,
   type EvidencePackManifest,
+  type EvidenceNotVerifiableReason,
   type EvidenceRollbacks,
   type EvidenceVerification,
 } from '@aoc/contracts';
+
+const NOT_VERIFIABLE: Record<EvidenceNotVerifiableReason, string> = {
+  audit_service_unavailable: 'the audit service was not running',
+  audit_verify_failed: 'the off-host verification could not run',
+  off_host_record_unavailable: 'an off-host anchor record could not be read',
+  anchors_not_off_host: 'some anchors are not held off-host (no anchor remote, or not pushed yet)',
+  no_anchors: 'the log has never been anchored off-host',
+};
 
 export interface ReportInput {
   manifest: Omit<EvidencePackManifest, 'files'>;
@@ -61,14 +70,41 @@ function banner(r: ReportInput): string {
         `Compliance mapping ${esc(m.version)} is ${esc(m.statement)}. Clause numbers must be confirmed against ${esc(m.standard)} before this pack is cited (AOC-SPEC-003 R3).</div>`,
     );
   }
-  if (!r.verification.ok) {
+  const v = r.verification;
+  if (v.status === 'failed') {
     out.push(
-      `<div class="banner danger" role="alert"><strong>Integrity check failed.</strong> Chain ok: ${esc(yesNo(r.verification.chain.ok))}; ` +
-        `anchors matched ${esc(r.verification.anchorsMatched)} of ${esc(r.verification.anchorsChecked)}; first bad seq ${esc(r.verification.chain.firstBadSeq ?? 'n/a')}. See verification.json.</div>`,
+      `<div class="banner danger" role="alert"><strong>Integrity check failed.</strong> Chain ok: ${esc(yesNo(v.chain.ok))}; ` +
+        `anchors confirmed off-host ${esc(v.anchorsMatched)} of ${esc(v.anchorsChecked)}; first bad seq ${esc(v.chain.firstBadSeq ?? 'n/a')}. See verification.json.</div>`,
+    );
+  } else if (v.status === 'not_verifiable') {
+    out.push(
+      `<div class="banner provisional" role="alert"><strong>Not verifiable against the off-host anchors:</strong> ` +
+        `${esc(v.notVerifiableReason ? NOT_VERIFIABLE[v.notVerifiableReason] : 'unknown reason')}. ` +
+        `The pack only shows that the log agrees with itself, which anyone with file access can arrange (AOC-SPEC-003 R2).</div>`,
     );
   }
   return out.join('\n');
 }
+
+function anchorRows(v: EvidenceVerification): string {
+  return v.anchors
+    .map((a) => {
+      const x = a.external;
+      const record = x ? `${x.record}${x.hash ? ` ${x.hash.slice(0, 16)}…` : ''}` : 'not checked';
+      return (
+        `<tr><td class="num">${esc(a.seq)}</td><td>${esc(a.provider)}</td><td class="mono">${esc(a.anchoredHash.slice(0, 16))}…</td>` +
+        `<td class="mono">${esc(record)}</td><td>${esc(x ? yesNo(x.matched) : 'n/a')}</td><td>${esc(x ? yesNo(x.proofOk) : 'n/a')}</td>` +
+        `<td>${esc(x ? yesNo(x.offHost) : 'n/a')}</td><td>${esc(a.matched ? 'confirmed' : 'NOT confirmed')}</td></tr>`
+      );
+    })
+    .join('');
+}
+
+const STATUS_LABEL = {
+  verified: 'verified against the off-host anchors',
+  failed: 'FAILED',
+  not_verifiable: 'NOT VERIFIABLE off-host',
+} as const;
 
 const STYLE = `
 :root{--bg:#fff;--fg:#16181d;--muted:#5b616e;--line:#d9dce3;--warn-bg:#fff4e5;--warn-fg:#6b3500;--warn-line:#d98a1c;--ok-bg:#e9f7ef;--ok-fg:#14532d;--ok-line:#3f9a63;--bad-bg:#fdecec;--bad-fg:#8a1c1c;--bad-line:#d14343}
@@ -157,9 +193,10 @@ ${dl([
 <section aria-labelledby="h-integrity">
 <h2 id="h-integrity">Integrity</h2>
 ${dl([
-  ['Overall', v.ok ? 'verified' : 'FAILED'],
+  ['Overall', STATUS_LABEL[v.status]],
   ['Chain recomputed', `${v.chain.ok ? 'ok' : 'FAILED'} (${v.chain.checked} events)`],
-  ['Anchors matched', `${v.anchorsMatched} of ${v.anchorsChecked}`],
+  ['Anchors confirmed off-host', `${v.anchorsMatched} of ${v.anchorsChecked}`],
+  ['Off-host check', v.external ? `${v.external.verifiedAt}${v.external.remoteChecked === false ? ' (anchor remote unreachable)' : ''}` : 'not run'],
   ['Range covered by an anchor', yesNo(v.rangeCoveredByAnchor)],
   [
     'Anchor before range',
@@ -172,6 +209,11 @@ ${dl([
   ['Unanchored tail', `${v.unanchoredTail.events} events (${v.unanchoredTail.rangeEvents} in range)`],
   ['Range hashes recomputed', `${v.range.hashesMatched} of ${v.range.hashesRecomputed} match`],
 ])}
+<div class="wrap"><table>
+<caption class="muted">Each anchor as the log recorded it, and its off-host record (git commit on the anchor remote, or RFC 3161 token)</caption>
+<thead><tr><th scope="col" class="num">Seq</th><th scope="col">Provider</th><th scope="col">Recorded in the log</th><th scope="col">Off-host record</th><th scope="col">Hash matches</th><th scope="col">Proof holds</th><th scope="col">Held off-host</th><th scope="col">Result</th></tr></thead>
+<tbody>${anchorRows(v)}</tbody>
+</table></div>
 </section>
 <section aria-labelledby="h-controls">
 <h2 id="h-controls">ISO/IEC 42001 controls</h2>

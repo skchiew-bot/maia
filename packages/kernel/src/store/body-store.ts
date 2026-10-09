@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -11,6 +11,16 @@ import { open, seal } from '../crypto';
  */
 function pathSegment(id: string): string {
   return /^[A-Za-z0-9_-][A-Za-z0-9_.-]{0,127}$/.test(id) ? id : `~${createHash('sha256').update(id).digest('hex').slice(0, 40)}`;
+}
+
+/** Where a blob's ciphertext lives, relative to the blob directory (`<scope>/<blobId>`, both segments sanitised). */
+export function blobRelativePath(scope: string, blobId: string): string {
+  return `${pathSegment(scope)}/${pathSegment(blobId)}`;
+}
+
+/** Public fingerprint of a 32-byte key (16 hex chars): names the key a backup or a body store needs, never reveals it. */
+export function keyFingerprint(key: Buffer, purpose: 'kek' | 'backup'): string {
+  return createHash('sha256').update(`aoc-${purpose}-key-id:`).update(key).digest('hex').slice(0, 16);
 }
 
 /**
@@ -115,7 +125,7 @@ export class BodyStore {
   }
 
   private blobPath(scope: string, blobId: string): string {
-    return join(this.blobDir, pathSegment(scope), pathSegment(blobId));
+    return join(this.blobDir, blobRelativePath(scope, blobId));
   }
 
   /** Store a large binary (e.g. intake video) encrypted on disk under the scope's DEK. */
@@ -171,6 +181,30 @@ export class BodyStore {
   isErased(scope: string): boolean {
     const r = this.db.prepare('SELECT COUNT(*) AS n FROM body_keys WHERE scope = ? AND destroyed_at IS NOT NULL').get(scope) as { n: number };
     return r.n > 0;
+  }
+
+  /** Fingerprint of the KEK this store seals with (see keyFingerprint). */
+  kekId(): string {
+    return keyFingerprint(this.kek, 'kek');
+  }
+
+  /** Constant-time: is `candidate` this store's KEK? (A backup key must never be the KEK.) */
+  isKek(candidate: Buffer): boolean {
+    return candidate.length === this.kek.length && timingSafeEqual(candidate, this.kek);
+  }
+
+  /** Unwrap every live data key with the KEK: the ids that fail mean a wrong KEK or a damaged key row. */
+  checkKeys(): { checked: number; failed: string[] } {
+    const rows = this.db.prepare('SELECT key_id FROM body_keys WHERE destroyed_at IS NULL ORDER BY key_id').all() as { key_id: string }[];
+    const failed: string[] = [];
+    for (const { key_id } of rows) {
+      try {
+        if (!this.unwrap(key_id)) failed.push(key_id);
+      } catch {
+        failed.push(key_id);
+      }
+    }
+    return { checked: rows.length, failed };
   }
 
   close(): void {

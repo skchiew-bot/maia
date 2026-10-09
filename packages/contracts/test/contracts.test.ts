@@ -102,6 +102,38 @@ describe('registry + config + misc', () => {
     expect(routeModel(t, true)).toBe('sonnet');
     expect(routeModel(t, false)).toBe('opus');
   });
+  it('backup events carry sizes, hashes and fingerprints only; backup settings are validated', () => {
+    const meta = {
+      backupId: 'bkp_01K0000000000000000ABCDEF1',
+      file: 'aoc-backup-20261009T183005Z-0ABCDEF1.aocbk',
+      bytes: 10,
+      sha256: 'a'.repeat(64),
+      keyId: '0123456789abcdef',
+      kekId: 'fedcba9876543210',
+      headSeq: 1,
+      headHash: 'b'.repeat(64),
+      files: 2,
+      aocDbBytes: 1,
+      bodiesDbBytes: 1,
+      blobs: 0,
+      blobBytes: 0,
+      skippedBlobs: 0,
+      bodiesMissing: 0,
+      copied: null,
+      pruned: 0,
+      retained: 1,
+    };
+    expect(validateEvent('backup.completed', meta, null)).toEqual([]);
+    expect(validateEvent('backup.completed', { ...meta, file: '/var/lib/aoc/backups/x.aocbk' }, null)).not.toEqual([]);
+    expect(validateEvent('backup.completed', { ...meta, dir: '/home/someone' }, null)).not.toEqual([]);
+    expect(validateEvent('backup.failed', { backupId: null, stage: 'copy', reason: 'copy_failed' }, { detail: 'exit 3' })).toEqual([]);
+    expect(validateEvent('backup.failed', { backupId: null, stage: 'copy', reason: 'no such file /home/x' }, {})).not.toEqual([]);
+    const audit = AocConfigSchema.parse({}).audit;
+    expect(audit).toMatchObject({ backupDir: '.aoc/backups', backupAtLocalTime: '02:30', backupRetentionDays: 35, backupCopyCommand: [] });
+    expect(audit.backupKeyFile).toBeUndefined();
+    expect(AocConfigSchema.safeParse({ audit: { backupAtLocalTime: '2:30' } }).success).toBe(false);
+    expect(AocConfigSchema.safeParse({ audit: { backupRetentionDays: 0 } }).success).toBe(false);
+  });
   it('defaults config and builds ids/paths', () => {
     expect(AocConfigSchema.parse({}).port).toBe(7420);
     expect(newId('session')).toMatch(/^ses_[0-9A-Z]{26}$/);

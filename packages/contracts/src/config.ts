@@ -138,6 +138,33 @@ export const AocConfigSchema = z.object({
       anchorRemote: z.string().optional(),
       tsaUrl: z.string().default('https://freetsa.org/tsr'),
       anchorAtLocalTime: z.string().default('02:00'),
+      /** OpenPGP key (id or fingerprint) that signs git anchor commits; Verify then requires its valid signature. */
+      gpgKeyId: z.string().min(1).optional(),
+      /** GNUPGHOME used to sign and verify anchor commits (default: aocd's environment). */
+      gnupgHome: z.string().min(1).optional(),
+      /** CA bundle for `openssl ts -verify` of RFC 3161 tokens; without it only the imprint and the time are checked. */
+      tsaCaFile: z.string().min(1).optional(),
+      /** Intermediate certificates for `openssl ts -verify -untrusted`. */
+      tsaUntrustedFile: z.string().min(1).optional(),
+      /**
+       * Encrypted backups (G-21, R6): one `.aocbk` file per run lands here. Mount off-host storage here, or ship each
+       * file with backupCopyCommand. See docs/runbooks/backup-restore.md.
+       */
+      backupDir: z.string().default('.aoc/backups'),
+      /**
+       * 32-byte backup key (64 hex chars or base64). Backups run only when it is set. It must not be the KEK and must
+       * not live in dataDir, in backupDir or next to keys.masterKeyFile.
+       */
+      backupKeyFile: z.string().min(1).optional(),
+      /** Local time of the daily backup: after anchorAtLocalTime, so every backup is covered by an anchor. */
+      backupAtLocalTime: z
+        .string()
+        .regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'expected HH:MM')
+        .default('02:30'),
+      /** Backups older than this are deleted from backupDir; erasure is complete only once they expire (O-12). */
+      backupRetentionDays: z.number().int().min(1).max(3650).default(35),
+      /** Off-host copy run after each backup, without a shell: `{file}` becomes the backup's path (appended if absent). */
+      backupCopyCommand: z.array(z.string()).default([]),
     })
     .default({}),
   intake: z

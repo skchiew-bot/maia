@@ -197,7 +197,16 @@ function resolvePaths(c: AocConfig, baseDir: string): AocConfig {
       credentialProfilesFile: optPath(c.supervisor.credentialProfilesFile),
     },
     metering: { ...c.metering, rateCardFile: path(c.metering.rateCardFile) },
-    audit: { ...c.audit, anchorRepoPath: path(c.audit.anchorRepoPath) },
+    audit: {
+      ...c.audit,
+      anchorRepoPath: path(c.audit.anchorRepoPath),
+      gnupgHome: optPath(c.audit.gnupgHome),
+      tsaCaFile: optPath(c.audit.tsaCaFile),
+      tsaUntrustedFile: optPath(c.audit.tsaUntrustedFile),
+      backupDir: path(c.audit.backupDir),
+      backupKeyFile: optPath(c.audit.backupKeyFile),
+      backupCopyCommand: c.audit.backupCopyCommand.map(arg),
+    },
     selfModification: {
       ...c.selfModification,
       aocRepoPaths: c.selfModification.aocRepoPaths.map(path),

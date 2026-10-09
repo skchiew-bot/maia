@@ -4,11 +4,13 @@ import { serve } from '@hono/node-server';
 import { createLogger } from '@aoc/kernel';
 import pkg from '../package.json' with { type: 'json' };
 import { ConfigError, loadConfig, parseDaemonArgs, type LoadedConfig } from './config';
+import { runRestoreCommand } from './restore';
 import { createAocServer, type AocServer } from './server';
 
 export const VERSION: string = pkg.version;
 
 const USAGE = `Usage: aocd [--config <file>] [--version]
+       aocd restore --from <backup.aocbk> --backup-key-file <file> --kek-file <file> [...]   (aocd restore --help)
 
 Config file: --config <file>, else $AOC_CONFIG, else ./aoc.config.json, else built-in defaults.
 Env overrides: AOC_PORT, AOC_HOST, AOC_DATA_DIR, AOC_PUBLIC_URL; AOC_LOG_LEVEL=debug|info|warn|error.
@@ -25,6 +27,11 @@ export async function runDaemon(
   argv: readonly string[] = process.argv.slice(2),
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<void> {
+  // Offline disaster recovery: runs instead of the daemon, never next to a running one.
+  if (argv[0] === 'restore') {
+    process.exitCode = await runRestoreCommand(argv.slice(1), { env });
+    return;
+  }
   let loaded: LoadedConfig;
   try {
     const args = parseDaemonArgs(argv);

@@ -124,7 +124,7 @@ Daily, or continuously from monitoring:
 | Jobs | `job_runs.last_status` | `ok` for every job |
 | Decisions | The oldest open card; gate latency p90 (Tower) | Within the agreed SLA (R15) |
 | Disk | Free space on the data volume; size of `aoc.db-wal` | More than 20 % free; the WAL is checkpointed regularly |
-| Backups | The nightly backup exists off-host and is not shrinking | See [key custody](key-custody.md#4-backups-off-host-nightly) |
+| Backups | `aoc backup list`; `/api/audit/health` warnings `backup_*` | The nightly backup exists off-host and is not shrinking ([backup and restore §4](backup-restore.md#4-daily-checks)) |
 
 Read-only SQL checks (WAL mode allows a reader alongside aocd):
 
@@ -160,7 +160,7 @@ projector that is new on an existing log, whose fingerprint changed, or that is 
 
 1. Plan a maintenance window and stop running sessions first (§2): while the rebuild runs, hooks cannot get an
    answer and fail closed.
-2. Take a backup ([key custody](key-custody.md#4-backups-off-host-nightly)).
+2. Take a backup: `aoc anchor`, then `aoc backup now` ([backup and restore](backup-restore.md)).
 3. **Make sure the right KEK is configured.** A rebuild reads every body; with a wrong KEK it fails and rolls
    back. Never let aocd start with a generated key
    ([key custody §3](key-custody.md#3-store-the-kek-options-weakest-to-strongest)).
@@ -225,8 +225,9 @@ A dead-lettered reaction means something that should have happened did not.
 
 ## 6. Backups
 
-The full procedure (what, the order, encryption, retention, keys kept apart) is in
-[key custody §4](key-custody.md#4-backups-off-host-nightly), and the restore drill is in
+aocd backs itself up daily once `audit.backupKeyFile` is set (`aoc backup now` / `aoc backup list`; restore with
+`aocd restore`): see the [backup and restore runbook](backup-restore.md). Key custody and the manual procedure are in
+[key custody §4](key-custody.md#4-backups-off-host-nightly) and the drill in
 [key custody §7](key-custody.md#7-restore-drill-quarterly). The rules that matter most:
 
 - **Never copy `aoc.db` alone while aocd runs.** Use `sqlite3 … ".backup …"` or `VACUUM INTO`. Copy `aoc.db`

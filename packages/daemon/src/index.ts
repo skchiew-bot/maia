@@ -12,6 +12,7 @@ export {
   type LoadedConfig,
 } from './config';
 export { createDefaultModules, MODULE_ORDER } from './modules';
+export { parseRestoreArgs, RESTORE_USAGE, runRestoreCommand, type RestoreArgs, type RestoreIo } from './restore';
 export {
   bodyLimitFor,
   CONTENT_SECURITY_POLICY,
