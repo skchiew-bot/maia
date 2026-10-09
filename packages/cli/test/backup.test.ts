@@ -53,6 +53,28 @@ describe('aoc backup', () => {
     expect(off.stderr).toContain('audit.backupKeyFile');
   });
 
+  it('now: a Builder token is refused with a message that names the Approver token and audit.backup', async () => {
+    d.on('POST', '/api/audit/backup', {
+      status: 403,
+      json: { error: { code: 'forbidden', message: 'Missing permission audit.backup' } },
+    });
+    const r = await aoc(['backup', 'now'], { homeDir: home });
+    expect(r.code).toBe(3);
+    expect(r.stdout).toBe('');
+    expect(r.stderr).toContain('forbidden: Missing permission audit.backup');
+    expect(r.stderr).toMatch(/hint: .*Approver token.*audit\.backup/);
+    expect(r.stderr).toContain('aoc login --token');
+  });
+
+  it('now: the help says the Approver token is required, and list stays open to Builders', async () => {
+    const now = await aoc(['backup', 'now', '--help']);
+    expect(now.code).toBe(0);
+    expect(now.stdout).toMatch(/Approver token/);
+    expect(now.stdout).toContain('audit.backup');
+    const list = await aoc(['backup', 'list', '--help']);
+    expect(list.stdout).not.toMatch(/Approver/);
+  });
+
   it('list: shows the schedule and recent backups, or says backups are off', async () => {
     d.on(
       'GET',

@@ -98,8 +98,9 @@ audit state.
    5. run `backupCopyCommand`, prune past retention, append `backup.completed`.
 
 A manual `aoc backup now` (permission `audit.backup`, held by the Approver only: a Builder's `audit.verify` and
-`audit.view` do not reach it, and Builders can still list the backups) runs the same steps; a second manual run within
-10 minutes is refused (429), so repeated full copies cannot fill the disk.
+`audit.view` do not reach it, and Builders can still list the backups) runs the same steps. With a Builder's token the
+daemon answers 403 and the CLI says the Approver token is needed (exit code 3). A second manual run within 10 minutes
+is refused (429), so repeated full copies cannot fill the disk.
 
 ## 4. Daily checks
 

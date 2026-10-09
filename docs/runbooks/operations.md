@@ -168,7 +168,7 @@ projector that is new on an existing log, whose fingerprint changed, or that is 
 
 1. Plan a maintenance window and stop running sessions first (§2): while the rebuild runs, hooks cannot get an
    answer and fail closed.
-2. Take a backup: `aoc anchor`, then `aoc backup now` ([backup and restore](backup-restore.md)).
+2. Take a backup: `aoc anchor`, then `aoc backup now` with the Approver's token ([backup and restore](backup-restore.md)).
 3. **Make sure the right KEK is configured.** A rebuild reads every body; with a wrong KEK it fails and rolls
    back. Never let aocd start with a generated key
    ([key custody §3](key-custody.md#3-store-the-kek-options-weakest-to-strongest)).
@@ -233,7 +233,7 @@ A dead-lettered reaction means something that should have happened did not.
 
 ## 6. Backups
 
-aocd backs itself up daily once `audit.backupKeyFile` is set (`aoc backup now` / `aoc backup list`; restore with
+aocd backs itself up daily once `audit.backupKeyFile` is set (`aoc backup now` needs the Approver token, `aoc backup list` does not; restore with
 `aocd restore`): see the [backup and restore runbook](backup-restore.md). Key custody and the manual procedure are in
 [key custody §4](key-custody.md#4-backups-off-host-nightly) and the drill in
 [key custody §7](key-custody.md#7-restore-drill-quarterly). The rules that matter most:
