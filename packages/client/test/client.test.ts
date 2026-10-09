@@ -46,7 +46,7 @@ describe('AocClient', () => {
       return [200, { accepted: 1, duplicates: 0, rejected: 0 }];
     });
     const up = createClient({ daemonUrl: url, spoolDir });
-    expect(await up.flushSpool()).toEqual({ sent: 1, failed: 0 });
+    expect(await up.flushSpool()).toEqual({ sent: 1, failed: 0, rejected: 0 });
     expect(up.spooledCount()).toBe(0);
     expect((seen[0] as { p: string }).p).toBe('/ingest/spool');
   });

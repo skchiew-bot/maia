@@ -1,5 +1,5 @@
 import { readdirSync } from 'node:fs';
-import type { AocClient } from '@aoc/client';
+import { createClient, isQueuedSpoolFile, isSpoolClaim, type AocClient } from '@aoc/client';
 
 export interface SpoolTarget {
   spoolDir: string;
@@ -7,9 +7,7 @@ export interface SpoolTarget {
   token: string | null;
 }
 
-/** Loaded lazily: @aoc/client imports the contracts barrel, a cost only the rare spool/flush paths should pay. */
-async function loadClient(t: SpoolTarget, fetchImpl?: typeof fetch): Promise<AocClient> {
-  const { createClient } = await import('@aoc/client');
+function client(t: SpoolTarget, fetchImpl?: typeof fetch): AocClient {
   return createClient({
     daemonUrl: t.daemonUrl ?? '',
     token: t.token,
@@ -22,16 +20,17 @@ async function loadClient(t: SpoolTarget, fetchImpl?: typeof fetch): Promise<Aoc
 /** Buffers a request in the shared JSONL spool format (replayed through /ingest/spool). False if the disk write failed. */
 export async function spoolRequest(t: SpoolTarget, path: string, body: unknown, now: Date): Promise<boolean> {
   try {
-    (await loadClient(t)).spool({ path, body, queuedAt: now.toISOString() });
+    client(t).spool({ path, body, queuedAt: now.toISOString() });
     return true;
   } catch {
     return false;
   }
 }
 
+/** Queued files, or claims of a flush that may have crashed (the flush requeues them once stale). */
 function hasSpooled(spoolDir: string): boolean {
   try {
-    return readdirSync(spoolDir).some((f) => f.endsWith('.jsonl'));
+    return readdirSync(spoolDir).some((f) => isQueuedSpoolFile(f) || isSpoolClaim(f));
   } catch {
     return false;
   }
@@ -47,7 +46,7 @@ export async function flushSpoolBounded(t: SpoolTarget, budgetMs = 1000): Promis
   const fetchImpl: typeof fetch = (input, init) =>
     fetch(input, { ...init, signal: init?.signal ? AbortSignal.any([init.signal, deadline]) : deadline });
   try {
-    await (await loadClient(t, fetchImpl)).flushSpool();
+    await client(t, fetchImpl).flushSpool();
   } catch {
     // best effort: the spool stays on disk
   }

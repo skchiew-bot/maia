@@ -123,6 +123,23 @@ describe('observed mode: report-only, never blocks', () => {
     });
     expect(readSpool(spoolDir)).toEqual([]);
   });
+
+  it('never replays spool-rejected.jsonl, which is kept for inspection', async () => {
+    daemon = await startFakeDaemon(accepting);
+    const home = writeClientConfig(tmp(), daemon.url);
+    const spoolDir = join(home, '.aoc', 'spool', 'observed');
+    mkdirSync(spoolDir, { recursive: true });
+    const rejected = JSON.stringify({
+      path: '/ingest/usage',
+      body: {},
+      queuedAt: 'x',
+      reason: 'rejected_by_daemon',
+    });
+    writeFileSync(join(spoolDir, 'spool-rejected.jsonl'), `${rejected}\n`);
+    await runHookBinary('UserPromptSubmit', userPromptSubmit(), { HOME: home });
+    expect(daemon.requests.map((r) => r.path)).toEqual(['/ingest/hook']);
+    expect(readFileSync(join(spoolDir, 'spool-rejected.jsonl'), 'utf8')).toBe(`${rejected}\n`);
+  });
 });
 
 describe('observed mode: transcript usage', () => {
