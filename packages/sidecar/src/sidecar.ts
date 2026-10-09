@@ -171,7 +171,8 @@ export class Sidecar {
       if (this.flushTimer) clearInterval(this.flushTimer);
       this.tailer.poll();
       await this.flush();
-      await this.client.post(INGEST_PATHS.process, { sessionId: this.o.sessionId, event: 'exited', exitCode, signal, at: this.now().toISOString() }, { spool: true });
+      // The pid tells the daemon which process this was: by now the supervisor may have started the next turn.
+      await this.client.post(INGEST_PATHS.process, { sessionId: this.o.sessionId, event: 'exited', exitCode, signal, at: this.now().toISOString(), pid: this.o.pid }, { spool: true });
       this.tailer.stop();
     })();
     return this.exiting;

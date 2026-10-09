@@ -280,8 +280,15 @@ export function createIntakeModule(opts: IntakeModuleOptions = {}): AocModule {
           type: 'ticket.diagnosis_reported',
           actor: { kind: 'agent', id: body.sessionId },
           scope: { ticketId: link.ticket_id, sessionId: body.sessionId },
-          meta: { ticketId: link.ticket_id, sessionId: body.sessionId, confidence: input.data.confidence, rootCauseClass: input.data.root_cause_class ?? null },
-          payload: { rootCause: input.data.root_cause, fixPlan: input.data.fix_plan, ...(input.data.affected_areas ? { affectedAreas: input.data.affected_areas } : {}) },
+          // The class is agent-written text from a session that reads untrusted ticket text: it goes in the erasable
+          // body with the rest of the diagnosis, never in the clear chain (meta keeps the contract's field null).
+          meta: { ticketId: link.ticket_id, sessionId: body.sessionId, confidence: input.data.confidence, rootCauseClass: null },
+          payload: {
+            rootCause: input.data.root_cause,
+            fixPlan: input.data.fix_plan,
+            ...(input.data.affected_areas ? { affectedAreas: input.data.affected_areas } : {}),
+            ...(input.data.root_cause_class ? { rootCauseClass: input.data.root_cause_class } : {}),
+          },
           source: 'mcp',
           bodyScope: link.ticket_id,
         });

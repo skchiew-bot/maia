@@ -38,6 +38,25 @@ describe('UsageAggregator', () => {
     a.add(parseTranscriptLine(asst('m', 'tool_use', { input_tokens: 2, output_tokens: 50 }))!);
     expect(a.drain()[0]).toMatchObject({ inputTokens: 2, outputTokens: 50 });
   });
+
+  it('ignores the synthetic API-error message: no usage, and the context size stays the last real one', () => {
+    // Regression (found by e2e): a plan-limit hit is written as a zero-usage `<synthetic>` assistant line, which
+    // reset the reported context size to 0 for the batch flushed after it.
+    const a = new UsageAggregator();
+    a.add(parseTranscriptLine(asst('msg_real', 'text', U))!);
+    const limit = JSON.stringify({
+      type: 'assistant',
+      uuid: 'synthetic-1',
+      timestamp: '2026-10-09T02:00:05.000Z',
+      isApiErrorMessage: true,
+      error: 'rate_limit',
+      message: { id: 'b7c1', model: '<synthetic>', role: 'assistant', content: [{ type: 'text', text: "You've hit your session limit · resets 3pm" }], usage: { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } },
+    });
+    expect(a.add(parseTranscriptLine(limit)!)).toBe(false);
+    const batches = a.drain();
+    expect(batches.map((b) => b.model)).toEqual(['claude-opus-5-5']);
+    expect(batches[0]!.contextTokens).toBe(2 + 1000 + 300);
+  });
 });
 
 describe('TranscriptTailer', () => {
@@ -121,6 +140,8 @@ describe('Sidecar end to end', () => {
     expect(paths).toContain('/ingest/heartbeat');
     expect(paths).toContain('/ingest/throttle');
     expect(paths.at(-1)).toBe('/ingest/process');
+    // The exit names the watched pid, so a report that arrives after the next turn started cannot be mistaken for it.
+    expect(posts.at(-1)!.body).toMatchObject({ sessionId: 'ses_X', event: 'exited', pid: child.pid });
     const usage = posts.filter((p) => p.path === '/ingest/usage');
     const totalOut = usage.flatMap((p) => p.body.batches as { outputTokens: number }[]).reduce((n, b) => n + b.outputTokens, 0);
     expect(totalOut).toBe(111); // msg_1 counted once + the subagent transcript
