@@ -23,6 +23,9 @@ packages/sidecar     per-session sidecar binary        packages/mcp-server  AOC 
 packages/hooks       Claude Code hook binary           packages/cli         `aoc` CLI
 packages/claude-sim  deterministic fake `claude` CLI   packages/daemon      aocd composition root
 packages/web         operator console + intake portal  mocks/               static design mocks
+packages/distill     shared distillation core (playbooks + lessons; Approver gate)   packages/mod-tower  Control Tower snapshot
+packages/e2e         end-to-end scenarios on the real binaries (aocd, hook, MCP, sidecar, supervisor + claude-sim)
+packages/demo        demo seeder + `live` launcher (real sessions on claude-sim; never the real claude CLI)
 ```
 - Each package exports from `src/index.ts` (package.json `exports` points at TS source; no build step for tests).
 - **Only edit files inside the package(s) you were assigned**, plus `packages/contracts/src/events/<yourmodule>.ts`
