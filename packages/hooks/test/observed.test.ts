@@ -123,6 +123,45 @@ describe('observed mode: report-only, never blocks', () => {
     });
     expect(readSpool(spoolDir)).toEqual([]);
   });
+
+  it("stands down for AOC's own LLM calls (AOC_INTERNAL_LLM=1): no report, no spool, no state", async () => {
+    daemon = await startFakeDaemon(accepting);
+    const home = writeClientConfig(tmp(), daemon.url);
+    const transcript = join(home, 't.jsonl');
+    writeFileSync(
+      transcript,
+      assistantMessage('msg_A', 'claude-haiku-5-5', { input: 3, output: 4 }, '2026-10-09T01:00:00.000Z').join(
+        '\n',
+      ) + '\n',
+    );
+    for (const [event, input] of [
+      ['UserPromptSubmit', userPromptSubmit()],
+      ['Stop', stop(transcript)],
+    ] as const) {
+      const run = await runHookBinary(event, input, { HOME: home, AOC_INTERNAL_LLM: '1' });
+      expect(run).toMatchObject({ code: 0, stdout: '', stderr: '' });
+    }
+    expect(daemon.requests).toEqual([]);
+    expect(existsSync(join(home, '.aoc', 'spool'))).toBe(false);
+    expect(existsSync(join(home, '.aoc', 'state'))).toBe(false);
+  });
+
+  it('never replays spool-rejected.jsonl, which is kept for inspection', async () => {
+    daemon = await startFakeDaemon(accepting);
+    const home = writeClientConfig(tmp(), daemon.url);
+    const spoolDir = join(home, '.aoc', 'spool', 'observed');
+    mkdirSync(spoolDir, { recursive: true });
+    const rejected = JSON.stringify({
+      path: '/ingest/usage',
+      body: {},
+      queuedAt: 'x',
+      reason: 'rejected_by_daemon',
+    });
+    writeFileSync(join(spoolDir, 'spool-rejected.jsonl'), `${rejected}\n`);
+    await runHookBinary('UserPromptSubmit', userPromptSubmit(), { HOME: home });
+    expect(daemon.requests.map((r) => r.path)).toEqual(['/ingest/hook']);
+    expect(readFileSync(join(spoolDir, 'spool-rejected.jsonl'), 'utf8')).toBe(`${rejected}\n`);
+  });
 });
 
 describe('observed mode: transcript usage', () => {
@@ -173,6 +212,7 @@ describe('observed mode: transcript usage', () => {
     expect(Object.keys(usage!.body).sort()).toEqual(['batches', 'idempotencyKey', 'sessionId']);
     expect(usage!.body.sessionId).toBe(CLAUDE_SESSION);
     expect(usage!.body.idempotencyKey).toMatch(/^[0-9a-f]{64}$/);
+    // contextTokens is the session's latest main-chain message (msg_C), the same for every batch of one read.
     expect(usage!.body.batches).toEqual([
       {
         model: 'claude-opus-5-5',
@@ -184,7 +224,7 @@ describe('observed mode: transcript usage', () => {
         messageIds: ['msg_A', 'msg_B'],
         firstAt: '2026-10-09T01:00:01.000Z',
         lastAt: '2026-10-09T01:00:03.000Z',
-        contextTokens: 215,
+        contextTokens: 1,
       },
       {
         model: 'claude-haiku-5-5',

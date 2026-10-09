@@ -7,7 +7,10 @@ export type TsaFetch = (
 export interface AuditModuleOptions {
   /** TSA transport for the rfc3161 provider (default: global fetch). */
   tsaFetch?: TsaFetch;
-  /** Sign anchor commits: `git -c user.signingkey=<id> commit -S` (OpenPGP). Verify then requires valid signatures. */
+  /**
+   * Sign anchor commits: `git -c user.signingkey=<id> commit -S` (OpenPGP). Verify then requires valid signatures.
+   * Overrides `audit.gpgKeyId`; the same holds for the three settings below and their `audit.*` keys.
+   */
   gpgKeyId?: string;
   /** GNUPGHOME used when signing / verifying anchor commits (default: inherited environment). */
   gnupgHome?: string;
@@ -25,12 +28,15 @@ export interface AuditModuleOptions {
   anchorRetries?: number;
   /** Delay between nightly anchor attempts (default 30s). */
   retryDelayMs?: number;
-  /** Anchor age after which health warns (default 26h). */
+  /** Anchor (and backup) age after which health warns (default 26h). */
   staleAfterMs?: number;
+  /** A manual backup is refused when the last one is younger than this (default 10 min): repeated full copies fill disks. */
+  minBackupIntervalMs?: number;
   /** Binaries (default from PATH). */
   gitBin?: string;
   opensslBin?: string;
 }
 
 export const DEFAULT_STALE_AFTER_MS = 26 * 60 * 60 * 1000;
+export const DEFAULT_MIN_BACKUP_INTERVAL_MS = 10 * 60 * 1000;
 export const DEFAULT_TSA_MAX_SKEW_MS = 60 * 60 * 1000;

@@ -1,7 +1,7 @@
 /** Flow: verified throughput per local hour vs a same-hour baseline, WIP, the ticket funnel and gate latency. */
 import { DECISION_KINDS, type TicketStage, type TowerFlow } from '@aoc/contracts';
 import { all, inProject, iso, one, projectName, type ReadCtx } from './read';
-import { decisionSlaMs } from './scoring';
+import { decisionDueMs, decisionSlaMs } from './scoring';
 import { pct, percentile, round1 } from './stats';
 import { DAY, HOUR, isoWithOffset, startOfLocalHour } from './zoned';
 
@@ -25,6 +25,7 @@ export interface FlowFacts {
   tasksVerifiedBaseline: number;
   gateLatencyP50Ms: number | null;
   gateLatencyP90Ms: number | null;
+  openPastSla: number;
   openTickets: number;
   oldestTicketSince: string | null;
 }
@@ -45,6 +46,7 @@ export function buildFlow(r: ReadCtx): FlowFacts {
     tasksVerifiedBaseline: throughput.verifiedBaseline,
     gateLatencyP50Ms: latency.gateP50,
     gateLatencyP90Ms: latency.gateP90,
+    openPastSla: latency.openPastSla,
     openTickets: tickets.open,
     oldestTicketSince: tickets.oldestSubmitted,
   };
@@ -226,39 +228,55 @@ function funnel(r: ReadCtx): {
 
 /**
  * Human latency per decision kind: p50/p90 of decisions resolved in 7d (policy resolutions excluded — they are
- * instant by construction), open count and SLA breaches (open past SLA + resolved slower than SLA in 7d).
- * The gate KPI pools every human-resolved kind except UAT sign-off, which measures the customer.
+ * instant by construction), open count and SLA breaches (open past due + resolved after due in 7d; due = the card's
+ * own due time, else its approved SLA). The gate KPI pools every human-resolved kind except UAT sign-off, which
+ * measures the customer; "open past SLA" counts the same gates.
  */
 function decisionLatency(r: ReadCtx) {
   const [where, args] = inProject(r, 'project_id');
-  const open = all<{ kind: string; requested_ms: number }>(
+  const open = all<{ kind: string; requested_ms: number; due_ms: number | null }>(
     r,
-    `SELECT kind, requested_ms FROM twr_decisions WHERE status = 'open'${where}`,
+    `SELECT kind, requested_ms, due_ms FROM twr_decisions WHERE status = 'open'${where}`,
     ...args,
-  );
-  const resolved = all<{ kind: string; latency: number }>(
+  ).map((d) => ({ kind: d.kind, late: isLate(d, r.now) }));
+  const resolved = all<{ kind: string; requested_ms: number; resolved_ms: number; due_ms: number | null }>(
     r,
-    `SELECT kind, resolved_ms - requested_ms AS latency FROM twr_decisions
+    `SELECT kind, requested_ms, resolved_ms, due_ms FROM twr_decisions
      WHERE status = 'resolved' AND resolved_ms >= ? AND COALESCE(method, '') != 'policy'${where}`,
     r.now - BASELINE_DAYS * DAY,
     ...args,
-  );
+  ).map((d) => ({
+    kind: d.kind,
+    latency: Math.max(0, d.resolved_ms - d.requested_ms),
+    late: isLate(d, d.resolved_ms),
+  }));
   const byKind: TowerFlow['decisionLatency'] = [];
   for (const kind of DECISION_KINDS) {
     const o = open.filter((d) => d.kind === kind);
-    const lat = resolved.filter((d) => d.kind === kind).map((d) => Math.max(0, d.latency));
-    if (!o.length && !lat.length) continue;
-    const sla = decisionSlaMs(kind);
+    const done = resolved.filter((d) => d.kind === kind);
+    if (!o.length && !done.length) continue;
+    const lat = done.map((d) => d.latency);
     byKind.push({
       kind,
       open: o.length,
-      resolved7d: lat.length,
+      resolved7d: done.length,
       p50Ms: percentile(lat, 0.5),
       p90Ms: percentile(lat, 0.9),
-      slaMs: sla,
-      breaches: o.filter((d) => r.now - d.requested_ms > sla).length + lat.filter((l) => l > sla).length,
+      slaMs: decisionSlaMs(kind),
+      breaches: o.filter((d) => d.late).length + done.filter((d) => d.late).length,
     });
   }
-  const gates = resolved.filter((d) => d.kind !== 'uat_signoff').map((d) => Math.max(0, d.latency));
-  return { byKind, gateP50: percentile(gates, 0.5), gateP90: percentile(gates, 0.9) };
+  const gates = resolved.filter((d) => d.kind !== 'uat_signoff').map((d) => d.latency);
+  return {
+    byKind,
+    gateP50: percentile(gates, 0.5),
+    gateP90: percentile(gates, 0.9),
+    openPastSla: open.filter((d) => d.kind !== 'uat_signoff' && d.late).length,
+  };
+}
+
+/** Past the card's due time at `at` (never, for a kind without an approved SLA or its own due time). */
+function isLate(d: { kind: string; requested_ms: number; due_ms: number | null }, at: number): boolean {
+  const due = decisionDueMs(d.kind, d.requested_ms, d.due_ms);
+  return due !== null && at > due;
 }

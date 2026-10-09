@@ -1,42 +1,50 @@
 import { describe, expect, it } from 'vitest';
 import { DECISION_KINDS } from '@aoc/contracts';
 import {
-  ageFactor,
+  agePoints,
   cleanTitle,
   costOfDelay,
-  decisionBase,
+  decisionDueMs,
+  decisionImpact,
   decisionSlaMs,
   displayScore,
   formatDuration,
-  GATE_SLA_MS,
   severityOf,
-  TICKET_BASE,
+  ATTENTION_SCALE_MS,
+  DECISION_SLA_MS,
+  GATE_SLA_MS,
+  IMPACT,
+  TICKET_IMPACT,
   TICKET_SLA_MS,
 } from '../src';
 import { DAY, HOUR, MIN } from './helpers';
 
+const severityAt = (impact: number, ageMs: number, slaMs: number) =>
+  severityOf(displayScore(costOfDelay(impact, ageMs, slaMs)));
+
 describe('cost of delay (pure)', () => {
-  it('ageFactor = 1 + log2(1 + ageMinutes / 30)', () => {
-    expect(ageFactor(0)).toBe(1);
-    expect(ageFactor(30 * MIN)).toBe(2);
-    expect(ageFactor(90 * MIN)).toBe(3);
-    expect(ageFactor(-5 * MIN)).toBe(1);
+  it('ageing is relative to the item’s own time scale: 20 points at 1×, 40 at 3×, 60 at 7×', () => {
+    expect(agePoints(0, HOUR)).toBe(0);
+    expect(agePoints(HOUR, HOUR)).toBe(20);
+    expect(agePoints(3 * HOUR, HOUR)).toBe(40);
+    expect(agePoints(14 * DAY, 2 * DAY)).toBe(60);
+    expect(agePoints(-5 * MIN, HOUR)).toBe(0);
   });
 
-  it('raw cost = base × ageFactor × blastRadius (radius clamped to 1..3)', () => {
-    expect(costOfDelay(100, 0)).toBe(100);
-    expect(costOfDelay(15, DAY)).toBeCloseTo(99.22, 2); // a lesson that waited a day still ranks below a fresh break-glass
-    expect(costOfDelay(50, HOUR)).toBeCloseTo(129.25, 2); // an hour-old stall overtakes a fresh go-live gate (90)
-    expect(costOfDelay(50, 0, 5)).toBe(150);
-    expect(costOfDelay(50, 0, 0.2)).toBe(50);
+  it('rank = impact × blast radius (clamped to 1..3) + ageing points', () => {
+    expect(costOfDelay(70, 0, 30 * MIN)).toBe(70);
+    expect(costOfDelay(70, 30 * MIN, 30 * MIN)).toBe(90);
+    expect(costOfDelay(40, 0, HOUR, 1.55)).toBe(62);
+    expect(costOfDelay(50, 0, HOUR, 5)).toBe(150);
+    expect(costOfDelay(50, 0, HOUR, 0.2)).toBe(50);
   });
 
-  it('publishes raw cost on the approved 0–100 scale: bands 75/50/25 are raw 90/60/30, then a monotonic tail', () => {
-    expect([0, 30, 60, 90].map(displayScore)).toEqual([0, 25, 50, 75]);
-    expect(displayScore(150)).toBe(87.5); // one tail half-distance above 90
+  it('publishes the rank as is up to 90, then approaches 100 (monotonic, never past it)', () => {
+    expect([0, 25, 50, 75, 90].map(displayScore)).toEqual([0, 25, 50, 75, 90]);
+    expect(displayScore(100)).toBe(95); // one tail half-distance above 90
     expect(displayScore(1e6)).toBe(100);
-    const raws = [0, 12, 45, 89.9, 90, 90.1, 130, 400, 2000];
-    const shown = raws.map(displayScore);
+    const ranks = [0, 12, 45, 89.9, 90, 90.1, 130, 400, 2000];
+    const shown = ranks.map(displayScore);
     expect([...shown].sort((a, b) => a - b)).toEqual(shown);
   });
 
@@ -53,44 +61,101 @@ describe('cost of delay (pure)', () => {
     ]);
   });
 
-  it('bases per decision kind and sub-kind; top-ups fold into credit_blocked and UAT sign-off is never a decision item', () => {
-    const bases = Object.fromEntries(DECISION_KINDS.map((k) => [k, decisionBase(k, null)]));
-    expect(bases).toEqual({
-      agent_decision: 35,
-      protected_operation: 60,
-      fix_plan: 65,
-      go_live: 90,
-      rollback: 95,
-      change_request: 40,
-      break_glass: 100,
-      playbook_approval: 15,
-      lesson_binding: 15,
-      credit_topup: null,
-      fx_discrepancy: 20,
-      triage_reconciliation: 50,
-      low_confidence_diagnosis: 50,
-      uat_signoff: null,
-    });
-    expect(
-      ['main', 'production', 'data', 'irreversible', 'ambiguity'].map((t) =>
-        decisionBase('agent_decision', t as never),
-      ),
-    ).toEqual([60, 60, 60, 35, 35]);
-    expect(TICKET_BASE).toEqual({ critical: 90, high: 70, medium: 40, low: 20 });
-    expect(TICKET_SLA_MS).toEqual({ critical: HOUR, high: 4 * HOUR, medium: 24 * HOUR, low: 72 * HOUR });
+  it('kinds of equal impact cross each band at the same fraction of their own SLA', () => {
+    const slas = Object.values(DECISION_SLA_MS);
+    for (const impact of [8, 12, 30, 45]) {
+      for (const fraction of [0, 0.25, 0.5, 1, 2, 3, 7, 10]) {
+        const bands = new Set(slas.map((sla) => severityAt(impact, fraction * sla, sla)));
+        expect(bands.size).toBe(1);
+      }
+    }
+    // Every kind that starts low reaches medium within its SLA and critical only between 5× and 10× of it.
+    const lowStart = DECISION_KINDS.map((k) => decisionImpact(k, null)).filter(
+      (i): i is number => i !== null && i < 25,
+    );
+    for (const impact of lowStart) {
+      const reach = (band: number) => 2 ** ((band - impact) / 20) - 1; // in multiples of the SLA
+      expect(reach(25)).toBeLessThan(1);
+      expect(reach(75)).toBeGreaterThan(5);
+      expect(reach(75)).toBeLessThan(10);
+    }
   });
 
-  it('decision SLAs as approved (rollback 30m, agent decision 1h, top-up 1h, go-live 2h, fix plan 4h, lesson 2d)', () => {
-    expect(decisionSlaMs('rollback')).toBe(30 * MIN);
-    expect(decisionSlaMs('agent_decision')).toBe(HOUR);
-    expect(decisionSlaMs('credit_topup')).toBe(HOUR);
+  it('a lesson binding (2-day SLA) is low at 22h, medium from ~39h and critical only past 9× its SLA', () => {
+    const lesson = decisionImpact('lesson_binding', null)!;
+    const sla = decisionSlaMs('lesson_binding');
+    expect(severityAt(lesson, 22 * HOUR, sla)).toBe('low');
+    expect(severityAt(lesson, 38 * HOUR, sla)).toBe('low');
+    expect(severityAt(lesson, 39 * HOUR, sla)).toBe('medium');
+    expect(severityAt(lesson, 6 * DAY, sla)).toBe('medium');
+    expect(severityAt(lesson, 7 * DAY, sla)).toBe('high');
+    expect(severityAt(lesson, 18 * DAY, sla)).toBe('high');
+    expect(severityAt(lesson, 19 * DAY, sla)).toBe('critical');
+    // The approved urgent gates: a rollback (30m SLA) is critical within 6 minutes.
+    expect(severityAt(decisionImpact('rollback', null)!, 6 * MIN, decisionSlaMs('rollback'))).toBe(
+      'critical',
+    );
+    expect(severityAt(decisionImpact('rollback', null)!, 5 * MIN, decisionSlaMs('rollback'))).toBe('high');
+  });
+
+  it('impacts per decision kind and sub-kind; top-ups fold into credit_blocked and UAT sign-off is never a decision item', () => {
+    const impacts = Object.fromEntries(DECISION_KINDS.map((k) => [k, decisionImpact(k, null)]));
+    expect(impacts).toEqual({
+      agent_decision: 8,
+      protected_operation: 12,
+      fix_plan: 30,
+      go_live: 45,
+      rollback: 70,
+      change_request: 10,
+      break_glass: 80,
+      playbook_approval: 8,
+      lesson_binding: 8,
+      credit_topup: null,
+      fx_discrepancy: 11,
+      triage_reconciliation: 20,
+      low_confidence_diagnosis: 20,
+      uat_signoff: null,
+    });
+    // Tests that bounce to the Approver (per the decision contract) weigh more than the builder's own calls.
+    expect(
+      ['main', 'production', 'irreversible', 'data', 'ambiguity'].map((t) =>
+        decisionImpact('agent_decision', t as never),
+      ),
+    ).toEqual([12, 12, 12, 12, 8]);
+    expect(IMPACT).toMatchObject({
+      chain_broken: 80,
+      session_dead: 50,
+      session_stalled: 30,
+      credit_blocked: 25,
+    });
+    expect(ATTENTION_SCALE_MS).toMatchObject({
+      session_dead: HOUR,
+      credit_blocked: HOUR,
+      anchor_missed: DAY,
+    });
+    expect(TICKET_IMPACT).toEqual({ critical: 75, high: 40, medium: 25, low: 15 });
+    expect(TICKET_SLA_MS).toEqual({ critical: 4 * HOUR, high: 2 * DAY, medium: 5 * DAY, low: 10 * DAY });
+  });
+
+  it('decision SLAs as approved (rollback 30m, agent decision 1h, top-up 1h, go-live 2h, fix plan 4h, lesson 2d); reference scales elsewhere', () => {
+    expect(DECISION_SLA_MS).toEqual({
+      rollback: 30 * MIN,
+      agent_decision: HOUR,
+      credit_topup: HOUR,
+      go_live: 2 * HOUR,
+      fix_plan: 4 * HOUR,
+      lesson_binding: 2 * DAY,
+    });
     expect(decisionSlaMs('go_live')).toBe(2 * HOUR);
-    expect(decisionSlaMs('fix_plan')).toBe(4 * HOUR);
-    expect(decisionSlaMs('lesson_binding')).toBe(2 * DAY);
     expect(decisionSlaMs('break_glass')).toBe(15 * MIN);
     expect(decisionSlaMs('protected_operation')).toBe(HOUR);
     expect(decisionSlaMs('change_request')).toBe(DAY);
     expect(GATE_SLA_MS).toBe(HOUR);
+    // Due: the card's own due time, else the approved SLA; kinds without either are never late.
+    expect(decisionDueMs('go_live', 1_000, null)).toBe(1_000 + 2 * HOUR);
+    expect(decisionDueMs('go_live', 1_000, 5_000)).toBe(5_000);
+    expect(decisionDueMs('break_glass', 1_000, null)).toBeNull();
+    expect(decisionDueMs('break_glass', 1_000, 9_000)).toBe(9_000);
   });
 
   it('formats durations for basis sentences', () => {

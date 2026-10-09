@@ -1,9 +1,9 @@
 /*
  * `aoc-hook <HookEventName>`: relays one Claude Code hook invocation to aocd. The daemon decides; this only relays
- * (managed) or reports (observed). Hot path: no runtime imports from @aoc/contracts or @aoc/client (see constants.ts);
- * the spool client and the transcript reader load lazily on the paths that need them.
+ * (managed) or reports (observed). Hot path: no runtime imports from @aoc/contracts (see constants.ts); @aoc/client
+ * only imports contract types, and the transcript reader loads lazily on the events that report usage.
  */
-import { basename } from 'node:path';
+import { agentIdOfTranscript } from '@aoc/client';
 import type {
   HookIngestRequest,
   HookIngestResponse,
@@ -210,7 +210,9 @@ function usageTranscript(event: string, hook: HookInput): UsageTranscript | null
   }
   if (event === 'SubagentStop' && typeof h.agent_transcript_path === 'string' && h.agent_transcript_path) {
     const agentId =
-      typeof h.agent_id === 'string' && h.agent_id ? h.agent_id : basename(h.agent_transcript_path, '.jsonl');
+      typeof h.agent_id === 'string' && h.agent_id
+        ? h.agent_id
+        : agentIdOfTranscript(h.agent_transcript_path);
     return { path: h.agent_transcript_path, agentId };
   }
   return null;

@@ -55,6 +55,31 @@ const hook = (sid: string | null, claudeId: string, event: string, extra: Record
 const livenessChanges = (sid: string) =>
   t.rt.store.list({ types: ['session.liveness_changed'], sessionId: sid }).map((e) => (e.meta as { to: string | null }).to);
 
+describe('session owner', () => {
+  it('is the owner recorded at launch; launches logged before ownerId existed keep the old inference', async () => {
+    await setup();
+    const owner = t.user('builder');
+    const other = t.user('builder');
+    launch(owner, 'ses_old'); // legacy: the launching human
+    const asSupervisor = (sid: string, meta: Record<string, unknown>) =>
+      t.rt.store.append({
+        type: 'session.launch_requested',
+        actor: { kind: 'system', id: 'supervisor' },
+        scope: { sessionId: sid, projectId: 'prj_1' },
+        meta: { sessionId: sid, projectId: 'prj_1', threadId: 'thr_1', processType: 'discovery', model: 'claude-opus-5-5', readOnly: false, credentialProfile: null, ticketId: null, parentSessionId: null, phaseId: null, ...meta } as never,
+        payload: { prompt: 'Continue', cwd: '/tmp/repo' },
+        source: 'supervisor',
+      });
+    asSupervisor('ses_succ', { parentSessionId: 'ses_old' }); // legacy: the parent's owner
+    asSupervisor('ses_triage', { parentSessionId: 'ses_old', ownerId: null }); // recorded: nobody
+    asSupervisor('ses_rec', { ownerId: other.user.id }); // recorded
+    const owners = () => ['ses_old', 'ses_succ', 'ses_triage', 'ses_rec'].map((id) => engine().get(id)?.ownerId);
+    expect(owners()).toEqual([owner.user.id, owner.user.id, null, other.user.id]);
+    t.rt.store.rebuildProjections(['sessions']);
+    expect(owners()).toEqual([owner.user.id, owner.user.id, null, other.user.id]);
+  });
+});
+
 describe('liveness engine (§4)', () => {
   it('derives states from instrumented events and chains only changes', async () => {
     await setup();
@@ -182,6 +207,91 @@ describe('hook ingest', () => {
     expect(await t.json('POST', '/ingest/spool', { headers, body: { items: [item] } })).toEqual({ accepted: 0, duplicates: 1, rejected: 0 });
     expect(t.rt.store.list({ types: ['tool.used'] })).toHaveLength(1);
   });
+
+  it('replays everything clients spool: observed usage, and the sidecar’s usage, throttle and process exit', async () => {
+    // Regression: only /ingest/hook items were replayed; the rest were counted rejected and the client then
+    // deleted them, so usage and throttles that happened during an outage were lost.
+    await setup();
+    const owner = t.user('builder');
+    launch(owner);
+    const usage = (sessionId: string, ids: string[], key: string) => ({
+      path: '/ingest/usage',
+      queuedAt: t.clock.iso(),
+      body: {
+        sessionId,
+        idempotencyKey: key,
+        batches: [{ model: 'claude-opus-5-5', inputTokens: 5, outputTokens: 7, cacheReadTokens: 0, cacheWrite5mTokens: 0, cacheWrite1hTokens: 0, messageIds: ids, firstAt: t.clock.iso(), lastAt: t.clock.iso(), contextTokens: 900 }],
+      },
+    });
+    const sidecar = t.ingestHeaders('ses_A');
+    const items = [
+      usage('ses_A', ['m1'], 'sidecar-usage-1'),
+      { path: '/ingest/throttle', queuedAt: t.clock.iso(), body: { sessionId: 'ses_A', resetAt: '2026-10-09T07:00:00.000Z', message: "You've hit your session limit · resets 3pm (Asia/Kuala_Lumpur)", source: 'transcript' } },
+      { path: '/ingest/process', queuedAt: t.clock.iso(), body: { sessionId: 'ses_A', event: 'exited', exitCode: null, signal: null, at: t.clock.iso() } },
+    ];
+    expect(await t.json('POST', '/ingest/spool', { headers: sidecar, body: { items } })).toEqual({ accepted: 3, duplicates: 0, rejected: 0 });
+    expect(t.rt.store.list({ types: ['usage.recorded'], sessionId: 'ses_A' })).toHaveLength(1);
+    expect(t.rt.store.list({ types: ['throttle.hit'], sessionId: 'ses_A' })[0]!.meta).toMatchObject({ resetAt: '2026-10-09T07:00:00.000Z', source: 'transcript' });
+    expect(engine().signalsOf('ses_A').processAlive).toBe(false);
+    // A second replay of the same items changes nothing.
+    expect(await t.json('POST', '/ingest/spool', { headers: sidecar, body: { items: items.slice(0, 2) } })).toEqual({ accepted: 0, duplicates: 2, rejected: 0 });
+    expect(t.rt.store.list({ types: ['usage.recorded', 'throttle.hit'], sessionId: 'ses_A' })).toHaveLength(2);
+    // A session token never replays another session's items.
+    expect(await t.json('POST', '/ingest/spool', { headers: sidecar, body: { items: [usage('ses_B', ['m9'], 'other-session')] } })).toEqual({ accepted: 0, duplicates: 0, rejected: 1 });
+
+    // Observed hooks spool usage keyed by the claude session id, replayed with the observer token.
+    const claudeObs = randomUUID();
+    const observer = t.ingestHeaders('observer');
+    await t.json('POST', '/ingest/hook', { headers: observer, body: hook(null, claudeObs, 'SessionStart', { source: 'startup' }, 'observed') });
+    const obs = engine().byClaudeSessionId(claudeObs)!;
+    expect(await t.json('POST', '/ingest/spool', { headers: observer, body: { items: [usage(claudeObs, ['o1'], 'observed-usage-1')] } })).toEqual({ accepted: 1, duplicates: 0, rejected: 0 });
+    expect(t.rt.store.list({ types: ['usage.recorded'], sessionId: obs.sessionId })[0]!.source).toBe('hook');
+    // Observer tokens cannot replay a managed session's process exit …
+    expect(await t.json('POST', '/ingest/spool', { headers: observer, body: { items: [items[2]] } })).toEqual({ accepted: 0, duplicates: 0, rejected: 1 });
+    // … nor usage or a throttle addressed to a managed session by its claude session id.
+    const forged = [
+      usage(CLAUDE_A, ['f1'], 'forged-usage'),
+      { path: '/ingest/throttle', queuedAt: t.clock.iso(), body: { sessionId: CLAUDE_A, resetAt: null, message: 'x', source: 'transcript' } },
+    ];
+    expect(await t.json('POST', '/ingest/spool', { headers: observer, body: { items: forged } })).toEqual({ accepted: 0, duplicates: 0, rejected: 2 });
+    expect(t.rt.store.list({ types: ['usage.recorded', 'throttle.hit'], sessionId: 'ses_A' })).toHaveLength(2);
+    // Replayed usage gets the same session-bound, hashed idempotency key as live usage: no client text is chained.
+    const replayed = t.rt.store.list({ types: ['usage.recorded'] });
+    expect(replayed.map((e) => e.idempotencyKey).every((k) => !!k && !k.includes('sidecar-usage') && !k.includes('observed-usage'))).toBe(true);
+  });
+});
+
+describe('per-turn sidecars', () => {
+  it("ignores heartbeats and exit reports about an earlier turn's process", async () => {
+    // Regression (found by e2e): the supervisor starts a sidecar per turn and stops the old one after a grace;
+    // the previous turn's sidecar noticed its pid had died seconds into the next turn, and its report marked the
+    // running session Dead.
+    await setup();
+    const owner = t.user('builder');
+    launch(owner); // turn 1: pid 4242
+    const headers = t.ingestHeaders('ses_A');
+    const heartbeat = (pid: number, alive: boolean) =>
+      t.json('POST', '/ingest/heartbeat', { headers, body: { sessionId: 'ses_A', pid, alive, at: t.clock.iso(), transcriptBytes: 0, lastTranscriptWriteAt: null } });
+    const exited = (pid?: number) =>
+      t.json('POST', '/ingest/process', { headers, body: { sessionId: 'ses_A', event: 'exited', exitCode: 0, signal: null, at: t.clock.iso(), ...(pid ? { pid } : {}) } });
+    await heartbeat(4242, true);
+    expect(engine().row('ses_A')!.liveness).toBe('thinking');
+    t.rt.store.append({
+      type: 'session.launched',
+      actor: { kind: 'system', id: 'supervisor' },
+      scope: { sessionId: 'ses_A' },
+      meta: { sessionId: 'ses_A', claudeSessionId: CLAUDE_A, pid: 5151, model: 'claude-opus-5-5', turn: 2 },
+      payload: { cwd: '/tmp/repo', argv: [], transcriptPath: '/tmp/t.jsonl' },
+      source: 'supervisor',
+    });
+    await heartbeat(4242, false);
+    await exited(4242);
+    expect(engine().row('ses_A')!.liveness).toBe('thinking');
+    // The current process's own sidecar still counts; so does a report that names no pid.
+    await heartbeat(5151, true);
+    await exited(5151);
+    expect(engine().row('ses_A')!.liveness).toBe('dead');
+  });
 });
 
 describe('usage + throttle ingest', () => {
@@ -195,6 +305,9 @@ describe('usage + throttle ingest', () => {
     const r2 = await t.json<{ recorded: number; skipped: number }>('POST', '/ingest/usage', { headers, body: { sessionId: 'ses_A', idempotencyKey: 'usage-key-2', batches: [batch(['m1', 'm2'], 50_000), batch(['m3'], 120_000)] } });
     expect(r1.recorded).toBe(1);
     expect(r2).toMatchObject({ recorded: 1, skipped: 1 });
+    expect(engine().contextTokens('ses_A')).toBe(120_000);
+    // A batch without a main-chain message (a subagent transcript on its own) reports 0: the last size stands.
+    await t.json('POST', '/ingest/usage', { headers, body: { sessionId: 'ses_A', idempotencyKey: 'usage-key-3', batches: [batch(['sub1'], 0)] } });
     expect(engine().contextTokens('ses_A')).toBe(120_000);
     // throttle: one event per episode
     await t.json('POST', '/ingest/throttle', { headers, body: { sessionId: 'ses_A', resetAt: '2026-10-09T05:00:00.000Z', message: 'Claude AI usage limit reached|1791522000', source: 'transcript' } });

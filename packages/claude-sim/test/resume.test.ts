@@ -136,6 +136,27 @@ describe('resume', () => {
     expect(loadState(statePath(SESSION_A))!.cursor).toBe(26);
   });
 
+  it('takes the hold branch on the supervisor’s answer line, which names the option by its label', async () => {
+    // The supervisor resumes with `Decision <id> answered: <label>.` (prompts.ts decisionAnswersText), passed as
+    // `--resume <id> … --model <id> -- <prompt>`.
+    const env = { CLAUDE_SIM_SCENARIO: 'decision' };
+    await runSim(box, ['-p', 'ship it', '--session-id', SESSION_A, '--permission-mode', 'acceptEdits'], { env });
+    const resumed = await runSim(box, [
+      '-p',
+      '--resume',
+      SESSION_A,
+      '--permission-mode',
+      'acceptEdits',
+      '--model',
+      'claude-opus-5-5',
+      '--',
+      'Decision dec_7 answered: Hold the merge.\n\nContinue with your declared plan in line with these answers.',
+    ]);
+    expect(resumed.stdout.trim()).toBe(
+      'The merge is on hold as decided; the plan is amended and the release note records it.',
+    );
+  });
+
   it('takes the default branch when the resume prompt does not pick option b', async () => {
     const env = { CLAUDE_SIM_SCENARIO: 'decision' };
     await runSim(box, ['-p', 'ship it', '--session-id', SESSION_A, '--permission-mode', 'acceptEdits'], {

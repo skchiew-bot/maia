@@ -61,7 +61,7 @@ export async function createAocServer(config: AocConfig, opts: AocServerOptions 
   // The data dir holds the event log, the encrypted body store and possibly the generated KEK.
   if (config.dataDir !== ':memory:') mkdirSync(config.dataDir, { recursive: true, mode: 0o700 });
 
-  const llm = opts.llm ?? (await resolveLlm(config, log));
+  const llm = opts.llm ?? resolveLlm(config);
   const daemon: AocModule = {
     name: 'aocd',
     init(ctx) {

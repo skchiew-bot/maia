@@ -92,7 +92,8 @@ export const intakeProjector: Projector = {
       case 'ticket.diagnosis_reported':
         db.prepare("UPDATE itk_sessions SET status = 'reported', confidence = ?, root_cause_class = ?, root_cause = ?, fix_plan = ?, reported_at = ? WHERE session_id = ?").run(
           m.confidence as number,
-          s(m.rootCauseClass),
+          // In the body since the class stopped being chained in clear; older events carry it in meta.
+          s(p?.rootCauseClass) ?? s(m.rootCauseClass),
           s(p?.rootCause) ?? '[erased]',
           s(p?.fixPlan) ?? '[erased]',
           e.ts,
@@ -171,7 +172,7 @@ export const intakeProjector: Projector = {
     db.prepare("UPDATE itk_attachments SET file_name = '[erased]' WHERE ticket_id = ?").run(scopeId);
     // Diagnoses are written under the ticket's key scope and routinely quote the ticket's personal data.
     db.prepare(
-      "UPDATE itk_sessions SET root_cause = CASE WHEN root_cause IS NULL THEN NULL ELSE '[erased]' END, fix_plan = CASE WHEN fix_plan IS NULL THEN NULL ELSE '[erased]' END WHERE ticket_id = ?",
+      "UPDATE itk_sessions SET root_cause = CASE WHEN root_cause IS NULL THEN NULL ELSE '[erased]' END, fix_plan = CASE WHEN fix_plan IS NULL THEN NULL ELSE '[erased]' END, root_cause_class = NULL WHERE ticket_id = ?",
     ).run(scopeId);
   },
 };

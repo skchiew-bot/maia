@@ -1,6 +1,7 @@
 import { spawn as nodeSpawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import {
+  AOC_ENV,
   MODEL_ID_BY_TIER,
   type JsonValue,
   type LlmJsonRequest,
@@ -151,8 +152,8 @@ export class ClaudeCliLlm implements LlmService {
       try {
         child = spawn(bin, args, {
           cwd: this.opts.cwd ?? tmpdir(),
-          // AOC_INTERNAL_LLM marks AOC's own helper calls so global hooks can skip them (not an observed session).
-          env: { ...process.env, ...this.opts.env, AOC_INTERNAL_LLM: '1' },
+          // Marks AOC's own helper calls so the observed hooks they inherit stand down (not a session).
+          env: { ...process.env, ...this.opts.env, [AOC_ENV.internalLlm]: '1' },
           stdio: [stdin === null ? 'ignore' : 'pipe', 'pipe', 'pipe'],
         });
       } catch (err) {

@@ -46,6 +46,9 @@ import {
   budgetsFrom,
   diagnosisOf,
   gatesOf,
+  goLiveDecisionId,
+  latestPromotion,
+  latestRound,
   stageSpans,
   timelineEvents,
   type CloseResolution,
@@ -140,7 +143,13 @@ function OpenDecision({
         </details>
       )}
       <RecommendationBox card={card} directory={directory} />
-      <ResolvePanel card={card} directory={directory} actions={actions} passkeys={passkeys} />
+      <ResolvePanel
+        card={card}
+        directory={directory}
+        actions={actions}
+        passkeys={passkeys}
+        allowWithdraw={false}
+      />
     </section>
   );
 }
@@ -258,27 +267,40 @@ export default function TicketPage() {
     query: { subjectId: id, limit: 100 },
     refreshOn: (m) => isDecisionEvent(m) && scoped(m),
   });
-  const openCards = (decisions.data?.decisions ?? []).filter((d) => d.status === 'open');
+  const evts: AuditEventHeaderDTO[] = events.data?.events ?? [];
+  // The go-live decision is about the promotion, not the ticket, so it is found through ticket.golive_requested.
+  const goLiveId = useMemo(() => goLiveDecisionId(evts), [evts]);
+  const goLive = useResource<DecisionCardView>(
+    goLiveId ? `/api/decisions/${encodeURIComponent(goLiveId)}` : null,
+    {
+      refreshOn: (m) => isDecisionEvent(m) && m.kind === 'aoc' && m.event.meta.decisionId === goLiveId,
+    },
+  );
+  const allDecisions = useMemo(() => {
+    const list = [...(decisions.data?.decisions ?? [])];
+    if (goLive.data && !list.some((d) => d.id === goLive.data!.id)) list.push(goLive.data);
+    return list;
+  }, [decisions.data, goLive.data]);
+  const openCards = allDecisions.filter((d) => d.status === 'open');
   const passkeys = usePasskeys(openCards.some((d) => d.requiresPasskey && d.viewer.canResolve));
   const { reload: reloadTicket } = ticket;
   const { reload: reloadEvents } = events;
   const { reload: reloadDecisions } = decisions;
+  const { reload: reloadGoLive } = goLive;
   const reloadAll = useCallback(() => {
     reloadTicket();
     reloadEvents();
     reloadDecisions();
-  }, [reloadTicket, reloadEvents, reloadDecisions]);
+    reloadGoLive();
+  }, [reloadTicket, reloadEvents, reloadDecisions, reloadGoLive]);
 
   // Geometry is computed once per fetched snapshot, so the bar only moves when an event refetched it.
   const snapshotAt = useMemo(() => clock.now(), [events.data, clock]);
-  const evts: AuditEventHeaderDTO[] = events.data?.events ?? [];
   const spans = useMemo(() => stageSpans(evts, snapshotAt), [evts, snapshotAt]);
   const budget = useMemo(() => budgetsFrom(evts).get(id), [evts, id]);
-  const decisionMap = useMemo(
-    () => new Map((decisions.data?.decisions ?? []).map((d) => [d.id, d])),
-    [decisions.data],
-  );
+  const decisionMap = useMemo(() => new Map(allDecisions.map((d) => [d.id, d])), [allDecisions]);
   const timeline = useMemo(() => timelineEvents(evts).reverse(), [evts]);
+  const promotion = useMemo(() => latestPromotion(evts), [evts]);
 
   if (ticket.data === undefined) {
     const notFound = ticket.error instanceof ApiError && ticket.error.status === 404;
@@ -311,17 +333,19 @@ export default function TicketPage() {
   }
 
   const t = ticket.data;
-  const gates = gatesOf(t);
-  const diag = diagnosisOf(t.diagnoses);
-  const use = budgetUse(t, budget);
   const done = TERMINAL.has(t.stage);
+  const gates = gatesOf(t, promotion);
+  const promotionProblem = gates.goLive === 'failed' || gates.goLive === 'rejected';
+  const round = latestRound(t.diagnoses, budget);
+  const diag = diagnosisOf(round);
+  const use = budgetUse(t, budget);
   const canDownload = user?.role === 'approver';
   const linkedActive = t.diagnoses.some((d) => {
     const s = directory.session(d.sessionId);
     return s?.ownerId === user?.id && !['ended', 'retired', 'failed'].includes(s?.lifecycle ?? 'ended');
   });
   const project = directory.projectName(t.projectId);
-  const closedCards = (decisions.data?.decisions ?? []).filter((d) => d.status !== 'open');
+  const closedCards = allDecisions.filter((d) => d.status !== 'open');
   const sessionsLinked = [
     ...t.diagnoses.map((d) => ({ id: d.sessionId, role: 'Triage (read-only)' })),
     ...(t.buildSessionId ? [{ id: t.buildSessionId, role: 'Build' }] : []),
@@ -384,8 +408,22 @@ export default function TicketPage() {
 
         <Widget span={7} title="Next step" subtitle={STAGE_LABEL[t.stage]}>
           <div className="tkt-next">
-            <p className="tkt-next__hint">{STAGE_HINT[t.stage]}</p>
+            <p className="tkt-next__hint">
+              {gates.goLive === 'failed'
+                ? 'Go-live was approved, but promoting the change to main did not complete.'
+                : gates.goLive === 'rejected'
+                  ? 'The Approver rejected go-live: nothing reached main. Close the ticket or send it back through triage.'
+                  : STAGE_HINT[t.stage]}
+            </p>
             <GateTrail gates={gates} />
+            {promotion && gates.goLive === 'failed' && (
+              <InlineAlert tone="danger" title={`Go-live promotion ${promotion.status}`}>
+                Promotion {shortId(promotion.promotionId)} {promotion.status} (
+                {(promotion.reason ?? 'no reason').replace(/_/g, ' ')}) at{' '}
+                {formatDateTime(promotion.at).slice(11, 16)}. Nothing reached main; the timeline has the
+                detail.
+              </InlineAlert>
+            )}
             {gates.goLive === 'blocked' && (
               <InlineAlert tone="danger" title="UAT passed, but go-live did not start">
                 The requester signed off UAT and no go-live decision or promotion was recorded, so nothing
@@ -402,7 +440,7 @@ export default function TicketPage() {
                 now={now}
               />
             ))}
-            {!openCards.length && !done && gates.goLive !== 'blocked' && (
+            {!openCards.length && !done && gates.goLive !== 'blocked' && !promotionProblem && (
               <p className="tkt-links__sub">
                 No human decision is open on this ticket: the platform moves it on when the current stage
                 finishes.
@@ -458,6 +496,7 @@ export default function TicketPage() {
                             ? 'diagnosing'
                             : 'stopped without a report'}
                         {s?.model ? ` · ${s.model}` : ''}
+                        {round.includes(d) ? '' : ' · earlier round'}
                       </span>
                     </span>
                     {use ? (

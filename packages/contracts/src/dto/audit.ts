@@ -71,7 +71,12 @@ export interface AnchorCheckDTO {
   anchorId: string | null;
   provider: AnchorProviderName;
   seq: number;
+  /** The off-host record's hash when it was found, otherwise the chain's own anchor.created hash. */
   anchoredHash: string;
+  /** Hash recorded by the chain's anchor.created event (null when the chain holds no event for this anchor). */
+  chainHash: string | null;
+  /** The off-host record: found, missing from a readable anchor store, or the store could not be read. */
+  record: 'found' | 'missing' | 'store_unavailable';
   recomputedHash: string | null;
   matched: boolean;
   proofOk: boolean;
@@ -88,6 +93,9 @@ export interface VerifyReportDTO {
   ok: boolean;
   /** In-file recomputation only (defeatable on its own — R2). */
   chainOk: boolean;
+  /** The in-file recomputation's own first bad seq and findings (also part of firstBadSeq / problems). */
+  chainFirstBadSeq: number | null;
+  chainProblems: string[];
   chainId: string;
   headSeq: number;
   headHash: string;
@@ -125,6 +133,42 @@ export interface EraseResultDTO {
   decisionId: string | null;
 }
 
+/** One `backup.completed` (G-21). The backup directory itself is configuration and is not exposed. */
+export interface BackupDTO {
+  backupId: string;
+  /** When the backup was recorded. */
+  at: string;
+  file: string;
+  /** Size and SHA-256 of the encrypted file (check an off-host copy without the key). */
+  bytes: number;
+  sha256: string;
+  /** Fingerprint of the backup key that decrypts it. */
+  keyId: string;
+  headSeq: number;
+  headHash: string;
+  /** Off-host copy command result (null = none configured). */
+  copied: boolean | null;
+  eventSeq: number;
+}
+
+/** `GET /api/audit/backups`, newest first. */
+export interface BackupListDTO {
+  /** audit.backupKeyFile is set: the daily job runs. */
+  configured: boolean;
+  atLocalTime: string;
+  retentionDays: number;
+  copyConfigured: boolean;
+  backups: BackupDTO[];
+}
+
+/** `POST /api/audit/backup`. */
+export interface BackupRunDTO {
+  ok: true;
+  backup: BackupDTO;
+  /** Set when the backup was written but the off-host copy command failed. */
+  copyError: string | null;
+}
+
 export interface AuditHealthDTO {
   generatedAt: string;
   chainId: string;
@@ -153,5 +197,13 @@ export interface AuditHealthDTO {
     lastError: string | null;
   }[];
   selfmodBlocked: { total: number; last24h: number };
+  /** Encrypted backups (G-21, R6). */
+  backup: {
+    configured: boolean;
+    last: (BackupDTO & { ageMs: number }) | null;
+    lastFailure: { at: string; stage: string; reason: string } | null;
+    /** Configured and none within the stale window (same window as anchors). */
+    stale: boolean;
+  };
   warnings: string[];
 }
