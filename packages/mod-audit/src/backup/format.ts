@@ -310,6 +310,22 @@ export class SealedReader {
   }
 }
 
+function isManifest(m: unknown): m is BackupManifest {
+  const x = m as Partial<BackupManifest> | null;
+  return (
+    !!x &&
+    x.format === BACKUP_FORMAT &&
+    typeof x.backupId === 'string' &&
+    typeof x.chainId === 'string' &&
+    Number.isSafeInteger(x.headSeq) &&
+    typeof x.headHash === 'string' &&
+    typeof x.kekId === 'string' &&
+    Number.isSafeInteger(x.bodiesMissing) &&
+    Array.isArray(x.skippedBlobs) &&
+    Array.isArray(x.files)
+  );
+}
+
 async function readAt(fh: FileHandle, position: number, length: number): Promise<Buffer> {
   const buf = Buffer.alloc(length);
   let off = 0;
@@ -401,7 +417,7 @@ export class ArchiveReader {
     if (r.t === 'file') {
       if (!isArchivePath(r.path) || !Number.isSafeInteger(r.size) || r.size < 0)
         throw new BackupFormatError('bad_path', `backup holds an unexpected entry ${String(r.path)}`);
-    } else if (r.t !== 'end') throw new BackupFormatError('corrupt', 'unknown backup record');
+    } else if (r.t !== 'end' || !isManifest(r.manifest)) throw new BackupFormatError('corrupt', 'unknown backup record');
     return r;
   }
 
