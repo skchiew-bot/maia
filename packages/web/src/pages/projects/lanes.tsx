@@ -79,7 +79,32 @@ export interface LanePin {
   label: string;
 }
 
-/** A phase's activity: its span (first session start → completion or now), task closes, and pins. */
+/** Closes that fall in the same few pixels stack into one column, so density reads as height. */
+export function bucketCloses(
+  closes: readonly LaneClose[],
+  xOf: (t: number) => number,
+  px = 3,
+): Array<{ x: number; verified: number; flagged: number }> {
+  const buckets = new Map<number, { x: number; verified: number; flagged: number }>();
+  for (const c of closes) {
+    const key = Math.round(xOf(c.at) / px);
+    const b = buckets.get(key) ?? { x: key * px, verified: 0, flagged: 0 };
+    if (c.flagged) b.flagged += 1;
+    else b.verified += 1;
+    buckets.set(key, b);
+  }
+  return [...buckets.values()].sort((a, b) => a.x - b.x);
+}
+
+const LANE_H = 28;
+const BASE = 23;
+const UNIT = 3;
+const MAX_COL = 14;
+
+/**
+ * A phase's activity on the shared calendar: its span (first session start → completion, or now while open), a
+ * column per cluster of task closes (taller = more closes; amber = flagged), and a flag at every pinned tag.
+ */
 export function ActivityLane({
   scale,
   label,
@@ -98,9 +123,8 @@ export function ActivityLane({
   open: boolean;
 }) {
   const [ref, width] = useElementWidth<HTMLDivElement>(480);
-  const H = 26;
-  const mid = 16;
   const x = (t: number) => xAt(scale, width, t);
+  const columns = bucketCloses(closes, x);
   const flagged = closes.filter((c) => c.flagged).length;
   const first = closes.length ? Math.min(...closes.map((c) => c.at)) : null;
   const last = closes.length ? Math.max(...closes.map((c) => c.at)) : null;
@@ -111,32 +135,36 @@ export function ActivityLane({
   }; ${open ? 'open' : 'complete'}.`;
   return (
     <div className="prj-lane" ref={ref}>
-      <svg role="img" aria-label={summary} width={width} height={H} viewBox={`0 0 ${width} ${H}`}>
-        <line x1={PAD} x2={width - PAD} y1={mid} y2={mid} className="prj-lane__rule" />
+      <svg role="img" aria-label={summary} width={width} height={LANE_H} viewBox={`0 0 ${width} ${LANE_H}`}>
+        <line x1={PAD} x2={width - PAD} y1={BASE + 0.5} y2={BASE + 0.5} className="prj-lane__rule" />
         {spanStart !== null && (
           <rect
             x={x(spanStart)}
-            y={mid - 2}
+            y={BASE}
             width={Math.max(2, x(spanEnd ?? scale.now) - x(spanStart))}
-            height={4}
-            rx={2}
+            height={3}
+            rx={1.5}
             className={cx('prj-lane__span', open && 'is-open')}
           />
         )}
-        {closes
-          .filter((c) => !c.flagged)
-          .map((c, i) => (
-            <rect key={`c${i}`} x={x(c.at) - 1} y={mid - 6} width={2} height={12} className="prj-lane__close" />
-          ))}
-        {closes
-          .filter((c) => c.flagged)
-          .map((c, i) => (
-            <rect key={`f${i}`} x={x(c.at) - 1.25} y={mid - 7} width={2.5} height={14} className="prj-lane__flagged" />
-          ))}
+        {columns.map((c) => {
+          const total = Math.min(MAX_COL, (c.verified + c.flagged) * UNIT + 2);
+          const flaggedH = c.flagged ? Math.max(UNIT, Math.round((c.flagged / (c.verified + c.flagged)) * total)) : 0;
+          return (
+            <g key={c.x}>
+              {c.verified > 0 && (
+                <rect x={c.x - 1} y={BASE - total} width={2.5} height={total - flaggedH} className="prj-lane__close" />
+              )}
+              {flaggedH > 0 && (
+                <rect x={c.x - 1} y={BASE - flaggedH} width={2.5} height={flaggedH} className="prj-lane__flagged" />
+              )}
+            </g>
+          );
+        })}
         {pins.map((p, i) => (
-          <path key={`p${i}`} d={`M${x(p.at)},${mid - 7}V1h6l-1.5,2.25l1.5,2.25h-6`} className="prj-lane__pin" />
+          <path key={`p${i}`} d={`M${x(p.at)},8V1h5l-1.25,2l1.25,2h-5`} className="prj-lane__pin" />
         ))}
-        <line x1={x(scale.now)} x2={x(scale.now)} y1={2} y2={H - 2} className="prj-lane__now" />
+        <line x1={x(scale.now)} x2={x(scale.now)} y1={1} y2={LANE_H - 1} className="prj-lane__now" />
       </svg>
     </div>
   );

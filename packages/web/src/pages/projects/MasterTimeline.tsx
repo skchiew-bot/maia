@@ -250,10 +250,11 @@ export function MasterTimeline({
           <span className="prj-legend__swatch prj-legend__swatch--open" /> declared, not done
         </span>
         <span className="prj-legend__item">
-          <svg width={10} height={14} aria-hidden="true" className="prj-legend__glyph">
-            <rect x={4} y={1} width={1.5} height={12} className="prj-lane__close" />
+          <svg width={14} height={14} aria-hidden="true" className="prj-legend__glyph">
+            <rect x={2} y={8} width={2.5} height={5} className="prj-lane__close" />
+            <rect x={7} y={3} width={2.5} height={10} className="prj-lane__close" />
           </svg>
-          task closed
+          task closes (taller = more)
         </span>
         <span className="prj-legend__item">
           <svg width={12} height={14} aria-hidden="true" className="prj-legend__glyph">

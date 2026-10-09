@@ -38,7 +38,7 @@
   background: var(--surface-2);
 }
 .prj-phasebar__track {
-  fill: color-mix(in srgb, var(--series-1) 14%, var(--surface));
+  fill: color-mix(in srgb, var(--series-1) 22%, var(--surface));
 }
 .prj-phasebar__done {
   fill: var(--series-1);
@@ -47,7 +47,7 @@
   fill: var(--mark-drift);
 }
 .is-current > .prj-phasebar__track {
-  fill: color-mix(in srgb, var(--series-1) 30%, var(--surface));
+  fill: color-mix(in srgb, var(--series-1) 36%, var(--surface));
 }
 .prj-phasebar__label {
   fill: var(--text-2);
@@ -91,7 +91,7 @@
   background: var(--mark-drift);
 }
 .prj-legend__swatch--open {
-  background: color-mix(in srgb, var(--series-1) 14%, var(--surface));
+  background: color-mix(in srgb, var(--series-1) 22%, var(--surface));
   box-shadow: inset 0 0 0 1px var(--border-strong);
 }
 .prj-legend__glyph {
@@ -1035,44 +1035,98 @@
     clip: rect(0 0 0 0);
   }
   .prj-log,
-  .prj-log tbody,
-  .prj-log tr,
-  .prj-log td {
+  .prj-log tbody {
     display: block;
   }
+  /* Change and denominator first, then when / by, then the reason. */
   .prj-log tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      'change denom'
+      'when when'
+      'by by'
+      'reason reason';
+    gap: 2px var(--sp-3);
     padding: var(--sp-2) 0;
     border-bottom: 1px solid var(--border);
   }
   .prj-log td {
-    display: grid;
-    grid-template-columns: 7em minmax(0, 1fr);
-    gap: var(--sp-2);
-    padding: 2px 0 !important;
+    padding: 0 !important;
     border: 0;
-    text-align: left !important;
   }
-  .prj-log td::before {
-    content: attr(data-label);
-    color: var(--text-3);
+  .prj-log td[data-label='When'] {
+    grid-area: when;
+  }
+  .prj-log td[data-label='Change'] {
+    grid-area: change;
+  }
+  .prj-log td[data-label='By'] {
+    grid-area: by;
+    color: var(--text-2);
     font-size: var(--fs-xs);
   }
-  .prj-log td > * {
-    grid-column: 2;
+  .prj-log td[data-label='By']::before {
+    content: 'by ';
+  }
+  .prj-log td[data-label='Denominator'] {
+    grid-area: denom;
+  }
+  .prj-log td[data-label='Reason'] {
+    grid-area: reason;
+    font-size: var(--fs-xs);
+  }
+  .prj-log td[data-label='When'] > *,
+  .prj-log td[data-label='Change'] > .prj-log__tasks,
+  .prj-log td[data-label='Change'] > .prj-log__session {
+    display: inline;
+    margin-right: 6px;
+    color: var(--text-3);
+    font-size: var(--fs-xs);
   }
   .prj-log tr.is-amendment td {
     background: none;
   }
   .prj-log tr.is-amendment {
+    margin: 0 calc(-1 * var(--sp-2));
+    padding-inline: var(--sp-2);
     background: var(--surface-2);
   }
   .prj-log__reason {
     max-width: none;
   }
 }
+.prj-types {
+  display: grid;
+  list-style: none;
+}
+.prj-types__item {
+  display: grid;
+  gap: 1px;
+  padding: var(--sp-2) 0;
+  border-top: 1px solid var(--border);
+}
+.prj-types__item:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+.prj-types__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
 .prj-types__name {
-  margin-right: 6px;
   font-weight: 600;
+}
+.prj-types__count {
+  margin-left: auto;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+}
+.prj-types__meta {
+  color: var(--text-2);
+  font-size: var(--fs-xs);
 }
 .prj-types__pb {
   display: inline-flex;

@@ -29,9 +29,9 @@ import {
   type DataTableColumn,
   type Tone,
 } from '../../components';
-import { cx } from '../../lib/dom';
+import { cx, useMediaQuery } from '../../lib/dom';
 import { formatClock, formatDateTime, formatInteger, formatShortDate } from '../../lib/format';
-import { BurnUp, scopeDescription } from './BurnUp';
+import { BurnUp } from './BurnUp';
 import { useThread } from './data';
 import { DriftGlyph, ScopeGlyph } from './glyphs';
 import type { TimeScale } from './lanes';
@@ -72,8 +72,9 @@ export function ScopePanel({
   people: People;
 }) {
   const [all, setAll] = useState(false);
+  const initial = useMediaQuery('(max-width: 640px)') ? 4 : 8;
   const rows = [...history.scope].reverse();
-  const visible = all ? rows : rows.slice(0, 8);
+  const visible = all ? rows : rows.slice(0, initial);
   const amendments = history.scope.filter((s) => s.kind === 'amended');
   return (
     <>
@@ -152,7 +153,7 @@ export function ScopePanel({
               </tbody>
             </table>
           </div>
-          <ShowMore total={rows.length} shown={8} expanded={all} onToggle={() => setAll((a) => !a)} />
+          <ShowMore total={rows.length} shown={initial} expanded={all} onToggle={() => setAll((a) => !a)} />
         </>
       )}
       {history.enhancements.length > 0 && (
@@ -711,52 +712,38 @@ export function ProcessTypesPanel({
   const typeOf = new Map((types ?? []).map((t) => [t.id, t]));
   const playbookOf = new Map((playbooks ?? []).map((p) => [p.playbookId, p]));
   return (
-    <div className="prj-scroll">
-      <table className="prj-log prj-types">
-        <caption className="aoc-sr-only">Process types used in this project</caption>
-        <thead>
-          <tr>
-            <th scope="col">Process type</th>
-            <th scope="col" className="is-end">
-              Sessions
-            </th>
-            <th scope="col">Ran on</th>
-            <th scope="col">Active playbook</th>
-          </tr>
-        </thead>
-        <tbody>
-          {used.map(([id, u]) => {
-            const t = typeOf.get(id);
-            const pb = t?.activePlaybookId ? playbookOf.get(t.activePlaybookId) : undefined;
-            return (
-              <tr key={id}>
-                <td data-label="Process type">
-                  <span className="prj-types__name">{t?.name ?? id}</span>
-                  {t && <Badge tone={CLASS_TONE[t.class] ?? 'neutral'}>{t.class}</Badge>}
-                </td>
-                <td data-label="Sessions" className="is-end aoc-num">
-                  {formatInteger(u.sessions)}
-                </td>
-                <td data-label="Ran on">
-                  {[...u.models].join(', ') || '—'}
-                  {t && <span className="prj-muted"> · routes to {t.currentModel}</span>}
-                </td>
-                <td data-label="Active playbook">
-                  {pb ? (
-                    <span className="prj-types__pb">
-                      <Icon name="ok" size={12} className="prj-types__pb-icon" />
-                      <Link to="/registry">{pb.title}</Link>
-                      <span className="prj-muted">· v{pb.version}</span>
-                    </span>
-                  ) : (
-                    <span className="prj-muted">no playbook</span>
-                  )}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
+    <ul className="prj-types">
+      {used.map(([id, u]) => {
+        const t = typeOf.get(id);
+        const pb = t?.activePlaybookId ? playbookOf.get(t.activePlaybookId) : undefined;
+        return (
+          <li key={id} className="prj-types__item">
+            <p className="prj-types__head">
+              <span className="prj-types__name">{t?.name ?? id}</span>
+              {t && <Badge tone={CLASS_TONE[t.class] ?? 'neutral'}>{t.class}</Badge>}
+              <span className="prj-types__count aoc-num">
+                {formatInteger(u.sessions)} {u.sessions === 1 ? 'session' : 'sessions'}
+              </span>
+            </p>
+            <p className="prj-types__meta">
+              ran on {[...u.models].join(', ') || '—'}
+              {t && <> · routes to {modelWord(t.currentModel)} now</>}
+            </p>
+            <p className="prj-types__meta">
+              {pb ? (
+                <span className="prj-types__pb">
+                  <Icon name="ok" size={12} className="prj-types__pb-icon" />
+                  <span>playbook</span>
+                  <Link to="/registry">{pb.title}</Link>
+                  <span>· v{pb.version}</span>
+                </span>
+              ) : (
+                'no approved playbook'
+              )}
+            </p>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
