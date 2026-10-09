@@ -85,12 +85,16 @@
   },
 
   "audit": {
-    "//": "Nightly off-host anchor of the chain head (§13, R2). git: one signed commit per anchor in a separate repo, ideally pushed off-host via anchorRemote; rfc3161: a timestamp from tsaUrl.",
+    "//": "Nightly off-host anchor of the chain head (§13, R2). git: one signed commit per anchor in a separate repo, ideally pushed off-host via anchorRemote; rfc3161: a timestamp from tsaUrl. See docs/runbooks/anchoring.md.",
     "anchorProvider": "git",
     "anchorRepoPath": ".aoc/anchor-repo",
     "//anchorRemote": "git@github.com:your-org/aoc-anchors.git",
     "tsaUrl": "https://freetsa.org/tsr",
-    "anchorAtLocalTime": "02:00"
+    "anchorAtLocalTime": "02:00",
+    "//gpgKeyId": "0123456789ABCDEF0123456789ABCDEF01234567 — OpenPGP key that signs anchor commits; Verify then requires a valid signature from it.",
+    "//gnupgHome": "/var/lib/aoc/gnupg — keyring used to sign and verify anchor commits (default: aocd's GNUPGHOME).",
+    "//tsaCaFile": "/etc/aoc/tsa-ca.pem — CA bundle that verifies RFC 3161 token signatures (without it only the imprint and the time are checked).",
+    "//tsaUntrustedFile": "/etc/aoc/tsa-intermediates.pem — intermediate certificates for the TSA chain."
   },
 
   "intake": {

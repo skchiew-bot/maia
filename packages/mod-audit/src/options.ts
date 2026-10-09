@@ -7,7 +7,10 @@ export type TsaFetch = (
 export interface AuditModuleOptions {
   /** TSA transport for the rfc3161 provider (default: global fetch). */
   tsaFetch?: TsaFetch;
-  /** Sign anchor commits: `git -c user.signingkey=<id> commit -S` (OpenPGP). Verify then requires valid signatures. */
+  /**
+   * Sign anchor commits: `git -c user.signingkey=<id> commit -S` (OpenPGP). Verify then requires valid signatures.
+   * Overrides `audit.gpgKeyId`; the same holds for the three settings below and their `audit.*` keys.
+   */
   gpgKeyId?: string;
   /** GNUPGHOME used when signing / verifying anchor commits (default: inherited environment). */
   gnupgHome?: string;

@@ -93,6 +93,14 @@ export const AocConfigSchema = z.object({
       anchorRemote: z.string().optional(),
       tsaUrl: z.string().default('https://freetsa.org/tsr'),
       anchorAtLocalTime: z.string().default('02:00'),
+      /** OpenPGP key (id or fingerprint) that signs git anchor commits; Verify then requires its valid signature. */
+      gpgKeyId: z.string().min(1).optional(),
+      /** GNUPGHOME used to sign and verify anchor commits (default: aocd's environment). */
+      gnupgHome: z.string().min(1).optional(),
+      /** CA bundle for `openssl ts -verify` of RFC 3161 tokens; without it only the imprint and the time are checked. */
+      tsaCaFile: z.string().min(1).optional(),
+      /** Intermediate certificates for `openssl ts -verify -untrusted`. */
+      tsaUntrustedFile: z.string().min(1).optional(),
     })
     .default({}),
   intake: z

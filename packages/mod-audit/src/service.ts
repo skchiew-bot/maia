@@ -84,11 +84,12 @@ export class AuditService {
     private readonly opts: AuditModuleOptions = {},
   ) {
     const audit = ctx.config.audit;
+    // aocd configures these through `audit.*`; module options override them (tests, embedding).
     this.git = new GitAnchorProvider({
       repoPath: resolve(audit.anchorRepoPath),
       remote: audit.anchorRemote,
-      gpgKeyId: opts.gpgKeyId,
-      gnupgHome: opts.gnupgHome,
+      gpgKeyId: opts.gpgKeyId ?? audit.gpgKeyId,
+      gnupgHome: opts.gnupgHome ?? audit.gnupgHome,
       gitBin: opts.gitBin,
     });
     this.rfc3161 = new Rfc3161AnchorProvider({
@@ -96,8 +97,8 @@ export class AuditService {
       tsaUrl: audit.tsaUrl,
       fetch: opts.tsaFetch ?? defaultFetch,
       opensslBin: opts.opensslBin,
-      caFile: opts.tsaCaFile,
-      untrustedFile: opts.tsaUntrustedFile,
+      caFile: opts.tsaCaFile ?? audit.tsaCaFile,
+      untrustedFile: opts.tsaUntrustedFile ?? audit.tsaUntrustedFile,
       maxSkewMs: opts.tsaMaxSkewMs ?? DEFAULT_TSA_MAX_SKEW_MS,
     });
   }

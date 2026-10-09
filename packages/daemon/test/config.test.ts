@@ -104,7 +104,12 @@ describe('loadConfig', () => {
         workspacesDir: '/abs/workspaces',
       },
       metering: { rateCardFile: 'rates.json' },
-      audit: { anchorRepoPath: '~/anchors' },
+      audit: {
+        anchorRepoPath: '~/anchors',
+        gnupgHome: 'gnupg',
+        tsaCaFile: 'certs/tsa-ca.pem',
+        tsaUntrustedFile: '/etc/aoc/tsa-chain.pem',
+      },
       selfModification: {
         aocRepoPaths: ['../..'],
         externalAuditLog: 'selfmod.log',
@@ -131,6 +136,12 @@ describe('loadConfig', () => {
     expect(config.supervisor.workspacesDir).toBe('/abs/workspaces');
     expect(config.metering.rateCardFile).toBe(join(confDir, 'rates.json'));
     expect(config.audit.anchorRepoPath).toBe(join(homedir(), 'anchors'));
+    expect(config.audit).toMatchObject({
+      gnupgHome: join(confDir, 'gnupg'),
+      tsaCaFile: join(confDir, 'certs', 'tsa-ca.pem'),
+      tsaUntrustedFile: '/etc/aoc/tsa-chain.pem',
+    });
+    expect(config.audit.gpgKeyId).toBeUndefined();
     expect(config.selfModification.aocRepoPaths).toEqual([cwd]);
     expect(config.selfModification.externalAuditLog).toBe(join(confDir, 'selfmod.log'));
     expect(config.selfModification.protectedPaths).toEqual(['packages/kernel/']);
