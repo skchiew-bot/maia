@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import type { Context, MiddlewareHandler } from 'hono';
-import { INGEST_PATHS, intakeRequestBytes, type AocConfig } from '@aoc/contracts';
+import { INGEST_GIT_PREFIX, INGEST_PATHS, intakeRequestBytes, MAX_PUSH_BYTES, type AocConfig } from '@aoc/contracts';
 import { HttpError, type AppEnv } from '@aoc/kernel';
 
 type Ctx = Context<AppEnv>;
@@ -42,6 +42,8 @@ export function bodyLimitFor(path: string, config: AocConfig): number {
   if (path === INTAKE_UPLOAD_PATH || path.startsWith(`${INTAKE_UPLOAD_PATH}/`))
     return intakeRequestBytes(config.intake);
   if (path === INGEST_PATHS.spool) return SPOOL_BODY_LIMIT;
+  // A session's push (R-02) carries a git pack, not JSON.
+  if (path.startsWith(INGEST_GIT_PREFIX)) return MAX_PUSH_BYTES;
   return JSON_BODY_LIMIT;
 }
 

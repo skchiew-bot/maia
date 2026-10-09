@@ -29,6 +29,8 @@ export const PERMISSIONS = [
   'rollback.request',
   'promotion.request',
   'ticket.view_internal',
+  'ticket.close_own', // close a ticket whose linked work (a session on it) the user owns; never as "withdrawn"
+  'ticket.close_any',
   'ticket.media_view', // raw intake media (only when the work needs it)
   'intake.submit',
   'intake.view_own',
@@ -57,6 +59,7 @@ const BUILDER: Permission[] = [
   'rollback.request',
   'promotion.request',
   'ticket.view_internal',
+  'ticket.close_own',
   'project.manage',
 ];
 

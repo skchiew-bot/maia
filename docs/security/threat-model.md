@@ -197,6 +197,7 @@ unprivileged OS user (O-1).
 | | Threat | Control | Status | Residual |
 | --- | --- | --- | --- | --- |
 | E | A credential profile reaches the wrong session | The profile comes from the process type only; the registry schema forbids credentials on read-only types, and the supervisor drops them for read-only sessions anyway | Built | — |
+| E | **A builder extracts the credential its session holds** (asks the model to print it encoded, reads `/proc/<pid>/environ`, copies a key file) and pushes from their own machine (R-02, [wave 2](review-wave2.md)) | A push credential is never in a session: a profile's `env` and `files` stay with aocd. A session pushes with `git push aoc …` through the supervisor's gateway, which accepts it only during a turn, checks every ref against the profile's `push.refs`, refuses `main`, `release/*`, tags and deletions, and forwards it upstream with the credential itself ([runbook §4, item 11](../runbooks/credential-isolation.md)). A session holds only the profile's read-only `session` part | Built | The gateway authenticates with the session's ingest token, which the model can read (T-3, R-01): it can push what `push.refs` allows, during a turn, and nothing more. Credentials that are not git (a deploy API, a cloud CLI) have no proxy yet. With `isolation: "none"` sessions can read the profiles file |
 | I | aocd secrets leak into sessions | `envAllowlist` copies only named variables, and never an `AOC_*` variable of aocd's own | Built | The default allowlist includes the Claude credentials (O-14) and `HOME`, so a session shares the service user's home directory: its SSH keys, git and `gh` credentials and Claude login state (O-1) |
 | E | **The agent runs code as the supervisor or aocd** through git hooks or config in its workspace, or through acceptance tests the supervisor executes | Never run privileged git or tests in an agent-writable tree ([T-2](#t-2-code-execution-through-git-configuration-in-agent-workspaces)) | Required (O-2) | `runIsolated` (built) runs as the aocd user, in the repository the sessions work in |
 | T | Invalid generated settings disable every hook silently | The generated settings are validated against a schema before launch; no `SessionStart` within N seconds → launch failure | Built / Required (O-15) | Until the `SessionStart` check exists, a Claude Code version that rejects settings AOC considers valid runs without hooks, unnoticed |
@@ -255,7 +256,7 @@ unprivileged OS user (O-1).
 
 | | Threat | Control | Status | Residual |
 | --- | --- | --- | --- | --- |
-| E | A feature or UAT deploy key pushes to `main` | Rulesets restrict updates of `main` and `release/*` to the supervisor machine user; a push drill proves it | Ops | GitHub admins can change rulesets: watch the audit log |
+| E | A feature or UAT deploy key pushes to `main` | Rulesets restrict updates of `main` and `release/*` to the supervisor machine user; the key is held by aocd alone and the push gateway refuses `main` and `release/*` before the key is used (R-02); a push drill proves both | Ops / Built | GitHub admins can change rulesets: watch the audit log |
 | T | Force-push or tag deletion rewrites pinned history | Block force-pushes and deletions on `main` and `release/*`; protect the `aoc/*` pin tags | Ops | — |
 | I | Agents read the credential profiles file | The file is owned by the service user, mode 0600, and agents run as a different OS user. The self-modification guard denies tool writes to it, not reads | Ops / Required (O-1) | Void while agents and aocd share a user, which they do today: the supervisor spawns `claude` as the aocd user |
 | E | An agent pushes a branch whose name matches a protected pattern | Rulesets on patterns; creation of `release/*` restricted to the machine user | Ops | — |
@@ -376,6 +377,10 @@ state that holds.
   - Give the sidecar its own token, outside the `claude` environment (O-3, Built): sidecar reports refuse the
     session token.
   - Give sessions a home directory of their own, holding no credentials (O-1).
+  - Keep every credential that can push out of the environment: a session pushes through the supervisor's gateway
+    with its own ingest token, which can do no more than the profile's `push.refs` allow, and only during a turn
+    (Built, R-02). What the model can print is then the token, the Claude credentials and the profile's read-only
+    `session` values.
   - Restrict network egress from build sessions and review how Claude credentials reach sessions (O-14).
 - **Residual:** an agent can still lie about **itself** through its own hook and MCP events and through the
   transcript it writes; its liveness and usage now reach aocd only from the sidecar and are reconciled against the
