@@ -1,214 +1,119 @@
 # AOC-SPEC-003 gap list
 
-Every Partial / Missing row of [traceability.md](traceability.md), grouped into fixes small enough to hand to one
-engineer. Baseline: integration `fb97e98` (978 tests, 976 pass, 2 fail).
+Open Partial rows of [traceability.md](traceability.md), grouped into fixes small enough for one engineer.
+Baseline: integration `ca0d637` — 125 test files, **1172 tests, all pass**. No requirement is Missing any more.
 
 * **P0** — breaks a binding control or the §3 make-or-break. Nothing ships to real users before these close.
-* **P1** — binding requirement only partly met, or a contract defect that silently loses audit/metering data.
+* **P1** — a binding requirement only partly met, wrong by default, or a defect that lets agents or outages corrupt
+  audit / metering data.
 * **P2** — polish, missing tests, hardening.
 
-Process items the CEO must own are at the end (P-xx). They cannot be fixed in code.
+"Owner" says who is on it, as reported by the lead at this baseline. **Unassigned** items need an owner.
+Threat-model items are cited as O-n (`docs/security/threat-model.md` §6).
 
-## P0 — software
+## Resolved since the previous baseline (`fb97e98`)
 
-### G-01 Supervisor: credential-isolated launch (`POST /api/sessions`)
-Spec: §2.1, §2.2, §3, §5 (single writer), §9 (project/phase at launch), §10 (boundary check), R1, R4.
-Rows: S2.1-a, S2.2-a/b, S2.4-c, S2-e, S2-k, S3-a, S3-b, S3-d, S4-g, S5-d, S5-i, S7-b/c/m, S9-b, S10.3-a, S11.1-d/e.
+| Gap | Was | Closed by | Evidence |
+| --- | --- | --- | --- |
+| G-02 | Turn end and resume with the answer injected | supervisor `d30ffda` | `packages/supervisor/test/turns.test.ts` › "waits on an open decision with no process alive, then resumes with the injected answer"; capped turn → `blocked` › "blocks when the credit cap is reached during a turn and resumes on a top-up" |
+| G-03 | Nudge, restart, stop, diagnosis-budget stop | supervisor | `packages/supervisor/test/turns.test.ts` › "nudge interrupts a hanging turn with SIGINT and resumes with the operator text", › "marks a crash Dead and restarts it from the transcript", › "stop without immediate ends the session at the next task boundary" |
+| G-05 | Rollover orchestration | supervisor | `packages/supervisor/test/rollover.test.ts` (5 tests) |
+| G-06 | Off-host anchor; Verify against the external proof | mod-audit `6284a04` | `packages/mod-audit/test/anchor-git.test.ts` › "R2: rewriting the anchor.created events as well is caught by the off-host record, and the forged head is never anchored"; `anchor-rfc3161.test.ts` |
+| G-08 | Evidence mapping missed the new promotion / break-glass events | `78bc38d` | `packages/mod-evidence/test/mapping.test.ts` green |
+| G-11 | Erasure API and audit-trail API | mod-audit | `packages/mod-audit/test/routes.test.ts` › "destroys the scope key: bodies gone, counts returned, chain and anchors still verify", › "lists headers only, with filters and pagination both ways" |
+| G-34 | Stall threshold | CEO decision 2026-10-09: 10 min (`a2a4e96`) | `packages/contracts/test/contracts.test.ts`, `packages/mod-sessions/test/sessions.test.ts` |
+| G-35 | Sole-Approver fallback always on | CEO decision 2026-10-09: off by default (`a2a4e96`) | `packages/mod-decisions/test/engine.test.ts` › "is off by default: the only Approver cannot resolve their own requests" |
+| G-01 / G-04 / G-07 | Supervisor launch, `runIsolated`, self-modification guard | supervisor, mod-audit | **Narrowed**, not closed — what remains is below. |
 
-**Module:** `packages/supervisor` (in flight). **Change** — `SupervisorService.launch` + `POST /api/sessions`:
-1. Resolve the type with `registry.getType`; model = `registry.modelFor(type)` (never from the request).
-2. Build the session env **only** from `supervisor.envAllowlist`, then: give each session its own `HOME` and
-   `CLAUDE_CONFIG_DIR` under `workspacesDir` (the default allowlist passes `HOME` through, which exposes the
-   daemon user's `~/.ssh`, `~/.git-credentials` and global git credential helpers to every session's Bash),
-   set `GIT_CONFIG_GLOBAL=/dev/null` and `GIT_TERMINAL_PROMPT=0`, then merge the named profile from
-   `credentialProfilesFile` **only** when `!type.readOnly && type.credentialProfile`.
-3. Read-only types: `--tools Read,Glob,Grep` (`builtinTools`), `--disallowedTools` from `tools.deny`, no profile.
-4. `ledger.ensureThread` + `ledger.acquireWriter` (refuse with 409 if another live writer holds the thread).
-5. `credits.checkBoundary(sessionId, null, actor)` before spawning; refuse a capped launch with the instruction.
-6. `identity.issueIngestToken(sessionId)` → `AOC_INGEST_TOKEN` for hooks, MCP server and sidecar; start the
-   sidecar; `installGitHooks(<workspace>/.git/hooks)`; write managed hook settings + `.mcp.json`.
-7. Opening prompt: require `mcp__aoc__declare_plan` first; append `learning.lessonsForScope(...)` and call
-   `learning.recordLessonsApplied(ids, sessionId, actor)`.
-8. Append `session.launch_requested` (human actor = owner), `session.launched`, `session.lifecycle_changed`.
+## P0 — software (both unassigned)
 
-**Tests to add** (with `@aoc/claude-sim`): env snapshot of a launched session contains no deploy variables,
-`HOME` ≠ the daemon's, no `~/.ssh` reachable; a `bug-triage` launch has no profile and `--tools Read,Glob,Grep`;
-the launched `--model` equals `modelFor(type)` for discovery and for execution-with-playbook; a second writer on
-the same thread gets 409; a capped owner gets the cap instruction and no process; `lesson.applied` is appended.
+### G-01 Sessions must not run as the aocd OS user (threat model O-1)
+Rows: S3-a, S3-d, S7-m, R1, R4. **Owner: unassigned.**
+Today `claude`, its hooks, MCP server and Bash run as the user that owns the credential profiles file, every key
+file a profile names, the KEK and both databases, with that user's `HOME` (the default `envAllowlist` passes `HOME`
+through: `packages/contracts/src/config.ts:43`, `packages/supervisor/src/launch-config.ts:76-107`). Any session —
+including a read-only triage session through `Read` — can read all of them, so the credential isolation of §3 holds
+only against agents that do not look.
+**Change** (`packages/supervisor`): spawn every turn (and the hook / MCP children) as a dedicated unprivileged user
+(`aoc-agent`, configurable `supervisor.sessionUser`) or in a per-session container; give each session its own `HOME`
+and `CLAUDE_CONFIG_DIR` under the session dir, `GIT_CONFIG_GLOBAL=/dev/null`, no credential helpers; materialise a
+profile's key file as a per-session copy readable by that user and delete it at session end; refuse to start when
+the session user can read `dataDir`, the KEK or `credentialProfilesFile` (startup self-check). The sidecar stays with
+the service user (it needs the transcript, not the agent's rights).
+**Tests:** claude-sim scenario whose Bash step tries to read the profiles file, the KEK, `aoc.db` and `~/.ssh` →
+all denied; `HOME` in the session env differs from aocd's; a read-only session cannot open a profile key file;
+startup fails when `sessionUser` can read `dataDir`.
 
-### G-02 Supervisor: turn-end handling and resume with the answer injected
-Spec: §2.3 (binding), §10 (aging top-up state, not a stall), R15. Rows: S2.3-a/b/c, S10.3-g.
-
-**Change:**
-* Map every turn end to a lifecycle: open decision → `waiting_decision`; `boundary.reason=credit_cap` →
-  `blocked` (reason `credit_cap`); throttle → `throttled`; stop requested → `ended`. Today a capped session that
-  ends its turn stays `running` and decays to **Stalled**.
-* Reactors: `decision.resolved` (session-scoped kinds) → `resume(sessionId, answerText, 'decision_answered')`
-  via `claude -p --resume <claudeSessionId>`; `credit.topup_granted` → resume `'topup'`; throttle reset time →
-  resume `'throttle_reset'`. Idempotent via `store.findByCausation`. On start, resume anything whose answer
-  arrived while aocd was down (cursor replay already redelivers the events).
-* For guard denials that raise a card, return `permissionDecision: 'defer'` instead of `'deny'`
-  (`packages/mod-sessions/src/ingest.ts:320`): `defer` ends a `-p` turn cleanly and `--resume` re-runs the same
-  call (`packages/contracts/src/claude-code.ts:151`), so ending the turn no longer depends on the agent obeying.
-
-**Tests:** claude-sim scenario: `request_decision` → turn ends → lifecycle `waiting_decision`, liveness Waiting
-on you → resolve → resumed turn's prompt contains the answer; same after restarting the runtime between the
-request and the answer; capped `task_done` → lifecycle `blocked`, never Stalled.
-
-### G-04 Supervisor: `runIsolated` for rollback verification and promotion
-Spec: §8 (gated rollback execution), §14 (main moves only through the gate), §3. Rows: S3-b, S7-f/g, S8-g, S8-j,
-S14.2-a, S15-e.
-
-**Change:** implement `SupervisorService.runIsolated({cwd, command, credentialProfile, timeoutMs})`: fresh
-env built as in G-01 (no daemon HOME), profile env only when `credentialProfile` is set (e.g. `prod-promote`),
-argument arrays only (no shell), output capped, never reachable from an agent session or the CLI. mod-change
-already calls it (`packages/mod-change/src/engine.ts:788-862`).
-**Tests:** rollback verification against a real temp repo with a failing and a passing acceptance test; a
-promotion push succeeds with `prod-promote` and fails without it (pre-push gate); the env of the child holds the
-profile variables and nothing from the daemon's env outside the allowlist.
-
-### G-06 mod-audit: nightly off-host anchor and Verify against the external proof
-Spec: §13 (binding), §15.1, R2. Rows: S13-e, S13-f, R2, S15-a.
-
-**Module:** `packages/mod-audit` (in flight). **Change:**
-* Daily job at `audit.anchorAtLocalTime`: commit `{chainId, seq, headHash}` to `audit.anchorRepoPath` as a
-  signed commit and push to `audit.anchorRemote` (or request an RFC 3161 token from `audit.tsaUrl`); append
-  `anchor.created` (proofRef = commit SHA / TSR hash) or `anchor.failed` + `anchor.missed` notification.
-* `POST /api/audit/verify` and `POST /api/audit/anchor` (paths the CLI already calls,
-  `packages/cli/src/paths.ts:28-29`): recompute the chain **and read every anchor back from the external
-  proof** (git show of the anchor repo at proofRef / TSR verification), not from `anchor.created.meta` alone —
-  that copy lives in the file an attacker rewrites. Append `chain.verified`.
-* Make mod-evidence's verification use the same external check.
-
-**Tests:** drop the append-only trigger, rewrite an old event and recompute every later hash *including the
-`anchor.created` rows* → Verify fails because the anchor repo disagrees; an unreachable remote yields
-`anchor.failed` and an alert; a clean chain passes.
-
-### G-07 mod-audit: self-modification guard and self-change log outside AOC
-Spec: §13 self-modification boundary (binding), R14. Rows: S13-i, S13-j, S13-k, R14.
-
-**Change:** a `PreToolGuard` (`self-modification`, order ≤ 15): when the session cwd (or the target path) lies in
-`selfModification.aocRepoPaths`, deny Edit/Write/MultiEdit/NotebookEdit on any `protectedPaths` prefix and Bash
-commands that write there (reuse `splitShell` from `packages/mod-change/src/guard.ts`) with
-`blockReason: 'self_modification'`; append `selfmod.blocked` (path hash in meta, path in payload); append a line
-to `selfModification.externalAuditLog` (a location outside the AOC data dir, ideally another host — P-07) for
-every blocked attempt **and** every allowed AOC self-change (commit SHAs promoted in an AOC repo).
-**Tests:** an Edit to `packages/kernel/src/x.ts` in an AOC repo is denied and logged externally; the same edit
-in a non-AOC repo is allowed; a Bash `sed -i packages/mod-credits/...` is denied; the guard fails closed when the
-cwd is unknown.
+### G-04 Privileged git never in agent-writable trees (threat model O-2)
+Rows: S3-b, S8-g, S14.2-a, R1. **Owner: unassigned.**
+Promotion, pin tagging and rollback verification run in the **project repository** through temporary worktrees that
+share its `.git` (`packages/mod-change/src/repo.ts:79-108`, `engine.ts:849-862`), so hooks or config an agent
+planted there run with the promotion credential (pushes) or as aocd (acceptance tests via `sh -c`). The credential
+isolation runbook (§4.5) tells operators not to give the promotion profile a real credential until this is fixed —
+so today main can only move through a promotion profile that must stay empty.
+**Change** (`packages/mod-change`, `packages/supervisor`, `packages/kernel` git): keep a service-owned bare clone per
+project, fetch candidate SHAs into it (`git fetch <repo> <sha>`), run promotion / tagging there with
+`core.hooksPath=/dev/null`, `-c protocol.file.allow=never`, no `safe.directory=*`; run acceptance tests for rollback
+verification as the session user from G-01 in a fresh checkout of that clone, never as aocd.
+**Tests:** plant a `pre-push` hook and an `alias`/`core.sshCommand` in the project repo → promotion and rollback
+ignore them and still succeed; an acceptance test that writes outside its checkout fails under the sandbox user.
 
 ## P1 — software
 
-### G-08 Evidence mapping out of date with mod-change's new events (2 red tests)
-Rows: S8-d, S13-g, S14.1-c. `packages/mod-evidence/test/mapping.test.ts` › "wires every required control to
-its catalog evidence" and › "loads a valid file, expanding prefix wildcards and normalising filters" fail:
-the provenance/promotion row lacks `promotion.rejected` and `promotion.failed`
-(`packages/contracts/src/events/change.ts`); check `rollback.failed` and `breakglass.rejected` as well.
-**Change:** add them to `packages/mod-evidence/src/default-mapping.ts` (and `config/iso42001-mapping.json` if
-present); the mapping hash changes, so any earlier stamp is void — tell the compliance lead (P-05).
-**Test:** add a catalog-coverage test: every `change.*`, `rollback.*`, `breakglass.*`, `promotion.*` event type
-appears in at least one mapping row.
+| ID | Gap | Rows | Owner | Fix | Test to add |
+| --- | --- | --- | --- | --- | --- |
+| G-10 | Spool replay drops usage, throttle and exit reports: `/ingest/spool` accepts only `/ingest/hook`; the client deletes "rejected" items | S2-m, S10.1-a | Integration agent (in progress) | Dispatch `/ingest/usage`, `/ingest/throttle`, `/ingest/process` items to the live handlers (keep per-item principal checks); keep rejected items in `spool-rejected.jsonl` | Real `flushSpool()` against the test runtime with a spooled usage batch → one `usage.recorded`, replay is a duplicate |
+| G-09 | Every operator and portal page is a placeholder | S1-d, S4-d, S6-c, S6-g, S9-e, S11.2-d, S14.1-a, UI-12.1/3/4/5, R15, S15-g | 8 page agents (in progress) | Build Console, Session, Registry, Decisions (age, passkey), Project, Evidence, portal pages from the approved mock | Per page: renders from an API fixture, prints every number, liveness only via `LivenessBadge`, no infinite animation, keyboard path, 360 px |
+| G-36 | FX defaults contradict BNM semantics: run at 12:30 MYT (newest 1700 row is yesterday's, so `packages/mod-fx/src/engine.ts:281-291` stamps **every weekday inherited**, never live); `apiUrl` without `?session=` (API answers session 1130, middle rate null — not the true figure); tolerance 0.005 hides real 4-dp errors | S10.2-b, S10.2-f, S10.2-j, R13 | FX alignment agent (`docs/research/bnm-fx.md`) | Add `fx.session` (default `1700`) and stamp it; API `?session=1700`; run 18:00 MYT with retries 18:30 / 21:00; compare at 4 dp, tolerance 0.0001; alert after 3 weekdays (P-19) | Fixture page + API at 18:00 → `live`; at 12:30 → retry, not a holiday; 4.0900 vs 4.0870 → discrepancy |
+| G-25 | Provenance trusts agent-written `AOC-Session` / `AOC-Change` trailers (T-22 / O-27); non-ticket promotions need no UAT | S14.2-a, S14.2-b | New agent (assigned) | Trace a commit only when its session is linked to the change/ticket and the commit is reachable from a head AOC recorded for that session (`task.done.meta.headSha`, `phase.completed.meta.pinnedSha`); confirm the UAT rule with the CEO | A valid trailer naming an unrelated approved change → orphan |
+| G-42 | Evidence packs check anchors in-chain only: `packages/mod-evidence/src/verification.ts:47-125` compares with `anchor.created.meta`, never with mod-audit's off-host proofs, so a full-chain forgery yields a pack that says every anchor matched | S14.1-a, S13-f, R2 | **Unassigned** | Have `buildVerification` call `AuditService.computeVerify()` (`packages/mod-audit/src/service.ts:340`) and embed its per-anchor external result; mark the pack "not verifiable" when the audit service or the off-host record is unavailable | Rewrite the chain and the `anchor.created` rows → the pack reports the mismatch |
+| G-44 | Agents can forge metering: the sidecar posts with the session's own ingest token, which is in the model's env (`packages/supervisor/src/supervisor.ts:1702-1738`), so Bash can post usage / heartbeats (O-3, O-5, T-4, T-14) | S10.1-a, S2.1-a | **Unassigned** | Issue a separate sidecar principal (mod-identity), accept `/ingest/usage` / `heartbeat` / `process` only from it; reconcile per turn against the supervisor's stream-json `result.modelUsage` | A usage POST with the session token → 403; sidecar totals that disagree with `modelUsage` are flagged |
+| G-45 | Requester UAT feedback reaches a **credentialed** build session (framed, but unreviewed) — O-9, T-11 | S7-m, R4 | **Unassigned** | Route UAT feedback through a read-only triage pass or a Builder review before `startBuild`; restrict build-session egress (with O-14) | A UAT failure creates a review step before any build turn starts |
+| G-39 | Erasure leaves decrypted read-model text in `aoc.db` free pages and WAL (O-24): only `bodies.db` has `secure_delete` + checkpoint (`packages/kernel/src/store/body-store.ts:36,167`) | S13-c | **Unassigned** | `PRAGMA secure_delete = ON` on `aoc.db`; `wal_checkpoint(TRUNCATE)` after `eraseScope` | After erasing a scope, the erased text is absent from the raw `aoc.db` and `-wal` bytes |
+| G-41 | Self-changes only partly audited outside AOC: the external log records blocked attempts, not merged Tier-1 changes; AOC's own promotion gate does not refuse Tier-1 changes traced to managed sessions (O-10) | S13-j, S13-k, R14 | **Unassigned** | Append an external-log line for every promotion touching `protectedPaths` in an AOC repo; refuse such promotions when any commit traces to a managed session | A promotion whose commits touch `packages/kernel/` from a managed session is refused and logged externally |
+| G-46 | KEK and secrets handling in production (O-13): the KEK may come from `AOC_MASTER_KEY` (`packages/kernel/src/crypto.ts:39`); the git wrapper passes all of `process.env` to child processes (`packages/kernel/src/git.ts:11`) | R6 | **Unassigned** | Production mode refuses an env KEK (file only, mode 0400); scrub the env of git / child processes to an allowlist | Production start with `AOC_MASTER_KEY` fails; a git child sees no `AOC_*` / API keys |
+| G-12 | Default malware scanner is a heuristic | S7-j, R4 | New agent (assigned) | ClamAV by default where present; refuse attachments in production without an AV engine; report it in health / `aoc doctor` | `scanner: 'clamav'` without the binary → 503 and a health warning |
+| G-21 | No automated off-host backup / restore drill | R6 | New agent (assigned) | Nightly online backup of both DBs + blobs, encrypted, off-host, never with the KEK; restore command and drill | Backup → wipe → restore → chain verifies, bodies decrypt with the separately held KEK |
 
-### G-10 Spool replay silently drops usage, throttle and exit events
-Rows: S2-m, S10.1-a, S2.1-b. `packages/mod-sessions/src/ingest.ts:357-360` accepts only `/ingest/hook` items;
-the client counts the 200 response as sent and deletes the rest (`packages/client/src/index.ts:134-143`).
-Observed hooks spool `/ingest/usage`; the sidecar spools `/ingest/usage`, `/ingest/throttle`, `/ingest/process`.
-After any daemon outage that usage is lost (metering hole, §3/§10) and a process exit is never recorded.
-**Change:** in `/ingest/spool`, dispatch `/ingest/usage`, `/ingest/throttle` and `/ingest/process` items to the
-same handlers as the live routes (factor the bodies of those routes into functions; keep the per-item principal
-checks); drop stale heartbeats/activity explicitly. In `flushSpool`, keep items the daemon reports as rejected in
-a `spool-rejected.jsonl` for inspection instead of deleting them.
-**Test:** integration test in mod-sessions: real `createClient().flushSpool()` against the test runtime with a
-spooled usage batch (observer and session tokens) → `usage.recorded` appended once, a replay is a duplicate.
+## P2 — polish, tests, hardening
 
-### G-03 Supervisor: nudge, restart, stop (+ the diagnosis-budget stop)
-Rows: S2.3-d, S2.3-e, S6-c, S7-n. **Change:** `/api/sessions/:id/{nudge,restart,stop,prompt,output}` (the CLI
-already calls them, `packages/cli/src/paths.ts:18-22`): nudge = interrupt the turn, `session.nudged`, resume with
-the operator text; restart = `session.restarted`, resume from the transcript; stop = `session.stop_requested`
-(immediate or at the next boundary, which `task_done` already honours via `stopRequested`). Permission
-`session.drive_own` / `drive_any`. **Tests:** claude-sim: nudge during a long tool call resumes with the text;
-restart of a killed process resumes; a stop at boundary ends after the next `task_done`; the intake budget job
-stops a triage session.
-
-### G-05 Supervisor: rollover orchestration
-Rows: S5-b, S5-c, S5-e, S5-f, S5-h, R16. **Change:** on a turn that ended with `boundary.reason='rollover'` (or
-`POST /api/threads/:id/rollover`): re-check `ledger.boundaryState` → `buildHandoffBrief` → `validateBrief` →
-`session.rollover_started` (brief in payload) → launch the successor with `LaunchRequest.brief` → release the
-writer (`rollover`) / acquire for the successor → `session.ended` (retired) → `session.rollover_completed`;
-any failed check → `session.rollover_aborted` with the problems. **Tests:** claude-sim run crossing 70% context
-rolls over once, the successor re-declares open task ids (counted once); a risky type mid-phase or a stale brief
-aborts and the old session keeps the lock.
-
-### G-11 mod-audit: erasure API and audit-trail API
-Rows: S13-c, S6-h. **Change:** `POST /api/audit/erase` (`audit.erase`, reason enum, optional decision id) →
-`store.eraseScope`; `GET /api/audit/events` (filters by type/session/project/actor/date, headers only, paged)
-for builders and approvers. **Tests:** erasure of a ticket scope → bodies/blobs gone, `body.erased`, chain still
-verifies, requester media 410; builders can list events, requesters cannot.
-
-### G-09 Web pages (after the CEO approves the mock, P-09)
-Rows: S1-d, S4-d, S6-c, S6-g, S9-e, S11.2-d, S14.1-a, UI-12.1/3/4/5/8, R15. Every page under
-`packages/web/src/pages/` except login/gallery is a "Not yet implemented" placeholder. **Change:** build Console
-(APM small multiples + liveness badges + decision rail), Session (timeline strip + stacked phase bar + actions),
-Registry (paired bars first), Decisions inbox (age on every card, passkey ceremony for go-live / rollback /
-break-glass), Project (stacked per-phase bar), portal pages, Evidence (one button). **Tests:** per page: renders
-from a recorded API fixture, every chart prints its numbers, liveness only as `LivenessBadge`, no element with an
-infinite animation, keyboard path through the primary action, layout at 360 px.
-
-### G-12 Malware scanning is heuristic by default
-Rows: S7-j, R4. `config.intake.scanner` defaults to `builtin` (EICAR, script polyglots, PDF active content —
-`packages/mod-intake/src/upload.ts:64-77`). **Change:** make `clamav` the default when the binary is present and
-have `aocd` refuse to mount `/portal/api/intakes` (or refuse attachments) with `requireScan` and no AV engine in
-production mode; surface the scanner in `aoc doctor` / `/api/health`. **Test:** with `scanner: 'clamav'` and no
-binary, uploads are refused with 503 and the health endpoint reports it.
-
-### G-21 Off-host backup of the event log, body store and keys
-Rows: R6. Nothing backs up `aoc.db`, `bodies.db`, `blobs/` or the KEK. **Change:** a daily job (mod-audit) that
-takes an SQLite online backup of both DBs (+ blobs) to `audit.backupDir` / remote, encrypted, with a restore
-command and a restore test; never the KEK in the same place (P-03). **Test:** backup → wipe → restore → chain
-verifies and bodies decrypt with the separately held KEK.
-
-### G-25 Provenance trailers are self-asserted
-Rows: S14.2-a, S14.2-b. `classifyCommit` (`packages/mod-change/src/provenance.ts:47-86`) accepts any commit whose
-`AOC-Change` trailer names *some* approved change of the project, and the agent writes its own commit messages.
-Also, change-driven (non-ticket) promotions need no UAT sign-off — confirm with the CEO that §14's "UAT sign-off"
-applies to ticket work only. **Change:** trace a commit only when (a) its `AOC-Session` is a session linked to
-that change (`change.started`) or ticket, and (b) the commit is reachable from a head SHA that session recorded
-(`task.done.meta.headSha`, `phase.completed.meta.pinnedSha`) — or have the supervisor record the session's
-commits itself. **Test:** a commit carrying a valid trailer for an unrelated approved change is an orphan.
-
-## P2 — polish and missing tests
-
-| ID | Gap | Rows | Fix | Test to add |
-| --- | --- | --- | --- | --- |
-| G-26 | No test runs the real ledger against the real credits module | S10.3-a | Integration test in mod-ledger with `createCreditsModule()` | Exhaust a balance, `task_done` returns `credit_cap`, auto-grant once, second cap stops |
-| G-27 | Untested structural properties | S1-c, S10.1-e, S15-c | — | `prompt.submitted` never changes `sessionProgress`; mod-metering registers no guards and never appends `session.blocked` / `credit.*`; `PRAGMA journal_mode` is `wal` for both DBs |
-| G-28 | Only `aoc run` is statically checked for spawning / env forwarding | S3-e | Extend the static import test to every CLI command | Module graph of each command imports no `child_process` and never reads `process.env` secrets |
-| G-29 | Button approvals are attribution, passkey approvals are signatures — not labelled for viewers | S6-k | Label `method: 'button'` as "attribution (bearer)" in the decision views and evidence pack | Evidence pack renders the label per resolution method |
-| G-30 | `uatSha` falls back to `0000000` when the project has no repo | S7-e | Refuse `readyForUat` without a resolvable UAT ref | No repo → no `ticket.uat_ready`, ticket escalated |
-| G-31 | Lessons and playbooks use two distillation engines | S11.1-a | Extract a shared distillation core (LLM call, schema, fallback, Approver gate) from `mod-registry/src/distill.ts`, reuse in `mod-learning/src/ai.ts` | Both proposal paths go through the shared core |
-| G-32 | No automated accessibility checks | UI-12.8 | Add axe + token-contrast checks to web tests | Every page passes axe; token pairs ≥ 4.5:1 |
-| G-33 | `decision.expired` is in the catalog but expiry is a `decision.withdrawn` labelled `expired`; mod-sessions ignores `decision.expired` | — | Pick one: emit `decision.expired` and handle it in `mod-sessions/src/projector.ts`, or delete the event type | Expired card no longer keeps the session Waiting on you |
-| G-34 | ~~Mock says the stall threshold is 10 min; code said 5 min~~ **Resolved 2026-10-09:** CEO chose 10 min; `stallAfterMs` default is now 600 000 ms in config and `DEFAULT_LIVENESS_THRESHOLDS` | S4-b | — | `contracts` and `mod-sessions` liveness tests assert thinking at 9 min, stalled at 11 min |
-| G-35 | ~~Sole-Approver fallback is always on~~ **Resolved 2026-10-09:** CEO chose off. `decisions.soleApproverFallback` (default `false`) gates it; when enabled it still never covers credit top-ups and stops applying once a second Approver is active | S6-m | — | `mod-decisions/test/engine.test.ts` › "sole-Approver fallback" |
+| ID | Gap | Rows | Owner | Fix | Test to add |
+| --- | --- | --- | --- | --- | --- |
+| G-26 | No test wires real modules across the main contracts (ledger ↔ credits; intake ↔ supervisor) | S10.3-a, S7-b | New agent (assigned) | Integration tests with the real modules | Exhaust a balance → `task_done` returns `credit_cap`; intake triage launches real read-only sessions on claude-sim |
+| G-27 | Untested structural properties | S1-c, S10.1-e, S15-c | New agent (assigned) | — | Prompts never change progress; mod-metering registers no guards and never appends `session.blocked` / `credit.*`; `journal_mode` is `wal` for both DBs |
+| G-28 | Only `aoc run` is statically checked for spawning / env forwarding | S3-e | New agent (assigned) | Extend the static import test to every CLI command | No command imports `child_process` or reads secret env |
+| G-29 | Button approvals are attribution, passkey approvals are signatures — not labelled | S6-k | New agent (assigned) | Label `method: 'button'` as "attribution (bearer)" in decision views and packs | Pack renders the label per resolution method |
+| G-30 | `uatSha` falls back to `0000000` without a repo | S7-e | New agent (assigned) | Refuse `readyForUat` without a resolvable UAT ref | No repo → no `ticket.uat_ready`, ticket escalated |
+| G-31 | Two distillation engines (lessons vs playbooks) | S11.1-a | New agent (assigned) | Shared distillation core | Both proposal paths use it |
+| G-32 | No automated accessibility checks | UI-12.8 | New agent (assigned) | axe + token-contrast checks in web tests | Every page passes axe; token pairs ≥ 4.5:1 |
+| G-33 | `decision.expired` in the catalog but expiry is a labelled withdrawal; mod-sessions ignores `decision.expired` | — | New agent (assigned) | Pick one representation | An expired card no longer keeps the session Waiting on you |
+| G-37 | The supervisor never installs `pre-push` / `prepare-commit-msg` in managed workspaces (provenance trailers depend on the agent following the prompt) | S2.4-c | **Unassigned** | Call `installGitHooks` (`packages/hooks/src/prepush.ts:55`) for each managed workspace (agent-side speed bump only; privileged git stays in G-04's clone) | A managed commit carries `AOC-Session` without the agent adding it |
+| G-40 | Anchors are nightly only: events newer than the last anchor can be rewritten (O-11) | S13-e, R2 | **Unassigned** | Anchor hourly and right after high-value events (gates, break-glass, erasure) | A `breakglass.approved` is followed by an anchor |
+| G-47 | Remaining threat-model hardening: O-4 (hook-relayed prompts recorded as supervisor), O-15 (fail a launch with no `SessionStart` in N s), O-16 (rate limits on cards, ingest, uploads, SSE), O-17 (lesson / playbook hygiene), O-23 (KEK rotation tool), O-25 (observed sessions outside any project), O-26 (audited admin re-drive / rebuild / run-job) | S6-f, R10, R6 | **Unassigned** | One small change per item (see the threat model) | One test per item |
+| G-48 | Ending the turn after a card still relies on the agent: guard denials answer `permissionDecision: 'deny'` | S2.3-a | **Unassigned** | Answer `'defer'` for card-raising denials (`packages/contracts/src/claude-code.ts:151`): the `-p` turn ends cleanly and `--resume` re-runs the call | claude-sim: a protected push ends the turn with `tool_deferred` |
 
 ## Process items the CEO must own
 
-| ID | Item | Spec / risk | Owner | Done when |
+| ID | Item | Spec / risk | Owner | Status |
 | --- | --- | --- | --- | --- |
-| P-01 | **Branch protection** on every project remote: protect main/master/production/release/*, require the go-live path, allow pushes only by the supervisor's promotion identity, forbid force-push and deletion | §2.4, §3, R1 | CEO / Platform Architect | Remote settings exported and attached to the stage-1 sign-off |
-| P-02 | **Remove deploy keys and protected-branch push rights from developer machines and accounts**; rotate every existing deploy key; issue new ones only into the supervisor's credential profiles | §3, R1 | CEO | Key inventory shows no developer-held deploy credential; `aoc doctor` clean on every laptop |
-| P-03 | **Key custody**: who holds `AOC_MASTER_KEY`, where it is backed up, rotation and break-glass access. `docs/runbooks/key-custody.md` is referenced by code but does not exist. Off-host backup target for the DBs | R6, §13 | CEO / Platform Architect | Runbook written and approved before real data lands |
-| P-04 | **Anchor target**: create the separate anchor repo on another host (or pick an RFC 3161 TSA) and decide who holds the anchor signing key | §13, R2 | Platform Architect | First nightly anchor verified from outside AOC |
-| P-05 | **Compliance-lead review of the ISO/IEC 42001 mapping** against the standard (all rows, incl. the five §13 corrections and A.4.5 vs A.4), then stamp it via `POST /api/compliance/mapping/stamp`. Name the compliance lead and give that person the `complianceLead` flag (never by role). Until stamped every pack says "Provisional — do not cite" | §13, §14, R3 | Compliance lead | `mapping.stamped` event bound to the current mapping hash |
-| P-06 | **Human review of the governance core.** kernel, mod-audit, mod-credits, mod-decisions, mod-identity (and contracts, hooks, config) were written by AI agents in this build; §13 requires that core to be human-built and human-changed. Assign named reviewers, review and sign off, and add CODEOWNERS + required human review on those paths | §13, R14 | CEO / Governance | Signed review record per package; CODEOWNERS enforced |
-| P-07 | **Where AOC self-changes are audited outside AOC**: choose the external log location (not the AOC data dir) and who reviews it | §13, R14 | CEO / Governance | `selfModification.externalAuditLog` points off-host; review cadence agreed |
-| P-08 | **Per-stage CEO sign-off** (§15). Stage 1 cannot be signed until the supervisor and the off-host anchor are merged and verified | §15, R5 | CEO | Sign-off recorded per stage |
-| P-09 | ~~**Approve the static mock**~~ **Done 2026-10-09:** the CEO approved the mock as shown, with its proposed defaults (recorded in `mocks/README.md`). Originally: approve the mock and answer its "Decisions for the CEO to confirm" — UI foundation code was merged before approval. Includes: do flagged no-file-change tasks count toward completion; stall threshold; passkey scope | §12, §15 | CEO | Approval (date) recorded in `mocks/README.md` |
-| P-10 | **Sequencing deviation**: the intake portal API (stage 5) merged before identity (stage 3). Accept, or require the portal routes disabled until identity and the portal UI are signed off | §6, §15, R5 | CEO | Decision recorded |
-| P-11 | **Separation-of-duties exception**: the sole active Approver may resolve their own requests (not credit top-ups), recorded as self-approval (`packages/mod-decisions/src/engine.ts:338-343`). Accept, or appoint a second Approver and turn it off (G-35) | §6 | CEO | Decision recorded |
-| P-12 | **Malware scanning in production**: provision ClamAV for the portal host; the builtin scanner is a heuristic | §7, R4 | CEO / CX lead | `scanner: 'clamav'` in production config |
-| P-13 | **Credential profiles file** (`supervisor.credentialProfilesFile`, readable only by the supervisor user) with least-privilege `git-feature`, `uat-deploy`, `prod-promote` profiles; run aocd as a dedicated OS user whose home holds no developer credentials | §3, R1 | Platform Architect | File reviewed; aocd service user created |
-| P-14 | **Observed-session coverage**: install the observed hooks (`aoc hooks install-observed`) on every developer machine and run `aoc doctor` | §2, R1 | CEO / DevEx | Every developer machine reports in |
-| P-15 | **Discovery-class build stages on Opus** (§15) — how this build itself is run | §15 | CEO | Recorded per stage |
-| P-16 | **Credit policy settings**: period allocations, exempt users, who the top-up approvers are | §10 | CEO / FinOps | `config.credits` reviewed |
-| P-17 | **Decision webhook** (opt-in, R15): choose the endpoint and on-call owner | R15 | CEO | `decisions.webhookUrl` set or explicitly declined |
+| P-01 | **Branch protection** (rulesets per `docs/runbooks/credential-isolation.md` §3): protect main / release/*, no force-push or deletion, only the supervisor identity updates main | §2.4, §3, R1 | CEO / Platform Architect | Open |
+| P-02 | **Remove deploy keys and protected-branch rights from developer machines**; rotate existing keys; issue new ones only into the supervisor's profiles | §3, R1 | CEO | Open |
+| P-03 | **Key custody and backups**: adopt `docs/runbooks/key-custody.md` (KEK holder, location, rotation, break-glass access) and decide backup retention against the PDPA erasure promise (O-12) before real data lands | R6, §13 | CEO / Platform Architect | Runbook written; adoption and the O-12 decision open |
+| P-04 | **Anchor target**: the off-host anchor remote (another account, no force-push or deletion) and signing key, or a qualified TSA (`docs/runbooks/anchoring.md`, O-11) | §13, R2 | Platform Architect | Open |
+| P-05 | **Compliance-lead review of the ISO/IEC 42001 mapping** (`docs/compliance/iso42001-annex-a.md` is input), then the stamp via `POST /api/compliance/mapping/stamp` by a named person holding the `complianceLead` flag. Until then every pack says "Provisional — do not cite" | §13, §14, R3 | Compliance lead | Open |
+| P-06 | **Human review of the AI-built governance core** (`docs/compliance/self-modification-boundary.md` §5 checklist: kernel, contracts, mod-audit, mod-credits, mod-decisions, mod-identity, hooks, config, plus the supervisor and change-control paths it lists); CODEOWNERS with required human review | §13, R14 | CEO / Governance | Open |
+| P-07 | **Ship the external self-modification log off-host** as it is written (central log, append-only bucket or anchor repo) and name its reviewer | §13, R14 | CEO / Governance | Open |
+| P-08 | **Per-stage CEO sign-off** (§15). Stage 1 is functionally complete; sign-off should wait for G-01 and G-04 | §15, R5 | CEO | Open |
+| P-09 | Approve the static mock | §12, §15 | CEO | **Done 2026-10-09** (recorded in `mocks/README.md`) |
+| P-10 | **Enablement gates** (O-21): keep the intake portal and Builder surfaces off in production until the identity stage is signed off — the portal API was merged before identity | §6, §15, R5 | CEO | Open |
+| P-11 | **Separation of duties with one Approver** (O-8): the fallback is now off (CEO, 2026-10-09), so the only Approver's own requests have no eligible resolver — appoint a deputy Approver with a passkey | §6 | CEO | Decision made; deputy Approver open |
+| P-12 | **Malware scanning in production**: provision ClamAV on the portal host | §7, R4 | CEO / CX lead | Open |
+| P-13 | **Credential profiles file and OS users**: least-privilege `git-feature`, `uat-deploy`, `promotion` profiles; aocd service user and a separate session user (prerequisite of G-01); no process type may name `promotion` | §3, R1 | Platform Architect | Open |
+| P-14 | **Observed-session coverage**: observed hooks with each developer's own observer token, quarterly `aoc doctor` checklist (`docs/runbooks/credential-isolation.md` §5) | §2, R1 | CEO / DevEx | Open |
+| P-15 | Discovery-class build stages on Opus | §15 | CEO | Process |
+| P-16 | Credit policy: allocations, exemptions, top-up approvers | §10 | CEO / FinOps | Open |
+| P-17 | Decision webhook (R15): endpoint and on-call owner | R15 | CEO | Open |
+| P-18 | **Set `selfModification.aocRepoPaths`** (default `[]`, so the core of the AOC repo is not yet protected) and review `protectedPaths` in production config (O-10) | §13, R14 | CEO / lead | Open |
+| P-19 | **FX policy** (O-18): session 1700 or 1200, run time, tolerance, carried-forward alert after 3 weekdays (`docs/research/bnm-fx.md` §0) | §10, R13 | FinOps | Open (feeds G-36) |
+| P-20 | **Threat-model decisions**: O-14 (Claude credentials readable by every session; egress), O-19 (passkeys on every Approver gate, not only go-live / rollback / break-glass), O-20 (`synchronous = NORMAL` vs `FULL`), O-25 (observed sessions outside projects, PDPA) | §3, §6, §13 | CEO / architect | Open |
+| P-21 | **HTTPS `publicUrl` in production** (cookie `Secure` flag, WebAuthn origin) — O-22 | §6 | Ops | Open |
