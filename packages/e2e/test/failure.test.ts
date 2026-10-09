@@ -32,13 +32,13 @@ const toolUsed = (sessionId: string, toolUseId: string) =>
 
 describe('(e) daemon down', () => {
   it('managed fails closed and spools, observed never blocks; after a restart both spools flush exactly once', async () => {
-    const owner = h.user('builder');
+    const owner = await h.user('builder');
     const { projectId, repo } = await h.project(owner, 'Outage');
     const s = await h.launch(owner, { projectId });
     const claude = new ClaudeSession(h, s);
     await claude.start();
     await claude.aoc('declare_plan', PLAN);
-    const observed = new ObservedClaude(h, repo, h.identity.issueObserverToken());
+    const observed = new ObservedClaude(h, repo, await h.observerToken());
     expectExit0(await observed.hook('SessionStart', { source: 'startup' }));
     const observedId = await waitFor(() => h.aoc.runtime.services.get('sessions').byClaudeSessionId(observed.claudeSessionId)?.sessionId, { what: 'observed session' });
 
@@ -97,7 +97,7 @@ describe('(e) daemon down', () => {
   });
 
   it('two managed sessions on one host never lose each other’s spooled events (default spool dir)', async () => {
-    const owner = h.user('builder');
+    const owner = await h.user('builder');
     const { projectId, repo } = await h.project(owner, 'Shared host');
     const a = new ClaudeSession(h, await h.launch(owner, { projectId }));
     const b = new ClaudeSession(h, await h.launch(owner, { projectId, cwd: repo }));
@@ -127,7 +127,7 @@ describe('(e) daemon down', () => {
 // Keep the helper honest: a malformed spool line must not take the others down with it.
 describe('(e) spool hygiene', () => {
   it('a corrupt spool line is skipped and the rest replays', async () => {
-    const owner = h.user('builder');
+    const owner = await h.user('builder');
     const { projectId, repo } = await h.project(owner, 'Hygiene');
     const s = await h.launch(owner, { projectId });
     const claude = new ClaudeSession(h, s);

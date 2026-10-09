@@ -1,16 +1,14 @@
 /**
- * E2E harness: the real aocd composition root (`createAocServer` from @aoc/daemon) with the production module
- * list (`createDefaultModules`), served over real HTTP (@hono/node-server on port 0) with the real clock and an
- * on-disk data dir, so the daemon can be stopped and restarted under running sessions.
+ * E2E harness: the real aocd composition root (`createAocServer` from @aoc/daemon) with the production module list
+ * (`createDefaultModules`), served over real HTTP (@hono/node-server) with an on-disk data dir, so the daemon can
+ * be stopped and restarted under running sessions. Identities are real (mod-identity): the bootstrap Approver
+ * creates every other user and token through the API.
  *
- * Production modules that have not landed are stood in for, and `standIns` says which:
- * - identity → `HarnessIdentity` (DevIdentityService whose users and tokens survive a daemon restart). Switch to
- *   the real identity routes once mod-identity lands.
- * - supervisor → `StubSupervisor`: appends the supervisor's launch events exactly as the supervisor would and
- *   issues the session ingest token; the test drives the "claude process" itself (see claude.ts).
- * - other placeholders (e.g. change, audit) are left out until they land.
- * - the `protected-op` guard: no landed module turns `git push origin main` into a decision card yet, so a
- *   contract stand-in is registered until a composed module provides a guard of that name.
+ * Two ways to run managed sessions:
+ * - `supervisor: 'real'`: mod-supervisor spawns claude-sim (never the real claude CLI) with the real hook, MCP
+ *   server and sidecar entries, exactly as in production.
+ * - `supervisor: 'stub'` (default): `StubSupervisor` records the launch events the supervisor would and issues the
+ *   session's ingest token; the test then plays the claude process itself (claude.ts drives the real binaries).
  */
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -23,52 +21,52 @@ import { serve } from '@hono/node-server';
 import {
   AocConfigSchema,
   MODEL_ID_BY_TIER,
+  defaultConfig,
   newId,
   transcriptPathFor,
   type Actor,
   type AocConfig,
-  type AuthContext,
-  type IdentityService,
-  type IngestPrincipal,
+  type IdentityUserDto,
+  type IssuedTokenDto,
   type LaunchRequest,
-  type Permission,
-  type PreToolGuard,
   type Role,
   type StoredEvent,
   type SupervisorService,
-  type User,
 } from '@aoc/contracts';
 import { createAocServer, createDefaultModules, type AocServer } from '@aoc/daemon';
 import {
   createLogger,
-  DevIdentityService,
   FakeLlm,
   initRepo,
   silentLogger,
-  systemClock,
   type AocModule,
+  type Clock,
   type EventStore,
   type ListQuery,
   type ModuleContext,
 } from '@aoc/kernel';
+import { createIdentityModule } from '@aoc/mod-identity';
 import { createSessionsModule } from '@aoc/mod-sessions';
-import { REPO_ROOT } from './paths';
+import { createSupervisorModule } from '@aoc/supervisor';
+import { CLAUDE_SIM_BIN, REPO_ROOT } from './paths';
 
 // ── small utilities ───────────────────────────────────────────────────────────
 
 export const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
+type Truthy<T> = Exclude<T, false | 0 | '' | null | undefined>;
+
 /** Poll until `fn` returns a truthy value (or stops throwing); fails with the last value seen. */
 export async function waitFor<T>(
   fn: () => T | Promise<T>,
   opts: { timeout?: number; interval?: number; what?: string } = {},
-): Promise<NonNullable<T>> {
+): Promise<Truthy<T>> {
   const deadline = Date.now() + (opts.timeout ?? 10_000);
   let last: unknown;
   for (;;) {
     try {
       const v = await fn();
-      if (v) return v as NonNullable<T>;
+      if (v) return v as Truthy<T>;
       last = v;
     } catch (err) {
       last = err;
@@ -94,68 +92,26 @@ function deepMerge(base: Json, over: Json): Json {
   return out;
 }
 
-const SUPERVISOR: Actor = { kind: 'system', id: 'supervisor' };
-
-// ── identity stand-in ─────────────────────────────────────────────────────────
-
-export interface TestUser {
-  user: User;
-  token: string;
-  headers: Record<string, string>;
+/** The real clock, plus an offset the test can move forward (e.g. past a plan-limit reset) without waiting. */
+export class OffsetClock implements Clock {
+  offsetMs = 0;
+  now(): number {
+    return Date.now() + this.offsetMs;
+  }
+  iso(): string {
+    return new Date(this.now()).toISOString();
+  }
+  advance(ms: number): void {
+    this.offsetMs += ms;
+  }
 }
 
-/**
- * DevIdentityService (kernel test kit) kept outside the runtime, so users, bearer tokens and session ingest
- * tokens stay valid across a daemon restart; `user.created` goes to whichever store is attached.
- */
-export class HarnessIdentity implements IdentityService {
-  private readonly dev = new DevIdentityService(null);
-  private store: EventStore | null = null;
+const SUPERVISOR: Actor = { kind: 'system', id: 'supervisor' };
 
-  attach(store: EventStore): void {
-    this.store = store;
-  }
-
-  createUser(role: Role, name?: string, opts: { complianceLead?: boolean } = {}): TestUser {
-    if (!this.store) throw new Error('identity is not attached to a running daemon');
-    const { user, token } = this.dev.createUser({ role, name, complianceLead: opts.complianceLead });
-    this.store.append({
-      type: 'user.created',
-      actor: { kind: 'system', id: 'dev-identity' },
-      scope: { userId: user.id },
-      meta: { userId: user.id, role, complianceLead: user.flags.complianceLead ?? false },
-      payload: { name: user.name },
-      source: 'system',
-    });
-    return { user, token, headers: { authorization: `Bearer ${token}` } };
-  }
-  issueObserverToken(): string {
-    return this.dev.issueObserverToken();
-  }
-  authenticate(token: string): AuthContext | null {
-    return this.dev.authenticate(token);
-  }
-  getUser(id: string): User | null {
-    return this.dev.getUser(id);
-  }
-  listUsers(): User[] {
-    return this.dev.listUsers();
-  }
-  can(user: User, perm: Permission): boolean {
-    return this.dev.can(user, perm);
-  }
-  issueIngestToken(sessionId: string, actor: Actor): string {
-    return this.dev.issueIngestToken(sessionId, actor);
-  }
-  revokeIngestTokensFor(sessionId: string): void {
-    this.dev.revokeIngestTokensFor(sessionId);
-  }
-  verifyIngestToken(token: string): IngestPrincipal | null {
-    return this.dev.verifyIngestToken(token);
-  }
-  verifyDecisionPasskey(input: { userId: string; decisionId: string; optionId: string; assertion: unknown }): Promise<boolean> {
-    return this.dev.verifyDecisionPasskey(input);
-  }
+export interface TestUser {
+  user: IdentityUserDto;
+  token: string;
+  headers: Record<string, string>;
 }
 
 // ── supervisor stand-in ───────────────────────────────────────────────────────
@@ -180,9 +136,9 @@ export interface LaunchedSession {
 }
 
 /**
- * Contract stand-in for the supervisor (SupervisorService). launch() records exactly what the supervisor
- * records — thread ensured, writer lock, session.launch_requested → session.launched → lifecycle running →
- * turn 1 — and starts a sleeper process standing in for `claude`, whose pid the sidecar watches.
+ * The supervisor's launch bookkeeping without its process management (SupervisorService), for scenarios in which
+ * the test plays the claude process itself: thread ensured, writer lock, session.launch_requested → launched →
+ * running → turn 1, a real ingest token, and a sleeper standing in for `claude` whose pid the sidecar watches.
  */
 export class StubSupervisor implements SupervisorService {
   readonly sessions = new Map<string, LaunchedSession>();
@@ -190,10 +146,7 @@ export class StubSupervisor implements SupervisorService {
   private ctx: ModuleContext | null = null;
   private readonly launchWaiters: ((s: LaunchedSession) => void)[] = [];
 
-  constructor(
-    private readonly identity: HarnessIdentity,
-    private readonly claudeConfigDir: string,
-  ) {}
+  constructor(private readonly claudeConfigDir: string) {}
 
   attach(ctx: ModuleContext): void {
     this.ctx = ctx;
@@ -238,7 +191,7 @@ export class StubSupervisor implements SupervisorService {
     if (!type.readOnly && !ledger.acquireWriter(thread.threadId, sessionId, SUPERVISOR)) {
       throw new Error(`thread ${thread.threadId} already has an active writer`);
     }
-    const token = this.identity.issueIngestToken(sessionId, SUPERVISOR);
+    const token = ctx.services.get('identity').issueIngestToken(sessionId, SUPERVISOR);
     const claude = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1 << 30)'], { stdio: 'ignore' });
     if (!claude.pid) throw new Error('could not start the stand-in claude process');
     const claudeSessionId = randomUUID();
@@ -311,7 +264,7 @@ export class StubSupervisor implements SupervisorService {
       source: 'supervisor',
     });
     ctx.store.append({ type: 'session.ended', actor: SUPERVISOR, scope, meta: { sessionId, outcome }, source: 'supervisor' });
-    this.identity.revokeIngestTokensFor(sessionId);
+    ctx.services.get('identity').revokeIngestTokensFor(sessionId, SUPERVISOR);
   }
 
   private record(method: string, sessionId: string | null, args: unknown[]): void {
@@ -348,58 +301,19 @@ export class StubSupervisor implements SupervisorService {
   }
 }
 
-// ── protected-op guard stand-in ───────────────────────────────────────────────
-
-const PROTECTED = ['main', 'master', 'production'];
-
-/** Destination branch of a `git push` that targets a protected branch, or null. */
-export function protectedPushTarget(command: string): string | null {
-  const m = command.match(/\bgit\s+push\b([^;&|]*)/);
-  if (!m) return null;
-  const args = m[1]!.trim().split(/\s+/).filter((a) => a && !a.startsWith('-'));
-  for (const refspec of args.slice(1)) {
-    const dst = (refspec.includes(':') ? refspec.split(':')[1]! : refspec).replace(/^\+/, '').replace(/^refs\/heads\//, '');
-    if (PROTECTED.includes(dst) || dst.startsWith('release/')) return dst;
-  }
-  return null;
-}
-
-export const protectedOpGuard: PreToolGuard = {
-  name: 'protected-op',
-  order: 30,
-  evaluate(ctx) {
-    if (ctx.toolName !== 'Bash') return null;
-    const target = protectedPushTarget(String(ctx.toolInput.command ?? ''));
-    if (!target) return null;
-    return {
-      decision: 'deny',
-      guard: 'protected-op',
-      blockReason: 'protected_operation',
-      reason: `Pushing to ${target} is a protected operation (AOC-SPEC-003 §2.4, test 1).`,
-      raiseDecision: {
-        kind: 'protected_operation',
-        test: 'main',
-        title: `Push to ${target}`,
-        question: `Allow this session to push to ${target}?`,
-        options: [
-          { id: 'approve', label: 'Approve the push' },
-          { id: 'reject', label: 'Reject' },
-        ],
-        subjectType: 'session',
-        subjectId: ctx.session.sessionId,
-      },
-    };
-  },
-};
-
 // ── the harness ───────────────────────────────────────────────────────────────
 
 export interface HarnessOptions {
   /** Deep-merged into the e2e config (AocConfigSchema input). */
   config?: Json;
+  /** 'real': mod-supervisor runs claude-sim; 'stub' (default): the test plays the claude process. */
+  supervisor?: 'stub' | 'real';
+  /** Extra environment for claude-sim sessions (real supervisor), e.g. CLAUDE_SIM_SCENARIO. */
+  simEnv?: Record<string, string>;
 }
 
-const isPlaceholder = (m: AocModule) => Object.keys(m).every((k) => k === 'name');
+/** claude-sim knobs the supervisor's env allowlist must let through (everything else is dropped, §3). */
+const SIM_ENV_KEYS = ['CLAUDE_SIM_SPEED', 'CLAUDE_SIM_SCENARIO', 'CLAUDE_SIM_EXEC', 'CLAUDE_SIM_DEBUG'];
 
 export class Harness {
   readonly root: string;
@@ -407,56 +321,72 @@ export class Harness {
   /** HOME of every spawned helper: observed client config, default spools, sidecar state. */
   readonly homeDir: string;
   readonly claudeConfigDir: string;
-  readonly config: AocConfig;
-  readonly identity: HarnessIdentity;
-  readonly supervisor: StubSupervisor;
+  readonly clock = new OffsetClock();
   readonly llm = new FakeLlm();
-  /** Production modules not composed for real (stood in or not landed yet). */
-  standIns: string[] = [];
-  /** Real production modules in the composition. */
-  composed: string[] = [];
+  readonly supervisorMode: 'stub' | 'real';
+  readonly stub: StubSupervisor;
+  config!: AocConfig;
+  /** The bootstrap Approver ("Owner"), who creates every other user. */
+  owner!: TestUser;
   port = 0;
+  private readonly bootstrapToken = `aoc_u_${randomBytes(24).toString('hex')}`;
   private readonly masterKey = randomBytes(32);
   private server: Server | null = null;
   private current: AocServer | null = null;
   private readonly children = new Set<ChildProcess>();
 
-  private constructor(opts: HarnessOptions) {
+  private constructor(private readonly opts: HarnessOptions) {
     this.root = mkdtempSync(join(tmpdir(), 'aoc-e2e-'));
     this.dataDir = join(this.root, 'data');
     this.homeDir = join(this.root, 'home');
     this.claudeConfigDir = join(this.root, 'claude-config');
     mkdirSync(this.homeDir, { recursive: true });
     mkdirSync(this.claudeConfigDir, { recursive: true });
-    this.config = AocConfigSchema.parse(
+    this.supervisorMode = opts.supervisor ?? 'stub';
+    this.stub = new StubSupervisor(this.claudeConfigDir);
+  }
+
+  static async start(opts: HarnessOptions = {}): Promise<Harness> {
+    const h = new Harness(opts);
+    // Bind first: the supervisor hands sessions the daemon URL (config.publicUrl) and the port is random.
+    await h.listen();
+    h.config = h.buildConfig();
+    await h.boot();
+    const me = await h.api<{ user: IdentityUserDto }>('GET', '/api/auth/me', { headers: { authorization: `Bearer ${h.bootstrapToken}` } });
+    h.owner = { user: me.user, token: h.bootstrapToken, headers: { authorization: `Bearer ${h.bootstrapToken}` } };
+    return h;
+  }
+
+  private buildConfig(): AocConfig {
+    const url = `http://127.0.0.1:${this.port}`;
+    return AocConfigSchema.parse(
       deepMerge(
         {
           dataDir: this.dataDir,
           host: '127.0.0.1',
-          port: 0,
+          port: this.port,
+          publicUrl: url,
           timezone: 'Asia/Kuala_Lumpur',
           registryFile: join(REPO_ROOT, 'config', 'process-types.json'),
           // Real clock: short enough to observe transitions, long enough not to flap under load.
           liveness: { workingWindowMs: 5_000, stallAfterMs: 120_000, toolStallAfterMs: 120_000, deadAfterMs: 15_000 },
-          supervisor: { workspacesDir: join(this.root, 'workspaces') },
+          supervisor: {
+            workspacesDir: join(this.root, 'workspaces'),
+            claudeBin: process.execPath,
+            claudeArgsPrefix: [CLAUDE_SIM_BIN],
+            envAllowlist: [...defaultConfig().supervisor.envAllowlist, ...SIM_ENV_KEYS],
+          },
           metering: { rateCardFile: join(REPO_ROOT, 'config', 'rate-card.json') },
           fx: { extractor: 'fake' },
           audit: { anchorRepoPath: join(this.root, 'anchor-repo') },
           selfModification: { externalAuditLog: join(this.root, 'selfmod-audit.log') },
           compliance: { mappingFile: join(REPO_ROOT, 'config', 'iso42001-mapping.json') },
+          identity: { origin: url, rpId: '127.0.0.1' },
           intake: { triageAgents: 1 },
         },
-        opts.config ?? {},
+        this.opts.config ?? {},
       ),
     );
-    this.identity = new HarnessIdentity();
-    this.supervisor = new StubSupervisor(this.identity, this.claudeConfigDir);
-  }
-
-  static async start(opts: HarnessOptions = {}): Promise<Harness> {
-    const h = new Harness(opts);
-    await h.boot();
-    return h;
   }
 
   get url(): string {
@@ -473,57 +403,71 @@ export class Harness {
     return this.current !== null;
   }
 
-  /** Fresh module instances each boot (modules hold per-runtime state); stand-ins wrap the long-lived objects. */
+  /** The env the real supervisor reads its allowlist from: what claude-sim, hooks, MCP server and sidecar inherit. */
+  private supervisorEnv(): Record<string, string> {
+    return {
+      PATH: process.env.PATH ?? '',
+      HOME: this.homeDir,
+      CLAUDE_CONFIG_DIR: this.claudeConfigDir,
+      // Scenario durations at 2% of real time; bash steps marked exec run for real (git commits as evidence).
+      CLAUDE_SIM_SPEED: '0.02',
+      CLAUDE_SIM_EXEC: '1',
+      ...this.opts.simEnv,
+    };
+  }
+
+  /** Fresh module instances each boot (modules hold per-runtime state): the production list, with test wiring. */
   private compose(): AocModule[] {
-    const identity = this.identity;
-    const supervisor = this.supervisor;
-    const modules: AocModule[] = [];
-    const standIns: string[] = [];
-    const composed: string[] = [];
-    for (const m of createDefaultModules()) {
-      if (m.name === 'identity') {
-        standIns.push('identity');
-        modules.push({ name: 'identity', init: (ctx) => (identity.attach(ctx.store), ctx.services.provide('identity', identity)) });
-      } else if (m.name === 'supervisor') {
-        standIns.push('supervisor');
-        modules.push({ name: 'supervisor', init: (ctx) => (supervisor.attach(ctx), ctx.services.provide('supervisor', supervisor)) });
-      } else if (isPlaceholder(m)) {
-        standIns.push(m.name);
-      } else {
-        composed.push(m.name);
-        // Same module, faster liveness sweep (the production default is 5 s).
-        modules.push(m.name === 'sessions' ? createSessionsModule({ sweepIntervalMs: 250 }) : m);
+    const stub = this.stub;
+    return createDefaultModules().map((m) => {
+      switch (m.name) {
+        case 'identity':
+          return createIdentityModule({ env: { AOC_BOOTSTRAP_TOKEN: this.bootstrapToken } });
+        case 'sessions':
+          // Same module, faster liveness sweep (the production default is 5 s).
+          return createSessionsModule({ sweepIntervalMs: 250 });
+        case 'supervisor':
+          return this.supervisorMode === 'real'
+            ? createSupervisorModule({ env: this.supervisorEnv(), sessionsDir: join(this.root, 'sessions'), interruptGraceMs: 3_000 })
+            : { name: 'supervisor', init: (ctx: ModuleContext) => (stub.attach(ctx), ctx.services.provide('supervisor', stub)) };
+        default:
+          return m;
       }
-    }
-    if (!modules.some((m) => m.guards?.some((g) => g.name === 'protected-op'))) {
-      standIns.push('guard:protected-op');
-      modules.push({ name: 'e2e-protected-op', guards: [protectedOpGuard] });
-    }
-    this.standIns = standIns;
-    this.composed = composed;
-    return modules;
+    });
+  }
+
+  /** Same port on every (re)start, so the URL the sessions were given stays valid. */
+  private listen(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const s = serve(
+        {
+          fetch: (req, env) => (this.current ? this.current.app.fetch(req, env) : new Response(null, { status: 503 })),
+          hostname: '127.0.0.1',
+          port: this.port,
+        },
+        (info: AddressInfo) => {
+          this.port = info.port;
+          resolve();
+        },
+      ) as Server;
+      s.once('error', reject);
+      this.server = s;
+    });
   }
 
   private async boot(): Promise<void> {
     const log = process.env.AOC_E2E_LOG ? createLogger({ level: 'debug' }) : silentLogger;
-    const aoc = await createAocServer(this.config, {
+    this.current = await createAocServer(this.config, {
       log,
-      clock: systemClock,
+      clock: this.clock,
       masterKey: this.masterKey,
       modules: this.compose(),
       llm: this.llm,
       webDir: null,
     });
-    const server = await new Promise<Server>((resolve, reject) => {
-      const s = serve({ fetch: aoc.app.fetch, hostname: '127.0.0.1', port: this.port }, () => resolve(s as Server));
-      s.once('error', reject);
-    });
-    this.port = (server.address() as AddressInfo).port;
-    this.server = server;
-    this.current = aoc;
   }
 
-  /** Take the daemon down (port closed, runtime stopped, DB closed) — hooks now see ECONNREFUSED. */
+  /** Take the daemon down (port closed, runtime stopped, DB closed) — clients now see ECONNREFUSED. */
   async stop(): Promise<void> {
     const server = this.server;
     const aoc = this.current;
@@ -537,15 +481,16 @@ export class Harness {
     await aoc?.close();
   }
 
-  /** Same port, same data dir, same KEK, same identities: what a restarted aocd looks like to its clients. */
+  /** Same port, data dir, KEK and config: what a restarted aocd looks like to its clients. */
   async restart(): Promise<void> {
-    if (this.current) await this.stop();
+    if (this.current || this.server) await this.stop();
+    await this.listen();
     await this.boot();
   }
 
   async close(): Promise<void> {
     for (const c of this.children) if (c.exitCode === null && c.signalCode === null) c.kill('SIGKILL');
-    this.supervisor.killAll();
+    this.stub.killAll();
     await this.stop();
     rmSync(this.root, { recursive: true, force: true });
   }
@@ -561,9 +506,18 @@ export class Harness {
     await this.aoc.runtime.drain();
   }
 
-  // ── identities ─────────────────────────────────────────────────────────────
-  user(role: Role, name?: string, opts: { complianceLead?: boolean } = {}): TestUser {
-    return this.identity.createUser(role, name, opts);
+  // ── identities (mod-identity routes) ───────────────────────────────────────
+  async user(role: Role, name?: string, opts: { complianceLead?: boolean } = {}): Promise<TestUser> {
+    const created = await this.api<{ user: IdentityUserDto }>('POST', '/api/users', {
+      as: this.owner,
+      body: { role, name: name ?? `${role} user`, ...(opts.complianceLead ? { flags: { complianceLead: true } } : {}) },
+    });
+    const issued = await this.api<IssuedTokenDto>('POST', `/api/users/${created.user.id}/tokens`, { as: this.owner, body: { label: 'e2e' } });
+    return { user: created.user, token: issued.token, headers: { authorization: `Bearer ${issued.token}` } };
+  }
+
+  async observerToken(): Promise<string> {
+    return (await this.api<IssuedTokenDto>('POST', '/api/tokens/observer', { as: this.owner, body: { label: 'e2e observer' } })).token;
   }
 
   // ── HTTP ───────────────────────────────────────────────────────────────────
@@ -595,14 +549,11 @@ export class Harness {
     return { projectId: p.projectId, repo, slug: p.slug };
   }
 
-  /** Launch a managed session as the supervisor would (owner = the launching user). */
+  /** Stub supervisor: launch a managed session as the supervisor would (owner = the launching user). */
   async launch(owner: TestUser | Actor, req: Partial<LaunchRequest> & { projectId: string }): Promise<LaunchedSession> {
     const actor: Actor = 'user' in owner ? { kind: 'human', id: owner.user.id } : owner;
-    const { sessionId } = await this.supervisor.launch(
-      { processType: 'discovery', prompt: 'Build the claims intake parser with tests.', ...req },
-      actor,
-    );
-    return this.supervisor.sessions.get(sessionId)!;
+    const { sessionId } = await this.stub.launch({ processType: 'discovery', prompt: 'Build the claims intake parser with tests.', ...req }, actor);
+    return this.stub.sessions.get(sessionId)!;
   }
 
   events(q: ListQuery = {}): StoredEvent[] {

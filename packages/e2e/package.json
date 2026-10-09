@@ -9,10 +9,13 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@aoc/claude-sim": "workspace:*",
     "@aoc/contracts": "workspace:*",
     "@aoc/daemon": "workspace:*",
     "@aoc/kernel": "workspace:*",
+    "@aoc/mod-identity": "workspace:*",
     "@aoc/mod-sessions": "workspace:*",
+    "@aoc/supervisor": "workspace:*",
     "@hono/node-server": "1.19.17",
     "@modelcontextprotocol/sdk": "1.32.1",
     "fflate": "0.8.3",

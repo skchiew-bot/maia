@@ -29,8 +29,8 @@ const cost = (model: keyof typeof RATES, u: U) =>
 
 describe('(a) managed happy path', () => {
   it('plan → edits → evidence-backed task_done → phase pinned → usage via sidecar → read models', async () => {
-    const owner = h.user('builder', 'Aisyah');
-    const ceo = h.user('approver', 'CEO');
+    const owner = await h.user('builder', 'Aisyah');
+    const ceo = await h.user('approver', 'CEO');
     const { projectId, repo } = await h.project(owner, 'Claims Bot');
     const s = await h.launch(owner, { projectId, processType: 'discovery' });
     const claude = new ClaudeSession(h, s);
@@ -156,7 +156,7 @@ describe('(a) managed happy path', () => {
     claude.killClaude();
     await waitFor(async () => (await detail()).liveness?.state === 'dead', { what: 'Dead after the process exit' });
     expect(await sidecar.exited).toBe(0);
-    h.supervisor.endSession(s.sessionId);
+    h.stub.endSession(s.sessionId);
     await waitFor(async () => (await detail()).lifecycle === 'ended', { what: 'session ended' });
     await claude.close();
     expect(h.store.verifyChain().ok).toBe(true);
@@ -165,7 +165,7 @@ describe('(a) managed happy path', () => {
 
 describe('(b) plan gate and read-only triage', () => {
   it('denies file changes before declare_plan (no-manifest guard), relayed by the hook binary', async () => {
-    const owner = h.user('builder');
+    const owner = await h.user('builder');
     const { projectId, repo } = await h.project(owner, 'Gate');
     const s = await h.launch(owner, { projectId });
     const claude = new ClaudeSession(h, s);
@@ -194,7 +194,7 @@ describe('(b) plan gate and read-only triage', () => {
   });
 
   it('a read-only triage session cannot write, whatever it declared', async () => {
-    const owner = h.user('builder');
+    const owner = await h.user('builder');
     const { projectId, repo } = await h.project(owner, 'Triage');
     const s = await h.launch(owner, { projectId, processType: 'bug-triage', prompt: 'Diagnose the blank page (read-only).' });
     expect(s.readOnly).toBe(true);

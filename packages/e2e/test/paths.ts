@@ -9,6 +9,8 @@ export const REPO_ROOT = resolve(E2E_DIR, '..', '..');
 export const HOOK_MAIN = join(REPO_ROOT, 'packages', 'hooks', 'src', 'main.ts');
 export const MCP_MAIN = join(REPO_ROOT, 'packages', 'mcp-server', 'src', 'main.ts');
 export const SIDECAR_MAIN = join(REPO_ROOT, 'packages', 'sidecar', 'src', 'main.ts');
+/** claude-sim's launcher (tsx-registered), the `claude` executable of supervisor-driven scenarios. */
+export const CLAUDE_SIM_BIN = join(REPO_ROOT, 'packages', 'claude-sim', 'bin', 'claude-sim.mjs');
 
 /** Absolute `--import` specifier: helpers run with a session workspace as cwd, where a bare `tsx` would not resolve. */
 export const TSX_IMPORT = pathToFileURL(createRequire(join(REPO_ROOT, 'package.json')).resolve('tsx')).href;

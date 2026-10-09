@@ -26,7 +26,7 @@ function next3pmKl(now = Date.now()): string {
 }
 
 async function running(name: string) {
-  const owner = h.user('builder', name);
+  const owner = await h.user('builder', name);
   const { projectId } = await h.project(owner, name);
   const s = await h.launch(owner, { projectId });
   const claude = new ClaudeSession(h, s);

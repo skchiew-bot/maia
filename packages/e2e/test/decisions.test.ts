@@ -18,9 +18,9 @@ afterAll(async () => {
 const PLAN = { phases: [{ id: 'p1', name: 'Ship', tasks: [{ id: 't1', title: 'Ship it', size: 's' }] }] };
 
 describe('(c) protected operation', () => {
-  it('git push origin main → deny relayed by the hook → protected_operation card → Waiting on you → resolved by the Approver', async () => {
-    const owner = h.user('builder', 'Dev');
-    const ceo = h.user('approver', 'CEO');
+  it('git push origin main → deny relayed by the hook → decision card (mod-change protected-op guard) → Waiting on you → resolved by the Approver', async () => {
+    const owner = await h.user('builder', 'Dev');
+    const ceo = await h.user('approver', 'CEO');
     const { projectId } = await h.project(owner, 'Push');
     const s = await h.launch(owner, { projectId });
     const claude = new ClaudeSession(h, s);
@@ -44,10 +44,13 @@ describe('(c) protected operation', () => {
     expect(h.events({ types: ['session.blocked'], sessionId: s.sessionId }).map((e) => e.meta.reason)).toEqual(['protected_operation']);
 
     const card = await h.api<DecisionCardView>('GET', `/api/decisions/${decisionId}`, { as: ceo });
+    // mod-change raises guard cards as agent_decision (test main); the domain also defines protected_operation.
     expect(card).toMatchObject({
-      kind: 'protected_operation',
+      kind: 'agent_decision',
       status: 'open',
       test: 'main',
+      title: 'Protected operation: git push to main',
+      context: 'git push origin main',
       requiredRole: 'approver',
       sessionId: s.sessionId,
       projectId,
@@ -57,7 +60,7 @@ describe('(c) protected operation', () => {
 
     await waitFor(async () => (await detail()).liveness?.state === 'waiting_on_you', { what: 'Waiting on you' });
     const d = await detail();
-    expect(d.openDecision).toMatchObject({ decisionId, kind: 'protected_operation' });
+    expect(d.openDecision).toMatchObject({ decisionId, kind: 'agent_decision' });
     const consoleView = await h.api<{ kpis: { waitingOnYou: number } }>('GET', '/api/console', { as: ceo });
     expect(consoleView.kpis.waitingOnYou).toBeGreaterThanOrEqual(1);
     expect((await h.api<{ resolvableByMe: number }>('GET', '/api/decisions/summary', { as: ceo })).resolvableByMe).toBeGreaterThanOrEqual(1);
@@ -73,7 +76,7 @@ describe('(c) protected operation', () => {
     const resolved = await h.api<DecisionCardView>('POST', `/api/decisions/${decisionId}/resolve`, { as: ceo, body: { optionId: 'approve', comment: 'Release window is open.' } });
     expect(resolved).toMatchObject({ status: 'resolved', resolution: { optionId: 'approve', resolvedBy: ceo.user.id, method: 'button', selfApproved: false } });
     const r = h.events({ types: ['decision.resolved'], decisionId })[0]!;
-    expect(r.meta).toMatchObject({ kind: 'protected_operation', optionId: 'approve', resolvedBy: ceo.user.id });
+    expect(r.meta).toMatchObject({ kind: 'agent_decision', optionId: 'approve', resolvedBy: ceo.user.id });
     await waitFor(async () => (await detail()).liveness?.state !== 'waiting_on_you', { what: 'no longer waiting once answered' });
     expect((await detail()).openDecision).toBeNull();
 
@@ -84,9 +87,9 @@ describe('(c) protected operation', () => {
 
 describe('(d) agent decisions via MCP request_decision', () => {
   it('END-TURN instruction; the session is the requester; the owner answers ambiguity, only the Approver answers main', async () => {
-    const owner = h.user('builder', 'Owner');
-    const otherBuilder = h.user('builder', 'Peer');
-    const ceo = h.user('approver', 'CEO');
+    const owner = await h.user('builder', 'Owner');
+    const otherBuilder = await h.user('builder', 'Peer');
+    const ceo = await h.user('approver', 'CEO');
     const { projectId } = await h.project(owner, 'Decide');
     const s = await h.launch(owner, { projectId });
     const claude = new ClaudeSession(h, s);
