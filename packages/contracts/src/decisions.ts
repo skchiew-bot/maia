@@ -43,6 +43,24 @@ export function requiresPasskey(kind: DecisionKind): boolean {
   return PASSKEY_KINDS.has(kind);
 }
 
+/**
+ * §6: what a resolution proves about who decided. A button press under a bearer token shows which token was used
+ * (attribution, not proof of the person); a verified per-decision passkey (WebAuthn) is a signature; a platform
+ * policy (the once-per-period credit auto-grant) is neither.
+ */
+export const RESOLUTION_ASSURANCES = ['signature', 'attribution', 'policy'] as const;
+export type ResolutionAssurance = (typeof RESOLUTION_ASSURANCES)[number];
+export const RESOLUTION_ASSURANCE_LABEL: Record<ResolutionAssurance, string> = {
+  signature: 'Signed (passkey)',
+  attribution: 'Attribution (bearer token)',
+  policy: 'Platform policy',
+};
+
+export function resolutionAssurance(r: { method: 'button' | 'passkey' | 'policy'; passkeyVerified: boolean }): ResolutionAssurance {
+  if (r.method === 'policy') return 'policy';
+  return r.method === 'passkey' && r.passkeyVerified ? 'signature' : 'attribution';
+}
+
 export function roleSatisfies(actual: Role, required: Role): boolean {
   if (required === 'requester') return actual === 'requester';
   if (required === 'builder') return actual === 'builder' || actual === 'approver';
@@ -83,6 +101,8 @@ export interface DecisionCard {
     resolvedAt: string;
     method: 'button' | 'passkey' | 'policy';
     passkeyVerified: boolean;
+    /** §6 wording for viewers (resolutionAssurance): always set by the decisions API. */
+    assurance?: ResolutionAssurance;
     selfApproved: boolean;
     comment: string | null;
   };

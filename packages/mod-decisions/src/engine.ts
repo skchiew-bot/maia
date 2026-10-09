@@ -10,6 +10,7 @@ import {
   newId,
   requiredRoleFor,
   requiresPasskey,
+  resolutionAssurance,
   roleSatisfies,
   type Actor,
   type DecisionBlockReason,
@@ -581,6 +582,7 @@ export class DecisionEngine implements DecisionService {
       resolvedAt: this.ctx.clock.iso(),
       method: r.method,
       passkeyVerified: r.passkeyVerified,
+      assurance: resolutionAssurance(r),
       selfApproved: r.selfApproved,
       comment: r.comment,
     };

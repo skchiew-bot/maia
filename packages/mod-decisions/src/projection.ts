@@ -1,15 +1,16 @@
 import type { DatabaseSync } from 'node:sqlite';
-import type {
-  DecisionCard,
-  DecisionKind,
-  DecisionOption,
-  DecisionStatus,
-  DecisionTest,
-  JsonValue,
-  MetaOf,
-  PayloadOf,
-  Role,
-  StoredEvent,
+import {
+  resolutionAssurance,
+  type DecisionCard,
+  type DecisionKind,
+  type DecisionOption,
+  type DecisionStatus,
+  type DecisionTest,
+  type JsonValue,
+  type MetaOf,
+  type PayloadOf,
+  type Role,
+  type StoredEvent,
 } from '@aoc/contracts';
 import type { Projector } from '@aoc/kernel';
 
@@ -338,6 +339,10 @@ function toRecord(r: Row): DecisionRecord {
             resolvedAt: r.resolved_at ?? r.closed_at ?? r.created_at,
             method: r.resolution_method as 'button' | 'passkey' | 'policy',
             passkeyVerified: r.passkey_verified === 1,
+            assurance: resolutionAssurance({
+              method: r.resolution_method as 'button' | 'passkey' | 'policy',
+              passkeyVerified: r.passkey_verified === 1,
+            }),
             selfApproved: r.self_approved === 1,
             comment: r.resolution_comment,
           }

@@ -221,6 +221,7 @@ describe('resolution', () => {
         optionId: 'approve',
         method: 'passkey',
         passkeyVerified: true,
+        assurance: 'signature',
         selfApproved: false,
         comment: 'ship',
       });
@@ -241,7 +242,12 @@ describe('resolution', () => {
       { optionId: 'reject', passkeyAssertion: { id: 'cred' } },
       approver.user,
     );
-    expect(done.resolution).toMatchObject({ method: 'button', passkeyVerified: false });
+    // A bearer-token button press is attribution, never a signature (§6).
+    expect(done.resolution).toMatchObject({
+      method: 'button',
+      passkeyVerified: false,
+      assurance: 'attribution',
+    });
     expect(t.identity!.passkeyCalls.length).toBe(calls);
   });
 
@@ -320,6 +326,7 @@ describe('policy resolution (§10, §11)', () => {
       method: 'policy',
       resolvedBy: 'policy:credits',
       passkeyVerified: false,
+      assurance: 'policy',
       selfApproved: false,
       comment: 'auto-grant 25%',
     });

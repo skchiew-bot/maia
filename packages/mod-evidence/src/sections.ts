@@ -1,20 +1,23 @@
-import type {
-  EvidenceBreakglass,
-  EvidenceBreakglassFile,
-  EvidenceChange,
-  EvidenceChanges,
-  EvidenceCredits,
-  EvidenceFx,
-  EvidenceFxDay,
-  EvidenceFxDiscrepancy,
-  EvidenceGate,
-  EvidenceGateFlag,
-  EvidenceGates,
-  EvidenceMetaEntry,
-  EvidencePackManifest,
-  EvidenceRollback,
-  EvidenceRollbacks,
-  StoredEvent,
+import {
+  RESOLUTION_ASSURANCE_LABEL,
+  RESOLUTION_ASSURANCES,
+  resolutionAssurance,
+  type EvidenceBreakglass,
+  type EvidenceBreakglassFile,
+  type EvidenceChange,
+  type EvidenceChanges,
+  type EvidenceCredits,
+  type EvidenceFx,
+  type EvidenceFxDay,
+  type EvidenceFxDiscrepancy,
+  type EvidenceGate,
+  type EvidenceGateFlag,
+  type EvidenceGates,
+  type EvidenceMetaEntry,
+  type EvidencePackManifest,
+  type EvidenceRollback,
+  type EvidenceRollbacks,
+  type StoredEvent,
 } from '@aoc/contracts';
 import type { EventStore } from '@aoc/kernel';
 import { entryOf, iterateEvents, metaOf, refOf, typesWithPrefix } from './events';
@@ -89,6 +92,7 @@ export function buildGates(ctx: SectionContext, resolved: StoredEvent[]): Eviden
     if (rm?.requiresPasskey && !m.passkeyVerified) flags.push('passkey_not_verified');
     // Builders may self-approve reversible off-main work by design (§6); only approver gates are a finding.
     if (m.selfApproved && rm?.requiredRole === 'approver') flags.push('self_approved_approver_gate');
+    const assurance = resolutionAssurance(m);
     return {
       decisionId: m.decisionId,
       kind: m.kind,
@@ -101,6 +105,8 @@ export function buildGates(ctx: SectionContext, resolved: StoredEvent[]): Eviden
       resolvedBy: m.resolvedBy,
       method: m.method,
       passkeyVerified: m.passkeyVerified,
+      assurance,
+      assuranceLabel: RESOLUTION_ASSURANCE_LABEL[assurance],
       selfApproved: m.selfApproved,
       ageMs: m.ageMs,
       resolvedAt: e.ts,
@@ -113,6 +119,9 @@ export function buildGates(ctx: SectionContext, resolved: StoredEvent[]): Eviden
   return {
     count: gates.length,
     byKind: tally(gates.map((g) => g.kind)),
+    byAssurance: Object.fromEntries(
+      RESOLUTION_ASSURANCES.map((a) => [a, gates.filter((g) => g.assurance === a).length]),
+    ) as EvidenceGates['byAssurance'],
     passkeyVerified: gates.filter((g) => g.passkeyVerified).length,
     selfApproved: gates.filter((g) => g.selfApproved).length,
     byPolicy: gates.filter((g) => g.method === 'policy').length,

@@ -264,6 +264,7 @@ describe('evidence pack generation', () => {
     expect(gates).toMatchObject({
       count: 2,
       byKind: { change_request: 1, go_live: 1 },
+      byAssurance: { signature: 1, attribution: 1, policy: 0 },
       passkeyVerified: 1,
       flagged: 0,
     });
@@ -275,6 +276,8 @@ describe('evidence pack generation', () => {
       resolvedBy: s.approver.user.id,
       method: 'passkey',
       passkeyVerified: true,
+      assurance: 'signature',
+      assuranceLabel: 'Signed (passkey)',
       selfApproved: false,
       ageMs: 162_000_000,
       requestedSeq: s.goLiveRequest.seq,
@@ -284,7 +287,15 @@ describe('evidence pack generation', () => {
       test: 'main',
       requiredRole: 'approver',
       method: 'button',
+      assurance: 'attribution',
+      assuranceLabel: 'Attribution (bearer token)',
     });
+    // §6 in the human-readable pack: a bearer-token button is attribution, a verified passkey a signature (G-29).
+    const html = p.files['index.html']!;
+    expect(html).toContain('<dt>Signed (passkey)</dt><dd>1</dd>');
+    expect(html).toContain('<dt>Attribution (bearer token)</dt><dd>1</dd>');
+    expect(html).toContain('<dt>Platform policy</dt><dd>0</dd>');
+    expect(html).toContain('a button press shows which token resolved the decision, not who held it');
 
     const changes = p.json<EvidenceChanges>('changes.json');
     expect(changes.changes).toEqual([
