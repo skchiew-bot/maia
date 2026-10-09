@@ -204,12 +204,15 @@ export function readCredentialProfiles(file: string): Record<string, CredentialP
     for (const [key, path] of Object.entries(files)) {
       if (!FILE_NAME.test(key))
         throw new Error(`credential profile "${name}": file names are 1-64 letters, digits, . _ -`);
-      if (!isAbsolute(path)) throw new Error(`credential profile "${name}": file "${key}" needs an absolute path`);
+      if (!isAbsolute(path))
+        throw new Error(`credential profile "${name}": file "${key}" needs an absolute path`);
     }
     for (const [k, v] of Object.entries(p.env)) {
       for (const m of v.matchAll(FILE_REF)) {
         if (!Object.hasOwn(files, m[1]!))
-          throw new Error(`credential profile "${name}": ${k} refers to a file that "files" does not declare`);
+          throw new Error(
+            `credential profile "${name}": ${k} refers to a file that "files" does not declare`,
+          );
       }
     }
     out[name] = { env: { ...p.env }, files: { ...files } };
@@ -224,9 +227,13 @@ export function readCredentialProfileSpec(file: string, profile: string): Creden
 }
 
 /** Replaces `{{file:<name>}}` with the given paths (originals for aocd's own runs, copies for isolated sessions). */
-export function resolveFileRefs(env: Record<string, string>, paths: Record<string, string>): Record<string, string> {
+export function resolveFileRefs(
+  env: Record<string, string>,
+  paths: Record<string, string>,
+): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(env)) out[k] = v.replace(FILE_REF, (_, name: string) => paths[name] ?? '');
+  for (const [k, v] of Object.entries(env))
+    out[k] = v.replace(FILE_REF, (_, name: string) => paths[name] ?? '');
   return out;
 }
 

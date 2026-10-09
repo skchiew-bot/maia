@@ -109,7 +109,8 @@ export function resolveIsolation(
         'production mode requires supervisor.isolation "user": managed sessions must not run as the aocd OS user (§3, threat model O-1)',
       );
     const warnings = [NO_ISOLATION_WARNING];
-    if (sup.sessionUser) warnings.push('supervisor.sessionUser is ignored because supervisor.isolation is "none"');
+    if (sup.sessionUser)
+      warnings.push('supervisor.sessionUser is ignored because supervisor.isolation is "none"');
     return { isolation: null, warnings };
   }
   if (!sup.sessionUser)
@@ -127,7 +128,8 @@ export function resolveIsolation(
   for (const u of reader === writer ? [writer] : [writer, reader]) {
     if (u.uid === 0 || u.uid === deps.euid)
       throw new IsolationError(`session user ${u.name} must not be root or aocd's own user`);
-    if (u.gid === 0) throw new IsolationError(`session user ${u.name} must not have root's group as its primary group`);
+    if (u.gid === 0)
+      throw new IsolationError(`session user ${u.name} must not have root's group as its primary group`);
   }
   const warnings: string[] = [];
   if (reader === writer) {
@@ -237,7 +239,9 @@ export function ensureDir(
   try {
     fd = openSync(path, NOFOLLOW_DIR);
   } catch (err) {
-    throw new IsolationError(`${path} must be a directory, not a link (${(err as NodeJS.ErrnoException).code})`);
+    throw new IsolationError(
+      `${path} must be a directory, not a link (${(err as NodeJS.ErrnoException).code})`,
+    );
   }
   try {
     fchownSync(fd, uid, gid);
@@ -329,7 +333,8 @@ export function materializeKeyFiles(
     const src = files[name]!;
     let data: Buffer;
     try {
-      if (statSync(src).size > MAX_CREDENTIAL_FILE_BYTES) throw Object.assign(new Error('too large'), { code: 'EFBIG' });
+      if (statSync(src).size > MAX_CREDENTIAL_FILE_BYTES)
+        throw Object.assign(new Error('too large'), { code: 'EFBIG' });
       data = readFileSync(src);
     } catch (err) {
       throw new IsolationError(
@@ -465,7 +470,8 @@ export function selfCheck(input: SelfCheckInput): void {
       }
       for (const l of lines.slice(1)) {
         if (l.startsWith('readable ')) problems.push(`session user ${user.name} can read ${l.slice(9)}`);
-        else if (l.startsWith('unreachable ')) problems.push(`session user ${user.name} cannot reach ${l.slice(12)}`);
+        else if (l.startsWith('unreachable '))
+          problems.push(`session user ${user.name} cannot reach ${l.slice(12)}`);
       }
     } finally {
       rmSync(dirs.dir, { recursive: true, force: true });
@@ -482,7 +488,9 @@ export function selfCheck(input: SelfCheckInput): void {
 /** Key files every profile names (each must stay unreadable to session users; only per-session copies are). */
 export function profileKeyFiles(profilesFile: string): string[] {
   try {
-    return [...new Set(Object.values(readCredentialProfiles(profilesFile)).flatMap((p) => Object.values(p.files)))];
+    return [
+      ...new Set(Object.values(readCredentialProfiles(profilesFile)).flatMap((p) => Object.values(p.files))),
+    ];
   } catch (err) {
     throw new IsolationError(`cannot verify the credential profiles file: ${(err as Error).message}`);
   }

@@ -1,5 +1,14 @@
 import { randomBytes } from 'node:crypto';
-import { chmodSync, chownSync, existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  chownSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -77,17 +86,32 @@ describe('kernel-spawned processes never inherit aocd secrets (G-46, O-13)', () 
     const head = withEnv({ GIT_DIR: join(b, '.git'), GIT_WORK_TREE: b }, () => git.head(a));
     expect(head).toBe(git.head(a));
     expect(head).not.toBe(git.head(b));
-    const r = git.run(a, ['-c', 'alias.envdump=!env', 'envdump'], { env: { GIT_AUTHOR_NAME: 'AOC supervisor' } });
+    const r = git.run(a, ['-c', 'alias.envdump=!env', 'envdump'], {
+      env: { GIT_AUTHOR_NAME: 'AOC supervisor' },
+    });
     expect(parseEnv(r.stdout).GIT_AUTHOR_NAME).toBe('AOC supervisor');
   });
 
   it('childEnv keeps only the allowlist, then explicit values', () => {
     expect(
       childEnv(
-        { PATH: '/bin', HOME: '/home/aoc', LANG: 'C.UTF-8', AOC_MASTER_KEY: 'k', DEPLOY_TOKEN: 't', HTTPS_PROXY: 'http://p' },
+        {
+          PATH: '/bin',
+          HOME: '/home/aoc',
+          LANG: 'C.UTF-8',
+          AOC_MASTER_KEY: 'k',
+          DEPLOY_TOKEN: 't',
+          HTTPS_PROXY: 'http://p',
+        },
         { GIT_TERMINAL_PROMPT: '0' },
       ),
-    ).toEqual({ PATH: '/bin', HOME: '/home/aoc', LANG: 'C.UTF-8', HTTPS_PROXY: 'http://p', GIT_TERMINAL_PROMPT: '0' });
+    ).toEqual({
+      PATH: '/bin',
+      HOME: '/home/aoc',
+      LANG: 'C.UTF-8',
+      HTTPS_PROXY: 'http://p',
+      GIT_TERMINAL_PROMPT: '0',
+    });
   });
 });
 
@@ -136,7 +160,9 @@ describe('KEK custody (R6)', () => {
       expect(load().key.toString('hex')).toBe(key);
       for (const mode of [0o640, 0o644, 0o604, 0o700]) {
         chmodSync(kek, mode);
-        expect(() => load(), mode.toString(8)).toThrow(`has mode 0${mode.toString(8)}; it must be 0400 or 0600`);
+        expect(() => load(), mode.toString(8)).toThrow(
+          `has mode 0${mode.toString(8)}; it must be 0400 or 0600`,
+        );
       }
     });
 

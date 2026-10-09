@@ -76,14 +76,19 @@ const deps = (euid = 0) => ({
 
 describe('isolation settings', () => {
   it('development defaults to running sessions as aocd, with a warning', () => {
-    expect(resolveIsolation(cfg(), deps(1000))).toEqual({ isolation: null, warnings: [NO_ISOLATION_WARNING] });
+    expect(resolveIsolation(cfg(), deps(1000))).toEqual({
+      isolation: null,
+      warnings: [NO_ISOLATION_WARNING],
+    });
   });
 
   it('production refuses sessions that run as the aocd OS user', () => {
-    expect(() => resolveIsolation(cfg({ mode: 'production', supervisor: { isolation: 'none' } }), deps())).toThrow(
-      'production mode requires supervisor.isolation "user"',
+    expect(() =>
+      resolveIsolation(cfg({ mode: 'production', supervisor: { isolation: 'none' } }), deps()),
+    ).toThrow('production mode requires supervisor.isolation "user"');
+    expect(() => resolveIsolation(cfg({ mode: 'production' }), deps())).toThrow(
+      /needs supervisor.sessionUser/,
     );
-    expect(() => resolveIsolation(cfg({ mode: 'production' }), deps())).toThrow(/needs supervisor.sessionUser/);
   });
 
   it('naming a session user turns isolation on, and aocd must be root to switch to it', () => {
@@ -102,10 +107,17 @@ describe('isolation settings', () => {
   });
 
   it('refuses root, unknown users and a read-only user sharing the build user’s uid or group', () => {
-    expect(() => resolveIsolation(cfg({ supervisor: { sessionUser: 'root' } }), deps())).toThrow(/must not be root/);
-    expect(() => resolveIsolation(cfg({ supervisor: { sessionUser: 'ghost' } }), deps())).toThrow(/does not exist/);
+    expect(() => resolveIsolation(cfg({ supervisor: { sessionUser: 'root' } }), deps())).toThrow(
+      /must not be root/,
+    );
+    expect(() => resolveIsolation(cfg({ supervisor: { sessionUser: 'ghost' } }), deps())).toThrow(
+      /does not exist/,
+    );
     expect(() =>
-      resolveIsolation(cfg({ supervisor: { sessionUser: 'aoc-agent', readOnlySessionUser: 'aoc-twin' } }), deps()),
+      resolveIsolation(
+        cfg({ supervisor: { sessionUser: 'aoc-agent', readOnlySessionUser: 'aoc-twin' } }),
+        deps(),
+      ),
     ).toThrow(/needs its own uid and primary group/);
   });
 
@@ -114,10 +126,16 @@ describe('isolation settings', () => {
       resolveIsolation(cfg({ mode: 'production', supervisor: { sessionUser: 'aoc-agent' } }), deps()),
     ).toThrow(/production mode: read-only sessions run as the credentialed session user/);
     const r = resolveIsolation(
-      cfg({ mode: 'production', supervisor: { sessionUser: 'aoc-agent', readOnlySessionUser: 'aoc-reader' } }),
+      cfg({
+        mode: 'production',
+        supervisor: { sessionUser: 'aoc-agent', readOnlySessionUser: 'aoc-reader' },
+      }),
       deps(),
     );
-    expect(r).toMatchObject({ isolation: { writer: USERS['aoc-agent'], reader: USERS['aoc-reader'] }, warnings: [] });
+    expect(r).toMatchObject({
+      isolation: { writer: USERS['aoc-agent'], reader: USERS['aoc-reader'] },
+      warnings: [],
+    });
   });
 
   it('a production aocd refuses to start without isolation', async () => {
@@ -147,21 +165,30 @@ describe('isolation settings', () => {
 describe('startup cleanup', () => {
   it('removes every key copy and throwaway directory a crash left behind, and nothing else', () => {
     const homes = temp('aoc-homes-');
-    for (const p of ['ses_a/credentials', 'ses_a/home/.claude', 'ses_b/home', 'aoc-run-x/home', 'aoc-selfcheck-u/tmp'])
+    for (const p of [
+      'ses_a/credentials',
+      'ses_a/home/.claude',
+      'ses_b/home',
+      'aoc-run-x/home',
+      'aoc-selfcheck-u/tmp',
+    ])
       mkdirSync(join(homes, p), { recursive: true });
     writeFileSync(join(homes, 'ses_a/credentials/ssh-key'), 'k');
     expect(removeStaleSessionFiles(homes)).toBe(1);
-    expect(['ses_a/credentials', 'aoc-run-x', 'aoc-selfcheck-u'].map((p) => existsSync(join(homes, p)))).toEqual([
-      false,
-      false,
-      false,
-    ]);
+    expect(
+      ['ses_a/credentials', 'aoc-run-x', 'aoc-selfcheck-u'].map((p) => existsSync(join(homes, p))),
+    ).toEqual([false, false, false]);
     expect(existsSync(join(homes, 'ses_a/home/.claude')) && existsSync(join(homes, 'ses_b/home'))).toBe(true);
   });
 });
 
 describe('turn spawning', () => {
-  const iso = { writer: USERS['aoc-agent']!, reader: USERS['aoc-reader']!, runner: [], homesRoot: '/srv/homes' };
+  const iso = {
+    writer: USERS['aoc-agent']!,
+    reader: USERS['aoc-reader']!,
+    runner: [],
+    homesRoot: '/srv/homes',
+  };
   const ctx = { sessionId: 'ses_1', sessionDir: '/srv/homes/ses_1', cwd: '/w/prj' };
 
   it('switches uid and gid directly', () => {
@@ -270,7 +297,14 @@ describe('isolated session environment', () => {
   });
 
   it('leaves a development session’s allowlisted variables as they were', () => {
-    const env = buildSessionEnv({ source, allowlist, credentials: null, readOnly: false, aoc: {}, timezone: 'UTC' });
+    const env = buildSessionEnv({
+      source,
+      allowlist,
+      credentials: null,
+      readOnly: false,
+      aoc: {},
+      timezone: 'UTC',
+    });
     expect(env).toMatchObject({ HOME: '/var/lib/aoc', CLAUDE_CONFIG_DIR: '/var/lib/aoc/.claude' });
     expect(env.GIT_CONFIG_GLOBAL).toBeUndefined();
   });
@@ -289,7 +323,7 @@ describe('credential profiles with key files', () => {
         env: { GIT_SSH_COMMAND: 'ssh -i {{file:ssh-key}} -o IdentitiesOnly=yes', GIT_PUSH_TOKEN: 'tok' },
         files: { 'ssh-key': '/etc/aoc/keys/git-feature' },
       },
-      'legacy': { env: { DEPLOY_TOKEN: 'd' } },
+      legacy: { env: { DEPLOY_TOKEN: 'd' } },
     });
     expect(readCredentialProfile(f, 'git-feature')).toEqual({
       GIT_SSH_COMMAND: 'ssh -i /etc/aoc/keys/git-feature -o IdentitiesOnly=yes',
@@ -369,7 +403,10 @@ function world(): World {
     JSON.stringify({
       profiles: {
         'git-feature': {
-          env: { GIT_SSH_COMMAND: 'ssh -i {{file:ssh-key}} -o IdentitiesOnly=yes', GIT_PUSH_TOKEN: 'ghp_feature_E2E' },
+          env: {
+            GIT_SSH_COMMAND: 'ssh -i {{file:ssh-key}} -o IdentitiesOnly=yes',
+            GIT_PUSH_TOKEN: 'ghp_feature_E2E',
+          },
           files: { 'ssh-key': keyFile },
         },
       },
@@ -444,7 +481,12 @@ function isolationSettings(w: World, writer: string, reader: string) {
     hookCommand: [process.execPath, FAKE_HELPER, 'hook'],
     mcpCommand: [process.execPath, FAKE_HELPER, 'mcp'],
     credentialProfilesFile: w.profiles,
-    envAllowlist: [...defaultConfig().supervisor.envAllowlist, 'CLAUDE_SIM_EXEC', 'CLAUDE_SIM_SPEED', 'FAKE_HELPER_LOG_DIR'],
+    envAllowlist: [
+      ...defaultConfig().supervisor.envAllowlist,
+      'CLAUDE_SIM_EXEC',
+      'CLAUDE_SIM_SPEED',
+      'FAKE_HELPER_LOG_DIR',
+    ],
   };
 }
 
@@ -476,7 +518,16 @@ describe.skipIf(!canCreateUsers)('OS-level isolation end to end (needs root to c
 
   beforeAll(async () => {
     for (const name of [WRITER, READER])
-      await run('useradd', ['--system', '--no-create-home', '--home-dir', '/nonexistent', '--shell', '/usr/sbin/nologin', '--user-group', name]);
+      await run('useradd', [
+        '--system',
+        '--no-create-home',
+        '--home-dir',
+        '/nonexistent',
+        '--shell',
+        '/usr/sbin/nologin',
+        '--user-group',
+        name,
+      ]);
     writer = lookupOsUser(WRITER);
     reader = lookupOsUser(READER);
   }, 30_000);
@@ -543,7 +594,12 @@ describe.skipIf(!canCreateUsers)('OS-level isolation end to end (needs root to c
     expect(r[7]).toMatch(/No such file or directory/);
     expect(r[9]!.split('\n')).toEqual([join(dirs.credentials, 'ssh-key'), 'TEST-KEY-git-feature']);
     const all = r.join('\n');
-    for (const secret of ['AOCD-SSH-PRIVATE-KEY', readFileSync(w.kek, 'utf8').trim(), 'ghp_feature_E2E', 'SQLite format'])
+    for (const secret of [
+      'AOCD-SSH-PRIVATE-KEY',
+      readFileSync(w.kek, 'utf8').trim(),
+      'ghp_feature_E2E',
+      'SQLite format',
+    ])
       expect(all).not.toContain(secret);
 
     // The key copy lived for the turn only; the session's directories belong to the right users.
@@ -551,7 +607,11 @@ describe.skipIf(!canCreateUsers)('OS-level isolation end to end (needs root to c
     const mode = (p: string) => statSync(p).mode & 0o7777;
     expect([statSync(dirs.dir).uid, statSync(dirs.dir).gid, mode(dirs.dir)]).toEqual([0, writer.gid, 0o750]);
     expect([statSync(dirs.home).uid, mode(dirs.home)]).toEqual([writer.uid, 0o700]);
-    expect([statSync(dirs.settings).uid, statSync(dirs.settings).gid, mode(dirs.settings)]).toEqual([0, writer.gid, 0o640]);
+    expect([statSync(dirs.settings).uid, statSync(dirs.settings).gid, mode(dirs.settings)]).toEqual([
+      0,
+      writer.gid,
+      0o640,
+    ]);
     expect(statSync(join(w.work, 'prj_demo')).uid).toBe(writer.uid);
 
     // Hooks and the MCP server are claude's children: same user, same private HOME. Nothing ran as root.
@@ -567,16 +627,31 @@ describe.skipIf(!canCreateUsers)('OS-level isolation end to end (needs root to c
   it('a read-only session cannot open a profile key file, a build session’s key copy or its environment', async () => {
     const w = world();
     h = await harness(w);
-    const hold = scenario(w, 'hold', [bash(`while [ ! -e ${w.gate} ]; do sleep 0.05; done; echo released`), endTurn]);
-    const build = await h.launch(`${hold} hold the credentials`, { processType: 'iso-build', threadId: 'thr_build' });
+    const hold = scenario(w, 'hold', [
+      bash(`while [ ! -e ${w.gate} ]; do sleep 0.05; done; echo released`),
+      endTurn,
+    ]);
+    const build = await h.launch(`${hold} hold the credentials`, {
+      processType: 'iso-build',
+      threadId: 'thr_build',
+    });
     const copy = join(sessionDirs(w.homes, build).credentials, 'ssh-key');
     await h.waitFor(() => existsSync(copy), 'the build turn’s key copy', 60_000);
     expect(statSync(copy)).toMatchObject({ uid: writer.uid, gid: writer.gid });
     expect(statSync(copy).mode & 0o777).toBe(0o400);
     const pid = Number(h.events('session.launched', build)[0]!.meta.pid);
 
-    const snoop = scenario(w, 'snoop', [read(w.keyFile), read(copy), read(w.profiles), read(`/proc/${pid}/environ`), endTurn]);
-    const triage = await h.launch(`${snoop} look around`, { processType: 'iso-triage', threadId: 'thr_triage' });
+    const snoop = scenario(w, 'snoop', [
+      read(w.keyFile),
+      read(copy),
+      read(w.profiles),
+      read(`/proc/${pid}/environ`),
+      endTurn,
+    ]);
+    const triage = await h.launch(`${snoop} look around`, {
+      processType: 'iso-triage',
+      threadId: 'thr_triage',
+    });
     await h.waitLifecycle(triage, 'idle', 60_000);
     const r = toolResults(triage);
     expect(r).toHaveLength(4);
@@ -619,20 +694,24 @@ describe.skipIf(!canCreateUsers)('OS-level isolation end to end (needs root to c
     expect(promoted.stdout).toBe(`0\nssh -i ${w.keyFile} -o IdentitiesOnly=yes`);
   }, 60_000);
 
-  it.skipIf(!hasSetpriv)('can start turns through a runner instead of a direct switch', async () => {
-    const w = world();
-    h = await harness(w, {
-      supervisor: { runner: ['setpriv', '--reuid={uid}', '--regid={gid}', '--clear-groups', '--'] },
-    });
-    const marker = scenario(w, 'runner', [bash('id -u; id -G'), endTurn]);
-    const id = await h.launch(`${marker} who am i`, { processType: 'iso-build' });
-    await h.waitLifecycle(id, 'idle', 60_000);
-    expect(toolResults(id)).toEqual([`${writer.uid}\n${writer.gid}`]);
-    expect(h.payload(h.events('session.launched', id)[0]!)).toMatchObject({
-      runAs: WRITER,
-      argv: expect.arrayContaining(['setpriv', `--reuid=${writer.uid}`]),
-    });
-  }, 90_000);
+  it.skipIf(!hasSetpriv)(
+    'can start turns through a runner instead of a direct switch',
+    async () => {
+      const w = world();
+      h = await harness(w, {
+        supervisor: { runner: ['setpriv', '--reuid={uid}', '--regid={gid}', '--clear-groups', '--'] },
+      });
+      const marker = scenario(w, 'runner', [bash('id -u; id -G'), endTurn]);
+      const id = await h.launch(`${marker} who am i`, { processType: 'iso-build' });
+      await h.waitLifecycle(id, 'idle', 60_000);
+      expect(toolResults(id)).toEqual([`${writer.uid}\n${writer.gid}`]);
+      expect(h.payload(h.events('session.launched', id)[0]!)).toMatchObject({
+        runAs: WRITER,
+        argv: expect.arrayContaining(['setpriv', `--reuid=${writer.uid}`]),
+      });
+    },
+    90_000,
+  );
 
   describe('startup self-check', () => {
     const start = (w: World, dataDir: string, supervisor: Record<string, unknown> = {}) =>
@@ -642,7 +721,12 @@ describe.skipIf(!canCreateUsers)('OS-level isolation end to end (needs root to c
           keys: { masterKeyFile: w.kek },
           supervisor: { ...isolationSettings(w, WRITER, READER), ...supervisor },
         }),
-        modules: [createSupervisorModule({ sessionsDir: join(w.secret, 'sessions'), env: { PATH: process.env.PATH } })],
+        modules: [
+          createSupervisorModule({
+            sessionsDir: join(w.secret, 'sessions'),
+            env: { PATH: process.env.PATH },
+          }),
+        ],
         clock: new FakeClock(),
         log: silentLogger,
         masterKey: randomBytes(32),
@@ -671,7 +755,8 @@ describe.skipIf(!canCreateUsers)('OS-level isolation end to end (needs root to c
       mkdirSync(dataDir, { mode: 0o700 });
       const err = await start(w, dataDir).catch((e: unknown) => e);
       expect(err).toBeInstanceOf(IsolationError);
-      for (const f of [w.kek, w.profiles, w.keyFile]) expect(String(err)).toContain(`session user ${WRITER} can read ${f}`);
+      for (const f of [w.kek, w.profiles, w.keyFile])
+        expect(String(err)).toContain(`session user ${WRITER} can read ${f}`);
     }, 60_000);
 
     it('refuses a runner that does not switch to the session user', async () => {
