@@ -71,9 +71,12 @@ export interface PasskeyProblem {
   needsRegistration: boolean;
 }
 
+/** The user dismissed the prompt or it timed out (raw DOMException, or wrapped by @simplewebauthn/browser). */
 function isCancelled(err: unknown): boolean {
-  if (err instanceof WebAuthnError) return err.code === 'ERROR_CEREMONY_ABORTED' || err.name === 'NotAllowedError';
-  return err instanceof Error && (err.name === 'NotAllowedError' || err.name === 'AbortError');
+  if (err instanceof WebAuthnError && err.code === 'ERROR_CEREMONY_ABORTED') return true;
+  const name =
+    typeof err === 'object' && err !== null && 'name' in err ? (err as { name: unknown }).name : null;
+  return name === 'NotAllowedError' || name === 'AbortError';
 }
 
 /** Plain-language explanation of a failed registration or signing attempt. */
@@ -86,7 +89,11 @@ export function describePasskeyError(err: unknown): PasskeyProblem {
   if (err instanceof ApiError) {
     switch (err.code) {
       case 'passkey_not_registered':
-        return problem('Register a passkey first', 'Go-live, rollback and break-glass decisions must be signed with a passkey.', true);
+        return problem(
+          'Register a passkey first',
+          'Go-live, rollback and break-glass decisions must be signed with a passkey.',
+          true,
+        );
       case 'passkey_invalid':
         return problem(
           'The signature was not accepted',
@@ -95,7 +102,10 @@ export function describePasskeyError(err: unknown): PasskeyProblem {
       case 'decision_not_open':
       case 'already_resolved':
       case 'not_open':
-        return problem('This decision is already closed', 'Someone resolved or withdrew it meanwhile. The page shows its outcome.');
+        return problem(
+          'This decision is already closed',
+          'Someone resolved or withdrew it meanwhile. The page shows its outcome.',
+        );
       case 'cannot_resolve':
       case 'separation_of_duties':
       case 'role':
@@ -108,13 +118,19 @@ export function describePasskeyError(err: unknown): PasskeyProblem {
       case 'challenge_expired':
       case 'challenge_used':
       case 'challenge_unknown':
-        return problem('The passkey request expired', 'Start again: each challenge is single-use and valid for 5 minutes.');
+        return problem(
+          'The passkey request expired',
+          'Start again: each challenge is single-use and valid for 5 minutes.',
+        );
       default:
         return problem('The passkey step failed', describeError(err) ?? 'Try again.');
     }
   }
   if (isCancelled(err)) {
-    return problem('No passkey response', 'The passkey prompt was cancelled or timed out. Nothing was signed.');
+    return problem(
+      'No passkey response',
+      'The passkey prompt was cancelled or timed out. Nothing was signed.',
+    );
   }
   if (err instanceof WebAuthnError) {
     if (err.code === 'ERROR_INVALID_DOMAIN' || err.code === 'ERROR_INVALID_RP_ID')

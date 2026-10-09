@@ -50,6 +50,11 @@ Two facts to keep in mind:
 - **The profiles file only protects anything if agents run as a different OS user.** If `claude` runs as the same
   user as aocd, the agent can simply read the 0600 profiles file, the KEK and the database. Run sessions as a
   separate unprivileged user (threat model O-1).
+- **Today they do not** (gap G-01). The supervisor spawns `claude` as aocd's own OS user and, through the default
+  `envAllowlist`, with aocd's `HOME`. Every session, including a read-only triage session through its `Read`
+  tool, can read the profiles file, every key file a profile names, the KEK, both databases and whatever the
+  service user's home holds. Until G-01 is done, treat every credential on the AOC host as readable by every
+  session.
 
 ## 3. GitHub: protect `main` and `release/*`
 
@@ -123,7 +128,10 @@ The host that runs aocd and the supervisor:
 
 1. **Users.** aocd runs as a service user (for example `aoc`). Managed sessions run as a separate, unprivileged
    user (for example `aoc-agent`) or in a per-session container (threat model O-1). `aoc-agent` must not be able
-   to read anything owned by `aoc`.
+   to read anything owned by `aoc`. **Not built yet** (gap G-01): the supervisor spawns sessions as `aoc`, with
+   `aoc`'s `HOME`. Until it changes, keep `aoc`'s home free of SSH keys, git credential helpers, `gh` logins and
+   cloud CLI profiles, and remember that the anchor deploy key kept there is readable by sessions
+   ([anchoring §2](anchoring.md#2-git-anchor-provider-git)).
 2. **Credential profiles file.** Path set by `supervisor.credentialProfilesFile` (for example
    `/etc/aoc/credential-profiles.json`). Owned by `aoc`, mode `0600`. Format:
 
@@ -137,9 +145,10 @@ The host that runs aocd and the supervisor:
    }
    ```
 
-   The key files are owned by `aoc`, mode `0600`. The supervisor hands a session key to the sandbox user only for
-   that session (for example a per-session copy, deleted when the session ends). The `promotion` key never leaves
-   the `aoc` user.
+   The key files are owned by `aoc`, mode `0600`. The supervisor copies the profile's `env` into the session's
+   environment as it is, so a key file named there must be readable by the session's user. The target design
+   (gap G-01) hands a session key to the sandbox user only for that session (a per-session copy, deleted when
+   the session ends), and the `promotion` key never leaves the `aoc` user.
 3. **No process type names the promotion profile.** Check:
    `jq -r '.types[].credentialProfile' config/process-types.json | sort -u` must not list `promotion`.
    `config/` is a protected path, and every edit is audited (`registry.changed`).
@@ -151,9 +160,12 @@ The host that runs aocd and the supervisor:
    [T-2](../security/threat-model.md#t-2-code-execution-through-git-configuration-in-agent-workspaces)). At this
    commit, `mod-change` promotes from the **project's repository path**, without fetching into a separate clone,
    and lets that repository's `pre-push` hook run with the promotion credential. If any session can write that
-   repository, or a worktree that shares its `.git` directory, this is exploitable. **Do not give the promotion
-   profile a real credential until threat model O-2 is done.** As a stopgap before each promotion, compare the
-   repository's `.git/config` and `.git/hooks/` with a known-good checksum kept off the host.
+   repository, or a worktree that shares its `.git` directory, this is exploitable. Managed sessions work in that
+   very repository by default. **Do not give the promotion profile a real credential until threat model O-1 and
+   O-2 are done** (gaps G-01, G-04): until then any session can also read the key file directly. How `main`
+   moves in the meantime is a CEO decision; record it. If a credential is ever used before then, compare the
+   repository's `.git/config` and `.git/hooks/` with a known-good checksum kept off the host before each
+   promotion.
 6. **Read-only types** never receive credentials. The registry schema refuses a read-only type with a
    `credentialProfile`. Do not work around it.
 
@@ -182,7 +194,8 @@ Every Builder, before getting access, and then every quarter:
 AOC ships the guard in `packages/hooks/git/pre-push`. It carries the marker `aoc:pre-push-guard`. It refuses any
 push that updates or deletes `main`, `master`, `production` or `release/*` unless `AOC_SUPERVISOR_PUSH=1`, which
 only the supervisor's promotion executor sets. Next to it is `prepare-commit-msg`, which adds the `AOC-Session`,
-`AOC-Change` and `AOC-Ticket` trailers inside managed sessions and does nothing elsewhere.
+`AOC-Change` and `AOC-Ticket` trailers inside managed sessions and does nothing elsewhere. The supervisor does not
+install either hook in managed workspaces yet (gap G-37).
 
 Install it for every repository on a developer machine:
 
@@ -239,6 +252,9 @@ Use a disposable branch and record the results as an AOC change record (or attac
    whose message carries a copied `AOC-Change: <approved change id>` trailer. Today that commit **passes** (threat
    model [T-22](../security/threat-model.md#t-22-forged-provenance-trailers)). Record the result until O-27 closes
    the gap.
+7. **Sessions cannot read AOC's secrets.** Run a `claude-sim` session, or a shell as the session user, that tries
+   to read the credential profiles file, a profile key file, the KEK, `aoc.db` and `~/.ssh` → expect every read
+   denied. Today every read succeeds (gap G-01). Record the result until O-1 closes the gap.
 
 Any unexpected success is a **Sev-1 incident**: stop promotions, then follow §8.
 

@@ -25,6 +25,13 @@ import {
   type StoredEvent,
   type User,
 } from '@aoc/contracts';
+import {
+  distill as distillWithModel,
+  gateVerdict,
+  proposeForApproval,
+  withFallback,
+  type Distilled,
+} from '@aoc/distill';
 import { HttpError, type ModuleContext, type NewEvent } from '@aoc/kernel';
 import { estimateCostUsd, type TokenRate } from './costs';
 import {
@@ -32,9 +39,9 @@ import {
   digestRun,
   DISTILL_EVENT_TYPES,
   fallbackPlaybook,
-  InvalidLlmOutputError,
-  refineWithLlm,
-  type DistilledPlaybook,
+  PLAYBOOK_GATE,
+  playbookRequest,
+  type PlaybookDraft,
   type RunEvent,
 } from './distill';
 import { computeRegistryEntries, type CostedRun } from './economics';
@@ -242,17 +249,18 @@ export class RegistryEngine {
     this.distilling.add(type.id);
     try {
       const distilled = await this.refine(type, chain, digest);
+      const { method, value: draft } = distilled;
       // Synchronous from here: re-check, raise the gate and record the proposal without yielding.
       this.assertNotDuplicate(chain, type);
       const playbookId = newId('playbook', this.ctx.clock.now());
       const version = nextPlaybookVersion(this.ctx.db, type.id);
       const actor: Actor = { kind: 'human', id: user.id };
-      const card = decisions.request(
-        {
-          kind: 'playbook_approval',
-          requiredRole: 'approver',
+      const { card } = proposeForApproval({
+        decisions,
+        gate: PLAYBOOK_GATE,
+        request: {
           title: `Approve playbook: ${type.name} v${version}`,
-          question: `Approve this distilled ${distilled.steps.length}-step playbook for "${type.name}"? ${routingNote(type)}`,
+          question: `Approve this distilled ${draft.steps.length}-step playbook for "${type.name}"? ${routingNote(type)}`,
           options: [
             {
               id: 'approve',
@@ -269,58 +277,57 @@ export class RegistryEngine {
           requesterId: user.id,
         },
         actor,
-      );
-      try {
-        this.ctx.store.append({
-          type: 'playbook.proposed',
-          actor,
-          scope: { sessionId: last.session_id, projectId: chain.projectId ?? undefined, decisionId: card.id },
-          meta: {
-            playbookId,
-            processType: type.id,
-            sourceSessionId: last.session_id,
-            version,
-            stepCount: distilled.steps.length,
-            decisionId: card.id,
-            method: distilled.method,
-          },
-          payload: {
-            title: distilled.title,
-            steps: distilled.steps,
-            ...(distilled.rationale ? { rationale: distilled.rationale } : {}),
-          },
-          source: 'api',
-          // Own key scope: the playbook outlives (and is erased independently of) the session it came from.
-          bodyScope: playbookId,
-        });
-      } catch (err) {
-        decisions.withdraw(card.id, 'proposal_failed', SYSTEM_ACTOR);
-        throw err;
-      }
-      return { playbook: this.getPlaybook(playbookId)!, decisionId: card.id, method: distilled.method };
+        withdrawAs: SYSTEM_ACTOR,
+        record: (c) =>
+          this.ctx.store.append({
+            type: 'playbook.proposed',
+            actor,
+            scope: { sessionId: last.session_id, projectId: chain.projectId ?? undefined, decisionId: c.id },
+            meta: {
+              playbookId,
+              processType: type.id,
+              sourceSessionId: last.session_id,
+              version,
+              stepCount: draft.steps.length,
+              decisionId: c.id,
+              method,
+            },
+            payload: {
+              title: draft.title,
+              steps: draft.steps,
+              ...(draft.rationale ? { rationale: draft.rationale } : {}),
+            },
+            source: 'api',
+            // Own key scope: the playbook outlives (and is erased independently of) the session it came from.
+            bodyScope: playbookId,
+          }),
+      });
+      return { playbook: this.getPlaybook(playbookId)!, decisionId: card.id, method };
     } finally {
       this.distilling.delete(type.id);
     }
   }
 
+  /** The model refines the run's ordered tasks; any model failure keeps the deterministic candidate. */
   private async refine(
     type: ProcessType,
     chain: RunChain,
     digest: ReturnType<typeof digestRun>,
-  ): Promise<DistilledPlaybook> {
+  ): Promise<Distilled<PlaybookDraft>> {
     const llm = this.ctx.services.maybe('llm');
-    if (!llm) return fallbackPlaybook(type, chain.rootSessionId, digest, 'llm_unavailable');
-    try {
-      return await refineWithLlm(llm, type, digest, candidateSteps(digest));
-    } catch (err) {
-      const reason = err instanceof InvalidLlmOutputError ? 'llm_invalid_output' : 'llm_error';
+    const out = withFallback(
+      await distillWithModel(llm, playbookRequest(type, digest, candidateSteps(digest))),
+      (reason) => fallbackPlaybook(type, chain.rootSessionId, digest, reason),
+    );
+    if (out.method === 'fallback' && llm) {
       this.ctx.log.warn('playbook distillation fell back to ordered tasks', {
         processType: type.id,
         sessionId: chain.rootSessionId,
-        reason,
+        reason: out.reason,
+        detail: out.detail,
       });
-      return fallbackPlaybook(type, chain.rootSessionId, digest, reason);
     }
+    return out;
   }
 
   private assertNotDuplicate(chain: RunChain, type: ProcessType): void {
@@ -444,13 +451,15 @@ export class RegistryEngine {
 
   /** Reactor: the Approver's decision binds or discards the proposal. Idempotent (status + causation checks). */
   onDecision(e: StoredEvent): void {
+    const verdict = gateVerdict(PLAYBOOK_GATE, e);
+    if (!verdict) return;
     const { store, db } = this.ctx;
     const decisionId = (e.meta as { decisionId: string }).decisionId;
     const row = playbookByDecision(db, decisionId);
     if (!row || row.status !== 'proposed') return;
     if (store.findByCausation(e.id).some((x) => x.type.startsWith('playbook.'))) return;
     const scope = { projectId: row.project_id ?? undefined, decisionId };
-    if (e.type === 'decision.withdrawn') {
+    if (verdict === 'withdrawn') {
       store.append({
         type: 'playbook.retired',
         actor: SYSTEM_ACTOR,
@@ -462,10 +471,8 @@ export class RegistryEngine {
       return;
     }
     const m = e.meta as MetaOf<'decision.resolved'>;
-    if (m.kind !== 'playbook_approval') return;
-    // The gate is human-only: a policy (machine) resolution can never bind a playbook.
-    const approved = m.optionId === 'approve' && m.method !== 'policy' && e.actor.kind === 'human';
-    if (!approved) {
+    // The gate is human-only: a reject, and any policy (machine) resolution, discards the proposal.
+    if (verdict === 'rejected') {
       store.append({
         type: 'playbook.rejected',
         actor: e.actor,
@@ -610,13 +617,17 @@ function routingNote(t: ProcessType): string {
   return `Runs of this type stay on ${t.model}; the playbook guides them.`;
 }
 
-function approvalContext(p: DistilledPlaybook, chain: RunChain, d: ReturnType<typeof digestRun>): string {
+function approvalContext(
+  { method, value: p }: Distilled<PlaybookDraft>,
+  chain: RunChain,
+  d: ReturnType<typeof digestRun>,
+): string {
   const steps = p.steps.map((s, i) => `${i + 1}. ${s.title}${s.detail ? `\n   ${s.detail}` : ''}`).join('\n');
   return [
     `${p.title}`,
     steps,
     p.rationale ? `Rationale: ${p.rationale}` : '',
-    `Distilled (${p.method === 'llm' ? 'refined by the distillation model' : 'deterministic fallback'}) from run ${chain.rootSessionId}: ` +
+    `Distilled (${method === 'llm' ? 'refined by the distillation model' : 'deterministic fallback'}) from run ${chain.rootSessionId}: ` +
       `${d.tasks.length} tasks, ${Object.values(d.toolCounts).reduce((a, b) => a + b, 0)} tool calls, ${d.decisionCount} decisions, ${d.driftCount} drift marks.`,
   ]
     .filter(Boolean)

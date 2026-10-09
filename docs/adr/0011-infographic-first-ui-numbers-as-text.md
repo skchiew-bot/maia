@@ -2,7 +2,8 @@
 
 - Status: Accepted
 - Date: 2026-10-09
-- Deciders: CEO (visual direction, §12); the static mock is approved before any UI code
+- Deciders: CEO (visual direction, §12). The static mock was approved by the CEO on 2026-10-09, as shown, with its
+  proposed defaults ([`mocks/README.md`](../../mocks/README.md))
 - Spec: AOC-SPEC-003 §12
 
 ## Context
@@ -41,7 +42,11 @@
 - **Bad:** more design and test effort per view (both themes, reduced motion, 360 px, screen-reader names). The
   rendering pipeline must be event-driven (SSE headers lead to targeted refetches). Small multiples need shared
   scales so they are not misread.
-- The static mock of the three main pages needs CEO approval before UI code starts (§12, §15).
+- The static mock had to be approved before UI code started (§12, §15). The CEO approved it on 2026-10-09 with its
+  proposed defaults: solid badges for the four states that need a human and soft badges for Working and Thinking;
+  console tiles ordered by liveness precedence; APM as tool calls per minute on a 0 to 15 scale; a 10-minute stall
+  threshold; a cost-of-delay ranking in the Control Tower; and a credit forecast that names developers for capacity
+  planning, while the anomaly radar stays portfolio-only.
 
 ## Alternatives rejected
 
