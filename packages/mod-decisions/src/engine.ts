@@ -79,6 +79,7 @@ const RequestSchema = z
       .refine((s) => !Number.isNaN(Date.parse(s)), 'must be an ISO-8601 timestamp')
       .nullish(),
     requiredRole: z.enum(ROLES).optional(),
+    bodyScope: zRef.regex(ID_RE, 'bodyScope must be a scope id').optional(),
   })
   .superRefine((v, ctx) => {
     const ids = v.options.map((o) => o.id);
@@ -117,9 +118,11 @@ function scopeOf(c: DecisionCard): Scope {
 
 /**
  * Cards about a ticket keep their text in the ticket's body scope, so a PDPA erasure of the ticket also
- * shreds decision text quoting it. Everything else uses the store default (session → project → global).
+ * shreds decision text quoting it; a caller can name the scope instead (e.g. the ticket behind a change request).
+ * Everything else uses the store default (session → project → global).
  */
-const bodyScopeFor = (c: DecisionCard) => (isTicketSubject(c) ? c.subjectId : undefined);
+const bodyScopeFor = (c: DecisionCard, requested: string | undefined) =>
+  requested ?? (isTicketSubject(c) ? c.subjectId : undefined);
 
 const closeKey = (id: string) => `decision:${id}:closed`;
 
@@ -271,7 +274,7 @@ export class DecisionEngine implements DecisionService {
       },
       source: opts.source ?? (actor.kind === 'system' ? 'system' : 'api'),
       causationId: opts.causationId,
-      bodyScope: bodyScopeFor(card),
+      bodyScope: bodyScopeFor(card, i.bodyScope),
     });
     return this.get(id) ?? card;
   }
