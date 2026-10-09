@@ -53,7 +53,7 @@ describe('context rollover (§5, R16)', () => {
     expect(h.file(next, 'system-prompt.md')).toContain('HANDOFF thr_big');
     expect(h.callsFor(next)[0]!.prompt).toContain(`from session ${id}`);
     expect(h.sup.session(next)!.ownerId).toBe(h.owner.user.id);
-    expect(h.t.identity!.verifyIngestToken(h.callsFor(id)[0]!.env.AOC_INGEST_TOKEN!)).toBeNull();
+    await h.waitRevoked(h.callsFor(id)[0]!.env.AOC_INGEST_TOKEN!);
   });
 
   it('rolls over on request through the API when the writer is idle at a boundary', async () => {

@@ -1,9 +1,16 @@
 /**
- * The daily FX run (§10, R13) for today's local date:
- *   weekend → inherit (no fetch) │ page unreadable → carry forward (flagged)
- *   → Haiku extract → self-validate → Sonnet once → still failing: carry forward (flagged)
- *   → reconcile with the BNM Open API → mismatch: re-fetch + re-extract once → still mismatched: discrepancy decision,
- *     day carried forward (flagged) until a human resolves it.
+ * The daily FX run (§10, R13) for today's local date D, at fx.runAtLocalTime and again at each fx.retryAtLocalTimes.
+ * The rate is BNM's Kuala Lumpur interbank middle rate for fx.session, RM per 1 USD, stamped with that session.
+ *   weekend → inherit (no fetch)
+ *   session 1700 (the page's default view):
+ *     page unreadable → carry forward (flagged; a scheduled retry tries again)
+ *     → Haiku extract → self-validate → Sonnet once → still failing: carry forward (flagged)
+ *     → no row for D yet → wait for a retry; at the last attempt: holiday (or, if the API has D, a stale page: flagged)
+ *     → reconcile with the BNM Open API for (D, session) at 4 dp — exactly when the move is above the soft flag
+ *       → API cannot confirm → wait for a retry; at the last attempt record it unreconciled, except a soft-flagged
+ *         move, which is carried forward (flagged)
+ *       → mismatch → re-fetch + re-extract once → still mismatched: discrepancy decision, day carried forward (flagged)
+ *   session 0900 / 1200: the API figure for (D, session), sanity-bounded; the page cannot show it, so no cross-check.
  * Every day is stamped live or inherited with its source date; closed days are never restated.
  */
 import type {
@@ -14,6 +21,7 @@ import type {
   FxReason,
   FxRunOutcome,
   FxRunResultDTO,
+  FxSession,
   FxValidation,
   LlmService,
   MetaOf,
@@ -21,8 +29,10 @@ import type {
   StoredEvent,
   User,
 } from '@aoc/contracts';
-import { HttpError, localDate, type ModuleContext, type NewEvent } from '@aoc/kernel';
+import { HttpError, localDate, localParts, type ModuleContext, type NewEvent } from '@aoc/kernel';
 import {
+  BNM_PAGE_SESSION,
+  bnmApiDateUrl,
   excerptForExtraction,
   readOfficial,
   readPage,
@@ -38,11 +48,13 @@ import {
   type FxRateRow,
   type FxReadModel,
 } from './read-model';
-import { carryForwardStreak, isCalendarDate, isWeekend, reconcile, type Reconciliation } from './rules';
+import { isCalendarDate, isWeekend, movePct, pipsApart, reconciles } from './rules';
 
 export interface FxTrigger {
   actor: Actor;
   source: 'scheduler' | 'api' | 'system';
+  /** A scheduled retry: it re-attempts only a day not recorded yet (awaiting publication) or whose source was unreadable. */
+  retry?: boolean;
 }
 /** Raises discrepancy decisions (never a human, so no approver is excluded by separation of duties). */
 export const FX_SYSTEM_ACTOR: Actor = { kind: 'system', id: 'scheduler:fx' };
@@ -50,6 +62,14 @@ export const FX_SYSTEM_ACTOR: Actor = { kind: 'system', id: 'scheduler:fx' };
 type RateMeta = MetaOf<'fx.rate_recorded'>;
 type RatePayload = NonNullable<PayloadOf<'fx.rate_recorded'>>;
 type Extracted = Extract<ExtractionOutcome, { ok: true }>;
+
+/** One attempt at date D. `final`: no scheduled attempt remains today, so whatever this one finds decides the day. */
+interface Attempt {
+  t: FxTrigger;
+  date: string;
+  prior: FxRateRow | null;
+  final: boolean;
+}
 
 export class FxEngine {
   private chain: Promise<unknown> = Promise.resolve();
@@ -93,6 +113,8 @@ export class FxEngine {
         );
       }
       const actor: Actor = { kind: 'human', id: user.id };
+      // The approver enters the figure for the session AOC records now.
+      const session = this.ctx.config.fx.session;
       const open = this.model.openDiscrepancyFor(date);
       if (open) {
         const decisions = this.ctx.services.get('decisions');
@@ -115,6 +137,7 @@ export class FxEngine {
             sourceDate: date,
             extractor: 'manual',
             validation: 'not_applicable',
+            session,
             notes: reason,
           },
           actor,
@@ -137,6 +160,7 @@ export class FxEngine {
           extractor: 'manual',
           validation: 'not_applicable',
           reason: 'manual_override',
+          session,
         };
         this.ctx.store.append({
           type: 'fx.rate_recorded',
@@ -157,6 +181,7 @@ export class FxEngine {
     if (m.kind !== 'fx_discrepancy') return;
     const d = this.model.discrepancyByDecision(m.decisionId);
     if (!d || d.status !== 'open') return;
+    const session = d.bnmSession ?? undefined;
     if (m.optionId === 'accept_official') {
       this.applyResolution(
         d,
@@ -166,6 +191,7 @@ export class FxEngine {
           sourceDate: d.officialDate ?? d.date,
           extractor: 'api',
           validation: 'pass',
+          session,
         },
         e.actor,
         'system',
@@ -180,6 +206,7 @@ export class FxEngine {
           sourceDate: d.scrapedDate ?? d.date,
           extractor: d.extractor ?? 'haiku',
           validation: 'pass',
+          session,
         },
         e.actor,
         'system',
@@ -192,7 +219,6 @@ export class FxEngine {
   // ── the daily run ─────────────────────────────────────────────────────────
 
   private async runToday(t: FxTrigger): Promise<FxRunResultDTO> {
-    const cfg = this.ctx.config.fx;
     const date = this.today();
     if (this.model.isClosed(date)) return this.result(date, 'skipped_closed');
     const existing = this.model.record(date);
@@ -201,146 +227,299 @@ export class FxEngine {
     if (existing?.status === 'live') return this.result(date, 'skipped_live');
     const open = this.model.openDiscrepancyFor(date);
     if (open) return this.result(date, 'skipped_discrepancy', { decisionId: open.decisionId });
-    const prior = this.model.latestBefore(date);
+    // Retries exist for a rate that is not published yet, or a source that could not be read; anything else is settled
+    // (a failed Sonnet escalation stops for the day, §10). The approver can still run it again by hand.
+    if (t.retry && existing && existing.reason !== 'source_unreadable') return this.result(date, 'unchanged');
+    const a: Attempt = { t, date, prior: this.model.latestBefore(date), final: this.isFinalAttempt(date) };
+    if (isWeekend(date) && a.prior)
+      return this.carryForward(a, 'weekend_or_holiday', 'none', 'not_applicable', {});
+    return this.ctx.config.fx.session === BNM_PAGE_SESSION ? this.fromPage(a) : this.fromApi(a);
+  }
 
-    if (isWeekend(date) && prior) {
-      return this.write(
-        t,
-        inherit(date, prior, 'none', 'not_applicable', 'weekend_or_holiday'),
-        {},
-        'inherited',
-      );
-    }
+  /** No scheduled attempt remains today (weekends never get a later one). */
+  private isFinalAttempt(date: string): boolean {
+    if (isWeekend(date)) return true;
+    const now = localParts(this.ctx.clock.now(), this.ctx.config.timezone).time;
+    return !this.ctx.config.fx.retryAtLocalTimes.some((time) => time > now);
+  }
 
+  /** Session 1700: scrape the page (its default view shows 1700), then reconcile with the BNM Open API. */
+  private async fromPage(a: Attempt): Promise<FxRunResultDTO> {
+    const cfg = this.ctx.config.fx;
     const page = await readPage(this.deps.fetcher, cfg.pageUrl);
     if (!page.ok) {
-      return this.carryForward(t, date, prior, 'source_unreadable', 'none', 'not_applicable', {
+      return this.carryForward(a, 'source_unreadable', 'none', 'not_applicable', {
         sourceUrl: cfg.pageUrl,
         problems: [page.problem],
         notes: page.detail,
       });
     }
-    const first = await this.extract(date, prior, page.text);
+    const first = await this.extract(a, page.text);
     if (!first.ok) {
-      return this.carryForward(t, date, prior, 'validation_failed', 'sonnet', 'fail', {
+      return this.carryForward(a, 'validation_failed', 'sonnet', 'fail', {
         sourceUrl: cfg.pageUrl,
         problems: problemsOf(first.attempts),
         attempts: first.attempts,
       });
     }
+    const api = await this.readApi(a.date);
+    if (first.value.publishedDate !== a.date) return this.notOnPage(a, first, api);
+    const soft = this.softFlag(first.value.usdMyr, a.prior);
+    if (!api.ok) return this.unconfirmed(a, first, api, soft);
+    if (this.agrees(first, api.official, soft)) return this.recordLive(a, first, api.official, soft);
 
-    const api = await readOfficial(this.deps.fetcher, cfg.apiUrl, cfg.sanity);
-    const official = api.ok ? api.official : null;
-    const verdict = reconcile(first.value, official, cfg.reconcileTolerance);
-    if (verdict !== 'mismatch') return this.recordExtraction(t, date, first, official, verdict, api);
-
-    // Read but mismatched: re-fetch and re-extract once (and re-read the API; keep the first figure if it is now down).
+    // Read but mismatched: re-fetch and re-extract once (and re-read the API; keep the first figure if it is now unavailable).
     const page2 = await readPage(this.deps.fetcher, cfg.pageUrl);
-    const second = page2.ok ? await this.extract(date, prior, page2.text) : null;
-    const api2 = await readOfficial(this.deps.fetcher, cfg.apiUrl, cfg.sanity);
-    const official2 = api2.ok ? api2.official : official!;
-    if (second?.ok) {
-      const verdict2 = reconcile(second.value, official2, cfg.reconcileTolerance);
-      if (verdict2 !== 'mismatch') return this.recordExtraction(t, date, second, official2, verdict2, api2);
+    const again = page2.ok ? await this.extract(a, page2.text) : null;
+    const second = again?.ok && again.value.publishedDate === a.date ? again : null;
+    const api2 = await this.readApi(a.date);
+    const official = api2.ok ? api2.official : api.official;
+    if (second) {
+      const soft2 = this.softFlag(second.value.usdMyr, a.prior);
+      if (this.agrees(second, official, soft2)) return this.recordLive(a, second, official, soft2);
     }
-    const attempts = [...first.attempts, ...(second?.attempts ?? [])];
+    const confirmed = second ?? first;
     return this.raiseDiscrepancy(
-      t,
-      date,
-      prior,
-      second?.ok ? second : first,
-      second?.ok === true,
-      official2,
-      attempts,
+      a,
+      confirmed,
+      second !== null,
+      official,
+      [...first.attempts, ...(again?.attempts ?? [])],
+      this.softFlag(confirmed.value.usdMyr, a.prior),
     );
   }
 
-  private extract(date: string, prior: FxRateRow | null, pageText: string): Promise<ExtractionOutcome> {
+  /** The page shows no row for D: not published yet (wait for a retry) or, at the last attempt, a public holiday. */
+  private notOnPage(a: Attempt, ex: Extracted, api: ApiRead): FxRunResultDTO {
+    if (!a.final) {
+      return this.result(a.date, 'awaiting_publication', {
+        problems: [api.ok ? 'page_not_updated' : 'not_published'],
+      });
+    }
+    if (api.ok) {
+      // BNM published D (the API has it) but the page still shows an older day: the scrape could not read D.
+      return this.carryForward(a, 'source_unreadable', 'none', 'not_applicable', {
+        ...this.scrapedPayload(ex),
+        official: api.official.rate,
+        officialDate: api.official.date,
+        problems: ['page_not_updated'],
+        attempts: ex.attempts,
+      });
+    }
+    const meta: RateMeta = {
+      date: a.date,
+      pair: 'USD/MYR',
+      rate: ex.value.usdMyr,
+      status: 'inherited',
+      sourceDate: ex.value.publishedDate,
+      extractor: ex.model,
+      validation: 'pass',
+      reason: 'weekend_or_holiday',
+      session: this.ctx.config.fx.session,
+    };
+    const payload: RatePayload = { ...this.scrapedPayload(ex), attempts: ex.attempts };
+    if (api.problem !== 'api_not_published') {
+      payload.notes = `BNM Open API unreadable (${api.problem}: ${api.detail}); holiday inferred from the page alone`;
+    }
+    return this.write(a, meta, payload, 'inherited');
+  }
+
+  /** The page has D's figure but the API cannot confirm it: wait for a retry; at the last attempt decide without it. */
+  private unconfirmed(
+    a: Attempt,
+    ex: Extracted,
+    api: Extract<ApiRead, { ok: false }>,
+    soft: number | null,
+  ): FxRunResultDTO {
+    if (!a.final) return this.result(a.date, 'awaiting_corroboration', { problems: [api.problem] });
+    if (soft === null) return this.recordLive(a, ex, null, null, `${api.problem}: ${api.detail}`);
+    // A move above the soft flag is never accepted on the page alone.
+    const cfg = this.ctx.config.fx;
+    const move = `${soft.toFixed(2)}%`;
+    this.ctx.notify({
+      kind: 'fx.alert',
+      title: `USD/MYR ${a.date}: a ${move} move on the BNM page could not be confirmed by the BNM Open API — carried forward, check it manually`,
+      audience: ['approver', 'builder'],
+      severity: 'warn',
+      link: '/fx',
+      refs: { date: a.date },
+    });
+    return this.carryForward(a, 'validation_failed', ex.model, 'fail', {
+      ...this.scrapedPayload(ex),
+      problems: ['soft_flag_unconfirmed', api.problem],
+      notes: `Day-over-day move ${move} is above the ${cfg.sanity.softFlagPct}% soft flag and the BNM Open API could not confirm it (${api.problem}: ${api.detail})`,
+      attempts: ex.attempts,
+    });
+  }
+
+  /** Session 0900 / 1200: the page cannot show that session without a form POST, so the API figure is the rate. */
+  private async fromApi(a: Attempt): Promise<FxRunResultDTO> {
+    const cfg = this.ctx.config.fx;
+    const sourceUrl = bnmApiDateUrl(cfg.apiUrl, a.date, cfg.session);
+    const api = await this.readApi(a.date);
+    if (!api.ok) {
+      if (api.problem === 'api_not_published') {
+        if (!a.final) return this.result(a.date, 'awaiting_publication', { problems: ['not_published'] });
+        return this.carryForward(a, 'weekend_or_holiday', 'none', 'not_applicable', { sourceUrl });
+      }
+      const payload: RatePayload = { sourceUrl, problems: [api.problem], notes: api.detail };
+      return api.problem === 'api_out_of_band'
+        ? this.carryForward(a, 'validation_failed', 'api', 'fail', payload)
+        : this.carryForward(a, 'source_unreadable', 'none', 'not_applicable', payload);
+    }
+    const { rate } = api.official;
+    if (a.prior && movePct(rate, a.prior.rate) > cfg.sanity.maxDailyChangePct) {
+      return this.carryForward(a, 'validation_failed', 'api', 'fail', {
+        sourceUrl,
+        official: rate,
+        officialDate: a.date,
+        problems: ['daily_change_exceeded'],
+      });
+    }
+    const soft = this.softFlag(rate, a.prior);
+    const notes = [
+      `BNM Open API figure for session ${cfg.session}; not cross-checked with the page, whose default view is session ${BNM_PAGE_SESSION}`,
+    ];
+    if (soft !== null) {
+      notes.push(
+        `day-over-day move ${soft.toFixed(2)}% is above the ${cfg.sanity.softFlagPct}% soft flag (accepted: it is the published figure)`,
+      );
+    }
+    const meta: RateMeta = {
+      date: a.date,
+      pair: 'USD/MYR',
+      rate,
+      status: 'live',
+      sourceDate: a.date,
+      extractor: 'api',
+      validation: 'pass',
+      reason: 'fetched',
+      session: cfg.session,
+    };
+    return this.write(
+      a,
+      meta,
+      { sourceUrl, official: rate, officialDate: a.date, notes: notes.join('. ') },
+      'live',
+    );
+  }
+
+  private extract(a: Attempt, pageText: string): Promise<ExtractionOutcome> {
     const text = excerptForExtraction(pageText);
     return extractRate(
       this.deps.llm(),
-      { text, sourceUrl: this.ctx.config.fx.pageUrl, today: date, timezone: this.ctx.config.timezone },
+      { text, sourceUrl: this.ctx.config.fx.pageUrl, today: a.date, timezone: this.ctx.config.timezone },
       {
-        today: date,
+        today: a.date,
         sanity: this.ctx.config.fx.sanity,
-        priorRate: prior?.rate ?? null,
-        minPublishedDate: prior?.sourceDate ?? null,
+        priorRate: a.prior?.rate ?? null,
+        minPublishedDate: a.prior?.sourceDate ?? null,
         sourceText: text,
       },
     );
   }
 
-  private recordExtraction(
-    t: FxTrigger,
-    date: string,
+  /** The BNM Open API figure for exactly (date, configured session). */
+  private readApi(date: string): Promise<ApiRead> {
+    const cfg = this.ctx.config.fx;
+    return readOfficial(this.deps.fetcher, {
+      url: bnmApiDateUrl(cfg.apiUrl, date, cfg.session),
+      date,
+      session: cfg.session,
+      band: cfg.sanity,
+    });
+  }
+
+  /** The day-over-day move (%) when it is above the soft flag, else null. */
+  private softFlag(rate: number, prior: FxRateRow | null): number | null {
+    if (!prior) return null;
+    const pct = movePct(rate, prior.rate);
+    return pct > this.ctx.config.fx.sanity.softFlagPct ? pct : null;
+  }
+
+  private agrees(ex: Extracted, official: OfficialRate, soft: number | null): boolean {
+    return reconciles(ex.value.usdMyr, official.rate, {
+      tolerance: this.ctx.config.fx.reconcileTolerance,
+      exact: soft !== null,
+    });
+  }
+
+  private recordLive(
+    a: Attempt,
     ex: Extracted,
     official: OfficialRate | null,
-    verdict: Reconciliation,
-    api: ApiRead,
+    soft: number | null,
+    apiProblem?: string,
   ): FxRunResultDTO {
-    const live = ex.value.publishedDate === date;
+    const cfg = this.ctx.config.fx;
     const meta: RateMeta = {
-      date,
+      date: a.date,
       pair: 'USD/MYR',
       rate: ex.value.usdMyr,
-      status: live ? 'live' : 'inherited',
-      sourceDate: ex.value.publishedDate,
+      status: 'live',
+      sourceDate: a.date,
       extractor: ex.model,
       validation: 'pass',
-      // A weekday page still showing an older publication date is a public holiday: inherited from that date.
-      reason: live ? 'fetched' : 'weekend_or_holiday',
+      reason: 'fetched',
+      session: cfg.session,
     };
     const payload: RatePayload = { ...this.scrapedPayload(ex), attempts: ex.attempts };
-    if (verdict === 'reconciled' && official) {
+    if (official) {
       payload.official = official.rate;
-      if (official.date) payload.officialDate = official.date;
-    } else if (verdict === 'not_comparable' && official) {
-      payload.notes = `BNM Open API still on ${official.date}; scraped figure recorded without reconciliation`;
-    } else if (!api.ok) {
-      payload.notes = `BNM Open API unavailable (${api.problem}: ${api.detail}); scraped figure recorded without reconciliation`;
+      payload.officialDate = official.date;
+    } else {
+      payload.notes = `BNM Open API could not confirm it (${apiProblem}); scraped figure recorded without reconciliation`;
     }
-    return this.write(t, meta, payload, live ? 'live' : 'inherited');
+    if (soft !== null) {
+      payload.notes = `Day-over-day move ${soft.toFixed(2)}% is above the ${cfg.sanity.softFlagPct}% soft flag; the BNM Open API agrees exactly at 4 dp`;
+    }
+    return this.write(a, meta, payload, 'live');
   }
 
   private carryForward(
-    t: FxTrigger,
-    date: string,
-    prior: FxRateRow | null,
+    a: Attempt,
     reason: FxReason,
     extractor: FxExtractor,
     validation: FxValidation,
     payload: RatePayload,
   ): FxRunResultDTO {
-    if (!prior) {
-      this.ctx.notify({
-        kind: 'fx.alert',
-        title: `No USD/MYR rate for ${date}: ${reason.replace(/_/g, ' ')} and no earlier rate to carry forward`,
-        audience: ['approver', 'builder'],
-        severity: 'danger',
-        link: '/fx',
-        refs: { date },
-      });
-      return this.result(date, 'no_rate', { problems: payload.problems });
+    if (!a.prior) {
+      // A retry is coming for an unreadable source: only its last attempt raises the alarm.
+      if (a.final || reason !== 'source_unreadable') {
+        this.ctx.notify({
+          kind: 'fx.alert',
+          title: `No USD/MYR rate for ${a.date}: ${reason.replace(/_/g, ' ')} and no earlier rate to carry forward`,
+          audience: ['approver', 'builder'],
+          severity: 'danger',
+          link: '/fx',
+          refs: { date: a.date },
+        });
+      }
+      return this.result(a.date, 'no_rate', { problems: payload.problems });
     }
-    return this.write(t, inherit(date, prior, extractor, validation, reason), payload, 'carried_forward');
+    const outcome: FxRunOutcome = reason === 'weekend_or_holiday' ? 'inherited' : 'carried_forward';
+    return this.write(a, inherit(a.date, a.prior, extractor, validation, reason), payload, outcome);
   }
 
   private raiseDiscrepancy(
-    t: FxTrigger,
-    date: string,
-    prior: FxRateRow | null,
+    a: Attempt,
     confirmed: Extracted,
     refetchConfirmed: boolean,
     official: OfficialRate,
     attempts: ExtractionAttempt[],
+    soft: number | null,
   ): FxRunResultDTO {
+    const { t, date, prior } = a;
     const cfg = this.ctx.config.fx;
     const s = confirmed.value;
     const f = (n: number) => n.toFixed(4);
+    const diff = (pipsApart(s.usdMyr, official.rate) / 1e4).toFixed(4);
     const detail = [
-      `Original confirmed figure: ${f(s.usdMyr)} scraped from ${cfg.pageUrl} by ${confirmed.model}, published ${s.publishedDate}${s.session ? ` (${s.session})` : ''}; ${refetchConfirmed ? 're-confirmed by one re-fetch' : 'the one re-fetch could not be read or validated'}.`,
-      `Conflicting figure: ${f(official.rate)} from the BNM Open API${official.date ? `, dated ${official.date}` : ''}${official.session ? ` (session ${official.session})` : ''}.`,
-      `Difference ${Math.abs(s.usdMyr - official.rate).toFixed(4)} exceeds the reconcile tolerance ${cfg.reconcileTolerance}.`,
+      `Original confirmed figure: ${f(s.usdMyr)} scraped from ${cfg.pageUrl} by ${confirmed.model}, published ${s.publishedDate}, session ${cfg.session}; ${refetchConfirmed ? 're-confirmed by one re-fetch' : 'the one re-fetch could not be read or validated'}.`,
+      `Conflicting figure: ${f(official.rate)} from the BNM Open API for ${official.date}, session ${official.session}.`,
+      soft === null
+        ? `At 4 dp they differ by ${diff}, more than the reconcile tolerance ${cfg.reconcileTolerance}.`
+        : `The day-over-day move ${soft.toFixed(2)}% is above the ${cfg.sanity.softFlagPct}% soft flag, so the figures must agree exactly at 4 dp; they differ by ${diff}.`,
       prior
         ? `Until resolved, ${date} carries forward ${f(prior.rate)} from ${prior.sourceDate} (flagged).`
         : `No earlier rate exists, so ${date} has no rate until resolved.`,
@@ -357,7 +536,7 @@ export class FxEngine {
           {
             id: 'accept_official',
             label: `Use the BNM published figure ${f(official.rate)}`,
-            description: 'BNM Open API middle rate',
+            description: `BNM Open API middle rate, session ${official.session}`,
           },
           {
             id: 'accept_scraped',
@@ -394,28 +573,28 @@ export class FxEngine {
           official: official.rate,
           decisionId: card.id,
           scrapedDate: s.publishedDate,
-          ...(official.date ? { officialDate: official.date } : {}),
+          officialDate: official.date,
           extractor: confirmed.model,
+          session: official.session,
         },
         payload: { detail, evidence: s.evidence, attempts },
       },
     ];
     const meta = prior ? inherit(date, prior, confirmed.model, 'fail', 'discrepancy_pending') : null;
     if (meta) {
-      const payload: RatePayload = {
-        ...this.scrapedPayload(confirmed),
-        official: official.rate,
-        problems: ['reconcile_mismatch'],
-        attempts,
-      };
-      if (official.date) payload.officialDate = official.date;
       events.push({
         type: 'fx.rate_recorded',
         actor: t.actor,
         source: t.source,
         bodyScope: FX_BODY_SCOPE,
         meta,
-        payload,
+        payload: {
+          ...this.scrapedPayload(confirmed),
+          official: official.rate,
+          officialDate: official.date,
+          problems: ['reconcile_mismatch'],
+          attempts,
+        },
       });
     }
     try {
@@ -436,6 +615,7 @@ export class FxEngine {
       sourceDate: string;
       extractor: FxExtractor;
       validation: FxValidation;
+      session: FxSession | undefined;
       notes?: string;
     },
     actor: Actor,
@@ -463,6 +643,7 @@ export class FxEngine {
       extractor: r.extractor,
       validation: r.validation,
       reason: 'manual_override',
+      ...(r.session ? { session: r.session } : {}),
     };
     if (applied) {
       const payload: RatePayload = { notes: r.notes ?? `Discrepancy decision ${d.decisionId}: ${r.choice}` };
@@ -494,27 +675,30 @@ export class FxEngine {
 
   // ── recording ─────────────────────────────────────────────────────────────
 
-  private write(t: FxTrigger, meta: RateMeta, payload: RatePayload, outcome: FxRunOutcome): FxRunResultDTO {
+  private write(a: Attempt, meta: RateMeta, payload: RatePayload, outcome: FxRunOutcome): FxRunResultDTO {
     const existing = this.model.record(meta.date);
     const problems = payload.problems ?? [];
-    if (existing && sameStamp(existing, meta)) return this.result(meta.date, 'unchanged', { problems });
-    this.ctx.store.append({
-      type: 'fx.rate_recorded',
-      actor: t.actor,
-      meta,
-      payload,
-      source: t.source,
-      bodyScope: FX_BODY_SCOPE,
-    });
-    this.afterRecord(meta, t);
-    return this.result(meta.date, outcome, { problems });
+    const changed = !existing || !sameStamp(existing, meta);
+    if (changed) {
+      this.ctx.store.append({
+        type: 'fx.rate_recorded',
+        actor: a.t.actor,
+        meta,
+        payload,
+        source: a.t.source,
+        bodyScope: FX_BODY_SCOPE,
+      });
+    }
+    // An unreadable source that a scheduled retry will try again is not the day's last word yet.
+    if (a.final || meta.reason !== 'source_unreadable') this.afterRecord(meta, a.t);
+    return this.result(meta.date, changed ? outcome : 'unchanged', { problems });
   }
 
-  /** After N consecutive carried-forward weekdays, ask for a manual check — once per streak. */
-  private afterRecord(meta: RateMeta, t: FxTrigger): void {
-    if (meta.status !== 'inherited' || isWeekend(meta.date)) return;
-    const threshold = this.ctx.config.fx.carryForwardAlertDays;
-    const { days, since } = carryForwardStreak(this.model.recordsDescFrom(meta.date));
+  /** After N weekdays in a row without a live rate, ask for a manual check — once per streak. */
+  private afterRecord(meta: RateMeta, t: Pick<FxTrigger, 'actor' | 'source'>): void {
+    if (meta.status !== 'inherited') return;
+    const threshold = this.ctx.config.fx.carryForwardAlertWeekdays;
+    const { days, since } = this.model.carryForwardStreak(meta.date);
     if (days < threshold || !since || this.model.hasAlert(since)) return;
     this.ctx.store.append({
       type: 'fx.carry_forward_alert',
@@ -524,7 +708,7 @@ export class FxEngine {
     });
     this.ctx.notify({
       kind: 'fx.alert',
-      title: `USD/MYR carried forward ${days} weekdays in a row (since ${since}) — manual check needed`,
+      title: `No live USD/MYR rate for ${days} weekdays in a row (since ${since}) — manual check needed`,
       audience: ['approver', 'builder'],
       severity: 'warn',
       link: '/fx',
@@ -538,7 +722,7 @@ export class FxEngine {
       rawExcerpt: ex.rawExcerpt,
       evidence: ex.value.evidence,
       publishedDate: ex.value.publishedDate,
-      session: ex.value.session,
+      ...(ex.value.session ? { session: ex.value.session } : {}),
     };
   }
 
@@ -564,7 +748,7 @@ export class FxEngine {
   }
 }
 
-/** Carry the rate in effect yesterday forward to `date`, keeping its original source date. */
+/** Carry the rate in effect yesterday forward to `date`, keeping its original source date and session. */
 function inherit(
   date: string,
   prior: FxRateRow,
@@ -581,6 +765,7 @@ function inherit(
     extractor,
     validation,
     reason,
+    ...(prior.bnmSession ? { session: prior.bnmSession } : {}),
   };
 }
 
@@ -591,7 +776,8 @@ function sameStamp(r: FxRateRow, m: RateMeta): boolean {
     r.sourceDate === m.sourceDate &&
     r.extractor === m.extractor &&
     r.validation === m.validation &&
-    r.reason === m.reason
+    r.reason === m.reason &&
+    r.bnmSession === (m.session ?? null)
   );
 }
 

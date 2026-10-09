@@ -34,6 +34,8 @@ export interface ResolvePanelProps {
   directory: Directory;
   actions: DecisionActions;
   passkeys: PasskeyState;
+  /** Offer withdraw where the API allows it (default). Ticket pages turn it off: their gates are answered, or the ticket is closed. */
+  allowWithdraw?: boolean;
 }
 
 /**
@@ -41,7 +43,13 @@ export interface ResolvePanelProps {
  * passkey ceremony for go-live / rollback / break-glass (registering a passkey inline first when needed), and
  * withdraw / escalate where the API allows them. Read-only viewers get the reason instead.
  */
-export function ResolvePanel({ card, directory, actions, passkeys }: ResolvePanelProps) {
+export function ResolvePanel({
+  card,
+  directory,
+  actions,
+  passkeys,
+  allowWithdraw = true,
+}: ResolvePanelProps) {
   const { user } = useAuth();
   const [comment, setComment] = useState('');
   const [withdrawOpen, setWithdrawOpen] = useState(false);
@@ -52,7 +60,7 @@ export function ResolvePanel({ card, directory, actions, passkeys }: ResolvePane
   const busy = actions.busy;
   // Intake gates (fix plan, triage decisions, go-live on a ticket) are answered or the ticket is closed:
   // withdrawing one would leave the ticket waiting on a gate that no longer exists.
-  const canWithdraw = card.viewer.canWithdraw && card.subjectType !== 'ticket';
+  const canWithdraw = allowWithdraw && card.viewer.canWithdraw && card.subjectType !== 'ticket';
   const secondary = (canWithdraw || card.viewer.canEscalate) && (
     <div className="dec-resolve__more">
       {card.viewer.canEscalate && (
