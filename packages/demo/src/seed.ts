@@ -36,7 +36,8 @@ const arg = (n: string, d: string) => {
   const i = process.argv.indexOf(`--${n}`);
   return i >= 0 ? process.argv[i + 1]! : d;
 };
-const dataDir = resolve(arg('data-dir', '.aoc/demo'));
+const repoDir = resolve(new URL('../../..', import.meta.url).pathname);
+const dataDir = resolve(arg('data-dir', join(repoDir, '.aoc/demo')));
 const days = Number(arg('days', '14'));
 const TZ = 'Asia/Kuala_Lumpur';
 
@@ -53,6 +54,9 @@ const clock = new FakeClock(now - days * 86_400_000);
 const config = AocConfigSchema.parse({
   dataDir,
   timezone: TZ,
+  registryFile: join(repoDir, 'config/process-types.json'),
+  metering: { rateCardFile: join(repoDir, 'config/rate-card.json') },
+  compliance: { mappingFile: join(repoDir, 'config/iso42001-mapping.json') },
   fx: { enabled: false, extractor: 'fake' },
   audit: { anchorProvider: 'git', anchorRepoPath: join(dataDir, 'anchor-repo') },
   supervisor: { workspacesDir: join(dataDir, 'workspaces') },
@@ -114,28 +118,20 @@ for (const p of people) {
     const me = await api<{ user: { id: string } }>('GET', '/api/auth/me', ownerToken);
     if (me.status === 200) {
       tokens.ceo = { userId: me.data.user.id, role: 'approver', token: ownerToken };
+      await api('PATCH', `/api/users/${me.data.user.id}`, ownerToken, { name: p.name });
       continue;
     }
   }
-  const created = ownerToken ? await api<{ id?: string; user?: { id: string } }>('POST', '/api/users', ownerToken, { name: p.name, role: p.role, complianceLead: p.complianceLead }) : { status: 0, data: {} };
+  const created = ownerToken
+    ? await api<{ id?: string; user?: { id: string } }>('POST', '/api/users', ownerToken, { name: p.name, role: p.role, ...(p.complianceLead ? { flags: { complianceLead: true } } : {}) })
+    : { status: 0, data: {} };
   const userId = created.data?.id ?? created.data?.user?.id;
   if (created.status < 300 && userId) {
-    const tok = await api<{ token: string }>('POST', `/api/users/${userId}/tokens`, ownerToken, { label: 'demo' });
-    tokens[p.key] = { userId, role: p.role, token: tok.data.token };
+    const tok = await api<{ token: string | { token: string } }>('POST', `/api/users/${userId}/tokens`, ownerToken, { label: 'demo' });
+    const token = typeof tok.data.token === 'string' ? tok.data.token : tok.data.token.token;
+    tokens[p.key] = { userId, role: p.role, token };
   } else {
-    // Fallback for identity builds without the admin API: create the user and a token by event.
-    const userId2 = newId('user', clock.now());
-    const token = `aoc_u_${randomBytes(18).toString('hex')}`;
-    store.append({ type: 'user.created', actor: sys('seed'), scope: { userId: userId2 }, meta: { userId: userId2, role: p.role, complianceLead: p.complianceLead }, payload: { name: p.name }, source: 'cli', bodyScope: userId2 });
-    store.append({
-      type: 'token.issued',
-      actor: sys('seed'),
-      scope: { userId: userId2 },
-      meta: { tokenId: newId('token', clock.now()), userId: userId2, kind: 'user', sessionId: null, expiresAt: null, tokenHash: createHash('sha256').update(token).digest('hex') },
-      payload: { label: 'demo' },
-      source: 'cli',
-    });
-    tokens[p.key] = { userId: userId2, role: p.role, token };
+    throw new Error(`identity API refused user ${p.key}: HTTP ${created.status} ${JSON.stringify(created.data)} (is the bootstrap token present?)`);
   }
   if (p.key === 'ceo') ownerToken = tokens.ceo!.token;
 }
@@ -358,9 +354,11 @@ for (let d = 0; d < days; d++) {
       phaseDone(s, ph.id);
     }
     if (rnd() < 0.25) {
-      const dec = decision({ kind: 'agent_decision', test: pick(['irreversible', 'ambiguity']), title: 'Pick a persistence strategy', question: 'Event table or document store for the handover summaries?', options: [{ id: 'events', label: 'Append-only event table' }, { id: 'docs', label: 'Document store' }], rec: 'events', subjectType: 'session', subjectId: s.sessionId, sessionId: s.sessionId, projectId: project.id, requesterId: owner });
+      const test = pick(['irreversible', 'ambiguity'] as const);
+      const dec = decision({ kind: 'agent_decision', test, title: 'Pick a persistence strategy', question: 'Event table or document store for the handover summaries?', options: [{ id: 'events', label: 'Append-only event table' }, { id: 'docs', label: 'Document store' }], rec: 'events', subjectType: 'session', subjectId: s.sessionId, sessionId: s.sessionId, projectId: project.id, requesterId: `session:${s.sessionId}` });
       at(clock.now() + between(10, 90) * 60_000);
-      await resolve_(dec.id, 'events', pick(builders.filter((b) => U(b) !== owner)), 'Keep it append-only; we need the audit trail.');
+      // Irreversible choices bounce to the Approver; ambiguity is answered by a Builder (§6).
+      await resolve_(dec.id, 'events', test === 'irreversible' ? 'ceo' : pick(builders.filter((b) => U(b) !== owner)), 'Keep it append-only; we need the audit trail.');
     }
     end(s);
   }
@@ -437,7 +435,7 @@ const mainDecision = decision({
   subjectId: live.waiting!.sessionId,
   sessionId: live.waiting!.sessionId,
   projectId: projects[1].id,
-  requesterId: U('aisyah'),
+  requesterId: `session:${live.waiting!.sessionId}`,
 });
 store.append({ type: 'session.turn_ended', actor: sys('supervisor'), scope: { sessionId: live.waiting!.sessionId }, meta: { sessionId: live.waiting!.sessionId, turn: 1, outcome: 'decision', exitCode: 0, durationMs: 1000 }, payload: {}, source: 'supervisor' });
 store.append({ type: 'session.lifecycle_changed', actor: sys('supervisor'), scope: { sessionId: live.waiting!.sessionId }, meta: { sessionId: live.waiting!.sessionId, from: 'running', to: 'waiting_decision', reason: 'open_decision' }, source: 'supervisor' });
@@ -468,9 +466,15 @@ sessions.refreshAll?.();
 await rt.tickJobs().catch((e) => console.warn('jobs:', String(e)));
 await rt.drain();
 
+// Per-session ingest tokens so the demo pulse can keep live sessions genuinely alive through the real ingest API.
+const identity = rt.services.get('identity');
+const liveTokens = Object.fromEntries(
+  Object.entries(live).map(([k, s]) => [k, { sessionId: s.sessionId, claudeSessionId: s.claude, token: identity.issueIngestToken(s.sessionId, sys('demo')) }]),
+);
 const out = {
   dataDir,
   console: config.publicUrl,
+  live: liveTokens,
   tokens: Object.fromEntries(Object.entries(tokens).map(([k, v]) => [k, { userId: v.userId, role: v.role, token: v.token }])),
   head: store.head(),
 };

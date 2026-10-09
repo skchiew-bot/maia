@@ -11,7 +11,7 @@ export const LEDGER_EVENTS = [
     owner: 'ledger',
     description: 'A project (the unit of work, §1) was created.',
     meta: meta({ projectId: zId, slug: zLabel }),
-    payload: payload({ name: z.string(), description: z.string().optional(), repoPath: z.string().optional(), defaultBranch: z.string().optional() }),
+    payload: payload({ name: z.string(), description: z.string().optional(), repoPath: z.string().optional(), defaultBranch: z.string().optional(), acceptanceCommand: z.string().optional() }),
   }),
   defineEvent({
     type: 'project.updated',
