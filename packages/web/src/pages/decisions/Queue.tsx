@@ -44,7 +44,8 @@ export function QueueCard({ card, now, selected, onSelect, directory, actions, p
   const project = directory.projectName(card.projectId);
   const rec = recommendedOption(card);
   const busyHere = actions.busy?.kind === 'resolve' && rec && actions.busy.optionId === rec.id;
-  const blocked = !card.viewer.canResolve && user ? explainBlock(card, card.viewer.reason, user, directory) : null;
+  const blocked =
+    !card.viewer.canResolve && user ? explainBlock(card, card.viewer.reason, user, directory) : null;
   const titleId = `dec-q-${card.id}`;
 
   const select = () => onSelect(card.id);
@@ -62,7 +63,12 @@ export function QueueCard({ card, now, selected, onSelect, directory, actions, p
 
   return (
     <li
-      className={cx('dec-card', `dec-card--${aging.state}`, selected && 'is-selected', !card.viewer.canResolve && 'is-readonly')}
+      className={cx(
+        'dec-card',
+        `dec-card--${aging.state}`,
+        selected && 'is-selected',
+        !card.viewer.canResolve && 'is-readonly',
+      )}
       aria-labelledby={titleId}
       aria-current={selected ? 'true' : undefined}
       onClick={onCardClick}
@@ -98,8 +104,9 @@ export function QueueCard({ card, now, selected, onSelect, directory, actions, p
                 loadingText="Recording…"
                 disabled={actions.busy !== null && !busyHere}
                 onClick={() => void actions.resolve(card, rec.id, null)}
+                aria-label={`Approve: ${rec.label}`}
               >
-                Approve<span className="aoc-sr-only">: {rec.label}</span>
+                Approve
               </Button>
             )}
             {rec && card.requiresPasskey && (
@@ -111,8 +118,9 @@ export function QueueCard({ card, now, selected, onSelect, directory, actions, p
                 loadingText="Waiting for passkey…"
                 disabled={(actions.busy !== null && !busyHere) || passkeys.hasPasskey === false}
                 onClick={() => void actions.resolve(card, rec.id, null)}
+                aria-label={`Approve with passkey: ${rec.label}`}
               >
-                Approve with passkey<span className="aoc-sr-only">: {rec.label}</span>
+                Approve with passkey
               </Button>
             )}
             <Button size="sm" variant={rec ? 'secondary' : 'primary'} onClick={select}>

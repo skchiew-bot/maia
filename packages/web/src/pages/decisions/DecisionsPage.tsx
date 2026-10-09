@@ -68,7 +68,10 @@ export default function DecisionsPage() {
   const now = useNow();
   const wide = useMediaQuery('(min-width: 1024px)');
 
-  const open = useResource<DecisionListResponse>('/api/decisions', { query: OPEN_QUERY, refreshOn: isDecisionEvent });
+  const open = useResource<DecisionListResponse>('/api/decisions', {
+    query: OPEN_QUERY,
+    refreshOn: isDecisionEvent,
+  });
   const closed = useResource<DecisionListResponse>('/api/decisions', {
     query: CLOSED_QUERY,
     refreshOn: isDecisionEvent,
@@ -93,7 +96,10 @@ export default function DecisionsPage() {
 
   const openCards = open.data?.decisions ?? [];
   const closedCards = closed.data?.decisions ?? [];
-  const visibleOpen = useMemo(() => sortByUrgency(applyFilters(openCards, filters, now), now), [openCards, filters, now]);
+  const visibleOpen = useMemo(
+    () => sortByUrgency(applyFilters(openCards, filters, now), now),
+    [openCards, filters, now],
+  );
   const mine = visibleOpen.filter((c) => c.viewer.canResolve);
   const others = visibleOpen.filter((c) => !c.viewer.canResolve);
   const visibleClosed = useMemo(
@@ -104,7 +110,10 @@ export default function DecisionsPage() {
   const allMine = openCards.filter((c) => c.viewer.canResolve);
   const overCount = openCards.filter((c) => agingOf(c, now).state === 'over').length;
   const passkeyCount = openCards.filter((c) => c.requiresPasskey).length;
-  const oldestMine = allMine.reduce<string | null>((min, c) => (min === null || c.createdAt < min ? c.createdAt : min), null);
+  const oldestMine = allMine.reduce<string | null>(
+    (min, c) => (min === null || c.createdAt < min ? c.createdAt : min),
+    null,
+  );
   const median = medianDecisionMs(closedCards);
   const resolvedCount = closedCards.filter((c) => c.status === 'resolved').length;
 
@@ -179,7 +188,11 @@ export default function DecisionsPage() {
         </Chip>
       )}
       {filters.tab === 'open' && filters.mine && (
-        <Chip tone="accent" onRemove={() => update({ mine: false })} removeLabel="Show decisions waiting on others too">
+        <Chip
+          tone="accent"
+          onRemove={() => update({ mine: false })}
+          removeLabel="Show decisions waiting on others too"
+        >
           Waiting on you
         </Chip>
       )}
@@ -206,7 +219,14 @@ export default function DecisionsPage() {
       />
     );
   } else {
-    const queueProps = { now, onSelect: select, selectedId: selected?.id ?? null, directory, actions, passkeys };
+    const queueProps = {
+      now,
+      onSelect: select,
+      selectedId: selected?.id ?? null,
+      directory,
+      actions,
+      passkeys,
+    };
     openView = (
       <div className="dec-layout">
         <div className="dec-layout__queue" aria-busy={open.loading || undefined}>
@@ -216,8 +236,8 @@ export default function DecisionsPage() {
             </InlineAlert>
           )}
           <p className="dec-snapshot">
-            Most urgent first. SLA bars as of {snapshot ? formatClock(snapshot) : '—'}; they move when a decision event
-            arrives.
+            Most urgent first · SLA bars as of {snapshot ? formatClock(snapshot) : '—'}, redrawn on each
+            decision event
           </p>
           <QueueSection
             id="dec-mine"
@@ -277,8 +297,16 @@ export default function DecisionsPage() {
             label="Waiting on you"
             value={allMine.length}
             href="/decisions?scope=mine"
-            tone={allMine.some((c) => agingOf(c, now).state === 'over') ? 'danger' : allMine.length ? 'warn' : 'neutral'}
-            footnote={oldestMine ? `oldest waiting ${formatAge(now - Date.parse(oldestMine))}` : 'nothing waiting'}
+            tone={
+              allMine.some((c) => agingOf(c, now).state === 'over')
+                ? 'danger'
+                : allMine.length
+                  ? 'warn'
+                  : 'neutral'
+            }
+            footnote={
+              oldestMine ? `oldest waiting ${formatAge(now - Date.parse(oldestMine))}` : 'nothing waiting'
+            }
           />
           <KpiTile
             label="Over SLA"
@@ -311,7 +339,12 @@ export default function DecisionsPage() {
         label="Decision views"
         items={tabs}
         value={filters.tab}
-        onChange={(id) => update({ tab: id === 'resolved' ? 'resolved' : 'open', focus: null, aging: null, mine: false }, false)}
+        onChange={(id) =>
+          update(
+            { tab: id === 'resolved' ? 'resolved' : 'open', focus: null, aging: null, mine: false },
+            false,
+          )
+        }
         className="dec-tabs"
       />
       {filterBar}
