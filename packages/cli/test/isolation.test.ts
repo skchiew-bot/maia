@@ -5,7 +5,7 @@
  * process.env. Dynamically: each command reads only AOC's own variables from the injected env, and planted
  * secrets never reach the daemon, the terminal or a file.
  */
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Command, Option } from 'commander';
@@ -207,7 +207,11 @@ describe('every command reads only AOC variables and never leaks a planted secre
       json: { user: { id: 'usr_dev', name: 'Dev', role: 'builder', flags: {}, email: null, active: true } },
     });
   });
-  afterAll(() => d.stop());
+  const made: string[] = [];
+  afterAll(async () => {
+    await d.stop();
+    for (const dir of made.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
 
   it('enumerates every leaf command', () => {
     expect(LEAVES.map((l) => l.path.join(' '))).toEqual(
@@ -238,6 +242,7 @@ describe('every command reads only AOC variables and never leaks a planted secre
     );
     const homeDir = tempDir('aoc-iso-home-');
     const cwd = tempDir('aoc-iso-cwd-');
+    made.push(homeDir, cwd);
     const before = d.requests.length;
     for (const fn of Object.values(cp)) fn.mockClear();
 
