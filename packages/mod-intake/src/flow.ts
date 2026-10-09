@@ -383,6 +383,8 @@ export class IntakeFlow {
       source: 'intake',
       causationId,
     });
+    // Whatever went wrong stays inside: the requester reads "Being worked on", not that a gate said no or failed.
+    this.setPublicStatus(t.ticket_id, 'being_worked_on', causationId);
     this.ctx.notify({ kind: 'session.attention', title: notice, audience: ['approver', 'builder'], severity: 'warn', refs: { ticketId: t.ticket_id, decisionId: d.id } });
   }
 
