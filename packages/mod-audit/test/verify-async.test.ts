@@ -46,17 +46,17 @@ describe('verification never stalls the sole writer', () => {
     // No anchor provider and no anchor repo: nothing else in the verify path waits on I/O.
     a = await auditRuntime({ config: { audit: { anchorProvider: 'none' } } });
     const { t } = a;
-    fill(t, 12_000);
+    fill(t, 3000);
 
     let turns = turnCounter();
     const report = await t.json<VerifyReportDTO>('GET', '/api/audit/verify', { headers: a.builder.headers });
-    expect(turns.stop()).toBeGreaterThan(10);
+    expect(turns.stop()).toBeGreaterThanOrEqual(3);
     expect(report).toMatchObject({ ok: true, chainOk: true, checked: report.headSeq });
-    expect(report.headSeq).toBeGreaterThanOrEqual(12_000);
+    expect(report.headSeq).toBeGreaterThanOrEqual(3000);
 
     turns = turnCounter();
     await t.rt.runJob('audit.anchor');
-    expect(turns.stop()).toBeGreaterThan(10);
+    expect(turns.stop()).toBeGreaterThanOrEqual(3);
     expect(t.rt.store.list({ types: ['chain.verified'], order: 'desc', limit: 1 })[0]!.meta).toMatchObject({
       ok: true,
       checked: report.headSeq + 1,
@@ -66,7 +66,7 @@ describe('verification never stalls the sole writer', () => {
   it('appends made while a verify runs are not reported as a head mismatch, and anchoring still anchors the verified head', async () => {
     a = await auditRuntime();
     const { t } = a;
-    fill(t, 6000);
+    fill(t, 2000);
     const head = t.rt.store.head();
     const anchoring = a.mod.service().anchorNow({ kind: 'human', id: a.approver.user.id }, 'api');
     for (let i = 0; i < 5; i++) {

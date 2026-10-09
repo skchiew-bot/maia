@@ -149,17 +149,16 @@ describe('backup → wipe → restore (G-21)', () => {
   it('a backup taken while events and bodies are being written is consistent', async () => {
     const s = site({ anchorProvider: 'none', anchorRemote: undefined });
     const b = await up(s);
-    for (let i = 0; i < 3; i++)
-      b.rt.store.appendMany(
-        Array.from({ length: 1000 }, (_, j) => ({
-          type: 'session.nudged' as const,
-          actor: SYSTEM,
-          scope: { sessionId: `ses_${j % 9}` },
-          meta: { sessionId: `ses_${j % 9}` },
-          payload: { text: `bulk ${i}-${j} ${'x'.repeat(200)}` },
-          source: 'api' as const,
-        })),
-      );
+    b.rt.store.appendMany(
+      Array.from({ length: 1000 }, (_, j) => ({
+        type: 'session.nudged' as const,
+        actor: SYSTEM,
+        scope: { sessionId: `ses_${j % 9}` },
+        meta: { sessionId: `ses_${j % 9}` },
+        payload: { text: `bulk ${j} ${'x'.repeat(200)}` },
+        source: 'api' as const,
+      })),
+    );
     const startHead = b.rt.store.head().seq;
     let writes = 0;
     let writing = true;

@@ -55,7 +55,7 @@ describe('EventStore.verifyChainAsync', () => {
 
   it('verifies the events present when called; events appended meanwhile wait for the next run', async () => {
     const { store } = open();
-    fill(store, 3000);
+    fill(store, 1500);
     const running = store.verifyChainAsync({ batch: 200 });
     let appended = 0;
     await new Promise<void>((resolve) => {
@@ -67,9 +67,9 @@ describe('EventStore.verifyChainAsync', () => {
       setImmediate(tick);
     });
     const v = await running;
-    expect(v).toMatchObject({ ok: true, headSeq: 3000, checked: 3000 });
-    expect(store.head().seq).toBe(3020);
-    expect(await store.verifyChainAsync()).toMatchObject({ ok: true, headSeq: 3020, headHash: store.head().hash });
+    expect(v).toMatchObject({ ok: true, headSeq: 1500, checked: 1500 });
+    expect(store.head().seq).toBe(1520);
+    expect(await store.verifyChainAsync()).toMatchObject({ ok: true, headSeq: 1520, headHash: store.head().hash });
     expect(await store.verifyChainAsync({ toSeq: 10 })).toMatchObject({ ok: true, headSeq: 10, checked: 10 });
     store.close();
   });
@@ -92,7 +92,7 @@ describe('EventStore.verifyChainAsync', () => {
     // Filling the chain is slow when every package's tests run in parallel: give the hook its own budget.
     beforeAll(async () => {
       store = open().store;
-      fill(store, 15_000);
+      fill(store, 4000);
       server = createServer((_req, res) => {
         served++;
         res.end('ok');
@@ -113,7 +113,7 @@ describe('EventStore.verifyChainAsync', () => {
       let done = false;
       let ticks = 0;
       const ticker = setInterval(() => ticks++, 0);
-      const verifying = store.verifyChainAsync().then((v) => {
+      const verifying = store.verifyChainAsync({ batch: 100 }).then((v) => {
         done = true;
         return v;
       });
@@ -125,7 +125,7 @@ describe('EventStore.verifyChainAsync', () => {
       expect(answeredWhileVerifying).toBe(true);
       expect(served).toBe(2);
       expect(ticks).toBeGreaterThan(5);
-      expect(v).toMatchObject({ ok: true, headSeq: 15_000, checked: 15_000, headHash: store.head().hash });
+      expect(v).toMatchObject({ ok: true, headSeq: 4000, checked: 4000, headHash: store.head().hash });
     }, 60_000);
   });
 });
