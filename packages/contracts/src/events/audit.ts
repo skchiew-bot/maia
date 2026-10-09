@@ -7,7 +7,17 @@ export const AUDIT_EVENTS = [
     type: 'anchor.created',
     owner: 'audit',
     description: 'Chain head anchored off-host (signed git commit to a separate repo, or RFC 3161 timestamp).',
-    meta: meta({ anchorId: zId, seq: z.number().int().min(1), hash: z.string().length(64), provider: z.enum(['git', 'rfc3161']), proofRef: z.string().max(300) }),
+    meta: meta({
+      anchorId: zId,
+      seq: z.number().int().min(1),
+      hash: z.string().length(64),
+      provider: z.enum(['git', 'rfc3161']),
+      proofRef: z.string().max(300),
+      /** git: the anchor commit was GPG-signed. */
+      signed: z.boolean().optional(),
+      /** git: the anchor commit reached the configured off-host remote (false = local only until the next push). */
+      pushed: z.boolean().optional(),
+    }),
     payload: null,
   }),
   defineEvent({
@@ -28,6 +38,8 @@ export const AUDIT_EVENTS = [
       anchorsChecked: z.number().int().min(0),
       anchorsMatched: z.number().int().min(0),
       firstBadSeq: z.number().int().nullable(),
+      /** Events after the last anchor (not yet protected off-host). */
+      unanchoredTail: z.number().int().min(0).optional(),
     }),
     payload: payload({ problems: z.array(z.string()) }),
   }),
@@ -42,7 +54,13 @@ export const AUDIT_EVENTS = [
     type: 'selfmod.blocked',
     owner: 'audit',
     description: 'An AOC-managed agent attempted to modify the governance/audit/credit core (self-modification boundary).',
-    meta: meta({ sessionId: zId, rule: zLabel, pathHash: z.string().max(64) }),
+    meta: meta({
+      sessionId: zId,
+      rule: zLabel,
+      pathHash: z.string().max(64),
+      /** The attempt was also written to the external (outside-AOC) audit log. */
+      externalLogged: z.boolean().optional(),
+    }),
     payload: payload({ path: z.string(), toolName: z.string() }),
   }),
   defineEvent({
