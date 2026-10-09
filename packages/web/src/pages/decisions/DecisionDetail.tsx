@@ -11,7 +11,6 @@ import { formatAge, formatClock, formatDateTime } from '../../lib/format';
 import type { DecisionActions, PasskeyState } from './actions';
 import type { Directory } from './directory';
 import {
-  KIND_LABEL,
   ROLE_WORD,
   TEST_LABEL,
   agingOf,
