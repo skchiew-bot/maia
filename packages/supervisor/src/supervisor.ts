@@ -53,6 +53,7 @@ import {
   toolPolicy,
 } from './launch-config';
 import { processMatches, runCommand, signalProcess, signalTree } from './process-utils';
+import { handOver, isolatedRunEnv, lookupSandboxUser, type SandboxUser } from './sandbox';
 import { SupervisorView, TERMINAL_LIFECYCLES, type SupervisedSession } from './projection';
 import {
   CONTINUE_TEXT,
@@ -90,6 +91,8 @@ export interface SupervisorModuleOptions {
   outputBufferSize?: number;
   /** The aocd environment the allowlist reads from (default `process.env`). */
   env?: Record<string, string | undefined>;
+  /** OS user for sandboxed isolated runs (default `supervisor.sessionUser`, G-01); aocd must run as root. */
+  sandboxUser?: string;
 }
 
 const zIdent = z
@@ -203,6 +206,8 @@ export class Supervisor implements SupervisorService {
   private readonly sessionsRoot: string;
   private readonly ownsSessionsRoot: boolean;
   private stopping = false;
+  /** Resolved on first use: undefined = not looked up yet, null = none configured. */
+  private sandboxIdentity: SandboxUser | null | undefined;
 
   constructor(
     private readonly ctx: ModuleContext,
@@ -339,14 +344,24 @@ export class Supervisor implements SupervisorService {
     return !!s && s.stopRequested && !TERMINAL_LIFECYCLES.includes(s.lifecycle);
   }
 
-  /** Supervisor-controlled environment (rollback verification, promotion). No route or agent path reaches it. */
+  /**
+   * Commands run outside any session (promotion, rollback, rollback verification). No route or agent path reaches
+   * it. The environment is built from scratch (isolatedRunEnv): PATH, locale, TZ and proxy settings, then the
+   * caller's `env`, then the credential profile when one is named. A `sandbox` run is code AOC does not trust: it
+   * never gets a credential profile, and it runs as the unprivileged session user when one is configured (G-01),
+   * after the fresh directories in `handOver` are given to that user (G-04).
+   */
   async runIsolated(input: {
     cwd: string;
     command: string[];
     credentialProfile: string | null;
     timeoutMs: number;
+    env?: Record<string, string>;
+    sandbox?: { handOver?: string[] };
   }): Promise<{ exitCode: number; stdout: string; stderr: string }> {
     const sup = this.ctx.config.supervisor;
+    if (input.sandbox && input.credentialProfile)
+      throw new Error('runIsolated: a sandboxed run never gets a credential profile');
     let credentials: Record<string, string> | null = null;
     if (input.credentialProfile) {
       if (!sup.credentialProfilesFile) {
@@ -356,15 +371,39 @@ export class Supervisor implements SupervisorService {
       }
       credentials = readCredentialProfile(resolve(sup.credentialProfilesFile), input.credentialProfile);
     }
-    const env = buildSessionEnv({
+    const env = isolatedRunEnv({
       source: this.sourceEnv(),
-      allowlist: sup.envAllowlist,
-      credentials,
-      readOnly: false,
-      aoc: {},
       timezone: this.ctx.config.timezone,
+      extra: input.env,
+      credentials,
     });
-    return runCommand({ cwd: input.cwd, command: input.command, env, timeoutMs: input.timeoutMs });
+    const user = input.sandbox ? this.sandboxUser() : null;
+    if (input.sandbox && !user)
+      this.warnOnce(
+        'sandbox:aocd',
+        'no session user is configured: untrusted isolated runs (rollback acceptance tests) run as the aocd OS user, without credentials (development only; G-01)',
+      );
+    if (user) handOver(input.sandbox?.handOver ?? [], user);
+    return runCommand({
+      cwd: input.cwd,
+      command: input.command,
+      env,
+      timeoutMs: input.timeoutMs,
+      ...(user ? { uid: user.uid, gid: user.gid } : {}),
+    });
+  }
+
+  /**
+   * The unprivileged OS user for sandboxed isolated runs: opts.sandboxUser, else the session user of G-01
+   * (`supervisor.sessionUser`, read here before the config schema names it). Null when neither is set.
+   */
+  private sandboxUser(): SandboxUser | null {
+    if (this.sandboxIdentity === undefined) {
+      const name =
+        this.opts.sandboxUser ?? (this.ctx.config.supervisor as { sessionUser?: string }).sessionUser;
+      this.sandboxIdentity = name ? lookupSandboxUser(name) : null;
+    }
+    return this.sandboxIdentity;
   }
 
   // ── read side (routes) ────────────────────────────────────────────────────

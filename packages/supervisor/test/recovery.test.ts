@@ -261,7 +261,7 @@ describe('startup recovery (§2.3: waiting survives reboots)', () => {
 });
 
 describe('runIsolated (rollback verification / promotion)', () => {
-  it('runs with only the allowlisted env plus the named credential profile, with a timeout', async () => {
+  it('runs with path, locale and TZ only, plus the named credential profile, with a timeout', async () => {
     h = await createHarness();
     const node = (code: string) => [process.execPath, '-e', code];
     const r = await h.sup.runIsolated({
@@ -277,7 +277,10 @@ describe('runIsolated (rollback verification / promotion)', () => {
     expect(env.TZ).toBe('Asia/Kuala_Lumpur');
     for (const k of ['DEPLOY_KEY', 'AOC_MASTER_KEY', 'GIT_PUSH_TOKEN', 'AOC_SESSION_ID', 'AOC_INGEST_TOKEN'])
       expect(env[k], k).toBeUndefined();
-    expect(env.HOME).toBe(h.env.HOME);
+    expect(env.PATH).toBe(h.env.PATH);
+    expect(env.LANG).toBe('C.UTF-8');
+    // Nothing of aocd's account or of the session allowlist: no HOME, no Claude config, no test-only variables.
+    for (const k of ['HOME', 'CLAUDE_CONFIG_DIR', 'FAKE_CLAUDE_LOG']) expect(env[k], k).toBeUndefined();
 
     const plain = await h.sup.runIsolated({
       cwd: h.root,
