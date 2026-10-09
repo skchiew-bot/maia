@@ -9,7 +9,8 @@
   },
   "scripts": {
     "test": "vitest run --passWithNoTests",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "a11y": "node --import tsx test/a11y/check.ts"
   },
   "dependencies": {
     "@aoc/contracts": "workspace:*",
