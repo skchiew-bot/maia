@@ -123,6 +123,57 @@ importers:
         specifier: 3.25.76
         version: 3.25.76
 
+  packages/demo:
+    dependencies:
+      '@aoc/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@aoc/kernel':
+        specifier: workspace:*
+        version: link:../kernel
+      '@aoc/mod-audit':
+        specifier: workspace:*
+        version: link:../mod-audit
+      '@aoc/mod-change':
+        specifier: workspace:*
+        version: link:../mod-change
+      '@aoc/mod-credits':
+        specifier: workspace:*
+        version: link:../mod-credits
+      '@aoc/mod-decisions':
+        specifier: workspace:*
+        version: link:../mod-decisions
+      '@aoc/mod-evidence':
+        specifier: workspace:*
+        version: link:../mod-evidence
+      '@aoc/mod-fx':
+        specifier: workspace:*
+        version: link:../mod-fx
+      '@aoc/mod-identity':
+        specifier: workspace:*
+        version: link:../mod-identity
+      '@aoc/mod-intake':
+        specifier: workspace:*
+        version: link:../mod-intake
+      '@aoc/mod-learning':
+        specifier: workspace:*
+        version: link:../mod-learning
+      '@aoc/mod-ledger':
+        specifier: workspace:*
+        version: link:../mod-ledger
+      '@aoc/mod-metering':
+        specifier: workspace:*
+        version: link:../mod-metering
+      '@aoc/mod-registry':
+        specifier: workspace:*
+        version: link:../mod-registry
+      '@aoc/mod-sessions':
+        specifier: workspace:*
+        version: link:../mod-sessions
+      hono:
+        specifier: 4.13.13
+        version: 4.13.13
+
   packages/hooks:
     dependencies:
       '@aoc/client':
