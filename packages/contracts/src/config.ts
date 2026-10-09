@@ -4,7 +4,7 @@ import { z } from 'zod';
 const thresholds = z
   .object({
     workingWindowMs: z.number().int().positive().default(30_000),
-    stallAfterMs: z.number().int().positive().default(300_000),
+    stallAfterMs: z.number().int().positive().default(600_000),
     toolStallAfterMs: z.number().int().positive().default(1_200_000),
     deadAfterMs: z.number().int().positive().default(45_000),
   })
@@ -50,6 +50,11 @@ export const AocConfigSchema = z.object({
       /** Opt-in webhook for new/aging decisions (R15). */
       webhookUrl: z.string().url().optional(),
       remindAfterMinutes: z.number().int().positive().default(30),
+      /**
+       * Let the only active Approver resolve their own requests (recorded selfApproved). Off by CEO decision
+       * (2026-10-09): with one Approver, their own requests wait for a second Approver (separation of duties, §6).
+       */
+      soleApproverFallback: z.boolean().default(false),
     })
     .default({}),
   credits: z

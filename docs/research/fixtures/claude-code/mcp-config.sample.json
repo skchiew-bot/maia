@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "probe": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "/tmp/aoc-capture/bin/mcp-probe.mjs",
+        "/tmp/aoc-capture/cap/mcp-base.jsonl"
+      ],
+      "env": {
+        "AOC_PROBE_MCPCONF": "set-in-mcp-config-env"
+      }
+    }
+  }
+}

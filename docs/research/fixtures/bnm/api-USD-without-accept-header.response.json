@@ -1,0 +1,8 @@
+{
+  "request": "GET https://api.bnm.gov.my/public/exchange-rate/USD (no Accept header)",
+  "status": 404,
+  "contentType": "text/html",
+  "bodyStartsWith": "<!DOCTYPE html>",
+  "htmlTitle": "BNM.API",
+  "capturedAt": "2026-10-09T00:04:54Z"
+}

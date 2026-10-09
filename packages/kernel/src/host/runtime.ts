@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import { Hono } from 'hono';
+import { bodyLimit } from 'hono/body-limit';
 import type { AocConfig, JsonValue, Notification, StoredEvent } from '@aoc/contracts';
 import type { Clock } from '../clock';
 import { loadOrCreateMasterKey } from '../crypto';
@@ -8,7 +9,7 @@ import type { Logger } from '../logger';
 import { EventStore } from '../store/event-store';
 import { localParts } from '../time';
 import { Broadcaster } from './broadcast';
-import { errorResponse, tokenFrom } from './http';
+import { bodyLimitFor, errorResponse, HttpError, tokenFrom } from './http';
 import type { AocModule, AppEnv, Job, ModuleContext, Reactor } from './module';
 import { GuardPolicy } from './policy';
 import { ServiceRegistry } from './services';
@@ -73,6 +74,9 @@ export class AocRuntime {
   static async create(opts: RuntimeOptions): Promise<AocRuntime> {
     const rt = new AocRuntime(opts);
     for (const m of opts.modules) for (const p of m.projectors ?? []) rt.store.registerProjector(p);
+    // Modules added to an existing install (or whose projection schema changed) back-fill from the log first.
+    const rebuilt = rt.store.rebuildStaleProjections();
+    if (rebuilt.length) opts.log.info('projections rebuilt from the log', { projectors: rebuilt });
     for (const m of opts.modules) for (const g of m.guards ?? []) rt.policy.register(g);
     for (const m of opts.modules) await m.init?.(rt.ctx);
     rt.wireBus();
@@ -111,50 +115,70 @@ export class AocRuntime {
     await this.drain();
   }
 
-  /** Resolves when every queued reaction has run (tests await this after actions). */
+  /**
+   * Resolves when every queued reaction has run (tests await this after actions). `draining` is set BEFORE the
+   * loop starts, so a reactor that appends synchronously during its reaction joins this loop instead of starting
+   * a second, untracked one (which would break ordering and let drain() resolve early).
+   */
   drain(): Promise<void> {
     if (this.draining) return this.draining;
-    this.draining = (async () => {
-      while (this.queue.length && !this.stopped) {
-        const item = this.queue.shift()!;
-        let lastErr: unknown = null;
-        for (let attempt = 0; attempt < 3; attempt++) {
-          try {
-            await item.reactor.react(item.e, item.payload, this.ctx);
-            lastErr = null;
-            break;
-          } catch (err) {
-            lastErr = err;
+    let done!: () => void;
+    this.draining = new Promise<void>((r) => (done = r));
+    void (async () => {
+      try {
+        while (this.queue.length && !this.stopped) {
+          const item = this.queue.shift()!;
+          let lastErr: unknown = null;
+          for (let attempt = 0; attempt < 3; attempt++) {
+            try {
+              await item.reactor.react(item.e, item.payload, this.ctx);
+              lastErr = null;
+              break;
+            } catch (err) {
+              lastErr = err;
+            }
           }
+          if (lastErr) {
+            this.opts.log.error('reactor failed', { reactor: item.reactor.name, seq: item.e.seq, err: String(lastErr) });
+            this.store.db
+              .prepare('INSERT INTO reactor_failures (reactor, seq, error, at) VALUES (?,?,?,?)')
+              .run(item.reactor.name, item.e.seq, String(lastErr).slice(0, 1000), this.opts.clock.iso());
+          }
+          this.store.db.prepare('UPDATE reactor_cursors SET seq = MAX(seq, ?) WHERE name = ?').run(item.e.seq, item.reactor.name);
         }
-        if (lastErr) {
-          this.opts.log.error('reactor failed', { reactor: item.reactor.name, seq: item.e.seq, err: String(lastErr) });
-          this.store.db
-            .prepare('INSERT INTO reactor_failures (reactor, seq, error, at) VALUES (?,?,?,?)')
-            .run(item.reactor.name, item.e.seq, String(lastErr).slice(0, 1000), this.opts.clock.iso());
-        }
-        this.store.db.prepare('UPDATE reactor_cursors SET seq = MAX(seq, ?) WHERE name = ?').run(item.e.seq, item.reactor.name);
+      } finally {
+        this.draining = null;
+        done();
       }
-    })().finally(() => {
-      this.draining = null;
-    });
+    })();
     return this.draining;
   }
 
   /** Mount auth middleware, module routes and the error handler on a Hono app. */
   mount(app: Hono<AppEnv> = new Hono<AppEnv>()): Hono<AppEnv> {
+    app.use('*', (c, next) => {
+      const maxSize = bodyLimitFor(c.req.path, this.opts.config);
+      return bodyLimit({
+        maxSize,
+        onError: () => {
+          throw new HttpError(413, 'payload_too_large', `Request body exceeds ${maxSize} bytes`);
+        },
+      })(c, next);
+    });
     app.use('*', async (c, next) => {
       c.set('requestId', c.req.header('x-request-id') ?? Math.random().toString(36).slice(2, 10));
       c.set('auth', null);
       c.set('ingest', null);
       const tok = tokenFrom(c);
       const identity = this.services.maybe('identity');
-      if (tok && identity) {
-        if (c.req.path.startsWith('/ingest/')) c.set('ingest', identity.verifyIngestToken(tok.token));
-        else {
-          const auth = identity.authenticate(tok.token);
-          if (auth) c.set('auth', { ...auth, method: tok.method });
-        }
+      if (c.req.path.startsWith('/ingest/')) {
+        const principal = tok && identity ? identity.verifyIngestToken(tok.token) : null;
+        // Every ingest route needs a token: refuse anonymous callers before any route parses their body.
+        if (!principal) throw new HttpError(401, 'unauthenticated', 'Ingest token required');
+        c.set('ingest', principal);
+      } else if (tok && identity) {
+        const auth = identity.authenticate(tok.token);
+        if (auth) c.set('auth', { ...auth, method: tok.method });
       }
       await next();
     });

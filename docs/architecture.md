@@ -517,7 +517,7 @@ them would add about 17,000 rows per session per day, §13).
 | 1 | **Waiting on you** | An open decision on the session, or lifecycle `waiting_decision`, `blocked` (credit cap, writer lock, no manifest, awaiting top-up) or `idle` (turn ended with the plan incomplete) | `open_decision`, `blocked`, `turn_ended` |
 | 2 | **Throttled** | Lifecycle `throttled`, or a plan-limit reset time still in the future (the badge shows the reset time) | `plan_limit` |
 | 3 | **Dead** | Lifecycle `failed`; the sidecar reports the process exited; no heartbeat for more than `deadAfterMs` (45 s); or no heartbeat ever, while running, after twice that | `process_failed`, `process_exited`, `no_heartbeat`, `never_reported` |
-| 4 | **Stalled** | One tool in flight longer than `toolStallAfterMs` (20 min), or no tool or model activity for `stallAfterMs` (5 min, can be overridden per process type) | `tool_hung`, `no_activity` |
+| 4 | **Stalled** | One tool in flight longer than `toolStallAfterMs` (20 min), or no tool or model activity for `stallAfterMs` (10 min — CEO decision 2026-10-09; can be overridden per process type) | `tool_hung`, `no_activity` |
 | 5 | **Thinking** | Alive, with no tool in the last `workingWindowMs` (30 s), while model output streams or the session is starting | `streaming`, `starting` |
 | 6 | **Working** | A tool in flight (below the hung threshold), or a tool finished within the last 30 s | `tool_in_flight`, `recent_tool` |
 
@@ -533,7 +533,7 @@ flowchart TD
   D -- no --> E{"tool in flight?"}
   E -- "for more than 20 min" --> S1["Stalled: tool_hung"]
   E -- "yes" --> WK1["Working: tool_in_flight"]
-  E -- no --> F{"no activity for 5 min?"}
+  E -- no --> F{"no activity for 10 min?"}
   F -- yes --> S2["Stalled: no_activity"]
   F -- no --> G{"tool finished within 30 s?"}
   G -- yes --> WK2["Working: recent_tool"]

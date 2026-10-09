@@ -1,0 +1,412 @@
+{
+  "version": "2026.10-draft",
+  "standard": "ISO/IEC 42001:2023",
+  "status": "provisional",
+  "stampedBy": null,
+  "stampedAt": null,
+  "notes": "PROVISIONAL: drafted from public secondary sources (Annex A control IDs/titles agreed by riskprofs.com and tcsa.in; main-clause titles per docs.modulos.ai), not from the purchased standard. The compliance lead must confirm every row against ISO/IEC 42001:2023 and stamp it (stampedBy/stampedAt) before the mapping page is built or cited (AOC-SPEC-003 §13, risk R3). Scope assumption to confirm (clause 4.3): the AIMS covers the organisation's use of AI coding agents (Claude Code) through AOC to develop, change and promote software; agent sessions plus AOC are treated as the AI system in operation for A.6.2.x rows. Rows carrying a correctionNote that starts 'Corrected per §13' implement the five known AOC-SPEC-002 corrections. Evidence entries are descriptive names of AOC event types (Wave 0 event catalog in packages/contracts/src/events) and artifacts. See docs/compliance/iso42001-annex-a.md.",
+  "rows": [
+    {
+      "id": "map-001",
+      "aocControl": "Append-only, hash-chained audit event log with a single writer (aocd)",
+      "aocFeature": "kernel EventStore: hash chain over ids/enums/hashes in clear, bodies in a per-session encrypted store with only their hash chained; liveness state changes chained, raw heartbeats not",
+      "clause": "A.6.2.8",
+      "clauseTitle": "AI system recording of event logs",
+      "evidence": [
+        "hash-chained event log (seq, prevHash, hash per event)",
+        "chain.verified events (Verify run results)",
+        "session.liveness_changed events (state changes only)",
+        "tool.used and tool.denied events",
+        "body.erased events (crypto-shred leaves the chain valid)"
+      ],
+      "status": "provisional",
+      "correctionNote": "Corrected per §13: AOC-SPEC-002 mapped event logging to A.6.2.6, which is operation and monitoring. Event logging is A.6.2.8."
+    },
+    {
+      "id": "map-002",
+      "aocControl": "Off-host anchoring of the nightly chain head; Verify tests the chain against the external anchor",
+      "aocFeature": "mod-audit nightly anchor job (signed commit to a separate repository or RFC 3161 timestamp) and Verify",
+      "clause": "A.6.2.8",
+      "clauseTitle": "AI system recording of event logs",
+      "evidence": [
+        "anchor.created events (anchor receipt: commit SHA or RFC 3161 token hash)",
+        "anchor.failed events and missed-anchor alerts",
+        "chain.verified events tested against every external anchor"
+      ],
+      "status": "provisional",
+      "correctionNote": "No AOC-SPEC-002 row. Supports the integrity of the A.6.2.8 record (risk R2: an in-file hash chain alone is defeatable). Confirm."
+    },
+    {
+      "id": "map-003",
+      "aocControl": "Frozen, ISO-mapped audit evidence pack",
+      "aocFeature": "mod-evidence one-button pack: date-ranged, hash-verified, control-mapped bundle with rate-card and mapping versions embedded and a compliance-lead stamp (provisional until stamped)",
+      "clause": "A.6.2.7",
+      "clauseTitle": "AI system technical documentation",
+      "evidence": [
+        "evidence_pack.generated events (packHash, mappingVersion, mappingStamped, chainOk)",
+        "evidence pack artifact (manifest with per-event hashes)",
+        "mapping.published and mapping.stamped events"
+      ],
+      "status": "provisional",
+      "correctionNote": "Corrected per §13: AOC-SPEC-002 mapped technical documentation to change management. Technical documentation is A.6.2.7; change management is anchored to clauses 6.3 and 8.1 (map-008, map-009)."
+    },
+    {
+      "id": "map-004",
+      "aocControl": "Control of documented information (evidence integrity and retention)",
+      "aocFeature": "hash-chained log, off-host anchor, frozen evidence packs, crypto-shredding for erasure, off-host backup with defined key custody (R6)",
+      "clause": "7.5",
+      "clauseTitle": "Documented information",
+      "evidence": [
+        "evidence_pack.generated events",
+        "chain.verified and anchor.created events",
+        "body.erased events",
+        "backup and key-custody records"
+      ],
+      "status": "provisional",
+      "correctionNote": "No AOC-SPEC-002 row. Main-clause anchor added because the evidence pack is the organisation's documented information for audits. Confirm."
+    },
+    {
+      "id": "map-005",
+      "aocControl": "Three-role access model (Approver, Builder, Requester) on a per-person identity layer",
+      "aocFeature": "mod-identity: users and roles, bearer tokens (attribution in v1), per-decision passkeys (WebAuthn) for go-live, rollback and break-glass; escalations never route back to the requester (separation of duties)",
+      "clause": "A.3.2",
+      "clauseTitle": "AI roles and responsibilities",
+      "evidence": [
+        "user.created and user.updated events (role assignments)",
+        "token.issued and token.revoked events",
+        "passkey.registered events",
+        "decision.resolved events carrying the resolving person and role",
+        "decision.escalated events (never to the requester)"
+      ],
+      "status": "provisional",
+      "correctionNote": "Corrected per §13: AOC-SPEC-002 mapped roles to A.5. A.5 is impact assessment; AI roles and responsibilities is A.3.2."
+    },
+    {
+      "id": "map-006",
+      "aocControl": "Change request impact analysis, mandatory before work starts",
+      "aocFeature": "mod-change: a change request cannot start until impact analysis, mitigation plan, rollback plan (exact tag or SHA) and acceptance test are supplied and approved; AI drafts the fields, the developer must edit or affirm each",
+      "clause": "A.5.2",
+      "clauseTitle": "AI system impact assessment process",
+      "evidence": [
+        "change.drafted and change.field_affirmed events (affirm-without-edit tracked)",
+        "change.submitted events (all four fields present, field hashes chained)",
+        "change.approved and change.rejected events"
+      ],
+      "status": "provisional",
+      "correctionNote": "No AOC-SPEC-002 row. Impact analysis is anchored to A.5 and main clause 6.1.4 (map-008). Confirm whether a per-change impact analysis satisfies the A.5.2 process or only feeds it; A.5.4 and A.5.5 (impacts on individuals and society) are not covered by AOC."
+    },
+    {
+      "id": "map-007",
+      "aocControl": "Retention of change impact analyses",
+      "aocFeature": "impact analysis text kept in the encrypted body store with its hash in the chain; included in evidence packs",
+      "clause": "A.5.3",
+      "clauseTitle": "Documentation of AI system impact assessments",
+      "evidence": [
+        "change.submitted payload (impact analysis) and its chained hash",
+        "evidence pack section listing change records with impact analyses"
+      ],
+      "status": "provisional",
+      "correctionNote": "No AOC-SPEC-002 row. Crypto-shredding a body (body.erased) removes the text but keeps the hash, so retention periods must be agreed with the compliance lead. Confirm."
+    },
+    {
+      "id": "map-008",
+      "aocControl": "Change request impact analysis (main-clause anchor)",
+      "aocFeature": "as map-006",
+      "clause": "6.1.4",
+      "clauseTitle": "AI system impact assessment",
+      "evidence": [
+        "change.submitted events (impact analysis field)",
+        "decision.resolved events for change requests"
+      ],
+      "status": "provisional",
+      "correctionNote": "No AOC-SPEC-002 row. Main-clause anchor for impact analysis (A.5 / 6.1.4). Clause 8.4 (impact assessment during operation) may also apply. Confirm."
+    },
+    {
+      "id": "map-009",
+      "aocControl": "Planned changes to the AI management system and AOC governance configuration",
+      "aocFeature": "change requests as human-required decisions; governed configuration (process-type registry, rate card, mapping) changes are detected and audited; rollback to a pinned tag or SHA is itself a gated, audited decision",
+      "clause": "6.3",
+      "clauseTitle": "Planning of changes",
+      "evidence": [
+        "change.submitted, change.approved, change.started and change.completed events",
+        "config.changed, registry.changed, ratecard.published and mapping.published events",
+        "rollback.requested, rollback.verified, rollback.approved and rollback.executed events"
+      ],
+      "status": "provisional",
+      "correctionNote": "Corrected per §13: AOC-SPEC-002 tied change management to the technical-documentation control. Change management is anchored to 6.3 and 8.1. Caution: 6.3 governs changes to the management system itself; control of changes to the software the agents build sits mainly under 8.1 (map-010). Confirm the split."
+    },
+    {
+      "id": "map-010",
+      "aocControl": "Operational planning and control: plan manifest, change control and gated promotion",
+      "aocFeature": "plan manifest declared at session start (tasks weighted, evidence per task, audited amendments); change requests; promotion refused unless provenance traces to an approved change, UAT sign-off and gate",
+      "clause": "8.1",
+      "clauseTitle": "Operational planning and control",
+      "evidence": [
+        "plan.declared, plan.amended, task.done and phase.completed events",
+        "change.* events",
+        "git.ref_pinned events (immutable tag per change and phase)",
+        "promotion.requested, promotion.refused and promotion.completed events"
+      ],
+      "status": "provisional",
+      "correctionNote": "Corrected per §13 (change management moved off the technical-documentation control). 8.1 covers control of planned changes and review of unintended ones; AOC change control and the provenance gate are the operational controls. Confirm."
+    },
+    {
+      "id": "map-011",
+      "aocControl": "Liveness and operation monitoring of agent sessions",
+      "aocFeature": "per-session sidecar heartbeats and transcript tail; derived states Working, Thinking, Stalled, Dead, Throttled (with reset time), Waiting on you, with fixed precedence; restart and nudge via the supervisor",
+      "clause": "A.6.2.6",
+      "clauseTitle": "AI system operation and monitoring",
+      "evidence": [
+        "session.liveness_changed events (state changes only)",
+        "throttle.hit and throttle.cleared events (resetAt, idle time)",
+        "session.restarted, session.nudged and session.stop_requested events",
+        "session.blocked events"
+      ],
+      "status": "provisional",
+      "correctionNote": "Per §13, A.6.2.6 is operation and monitoring. AOC-SPEC-002 had used it for event logging, which is now A.6.2.8 (map-001)."
+    },
+    {
+      "id": "map-012",
+      "aocControl": "Measured progress, metering and recurrence trends",
+      "aocFeature": "progress = tasks done over tasks declared, evidence-backed; metering per actor, task, project and model; recurrence trend per root-cause class",
+      "clause": "9.1",
+      "clauseTitle": "Monitoring, measurement, analysis and evaluation",
+      "evidence": [
+        "task.done events with evidence (no-file-change closes flagged)",
+        "usage.recorded events",
+        "rollup.closed events",
+        "offence.transitioned events (recurrence over the verification window)"
+      ],
+      "status": "provisional",
+      "correctionNote": "No AOC-SPEC-002 row. Main-clause anchor for monitoring. Confirm which AOC metrics are AIMS performance indicators."
+    },
+    {
+      "id": "map-013",
+      "aocControl": "Acceptance tests and requester UAT sign-off",
+      "aocFeature": "acceptance test is a mandatory change-request field; task_done evidence (test id, commit or diff); requester tests on UAT; rollback verification runs the target state's acceptance tests before anything touches main",
+      "clause": "A.6.2.4",
+      "clauseTitle": "AI system verification and validation",
+      "evidence": [
+        "task.done events with evidence kind test",
+        "ticket.uat_ready and ticket.uat_result events",
+        "rollback.verification_started and rollback.verified events (clean only when tests pass)"
+      ],
+      "status": "provisional",
+      "correctionNote": "No AOC-SPEC-002 row. Confirm that verification of agent-built changes falls inside the AI-system life-cycle scope chosen for the AIMS."
+    },
+    {
+      "id": "map-014",
+      "aocControl": "Go-live gate with provenance guarantee",
+      "aocFeature": "promotion to main is a human-required decision under the Approver's name (passkey); refused unless every commit traces to an approved change record, a UAT sign-off and a gate; break-glass is the sole exception",
+      "clause": "A.6.2.5",
+      "clauseTitle": "AI system deployment",
+      "evidence": [
+        "ticket.golive_requested and decision.resolved events",
+        "promotion.requested, promotion.refused and promotion.completed events",
+        "passkey assertion recorded on go-live decisions",
+        "git.ref_pinned events"
+      ],
+      "status": "provisional",
+      "correctionNote": "No AOC-SPEC-002 row. Confirm."
+    },
+    {
+      "id": "map-015",
+      "aocControl": "Break-glass emergency promotion with mandatory post-incident record",
+      "aocFeature": "emergency promotion when production is down; routes straight to the Approver; auto-raises a post-incident change record due within 24 h; most heavily audited event",
+      "clause": "A.8.4",
+      "clauseTitle": "Communication of incidents",
+      "evidence": [
+        "breakglass.invoked and breakglass.approved events",
+        "breakglass.post_incident_overdue events",
+        "post-incident change record (change.* events linked to the break-glass)"
+      ],
+      "status": "provisional",
+      "correctionNote": "Corrected per §13: AOC-SPEC-002 mapped incident communication to A.8.3. A.8.3 is external reporting; communication of incidents is A.8.4. Communication to users and external parties beyond the Approver needs an organisational procedure."
+    },
+    {
+      "id": "map-016",
+      "aocControl": "Abstracted status for requesters",
+      "aocFeature": "intake portal shows only 'being worked on', 'ready for your testing' or 'completed'; never internal gate names, the approver's identity, queue depth or an implied timeline",
+      "clause": "A.8.2",
+      "clauseTitle": "System documentation and information for users",
+      "evidence": [
+        "ticket.public_status_changed events",
+        "versioned intake-portal status copy"
+      ],
+      "status": "provisional",
+      "correctionNote": "No AOC-SPEC-002 row. A.8.2 also expects documentation for users; the portal should state that AI agents work on tickets. Confirm."
+    },
+    {
+      "id": "map-017",
+      "aocControl": "Documented AI resources: process-type registry, models, rate card, subscription and FX",
+      "aocFeature": "fixed process-type registry (model fixed at launch); versioned rate card applied forward only; subscription cost recorded separately; daily USD/MYR rate stamped fetched-live or inherited",
+      "clause": "A.4.2",
+      "clauseTitle": "Resource documentation",
+      "evidence": [
+        "registry.changed events",
+        "ratecard.published events",
+        "subscription.updated events",
+        "fx.rate_recorded events (fetched-live or inherited, source date)",
+        "session.launched events (model, Claude Code version)"
+      ],
+      "status": "provisional",
+      "correctionNote": "Corrected per §13: token and resource use belongs to A.4, not A.7. Confirm."
+    },
+    {
+      "id": "map-018",
+      "aocControl": "Tooling inventory per session",
+      "aocFeature": "supervisor records Claude Code version, tool list, MCP servers and permission mode from the session's init line; hooks record tool use and denials",
+      "clause": "A.4.4",
+      "clauseTitle": "Tooling resources",
+      "evidence": [
+        "session.launched events (Claude Code version, tools, MCP servers, permission mode)",
+        "tool.used and tool.denied events"
+      ],
+      "status": "provisional",
+      "correctionNote": "No AOC-SPEC-002 row. Depends on the supervisor persisting init metadata. Confirm."
+    },
+    {
+      "id": "map-019",
+      "aocControl": "Metering of tokens, compute and plan-limit idle time",
+      "aocFeature": "sidecar transcript tail deduped by message.id; notional API-equivalent cost labelled as such; plan-limit hits and throttle idle time; credit caps enforced only at task boundaries (metering never gates)",
+      "clause": "A.4.5",
+      "clauseTitle": "System and computing resources",
+      "evidence": [
+        "usage.recorded events",
+        "throttle.hit and throttle.cleared events (idleMs)",
+        "rollup.closed events (USD and RM)",
+        "credit.cap_reached, credit.auto_granted and credit.topup_* events"
+      ],
+      "status": "provisional",
+      "correctionNote": "Corrected per §13: AOC-SPEC-002 mapped token and resource use to A.7 (data). Resources are A.4; computing resources specifically A.4.5."
+    },
+    {
+      "id": "map-020",
+      "aocControl": "Controlled acquisition of intake media (PDPA surface)",
+      "aocFeature": "intake uploads: size and magic-byte type limits, malware scan, encrypted body store, hashes only in the chain; triage sessions read-only with no deploy credentials",
+      "clause": "A.7.3",
+      "clauseTitle": "Acquisition of data",
+      "evidence": [
+        "intake.submitted events",
+        "intake.attachment_stored events (validation and scan result, content hash)",
+        "ticket.triage_started events (read-only sessions)"
+      ],
+      "status": "provisional",
+      "correctionNote": "No AOC-SPEC-002 row. A.7 is framed around data used by AI systems; intake media are inputs to agent sessions, so applicability must be confirmed. PDPA duties (notice, consent, retention, access, erasure) are legal requirements outside Annex A."
+    },
+    {
+      "id": "map-021",
+      "aocControl": "Provenance and erasure of intake data",
+      "aocFeature": "every attachment hashed and linked to its ticket; per-scope encryption keys allow crypto-shredding while the chain stays valid",
+      "clause": "A.7.5",
+      "clauseTitle": "Data provenance",
+      "evidence": [
+        "intake.attachment_stored events (content hash, ticket link)",
+        "body.erased events (PDPA erasure)"
+      ],
+      "status": "provisional",
+      "correctionNote": "No AOC-SPEC-002 row. Confirm applicability (see map-020)."
+    },
+    {
+      "id": "map-022",
+      "aocControl": "Anthropic (Claude Code CLI and Claude models) managed as a supplier",
+      "aocFeature": "supplier register entry; per-session model and Claude Code version captured at launch; plan-limit (throttle) records; integration facts re-verified after each Claude Code upgrade (docs/research/claude-code-integration.md)",
+      "clause": "A.10.3",
+      "clauseTitle": "Suppliers",
+      "evidence": [
+        "session.launched events (model id, Claude Code version)",
+        "throttle.hit events (supplier service limits)",
+        "subscription.updated events",
+        "integration re-verification record after Claude Code upgrades"
+      ],
+      "status": "provisional",
+      "correctionNote": "No AOC-SPEC-002 row. A.10.2 (allocating responsibilities between the organisation and Anthropic) may also apply. Confirm."
+    },
+    {
+      "id": "map-023",
+      "aocControl": "Human-required decisions, credential isolation and read-only triage",
+      "aocFeature": "decision cards for the main, production, irreversible, ambiguity and data tests; deploy credentials only in supervisor-controlled session environments; triage sessions read-only; PreToolUse guards turn attempts into decision cards",
+      "clause": "A.9.2",
+      "clauseTitle": "Processes for responsible use of AI systems",
+      "evidence": [
+        "decision.requested and decision.resolved events",
+        "tool.denied events",
+        "session.launch_requested events (process type, credential profile)",
+        "ticket.escalated_to_human events (low-confidence diagnoses)"
+      ],
+      "status": "provisional",
+      "correctionNote": "No AOC-SPEC-002 row. Confirm."
+    },
+    {
+      "id": "map-024",
+      "aocControl": "Responsible-use objectives tracked as metrics",
+      "aocFeature": "provenance guarantee (no orphan commits to main), affirm-without-edit rate per developer, evidence-backed progress, cost-per-outcome as a portfolio lens only (never individual ranking)",
+      "clause": "A.9.3",
+      "clauseTitle": "Objectives for responsible use of AI system",
+      "evidence": [
+        "promotion.refused events",
+        "change.field_affirmed events (affirm-without-edit rate)",
+        "task.done events flagged for no file change"
+      ],
+      "status": "provisional",
+      "correctionNote": "No AOC-SPEC-002 row. The objectives themselves must be set by management (clause 6.2). Confirm."
+    },
+    {
+      "id": "map-025",
+      "aocControl": "Intended use declared at launch via the process-type registry",
+      "aocFeature": "aoc run --type picks from a fixed registry that sets model, tools and permissions per type; agents cannot name their own type",
+      "clause": "A.9.4",
+      "clauseTitle": "Intended use of the AI system",
+      "evidence": [
+        "session.launch_requested events (process type)",
+        "registry.changed events"
+      ],
+      "status": "provisional",
+      "correctionNote": "No AOC-SPEC-002 row. Confirm."
+    },
+    {
+      "id": "map-026",
+      "aocControl": "Self-modification boundary for the governance, audit and credit core",
+      "aocFeature": "AOC agents may build product features but never the governance, audit or credit core; attempts are blocked; AOC self-changes are audited outside AOC",
+      "clause": "A.6.1.3",
+      "clauseTitle": "Processes for responsible AI system design and development",
+      "evidence": [
+        "selfmod.blocked events",
+        "config.changed events (governed files detected by hash at startup)",
+        "external review record for AOC self-changes"
+      ],
+      "status": "provisional",
+      "correctionNote": "No AOC-SPEC-002 row. Also relevant to A.9.2. Confirm."
+    },
+    {
+      "id": "map-027",
+      "aocControl": "Reporting of concerns without blame",
+      "aocFeature": "agents report repeatable error classes (report_error); FX and other discrepancies become human-reviewed decisions; error-learning data is clustered by root cause and never used for per-person ranking",
+      "clause": "A.3.3",
+      "clauseTitle": "Reporting of concerns",
+      "evidence": [
+        "error.observed events (agent reports, UAT failures)",
+        "fx.discrepancy_raised events",
+        "decision.requested events",
+        "policy record: root-cause classes only, no per-person blame data"
+      ],
+      "status": "provisional",
+      "correctionNote": "No AOC-SPEC-002 row. Gap: AOC has no dedicated channel for a person (developer or requester) to raise a concern, and no rule for reporter confidentiality. Add a 'raise a concern' decision type or an organisational procedure. Confirm."
+    },
+    {
+      "id": "map-028",
+      "aocControl": "Corrective action through distilled lessons and repeat-offence tracking",
+      "aocFeature": "errors clustered by root cause; repeat-offence lifecycle detected, root-caused, fix applied, verified closed (no recurrence over a window); lessons bind only after a human decision, are scoped and retire when unused",
+      "clause": "10.2",
+      "clauseTitle": "Nonconformity and corrective action",
+      "evidence": [
+        "error.observed and rootcause.assigned events",
+        "offence.transitioned events (verified_closed after the recurrence window)",
+        "lesson.proposed, lesson.bound and lesson.retired events",
+        "ticket.uat_result rejections feeding error-learning"
+      ],
+      "status": "provisional",
+      "correctionNote": "No AOC-SPEC-002 row. 10.2 requires root-cause analysis and a review of effectiveness, which the verified_closed state provides. Confirm which error classes count as AIMS nonconformities."
+    }
+  ]
+}

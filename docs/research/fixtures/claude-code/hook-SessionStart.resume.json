@@ -1,0 +1,11 @@
+{
+  "session_id": "59c4a8a4-23c6-45c0-9e98-92ae3305068d",
+  "transcript_path": "/tmp/aoc-capture/cfg/projects/-tmp-aoc-capture-work/59c4a8a4-23c6-45c0-9e98-92ae3305068d.jsonl",
+  "cwd": "/tmp/aoc-capture/work",
+  "hook_event_name": "SessionStart",
+  "source": "resume",
+  "seconds_since_last_response": 289,
+  "context_tokens": 18404,
+  "prompt_cache_likely_expired": false,
+  "estimated_cache_write_usd": 0.0037
+}
