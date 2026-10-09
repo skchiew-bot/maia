@@ -355,8 +355,8 @@ The host that runs aocd and the supervisor. Items 1–3 are enforced by aocd whe
      compare-and-swap of a verified fast-forward (`--force-with-lease=<branch>:<verified base>`): the branch moves
      only from the commit whose delta passed the gate, and never backwards, so ruleset A needs no bypass. If the
      remote is not where AOC left it, nothing is pushed (`default_branch_moved`); a `main` moved outside AOC is an
-     R1 breach (§7). The project repository's `pre-push` hook no longer runs, and `AOC_SUPERVISOR_PUSH` is no
-     longer set.
+     R1 breach (§7). The project repository's `pre-push` hook never runs for it, and no environment variable
+     (`AOC_SUPERVISOR_PUSH` existed once) unlocks a push to a protected ref.
    - **Rollback verification** checks the pinned target out of the clone into a fresh, standalone checkout (its own
      `.git`, no link back to the clone) in a directory that aocd then hands over to the session user. Its
      acceptance tests run as the session user (`supervisor.sessionUser`, gap G-01), never with a credential, with
@@ -486,8 +486,8 @@ Every Builder, before getting access, and then every quarter:
 ### 5.2 The pre-push speed bump
 
 AOC ships the guard in `packages/hooks/git/pre-push`. It carries the marker `aoc:pre-push-guard`. It refuses any
-push that updates or deletes `main`, `master`, `production` or `release/*` unless `AOC_SUPERVISOR_PUSH=1`. AOC's
-own pushes never meet it: they run from the service clone with hooks switched off (§4 item 9). Next to it is
+push that updates or deletes `main`, `master`, `production` or `release/*`, and no environment variable overrides it.
+AOC's own pushes never meet it: they run from the service clone with hooks switched off (§4 item 9). Next to it is
 `prepare-commit-msg`, which adds the `AOC-Session`,
 `AOC-Change` and `AOC-Ticket` trailers inside managed sessions and does nothing elsewhere. The supervisor does not
 install either hook in managed workspaces yet (gap G-37).
@@ -500,9 +500,8 @@ git config --global core.hooksPath /path/to/aoc/packages/hooks/git
 
 Or install it per repository, by copying `pre-push` into `.git/hooks/` and making it executable.
 
-It is **a speed bump**. `--no-verify`, `-c core.hooksPath=…`, another clone, or simply setting
-`AOC_SUPERVISOR_PUSH=1` by hand all skip it. It exists to turn a habit into a prompt at the moment of the attempt,
-not to enforce anything. The server-side rulesets in §3 enforce.
+It is **a speed bump**. `--no-verify`, `-c core.hooksPath=…` or another clone skips it. It exists to turn a habit
+into a prompt at the moment of the attempt, not to enforce anything. The server-side rulesets in §3 enforce.
 
 ### 5.3 `aoc doctor`
 

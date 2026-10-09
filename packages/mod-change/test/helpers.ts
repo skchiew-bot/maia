@@ -145,7 +145,7 @@ export function makeRepo(files: Record<string, string> = { 'README.md': '# app\n
 
 /**
  * A bare remote wired as the project repository's `origin` (the developers' view), plus the developers' pre-push
- * speed bump there: it refuses pushes unless AOC_SUPERVISOR_PUSH=1. AOC itself never runs that hook any more.
+ * speed bump there: it refuses every push. AOC itself never runs that hook: it pushes from its service clone.
  */
 export function addGuardedRemote(repo: TestRepo): string {
   const remote = tempDir('aoc-chg-remote-');
@@ -156,7 +156,7 @@ export function addGuardedRemote(repo: TestRepo): string {
   const hook = join(repo.dir, '.git', 'hooks', 'pre-push');
   writeFileSync(
     hook,
-    '#!/bin/sh\n[ "$AOC_SUPERVISOR_PUSH" = "1" ] || { echo "pre-push: only the AOC supervisor may push" >&2; exit 1; }\n',
+    '#!/bin/sh\necho "pre-push: protected branches change only through an AOC promotion" >&2\nexit 1\n',
   );
   chmodSync(hook, 0o755);
   return remote;

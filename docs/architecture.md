@@ -291,10 +291,11 @@ idempotencyKey}` to `/ingest/hook` and applies the daemon's `HookIngestResponse`
   A guard denial from the daemon is returned as a JSON `permissionDecision: "deny"` rather than exit 2, because exit
   2 shows the hook's command line to the model. The hook command line never carries a secret.
 - **Git hooks for managed workspaces.** The hooks package also ships a `pre-push` guard (it refuses pushes to `main`,
-  `master`, `production` and `release/*` unless `AOC_SUPERVISOR_PUSH=1`, which only the promotion executor sets)
-  and a `prepare-commit-msg` hook that adds the `AOC-Session`, `AOC-Change` and `AOC-Ticket` trailers. Like every
-  client-side hook, they are speed bumps. The supervisor does not install them in managed workspaces yet (gap
-  G-37): today the system prompt asks the agent to add the trailers.
+  `master`, `production` and `release/*`, and no environment variable overrides it: AOC's own promotion pushes from a
+  service-owned clone with hooks off, so it never meets this hook) and a `prepare-commit-msg` hook that adds the
+  `AOC-Session`, `AOC-Change` and `AOC-Ticket` trailers. Like every client-side hook, they are speed bumps. The
+  supervisor does not install them in managed workspaces yet (gap G-37): today the system prompt asks the agent to
+  add the trailers.
 - **Observed mode** (global hooks on developer machines, observer token). It never blocks: the ingest does not
   run guards for observed sessions, and the kernel policy would turn any denial into an allow with a "would deny"
   note anyway. When aocd is down, events are buffered in the local spool and replayed later (§2,
@@ -1119,9 +1120,10 @@ Open items found while writing this document. Owners and details are in the
 
 1. Agents can get code execution as a privileged user through git configuration and hooks in their own workspace,
    whenever aocd or the supervisor runs git or repository code there (threat model T-2). Today the ledger
-   fingerprints workspaces with aocd's own git, promotion deliberately runs the repository's `pre-push` hook with
-   the promotion credential, and `runIsolated` runs as aocd's OS user. Privileged git must never run in an
-   agent-writable repository.
+   fingerprints workspaces with aocd's own git and `runIsolated` runs as aocd's OS user. (Promotion no longer runs
+   the repository's `pre-push` hook with the promotion credential: since G-04 it pushes from a service-owned clone
+   with hooks off, and no environment variable unlocks a push to a protected ref.) Privileged git must never run
+   in an agent-writable repository.
 2. Agents and aocd must run as different OS users, and sessions must not inherit aocd's `HOME`. Otherwise every
    0600 file of aocd, and the service user's `~/.ssh`, git credentials and `~/.claude`, are reachable from every
    agent.

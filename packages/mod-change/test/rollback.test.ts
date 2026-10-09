@@ -148,9 +148,10 @@ describe('gated rollback (§8): verify on a branch, passkey decision only when c
   it('pushes the restore commit from the service clone: one credentialed push, leased on the verified base, never forced', async () => {
     await setup();
     const remote = addGuardedRemote(repo);
-    // The developers' speed bump in the project repository still refuses them; AOC never runs it.
+    // The developers' speed bump in the project repository still refuses them, with nothing to unlock it; AOC never
+    // runs it.
     expect(() => repo.git('push', 'origin', 'aoc/phase/p1:refs/heads/attempt')).toThrow(
-      /only the AOC supervisor/,
+      /only through an AOC promotion/,
     );
     const clone = setPromotionRemote(h, PROJECT, remote);
     const rb = await request({ targetRef: good.slice(0, 10) });

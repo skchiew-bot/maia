@@ -1,6 +1,7 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import {
   ALL_EVENTS,
+  AOC_ENV,
   EVENT_CATALOG,
   computeProgress,
   deriveLiveness,
@@ -200,6 +201,11 @@ describe('intake upload allowance', () => {
 });
 
 describe('ingest wire types', () => {
+  it('has no environment variable that lets a push to a protected ref through (AOC pushes from a service-owned clone)', () => {
+    expect(Object.keys(AOC_ENV)).not.toContain('supervisorPush');
+    expect(Object.values(AOC_ENV)).not.toContain('AOC_SUPERVISOR_PUSH');
+  });
+
   it('a process exit report can name the process it is about, so a stale sidecar is told apart from the current one', () => {
     const named: ProcessEventRequest = { sessionId: 'ses_A', event: 'exited', exitCode: 0, signal: null, at: '2026-10-09T10:00:00.000Z', pid: 4242 };
     const unnamed: ProcessEventRequest = { sessionId: 'ses_A', event: 'exited', exitCode: null, signal: 'SIGKILL', at: '2026-10-09T10:00:00.000Z' };
