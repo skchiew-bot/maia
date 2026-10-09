@@ -172,6 +172,12 @@ export function mountIdentityRoutes(app: App, ctx: ModuleContext, deps: Identity
     return c.json(service.me(auth));
   });
 
+  // Every governance record names its developer (§6): operators may resolve each other's names.
+  app.get('/api/directory', (c) => {
+    requirePermission(c, 'audit.view');
+    return c.json(service.directory());
+  });
+
   // ── users (admin) ──────────────────────────────────────────────────────────
   app.get('/api/users', (c) => {
     requirePermission(c, 'users.manage');

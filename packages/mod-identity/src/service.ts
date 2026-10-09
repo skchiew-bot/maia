@@ -5,6 +5,7 @@ import {
   type Actor,
   type AuthContext,
   type AuthMeDto,
+  type DirectoryDto,
   type IdentityService,
   type IdentityTokenDto,
   type IdentityTokenKind,
@@ -101,6 +102,22 @@ export class IdentityServiceImpl implements IdentityService {
 
   listUserDtos(): IdentityUserDto[] {
     return this.userRows().map(toUserDto);
+  }
+
+  /** Operator names for attribution on governance records; requesters stay behind the role boundary. */
+  directory(): DirectoryDto {
+    const people: DirectoryDto['people'] = [];
+    for (const r of this.userRows()) {
+      if (r.role === 'requester') continue;
+      people.push({
+        id: r.id,
+        name: r.name,
+        role: r.role,
+        active: r.active === 1,
+        complianceLead: r.compliance_lead === 1,
+      });
+    }
+    return { people };
   }
 
   private userRows(): UserRow[] {

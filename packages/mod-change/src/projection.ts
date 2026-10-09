@@ -15,6 +15,7 @@ import {
   type JsonValue,
   type MetaOf,
   type PayloadOf,
+  type PinSource,
   type PromotionDTO,
   type PromotionRefusalReason,
   type RollbackDTO,
@@ -922,6 +923,14 @@ export interface ProjectRow {
   default_branch: string | null;
   acceptance_command: string | null;
 }
+export interface PinRow {
+  seq: number;
+  sha: string | null;
+  tag: string | null;
+  source: PinSource;
+  source_id: string | null;
+  at: string;
+}
 
 /** Change statuses at or past approval: the record cleared its gate. */
 export const APPROVED_STATUSES: ReadonlySet<ChangeStatus> = new Set(['approved', 'in_progress', 'completed']);
@@ -993,6 +1002,13 @@ export class ChangeReadModel {
       'SELECT 1 FROM chg_pins WHERE project_id = ? AND sha IS NOT NULL AND length(sha) >= 7 AND substr(?, 1, length(sha)) = sha',
       projectId,
       sha,
+    );
+  }
+  pinRows(projectId: string): PinRow[] {
+    return all<PinRow>(
+      this.db(),
+      'SELECT seq, sha, tag, source, source_id, at FROM chg_pins WHERE project_id = ? ORDER BY seq',
+      projectId,
     );
   }
   pins(projectId: string, limit = 8): { sha: string | null; tag: string | null }[] {
