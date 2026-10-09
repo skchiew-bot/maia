@@ -31,7 +31,7 @@ The counts below are checked against the tables by `scripts/check-docs.mjs`.
 | Open software gaps, P1 | 1 | [P1](#p1) |
 | Open software gaps, P2 | 6 | [P2](#p2) |
 | Residual risks of closed gaps | 12 | [Residual risks](#residual-risks-of-closed-gaps) |
-| Process items not yet done | 23 | [Process items](#process-items-the-ceo-and-operators-must-own) |
+| Process items not yet done | 24 | [Process items](#process-items-the-ceo-and-operators-must-own) |
 | Process items done | 1 | same table |
 | Software gaps resolved since `a1c8a0c` | 22 | [Resolved since a1c8a0c](#resolved-since-a1c8a0c) |
 | Software gaps resolved before `a1c8a0c` | 9 | [Resolved before a1c8a0c](#resolved-before-a1c8a0c) |
@@ -112,6 +112,7 @@ standing practice) or **Done**.
 | P-22 | **Credential profiles, push rules and promotion remotes** (R-02, G-04): in the profiles file define `git-feature` and `uat-deploy` with `push.refs` for every profile a session type names (a profile without `push.refs` cannot push), and `prod-promote` (or the profiles the `promotion` section names) with its key file under `files`; set `promotion.projects.<id>.promotionRemote` for each project. Production refuses to start while a promotion profile is undefined. No process type may name a promotion profile | §3, R1 | Platform architect | Open |
 | P-23 | **Per-session worktrees for builds.** Sessions of a project share its checkout (a session's working directory defaults to the project repository), and the registry grants build types `git commit`, which nothing stops on the branch that is checked out, `main` included. Give each build session a worktree of its own, as the demo does (`packages/demo/src/workspaces.ts`), or keep `main` out of the shared checkout. A recommendation until the supervisor does it | §3, §8, R1 | Platform architect | Open (recommendation) |
 | P-24 | **Install and run the CI example for the AOC repository**: copy `.github/workflows/ci.yml.example` and `.github/CODEOWNERS.example` (real handles, at least two named humans), make the job a required check on a `main` ruleset with Code Owner review and no bypass actors ([self-modification boundary §2](self-modification-boundary.md#layer-3-human-review-on-github-which-aoc-cannot-bypass)), and pin the workflow's actions to commit SHAs (the example uses mutable tags because it was written without network access). Neither file has run anywhere | §13, R14 | CEO / Governance | Open |
+| P-25 | **Confirm the UAT rule for change-driven promotions.** §14 says a production line traces through "an approved change record, a UAT sign-off and a gate". A ticket-driven promotion needs a passing UAT sign-off; a promotion driven by a change record, or by neither, does not (`packages/mod-change/src/engine.ts:1915`). The CEO decides whether to require one there too | §14 | CEO | Open |
 
 ## Resolved since a1c8a0c
 
