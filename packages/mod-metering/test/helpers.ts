@@ -45,7 +45,10 @@ export function launch(
   t: TestRuntime,
   s: {
     sessionId: string;
+    /** The launching human (the event's actor); without `recordedOwnerId` this is also the session's owner. */
     ownerId?: string | null;
+    /** The owner the launch records in its meta (null: nobody); omitted, as in logs written before it existed. */
+    recordedOwnerId?: string | null;
     projectId?: string;
     processType?: string;
     model?: string;
@@ -70,6 +73,7 @@ export function launch(
       ticketId: s.ticketId ?? null,
       parentSessionId: s.parentSessionId ?? null,
       phaseId: s.phaseId ?? null,
+      ...(s.recordedOwnerId !== undefined ? { ownerId: s.recordedOwnerId } : {}),
     },
     payload: { prompt: 'build it', cwd: '/tmp/x' },
     source: 'api',

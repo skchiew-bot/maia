@@ -204,4 +204,39 @@ describe('spend', () => {
     // Person-level capacity planning is not narrowed by a project filter.
     expect((await h.snap('?projectId=prj_zzz')).spend.capForecast).toHaveLength(4);
   });
+
+  it('cap forecast: a session belongs to the owner its launch recorded, not to the human who launched it; a recorded null is nobody; a rebuild agrees', async () => {
+    const credits: CreditService = {
+      checkBoundary: () => ({ continue: true }),
+      balance: (userId) => ({
+        userId,
+        period: '2026-10',
+        allocationUsd: 100,
+        grantedUsd: 0,
+        usedUsd: 0,
+        balanceUsd: 100,
+        autoGrantUsed: false,
+        pendingTopupRequestId: null,
+        exempt: false,
+      }),
+    };
+    h = await setup({ now: '2026-10-08T16:00:00.000Z', services: { metering: meteringStub().stub, credits } });
+    const [alice, bob, carol] = ['Alice', 'Bob', 'Carol'].map((n) => h.t.user('builder', n));
+    const run = (sessionId: string, o: Parameters<typeof launch>[2]) => {
+      launch(h, sessionId, { at: at('2026-10-01T00:00:00.000Z'), ...o });
+      usage(h, sessionId, 80_000, { at: at('2026-10-03T05:00:00.000Z') }); // $80 → $10/day over 8 days
+    };
+    run('ses_1', { owner: alice!.user.id, ownerId: bob!.user.id }); // Alice started it on Bob's behalf
+    run('ses_2', { owner: alice!.user.id, ownerId: null }); // recorded as nobody's
+    run('ses_3', { owner: carol!.user.id }); // logged before ownerId existed: the launching human
+    const forecast = async () => (await h.snap()).spend.capForecast.map((f) => [f.userId, f.burnPerDayUsd]);
+    const expected = [
+      [bob!.user.id, 10],
+      [carol!.user.id, 10],
+    ].sort((x, y) => String(x[0]).localeCompare(String(y[0])));
+    expect((await forecast()).sort((x, y) => String(x[0]).localeCompare(String(y[0])))).toEqual(expected);
+
+    h.t.rt.store.rebuildProjections(['tower']);
+    expect((await forecast()).sort((x, y) => String(x[0]).localeCompare(String(y[0])))).toEqual(expected);
+  });
 });
