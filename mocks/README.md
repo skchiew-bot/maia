@@ -157,7 +157,13 @@ The four contrast fixes from the first review are in `tokens.css` (commit 8ea361
 `--series-2` #00939a. One known limit remains: light `--mark-drift` (#d97706) is only 2.84:1 on
 `--surface-2`, so drift marks are only placed on `--surface`.
 
-## Decisions for the CEO to confirm
+## Approval
+
+**Approved by the CEO (Chiew Sin Kwang) on 2026-10-09**, as shown, including the defaults proposed in the nine
+decisions below. Confirmed separately the same day: the stall threshold is 10 minutes, and the sole-Approver
+fallback is off (`decisions.soleApproverFallback: false`). The live pages are built to this mock.
+
+## Decisions for the CEO to confirm (accepted as proposed, 2026-10-09)
 
 1. **Cost-of-delay score.** Customer impact, blocked work, idle spend and audit exposure, rising with
    age. Severity bands are at 75/50/25. Are these the right weights and cut-offs?
