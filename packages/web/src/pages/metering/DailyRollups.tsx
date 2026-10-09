@@ -1,5 +1,6 @@
+import { useState } from 'react';
 import type { FxRateDTO, MeteringDayDTO } from '@aoc/contracts';
-import { Badge, DataTable, EmptyState, Icon, Widget, type DataTableColumn } from '../../components';
+import { Badge, Button, DataTable, EmptyState, Icon, Widget, type DataTableColumn } from '../../components';
 import { formatMyr, formatTokens, formatUsd } from '../../lib/format';
 import { dayLabel, formatIdle, fxSessionLabel, fxStampText } from './meteringModel';
 
@@ -11,8 +12,12 @@ export interface DailyRollupsProps {
   scope: 'org' | 'mine';
 }
 
+const FIRST_DAYS = 7;
+
 /** Daily USD and RM rollups, each stamped with its FX status and source date (§10). Closed days are frozen. */
 export function DailyRollups({ days, fxByDate, lastClosedDay, scope }: DailyRollupsProps) {
+  const [all, setAll] = useState(false);
+  const shown = all ? days : days.slice(0, FIRST_DAYS);
   const columns: DataTableColumn<MeteringDayDTO>[] = [
     {
       id: 'date',
@@ -106,11 +111,18 @@ export function DailyRollups({ days, fxByDate, lastClosedDay, scope }: DailyRoll
       }`}
       info="A closed day is frozen with the rate-card version and FX stamp it used; later rate changes never restate it."
       flush
+      footer={
+        days.length > FIRST_DAYS ? (
+          <Button size="sm" variant="ghost" aria-expanded={all} onClick={() => setAll((v) => !v)}>
+            {all ? `Show the latest ${FIRST_DAYS} days` : `Show all ${days.length} days`}
+          </Button>
+        ) : undefined
+      }
     >
       <DataTable
         caption="Daily rollups with FX stamps"
         columns={columns}
-        rows={days}
+        rows={shown}
         rowKey={(d) => d.date}
         defaultSort={{ columnId: 'date', direction: 'desc' }}
         maxHeight={360}

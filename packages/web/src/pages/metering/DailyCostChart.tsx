@@ -26,7 +26,7 @@ function niceTop(max: number): { top: number; step: number } {
   return { top: Math.ceil(max / step - 1e-9) * step, step };
 }
 
-const money = (v: number) => (v >= 100 ? formatUsd(v, { decimals: 0 }) : formatUsd(v));
+const money = (v: number) => formatUsd(v, { decimals: Number.isInteger(v) || v >= 100 ? 0 : 2 });
 
 /**
  * Metering hero: notional API-equivalent cost per day (columns) against the actual subscription per day (a

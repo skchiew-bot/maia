@@ -51,6 +51,8 @@ import './credits.css';
 const CREDIT_EVENTS = ['credit.', 'usage.recorded', 'ratecard.published', 'user.'];
 const TOPUP_EVENTS = ['credit.', 'decision.'];
 
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
 /** Browser-local `YYYY-MM-DD`, only until the daemon's own date has loaded. */
 function localDay(ms: number): string {
   const d = new Date(ms);
@@ -193,7 +195,7 @@ export default function CreditsPage() {
                     key="granted"
                     label="Granted"
                     value={formatUsd(team.grantedUsd)}
-                    footnote={`${trail.filter((g) => g.kind === 'auto').length} auto-grants · ${trail.filter((g) => g.kind === 'topup').length} top-ups`}
+                    footnote={`${plural(trail.filter((g) => g.kind === 'auto').length, 'auto-grant')} · ${plural(trail.filter((g) => g.kind === 'topup').length, 'top-up')}`}
                     href="#trail"
                   />,
                 ]

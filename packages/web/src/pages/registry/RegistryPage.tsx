@@ -180,7 +180,7 @@ export default function RegistryPage() {
         {entries.data && <EconomicsByType entries={entries.data} />}
         {runs.data ? (
           <RecentRuns
-            runs={runs.data.runs.slice(0, 40)}
+            runs={runs.data.runs}
             entries={entries.data ?? []}
             onDistill={(runId) => setDistill({ open: true, runId })}
           />

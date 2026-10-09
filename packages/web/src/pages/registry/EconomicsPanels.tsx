@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { RegistryEntry, RegistryRunDTO } from '@aoc/contracts';
 import {
@@ -154,7 +155,11 @@ export interface RecentRunsProps {
 }
 
 /** Recent runs, newest first: kind, outcome, cost, tokens and time — completed runs can seed a playbook. */
+const FIRST_RUNS = 10;
+
 export function RecentRuns({ runs, entries, onDistill }: RecentRunsProps) {
+  const [all, setAll] = useState(false);
+  const shown = all ? runs : runs.slice(0, FIRST_RUNS);
   const nameOf = (t: string) => entries.find((e) => e.processType === t)?.name ?? t;
   const pendingFor = (t: string) => entries.find((e) => e.processType === t)?.playbook.status === 'proposed';
   const columns: DataTableColumn<RegistryRunDTO>[] = [
@@ -242,13 +247,25 @@ export function RecentRuns({ runs, entries, onDistill }: RecentRunsProps) {
     },
   ];
   return (
-    <Widget span={12} id="runs" title="Recent runs" subtitle={`Newest first · ${runs.length} shown`} flush>
+    <Widget
+      span={12}
+      id="runs"
+      title="Recent runs"
+      subtitle={`Newest first · ${shown.length} of ${runs.length}`}
+      flush
+      footer={
+        runs.length > FIRST_RUNS ? (
+          <Button size="sm" variant="ghost" aria-expanded={all} onClick={() => setAll((v) => !v)}>
+            {all ? `Show the newest ${FIRST_RUNS}` : `Show all ${runs.length} runs`}
+          </Button>
+        ) : undefined
+      }
+    >
       <DataTable
         caption="Recent runs"
         columns={columns}
-        rows={runs}
+        rows={shown}
         rowKey={(r) => r.runId}
-        maxHeight={420}
         empty={<EmptyState size="sm" title="No runs yet" body="Runs launched with aoc run --type appear here." />}
       />
     </Widget>
