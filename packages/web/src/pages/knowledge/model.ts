@@ -197,8 +197,3 @@ export function isKnowledgeEvent(type: string, meta: Readonly<Record<string, unk
   if (!type.startsWith('decision.')) return false;
   return meta.kind === undefined || meta.kind === 'lesson_binding';
 }
-
-/** Decision page deep link (the inbox focuses and scrolls to the card). */
-export function decisionHref(decisionId: string): string {
-  return `/decisions?focus=${encodeURIComponent(decisionId)}`;
-}

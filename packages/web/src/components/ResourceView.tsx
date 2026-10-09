@@ -22,7 +22,7 @@ export interface ResourceViewProps<T> {
 /**
  * The standard loading / error / empty / data states for anything fetched with `useResource`:
  * - first load: one quiet line of text (no spinner, no skeleton);
- * - refetch: the previous render stays, dimmed, with `aria-busy`;
+ * - refetch: the previous render stays at full contrast, with a hairline along its top edge and `aria-busy`;
  * - failed refetch: the stale data stays, with a warning and Retry;
  * - failed first load: ErrorState with Retry.
  */

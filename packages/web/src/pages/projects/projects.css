@@ -305,6 +305,8 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  /* WCAG 2.5.8: a link in a list is a target of its own, 24px tall (or spaced 24px from the next). */
+  min-height: 24px;
   color: var(--text);
   font-size: var(--fs-xs);
   text-decoration: none;
@@ -1293,6 +1295,11 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 4px;
+}
+.prj-lineage__item > a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
 }
 .prj-lineage__arrow {
   color: var(--text-3);

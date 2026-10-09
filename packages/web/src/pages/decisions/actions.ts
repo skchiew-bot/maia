@@ -3,7 +3,7 @@ import type { DecisionCardView, PasskeyDto } from '@aoc/contracts';
 import { apiPost } from '../../api/client';
 import { useResource } from '../../api/useResource';
 import { useToast } from '../../components/Toast';
-import { methodLabel, outcomeLabel } from './model';
+import { assuranceLabel, outcomeLabel } from './model';
 import { describePasskeyError, registerPasskey, resolveWithPasskey, type PasskeyProblem } from './passkey';
 
 export interface PasskeyState {
@@ -78,7 +78,7 @@ export function useDecisionActions(
         toast.notify({
           tone: 'ok',
           title: `Decided: ${outcomeLabel(updated)}`,
-          body: `${updated.title}${updated.resolution ? ` · ${methodLabel(updated.resolution)}` : ''}`,
+          body: `${updated.title}${updated.resolution ? ` · ${assuranceLabel(updated.resolution)}` : ''}`,
         });
         onChanged?.(updated);
         return updated;

@@ -23,6 +23,7 @@ import {
   type LivenessState,
 } from '../../components';
 import { cx } from '../../lib/dom';
+import { decisionHref } from '../../lib/links';
 import { EventFeed } from './EventFeed';
 import { FleetTrack, nodeColor } from './FleetTrack';
 import {
@@ -300,7 +301,7 @@ function Lane({
           <ul className="sc-decisions__list">
             {lane.decisions.map((d) => (
               <li key={d.id}>
-                <Link to="/decisions" className="sc-decision">
+                <Link to={decisionHref(d.id)} className="sc-decision">
                   <DecisionGlyph />
                   <span>{d.label}</span>
                   <RelativeTime value={d.createdAt} now={now} className="sc-decision__age" />
@@ -453,9 +454,9 @@ function Legend() {
   return (
     <ul className="sc-legend" aria-label="Legend">
       <li>
-        <svg width={34} height={12} aria-hidden="true">
-          <rect className="sc-seg" x={1} y={2} width={32} height={8} rx={2} />
-          <rect className="sc-seg__done" x={1} y={2} width={18} height={8} rx={2} />
+        <svg width={24} height={12} aria-hidden="true">
+          <rect className="sc-seg" x={1} y={2} width={22} height={8} rx={2} />
+          <rect className="sc-seg__done" x={1} y={2} width={13} height={8} rx={2} />
         </svg>
         Phase, done weight dark
       </li>

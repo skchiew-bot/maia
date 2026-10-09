@@ -8,7 +8,13 @@ import { Select, TextArea } from '../../components/Field';
 import { Icon } from '../../components/Icon';
 import type { DecisionActions, PasskeyState } from './actions';
 import type { Directory } from './directory';
-import { explainBlock, recommendedOption } from './model';
+import {
+  ASSURANCE_MEANING,
+  assuranceName,
+  expectedAssurance,
+  explainBlock,
+  recommendedOption,
+} from './model';
 import { passkeysAvailable } from './passkey';
 
 const WITHDRAW_REASONS = [
@@ -57,6 +63,7 @@ export function ResolvePanel({
   const [note, setNote] = useState('');
   if (!user || card.status !== 'open') return null;
 
+  const assurance = expectedAssurance(card);
   const busy = actions.busy;
   // Intake gates (fix plan, triage decisions, go-live on a ticket) are answered or the ticket is closed:
   // withdrawing one would leave the ticket waiting on a gate that no longer exists.
@@ -224,9 +231,8 @@ export function ResolvePanel({
         </p>
       )}
       <p className="dec-resolve__attribution">
-        {card.requiresPasskey
-          ? 'Recorded as signed (passkey).'
-          : 'Recorded as attribution (bearer token): it shows which token was used, not a signature (§6).'}
+        Recorded as: {assuranceName(assurance)}
+        {assurance === 'signature' ? '' : ` — ${ASSURANCE_MEANING[assurance]}`}.
       </p>
       {secondary}
     </div>

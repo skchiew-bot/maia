@@ -464,16 +464,6 @@ export function recommendedOptionIdOf(item: TowerAttentionItem): string | null {
   return typeof id === 'string' && id.length > 0 ? id : null;
 }
 
-/** Decisions open on the Decisions page with the card selected (`?focus=`; it runs the passkey ceremony). */
-export function decisionHref(decisionId: string): string {
-  return `/decisions?focus=${encodeURIComponent(decisionId)}`;
-}
-
-/** Where a row's title leads: the decision card for decision rows, otherwise the subject the server names. */
-export function subjectHref(item: TowerAttentionItem): string {
-  return item.action.decisionId ? decisionHref(item.action.decisionId) : item.action.href;
-}
-
 /**
  * What an inline Approve applies: the option the server recommends when it names one, else the card's rule
  * (`approveOption`). Without the card only a server-named option can be applied (its label is then unknown).

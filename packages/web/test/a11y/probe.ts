@@ -50,6 +50,12 @@ export interface FocusInfo {
   isSkipLink: boolean;
   /** Focus came back to an element visited earlier in this walk. */
   revisit: boolean;
+  /**
+   * Another Tab stop inside the control focused just before (a date input's next field, then its picker button).
+   * The first stop shows the control's indicator; the picker's own ring is drawn by the browser, in a shadow tree
+   * the page can neither style as :focus nor blur, so those stops are not checked again.
+   */
+  nextField: boolean;
   /** The focus style recognised from computed styles, or null (the caller then compares pixels). */
   indicator: 'outline' | 'ring' | null;
   rect: { x: number; y: number; width: number; height: number };
@@ -404,6 +410,10 @@ export function markPrimaryAction(): PrimaryAction {
 
 let accentRgb: string | null = null;
 let stop = 0;
+let lastFocused: Element | null = null;
+
+/** A native date or time input is one element with several Tab stops: a field each, then the picker. */
+const SEGMENTED_INPUTS = ['date', 'time', 'datetime-local', 'month', 'week'];
 
 /** The focused element and whether its computed style shows a focus indicator (outline or the token ring). */
 export function focusInfo(): FocusInfo | null {
@@ -416,8 +426,12 @@ export function focusInfo(): FocusInfo | null {
     accentRgb = getComputedStyle(probe).color;
     probe.remove();
   }
-  const revisit = el.hasAttribute('data-a11y-stop');
-  if (!revisit) el.setAttribute('data-a11y-stop', String(++stop));
+  const seen = el.hasAttribute('data-a11y-stop');
+  const nextField =
+    el === lastFocused && el instanceof HTMLInputElement && SEGMENTED_INPUTS.includes(el.type);
+  lastFocused = el;
+  const revisit = seen && !nextField;
+  if (!seen) el.setAttribute('data-a11y-stop', String(++stop));
   const cs = getComputedStyle(el);
   const outline = parseRgb(cs.outlineColor);
   let indicator: FocusInfo['indicator'] = null;
@@ -432,6 +446,7 @@ export function focusInfo(): FocusInfo | null {
     isPrimary: el.hasAttribute('data-a11y-primary'),
     isSkipLink: el.classList.contains('aoc-skip-link'),
     revisit,
+    nextField,
     indicator,
     rect: { x: r.x, y: r.y, width: r.width, height: r.height },
   };
