@@ -250,6 +250,20 @@ export interface LaunchRequest {
    */
   idempotencyKey?: string | null;
 }
+/** What `SupervisorService.runIsolated` runs. */
+export interface IsolatedRunInput {
+  cwd: string;
+  command: string[];
+  credentialProfile: string | null;
+  timeoutMs: number;
+  env?: Record<string, string>;
+  /**
+   * Code AOC does not trust (a rollback target's acceptance tests): it never gets a credential profile, and with
+   * session isolation on it runs as the session user. `handOver` lists fresh directories (a verification checkout)
+   * that user is given first.
+   */
+  sandbox?: { handOver?: string[] };
+}
 export interface SupervisorService {
   launch(req: LaunchRequest, actor: Actor): Promise<{ sessionId: string }>;
   /** Resume a session that ended its turn, injecting text (decision answer, top-up, operator prompt). */
@@ -263,7 +277,7 @@ export interface SupervisorService {
   /** Operator asked for a stop at the next task boundary (task_done returns stop_requested). */
   stopRequested(sessionId: string): boolean;
   /** Run a command in a supervisor-controlled environment (rollback verification, promotion). Never exposed to agents. */
-  runIsolated(input: { cwd: string; command: string[]; credentialProfile: string | null; timeoutMs: number; env?: Record<string, string> }): Promise<{ exitCode: number; stdout: string; stderr: string }>;
+  runIsolated(input: IsolatedRunInput): Promise<{ exitCode: number; stdout: string; stderr: string }>;
 }
 
 // ── registry (mod-registry) ────────────────────────────────────────────────

@@ -18,6 +18,7 @@ import {
   type ChangeScope,
   type ChangeService,
   type DecisionOption,
+  type IsolatedRunInput,
   type JsonValue,
   type MetaOf,
   type PinDTO,
@@ -28,7 +29,6 @@ import {
   type RollbackDTO,
   type Scope,
   type StoredEvent,
-  type SupervisorService,
   type User,
 } from '@aoc/contracts';
 import {
@@ -138,9 +138,6 @@ function scopeOf(
     ...(ids.sessionId ? { sessionId: ids.sessionId } : {}),
   };
 }
-
-/** SupervisorService.runIsolated as the supervisor package implements it, with its `sandbox` option (G-04). */
-type IsolatedRun = Parameters<SupervisorService['runIsolated']>[0] & { sandbox?: { handOver?: string[] } };
 
 /** Where a promotion lands: the protected remote, the project's own branch (no remote anywhere), or nowhere yet. */
 type PromotionTarget =
@@ -405,8 +402,7 @@ export class ChangeEngine implements ChangeService {
     };
   }
 
-  /** The supervisor's runIsolated, with its sandbox option (requested for the SupervisorService contract, G-04). */
-  private isolated(input: IsolatedRun) {
+  private isolated(input: IsolatedRunInput) {
     return this.ctx.services.get('supervisor').runIsolated(input);
   }
 

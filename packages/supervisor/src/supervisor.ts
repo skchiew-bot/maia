@@ -33,6 +33,7 @@ import {
   type DecisionCard,
   type EventType,
   type HandoffBrief,
+  type IsolatedRunInput,
   type LaunchRequest,
   type LessonInfo,
   type MetaOf,
@@ -502,14 +503,7 @@ export class Supervisor implements SupervisorService {
    * caller's `env`, then the credential profile when one is named. A `sandbox` run is code AOC does not trust and
    * never gets a credential profile.
    */
-  async runIsolated(input: {
-    cwd: string;
-    command: string[];
-    credentialProfile: string | null;
-    timeoutMs: number;
-    env?: Record<string, string>;
-    sandbox?: { handOver?: string[] };
-  }): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  async runIsolated(input: IsolatedRunInput): Promise<{ exitCode: number; stdout: string; stderr: string }> {
     const sup = this.ctx.config.supervisor;
     if (input.sandbox && input.credentialProfile)
       throw new Error('runIsolated: a sandboxed run never gets a credential profile');
@@ -548,13 +542,7 @@ export class Supervisor implements SupervisorService {
    */
   private async runAsSessionUser(
     iso: SessionIsolation,
-    input: {
-      cwd: string;
-      command: string[];
-      timeoutMs: number;
-      env?: Record<string, string>;
-      sandbox?: { handOver?: string[] };
-    },
+    input: Omit<IsolatedRunInput, 'credentialProfile'>,
   ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
     const [bin, ...args] = input.command;
     if (!bin) throw new Error('runIsolated: command is required');

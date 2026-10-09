@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type {
   ChangeScope,
+  IsolatedRunInput,
   LearningService,
   LedgerService,
   SelfModificationService,
@@ -20,15 +21,6 @@ import {
 } from '@aoc/kernel';
 import { createChangeModule, type ChangeModule, type ChangeModuleOptions } from '../src';
 
-export interface IsolatedCall {
-  cwd: string;
-  command: string[];
-  credentialProfile: string | null;
-  timeoutMs: number;
-  env?: Record<string, string>;
-  sandbox?: { handOver?: string[] };
-}
-
 /** Git env isolated from the host's config so tests are deterministic. */
 const GIT_ENV = { GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0' };
 
@@ -37,12 +29,12 @@ const GIT_ENV = { GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_
  * the caller's env, then the credential profile's env — as the current user (no session user is configured).
  */
 export class FakeSupervisor implements SupervisorService {
-  readonly calls: IsolatedCall[] = [];
+  readonly calls: IsolatedRunInput[] = [];
   readonly profiles: Record<string, Record<string, string>> = {
     'prod-promote': { TEST_PROMOTION_TOKEN: 'prod-promote' },
   };
 
-  runIsolated(input: IsolatedCall): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  runIsolated(input: IsolatedRunInput): Promise<{ exitCode: number; stdout: string; stderr: string }> {
     this.calls.push(input);
     if (input.sandbox && input.credentialProfile)
       return Promise.reject(new Error('runIsolated: a sandboxed run never gets a credential profile'));
