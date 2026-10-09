@@ -13,17 +13,6 @@ export interface GrantTrailProps {
 export function GrantTrail({ rows, meId, nameOf }: GrantTrailProps) {
   const columns: DataTableColumn<GrantRow>[] = [
     {
-      id: 'at',
-      header: 'When',
-      sortValue: (g) => g.at,
-      firstSort: 'desc',
-      cell: (g) => (
-        <span title={formatDateTime(g.at)}>
-          <RelativeTime value={g.at} suffix=" ago" />
-        </span>
-      ),
-    },
-    {
       id: 'who',
       header: 'Recipient',
       primary: true,
@@ -31,6 +20,18 @@ export function GrantTrail({ rows, meId, nameOf }: GrantTrailProps) {
         <span>
           {g.userName ?? nameOf(g.userId) ?? g.userId}
           {g.userId === meId && <span className="crd-you">you</span>}
+        </span>
+      ),
+    },
+    {
+      id: 'at',
+      header: 'When',
+      sortValue: (g) => g.at,
+      firstSort: 'desc',
+      sortLabels: ['Oldest first', 'Newest first'],
+      cell: (g) => (
+        <span title={formatDateTime(g.at)}>
+          <RelativeTime value={g.at} suffix=" ago" />
         </span>
       ),
     },

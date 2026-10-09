@@ -9,7 +9,7 @@ import type {
 import { Badge, Button, CopyableHash, Icon, Widget } from '../../components';
 import { formatNumber, formatShortDate, formatUsd } from '../../lib/format';
 import { dayLabel } from './meteringModel';
-import { RateCardDialog, type RateCardDraft } from './RateCardDialog';
+import { PRICE_FIELDS, RateCardDialog, type RateCardDraft } from './RateCardDialog';
 
 export interface RateCardPanelProps {
   card: RateCardDTO;
@@ -30,49 +30,59 @@ function RatesTable({ version }: { version: RateCardVersionDTO }) {
       .filter(([, m]) => m?.toLowerCase() === model.toLowerCase())
       .map(([tier]) => tier);
   if (version.erased) return <p className="met-quiet">This version&rsquo;s rates were erased; only its hash remains.</p>;
+  const name = `Rate card v${version.version}, US dollars per million tokens`;
+  const model = (r: RateCardRate) => (
+    <>
+      <code>{r.model}</code>
+      {fallbackFor(r.model).length > 0 && <span className="met-sub">fallback for {fallbackFor(r.model).join(', ')}</span>}
+    </>
+  );
   return (
-    <div className="met-scroll">
-      <table className="met-rates">
-        <caption className="aoc-sr-only">Rate card v{version.version}, US dollars per million tokens</caption>
-        <thead>
-          <tr>
-            <th scope="col">Model</th>
-            <th scope="col" className="is-end">
-              Input
-            </th>
-            <th scope="col" className="is-end">
-              Output
-            </th>
-            <th scope="col" className="is-end">
-              Cache read
-            </th>
-            <th scope="col" className="is-end">
-              Cache write 5m
-            </th>
-            <th scope="col" className="is-end">
-              Cache write 1h
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {version.rates.map((r: RateCardRate) => (
-            <tr key={r.model}>
-              <th scope="row">
-                <code>{r.model}</code>
-                {fallbackFor(r.model).length > 0 && (
-                  <span className="met-sub">fallback for {fallbackFor(r.model).join(', ')}</span>
-                )}
-              </th>
-              <td className="is-end aoc-num">{price(r.inputPerMTok)}</td>
-              <td className="is-end aoc-num">{price(r.outputPerMTok)}</td>
-              <td className="is-end aoc-num">{price(r.cacheReadPerMTok)}</td>
-              <td className="is-end aoc-num">{price(r.cacheWrite5mPerMTok)}</td>
-              <td className="is-end aoc-num">{price(r.cacheWrite1hPerMTok)}</td>
+    <>
+      <div className="met-scroll met-rates-wide">
+        <table className="met-rates">
+          <caption className="aoc-sr-only">{name}</caption>
+          <thead>
+            <tr>
+              <th scope="col">Model</th>
+              {PRICE_FIELDS.map(([f, label]) => (
+                <th key={f} scope="col" className="is-end">
+                  {label}
+                </th>
+              ))}
             </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+          </thead>
+          <tbody>
+            {version.rates.map((r) => (
+              <tr key={r.model}>
+                <th scope="row">{model(r)}</th>
+                {PRICE_FIELDS.map(([f]) => (
+                  <td key={f} className="is-end aoc-num">
+                    {price(r[f])}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {/* Phones: the same prices as labelled groups, so the card never scrolls sideways. */}
+      <ul className="met-rates-list" aria-label={name}>
+        {version.rates.map((r) => (
+          <li key={r.model}>
+            <p className="met-rates-list__model">{model(r)}</p>
+            <dl>
+              {PRICE_FIELDS.map(([f, label]) => (
+                <div key={f}>
+                  <dt>{label}</dt>
+                  <dd className="aoc-num">{price(r[f])}</dd>
+                </div>
+              ))}
+            </dl>
+          </li>
+        ))}
+      </ul>
+    </>
   );
 }
 

@@ -37,6 +37,7 @@ export function BreakdownPanel({ dim, onDim, summary, labelOf }: BreakdownPanelP
     <Widget
       span={7}
       id="breakdown"
+      className="met-breakdown"
       title="Where the notional cost goes"
       subtitle="Same range and scope as the page"
       actions={<SegmentedControl label="Break down by" size="sm" value={dim} onChange={onDim} options={DIMENSIONS} />}

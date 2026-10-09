@@ -625,3 +625,93 @@
   margin: 4px 0;
   font-size: var(--fs-sm);
 }
+
+/* Rate card on phones: labelled price groups instead of a table that scrolls sideways (same data, one shown). */
+.met-rates-list {
+  display: none;
+}
+@media (max-width: 640px) {
+  .met-rates-wide {
+    display: none;
+  }
+  .met-rates-list {
+    display: flex;
+    flex-direction: column;
+    list-style: none;
+  }
+  .met-rates-list > li {
+    padding: var(--sp-2) 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .met-rates-list__model {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 2px 8px;
+    font-size: var(--fs-sm);
+  }
+  .met-rates-list dl {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 4px 12px;
+    margin-top: 4px;
+  }
+  .met-rates-list dt {
+    color: var(--text-2);
+    font-size: var(--fs-xs);
+  }
+  .met-rates-list dd {
+    font-size: var(--fs-sm);
+  }
+  /* The edit grid: model id and remove on one line, then the five prices, each with its label. */
+  .met-rates--edit thead {
+    display: none;
+  }
+  .met-rates--edit,
+  .met-rates--edit tbody {
+    display: block;
+  }
+  .met-rates--edit tr {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px 8px;
+    padding: var(--sp-2) 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .met-rates--edit td {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 0;
+    border-bottom: 0;
+    white-space: normal;
+  }
+  .met-rates--edit td:first-child {
+    grid-row: 1;
+    grid-column: 1 / span 2;
+  }
+  .met-rates--edit td:last-child {
+    grid-row: 1;
+    grid-column: 3;
+    align-items: flex-end;
+    justify-content: flex-end;
+  }
+  .met-rates--edit td[data-label]::before {
+    content: attr(data-label);
+    color: var(--text-2);
+    font-size: var(--fs-xs);
+  }
+  .met-input-model,
+  .met-input-price {
+    width: 100%;
+    min-width: 0;
+  }
+}
+
+/* The dimension switch drops under the title on narrow cards instead of squeezing it. */
+.met-breakdown > .aoc-widget__header {
+  flex-wrap: wrap;
+}
+.met-breakdown > .aoc-widget__header > .aoc-widget__titles {
+  flex: 1 1 220px;
+}

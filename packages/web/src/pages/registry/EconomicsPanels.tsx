@@ -190,6 +190,7 @@ export function RecentRuns({ runs, entries, onDistill }: RecentRunsProps) {
       header: 'Launched',
       sortValue: (r) => r.launchedAt,
       firstSort: 'desc',
+      sortLabels: ['Oldest first', 'Newest first'],
       cell: (r) => (
         <span className="reg-perrun">
           <span title={formatDateTime(r.launchedAt)}>
@@ -243,7 +244,9 @@ export function RecentRuns({ runs, entries, onDistill }: RecentRunsProps) {
               Distill<span className="aoc-sr-only"> a playbook from run {r.runId}</span>
             </Button>
           )
-        ) : null,
+        ) : (
+          <span className="reg-muted">{r.finished ? 'not completed' : 'after it completes'}</span>
+        ),
     },
   ];
   return (

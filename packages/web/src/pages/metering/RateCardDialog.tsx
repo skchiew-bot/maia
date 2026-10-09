@@ -18,14 +18,15 @@ export interface RateCardDialogProps {
   onPublish: (draft: RateCardDraft) => Promise<RateCardVersionDTO>;
 }
 
-const FIELDS = [
+/** The five priced token types, in rate-card order. */
+export const PRICE_FIELDS = [
   ['inputPerMTok', 'Input'],
   ['outputPerMTok', 'Output'],
   ['cacheReadPerMTok', 'Cache read'],
   ['cacheWrite5mPerMTok', 'Cache write 5m'],
   ['cacheWrite1hPerMTok', 'Cache write 1h'],
 ] as const;
-type PriceField = (typeof FIELDS)[number][0];
+type PriceField = (typeof PRICE_FIELDS)[number][0];
 
 export interface RateRow {
   key: number;
@@ -36,7 +37,7 @@ export interface RateRow {
 const toRow = (r: RateCardRate, key: number): RateRow => ({
   key,
   model: r.model,
-  prices: Object.fromEntries(FIELDS.map(([f]) => [f, String(r[f])])) as Record<PriceField, string>,
+  prices: Object.fromEntries(PRICE_FIELDS.map(([f]) => [f, String(r[f])])) as Record<PriceField, string>,
 });
 
 /** Validates the draft the way the daemon will (unique models, non-negative prices, forward-only date). */
@@ -48,7 +49,7 @@ export function validateDraft(rows: readonly RateRow[], effectiveFrom: string, e
     if (!id) return 'Every row needs a model id.';
     if (seen.has(id)) return `${r.model.trim()} appears twice.`;
     seen.add(id);
-    for (const [f, label] of FIELDS) {
+    for (const [f, label] of PRICE_FIELDS) {
       const v = Number(r.prices[f]);
       if (r.prices[f].trim() === '' || !Number.isFinite(v) || v < 0)
         return `${label} for ${r.model.trim()} must be a price of 0 or more.`;
@@ -95,7 +96,7 @@ export function RateCardDialog({ open, onClose, base, earliestEffectiveFrom, onP
         note: note.trim() || undefined,
         rates: rows.map((r) => ({
           model: r.model.trim(),
-          ...(Object.fromEntries(FIELDS.map(([f]) => [f, Number(r.prices[f])])) as Record<PriceField, number>),
+          ...(Object.fromEntries(PRICE_FIELDS.map(([f]) => [f, Number(r.prices[f])])) as Record<PriceField, number>),
         })),
       });
       onClose();
@@ -141,7 +142,7 @@ export function RateCardDialog({ open, onClose, base, earliestEffectiveFrom, onP
             <thead>
               <tr>
                 <th scope="col">Model id</th>
-                {FIELDS.map(([f, label]) => (
+                {PRICE_FIELDS.map(([f, label]) => (
                   <th key={f} scope="col" className="is-end">
                     {label}
                   </th>
@@ -154,7 +155,7 @@ export function RateCardDialog({ open, onClose, base, earliestEffectiveFrom, onP
             <tbody>
               {rows.map((r) => (
                 <tr key={r.key}>
-                  <td>
+                  <td data-label="Model id">
                     <input
                       className="aoc-input met-input-model"
                       aria-label="Model id"
@@ -162,8 +163,8 @@ export function RateCardDialog({ open, onClose, base, earliestEffectiveFrom, onP
                       onChange={(e) => update(r.key, { model: e.target.value })}
                     />
                   </td>
-                  {FIELDS.map(([f, label]) => (
-                    <td key={f}>
+                  {PRICE_FIELDS.map(([f, label]) => (
+                    <td key={f} data-label={label}>
                       <input
                         className="aoc-input met-input-price aoc-num"
                         inputMode="decimal"

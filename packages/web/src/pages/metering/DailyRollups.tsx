@@ -25,6 +25,7 @@ export function DailyRollups({ days, fxByDate, lastClosedDay, scope }: DailyRoll
       primary: true,
       sortValue: (d) => d.date,
       firstSort: 'desc',
+      sortLabels: ['Oldest first', 'Newest first'],
       cell: (d) => <span className="aoc-num">{dayLabel(d.date)}</span>,
     },
     {

@@ -124,6 +124,7 @@ export function PlaybooksPanel({ playbooks, entries, decisions, nameOf, actions,
       id: 'status',
       header: 'Status',
       sortValue: (p) => ['proposed', 'approved', 'retired', 'rejected'].indexOf(p.status),
+      sortLabels: ['Awaiting approval first', 'Rejected first'],
       cell: (p) => (
         <span className="reg-pbk__status">
           <StatusBadge p={p} />
