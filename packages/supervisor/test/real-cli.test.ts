@@ -10,8 +10,16 @@ import { isLegacyLimitResult, isLimitNotice } from '../src/throttle';
 import { readStreamLine, type StreamFacts } from '../src/stream';
 
 const FIXTURES = fileURLToPath(new URL('../../../docs/research/fixtures/claude-code/', import.meta.url));
-const rawLines = (file: string): string[] => readFileSync(FIXTURES + file, 'utf8').split('\n').filter(Boolean);
-const parsed = (file: string) => rawLines(file).map((line) => ({ line, json: JSON.parse(line) as Record<string, any>, facts: readStreamLine(line) }));
+const rawLines = (file: string): string[] =>
+  readFileSync(FIXTURES + file, 'utf8')
+    .split('\n')
+    .filter(Boolean);
+const parsed = (file: string) =>
+  rawLines(file).map((line) => ({
+    line,
+    json: JSON.parse(line) as Record<string, any>,
+    facts: readStreamLine(line),
+  }));
 const kindOf = (o: Record<string, any>) => `${o.type}${o.subtype ? `/${o.subtype}` : ''}`;
 const texts = (facts: StreamFacts[]) => facts.flatMap((f) => f.items.map((i) => i.text));
 
@@ -28,6 +36,7 @@ const STREAMS = [
   'aoc-boundary-ignored.stream-json.jsonl',
   'aoc-boundary-obeyed.stream-json.jsonl',
   'aoc-gateway.stream-json.jsonl',
+  'aoc-background-task.stream-json.jsonl',
 ];
 
 describe('stream-json as a real managed session printed it', () => {
@@ -35,7 +44,10 @@ describe('stream-json as a real managed session printed it', () => {
     const lines = parsed('aoc-happy.stream-json.jsonl');
     const all = lines.map((l) => l.facts);
 
-    expect(all.find((f) => f.init)!.init).toEqual({ model: 'claude-haiku-5-5', mcpServers: [{ name: 'aoc', status: 'connected' }] });
+    expect(all.find((f) => f.init)!.init).toEqual({
+      model: 'claude-haiku-5-5',
+      mcpServers: [{ name: 'aoc', status: 'connected' }],
+    });
     expect(texts(all)[0]).toBe('Session started · model claude-haiku-5-5 · MCP aoc:connected');
     // Operator view: the tool calls in order; bookkeeping (status, thinking_tokens, hook_*) says nothing.
     expect(all.flatMap((f) => f.items.filter((i) => i.kind === 'tool_use').map((i) => i.toolName))).toEqual([
@@ -44,7 +56,11 @@ describe('stream-json as a real managed session printed it', () => {
       'Bash',
       'mcp__aoc__task_done',
     ]);
-    for (const l of lines.filter((x) => ['system/status', 'system/thinking_tokens', 'system/hook_started', 'system/hook_response'].includes(kindOf(x.json)))) {
+    for (const l of lines.filter((x) =>
+      ['system/status', 'system/thinking_tokens', 'system/hook_started', 'system/hook_response'].includes(
+        kindOf(x.json),
+      ),
+    )) {
       expect(l.facts.items).toEqual([]);
     }
     expect(all.some((f) => f.conversation)).toBe(true);
@@ -55,28 +71,52 @@ describe('stream-json as a real managed session printed it', () => {
     // result.modelUsage is what G-44 holds the sidecar's transcript figures against.
     const usage = result.json.modelUsage['claude-haiku-5-5'];
     expect(result.facts.result!.modelUsage).toEqual({
-      'claude-haiku-5-5': { input: usage.inputTokens, output: usage.outputTokens, cacheRead: usage.cacheReadInputTokens, cacheWrite: usage.cacheCreationInputTokens },
+      'claude-haiku-5-5': {
+        input: usage.inputTokens,
+        output: usage.outputTokens,
+        cacheRead: usage.cacheReadInputTokens,
+        cacheWrite: usage.cacheCreationInputTokens,
+      },
     });
     // Context size follows the latest assistant message.
     const last = lines.filter((l) => l.json.type === 'assistant').at(-1)!;
     const u = last.json.message.usage;
-    expect(last.facts.contextTokens).toBe(u.input_tokens + u.cache_read_input_tokens + u.cache_creation_input_tokens);
+    expect(last.facts.contextTokens).toBe(
+      u.input_tokens + u.cache_read_input_tokens + u.cache_creation_input_tokens,
+    );
   });
 
   it('allowed_warning is an ordinary rate_limit_event of a healthy account: a fact, never a throttle signal', () => {
     const events = STREAMS.flatMap((f) => parsed(f)).filter((l) => l.json.type === 'rate_limit_event');
     expect(events.length).toBeGreaterThanOrEqual(STREAMS.length);
     for (const e of events) {
-      expect(e.facts.rateLimit).toEqual({ status: e.json.rate_limit_info.status, resetsAtMs: e.json.rate_limit_info.resetsAt * 1000, window: e.json.rate_limit_info.rateLimitType });
+      expect(e.facts.rateLimit).toEqual({
+        status: e.json.rate_limit_info.status,
+        resetsAtMs: e.json.rate_limit_info.resetsAt * 1000,
+        window: e.json.rate_limit_info.rateLimitType,
+      });
       expect(e.facts.rateLimit!.status).not.toBe('rejected');
     }
     expect(events.some((e) => e.json.rate_limit_info.status === 'allowed_warning')).toBe(true);
+    // Operators read the number, not the event name.
+    const warning = events.find((e) => e.json.rate_limit_info.status === 'allowed_warning')!;
+    expect(warning.facts.items).toEqual([
+      {
+        kind: 'system',
+        text: `Plan usage seven_day ${Math.round(warning.json.rate_limit_info.utilization * 100)}% used`,
+      },
+    ]);
   });
 
   it('SIGINT is a clean end of turn: an error_during_execution result that the operator reads as an interruption', () => {
     const lines = parsed('aoc-nudge.turn-1.stream-json.jsonl');
     const result = lines.at(-1)!;
-    expect(result.json).toMatchObject({ subtype: 'error_during_execution', is_error: true, terminal_reason: 'aborted_tools', stop_reason: 'tool_use' });
+    expect(result.json).toMatchObject({
+      subtype: 'error_during_execution',
+      is_error: true,
+      terminal_reason: 'aborted_tools',
+      stop_reason: 'tool_use',
+    });
     expect(result.facts.result).toMatchObject({ isError: true, subtype: 'error_during_execution' });
     // Not the CLI's internal "[ede_diagnostic] ..." line.
     expect(result.facts.items).toEqual([{ kind: 'result', text: 'Turn interrupted (aborted_tools)' }]);
@@ -89,15 +129,43 @@ describe('stream-json as a real managed session printed it', () => {
   });
 
   it('background-task and VCS bookkeeping lines (seen around long Bash calls and commits) are not operator output', () => {
-    const quiet = ['system/vcs_state_changed', 'system/task_started', 'system/task_notification', 'system/background_tasks_changed'];
+    const quiet = [
+      'system/vcs_state_changed',
+      'system/task_started',
+      'system/task_notification',
+      'system/background_tasks_changed',
+    ];
     const seen = new Set<string>();
-    for (const l of ['aoc-nudge.turn-2.stream-json.jsonl', 'aoc-nudge.turn-3.stream-json.jsonl'].flatMap((f) => parsed(f))) {
+    for (const l of ['aoc-nudge.turn-2.stream-json.jsonl', 'aoc-nudge.turn-3.stream-json.jsonl'].flatMap(
+      (f) => parsed(f),
+    )) {
       const kind = kindOf(l.json);
       if (!quiet.includes(kind)) continue;
       seen.add(kind);
       expect(l.facts.items, kind).toEqual([]);
     }
-    expect([...seen].sort()).toEqual(['system/task_notification', 'system/task_started', 'system/vcs_state_changed']);
+    expect([...seen].sort()).toEqual([
+      'system/task_notification',
+      'system/task_started',
+      'system/vcs_state_changed',
+    ]);
+  });
+
+  it('a background task that finishes after the first result wakes the model: one process, two inits and two results', () => {
+    // The model could not `sleep 90` (Claude Code refuses a standalone sleep), ran it as a background task, answered, and
+    // the process stayed up until the task completed and started the model again. The turn ends with the process; the
+    // later result is the turn's, and both carry the conversation's cumulative figures.
+    const lines = parsed('aoc-background-task.stream-json.jsonl');
+    const inits = lines.filter((l) => l.facts.init);
+    const results = lines.filter((l) => l.facts.result);
+    expect(inits).toHaveLength(2);
+    expect(results.map((l) => l.facts.result!.subtype)).toEqual(['success', 'success']);
+    expect(lines.indexOf(inits[1]!)).toBeGreaterThan(lines.indexOf(results[0]!));
+    const output = (l: (typeof lines)[number]) => l.facts.result!.modelUsage!['claude-haiku-5-5']!.output;
+    expect(output(results[1]!)).toBeGreaterThan(output(results[0]!));
+    expect(texts(lines.map((l) => l.facts)).some((t) => t.includes('Blocked: standalone sleep 90'))).toBe(
+      true,
+    );
   });
 
   it('print mode cannot prompt: a refused Bash call is a permission_denied line plus a tool_result the model reads', () => {
@@ -108,7 +176,9 @@ describe('stream-json as a real managed session printed it', () => {
       ['Bash', 'other'],
     ]);
     expect(denied.map((l) => l.facts.items[0]!.text)).toEqual([
-      expect.stringMatching(/^permission_denied: This Bash command contains multiple operations\. The following part requires approval: git add/),
+      expect.stringMatching(
+        /^permission_denied: This Bash command contains multiple operations\. The following part requires approval: git add/,
+      ),
       'permission_denied: This command requires approval',
     ]);
     // The model is told the same thing as a tool error, and the turn still ends with an ordinary success result.
@@ -119,7 +189,9 @@ describe('stream-json as a real managed session printed it', () => {
   it('a PreToolUse JSON deny reaches the model as "PreToolUse:<Tool> hook error: <reason>" and the turn ends normally', () => {
     const lines = parsed('aoc-guard-push.stream-json.jsonl');
     const shown = texts(lines.map((l) => l.facts)).find((t) => t.startsWith('PreToolUse:Bash hook error:'))!;
-    expect(shown).toMatch(/^PreToolUse:Bash hook error: AOC blocked a protected operation \(test 1: Touches main \/ protected branch\): git push/);
+    expect(shown).toMatch(
+      /^PreToolUse:Bash hook error: AOC blocked a protected operation \(test 1: Touches main \/ protected branch\): git push/,
+    );
     expect(shown).toContain('End your turn');
     expect(lines.at(-1)!.facts.result).toMatchObject({ isError: false, subtype: 'success' });
   });
@@ -146,7 +218,8 @@ describe('stream-json as a real managed session printed it', () => {
         }
       }
       // Model-authored text and tool output mention commits, tests and permissions, never a limit notice.
-      for (const text of texts(lines.map((l) => l.facts))) expect(isLimitNotice(text), `${file}: ${text.slice(0, 80)}`).toBe(false);
+      for (const text of texts(lines.map((l) => l.facts)))
+        expect(isLimitNotice(text), `${file}: ${text.slice(0, 80)}`).toBe(false);
     }
   });
 });

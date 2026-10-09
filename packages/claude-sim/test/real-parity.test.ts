@@ -8,7 +8,18 @@
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { fakeAocConfig, hookSettings, makeSandbox, parseLines, readJsonLines, readTranscript, SESSION_A, runSim, spawnSim, type Sandbox } from './helpers';
+import {
+  fakeAocConfig,
+  hookSettings,
+  makeSandbox,
+  parseLines,
+  readJsonLines,
+  readTranscript,
+  SESSION_A,
+  runSim,
+  spawnSim,
+  type Sandbox,
+} from './helpers';
 
 const FIXTURES = fileURLToPath(new URL('../../../docs/research/fixtures/claude-code/', import.meta.url));
 const jsonl = (file: string): Record<string, any>[] => parseLines(fs.readFileSync(FIXTURES + file, 'utf8'));
@@ -24,17 +35,27 @@ const kindOf = (o: Record<string, any>) => `${o.type}${o.subtype ? `/${o.subtype
 /** Dotted key paths of an object down to `depth` levels (arrays and values are leaves). */
 function paths(o: unknown, prefix = '', depth = 1): string[] {
   if (!o || typeof o !== 'object' || Array.isArray(o) || depth < 0) return [];
-  return Object.entries(o).flatMap(([k, v]) => [`${prefix}${k}`, ...(depth > 0 ? paths(v, `${prefix}${k}.`, depth - 1) : [])]);
+  return Object.entries(o).flatMap(([k, v]) => [
+    `${prefix}${k}`,
+    ...(depth > 0 ? paths(v, `${prefix}${k}.`, depth - 1) : []),
+  ]);
 }
 
 /** First line of each kind. */
-function firstOfEach(lines: Record<string, any>[], kind: (o: Record<string, any>) => string): Map<string, Record<string, any>> {
+function firstOfEach(
+  lines: Record<string, any>[],
+  kind: (o: Record<string, any>) => string,
+): Map<string, Record<string, any>> {
   const out = new Map<string, Record<string, any>>();
   for (const l of lines) if (!out.has(kind(l))) out.set(kind(l), l);
   return out;
 }
 
-function gaps(real: Map<string, Record<string, any>>, sim: Map<string, Record<string, any>>, depth: number): Record<string, string[]> {
+function gaps(
+  real: Map<string, Record<string, any>>,
+  sim: Map<string, Record<string, any>>,
+  depth: number,
+): Record<string, string[]> {
   const out: Record<string, string[]> = {};
   for (const [kind, line] of real) {
     const other = sim.get(kind);
@@ -50,22 +71,54 @@ const SCENARIO = {
   name: 'parity',
   steps: [
     { kind: 'think', ms: 100, outputTokens: 50 },
-    { kind: 'mcp', server: 'aoc', tool: 'declare_plan', args: { phases: [{ id: 'p1', name: 'Hello', tasks: [{ id: 't1', title: 'Create hello.txt and commit it', size: 'xs' }] }] } },
+    {
+      kind: 'mcp',
+      server: 'aoc',
+      tool: 'declare_plan',
+      args: {
+        phases: [
+          {
+            id: 'p1',
+            name: 'Hello',
+            tasks: [{ id: 't1', title: 'Create hello.txt and commit it', size: 'xs' }],
+          },
+        ],
+      },
+    },
     { kind: 'tool', name: 'Write', input: { file_path: 'hello.txt', content: 'hi\n' } },
-    { kind: 'bash', command: 'git add hello.txt && git commit -q -m hello && git rev-parse HEAD', stdout: '29f85730199261e202d2b32ff56cafb81fa31596\n' },
-    { kind: 'mcp', server: 'aoc', tool: 'task_done', args: { task_id: 't1', evidence: { kind: 'commit', ref: '29f85730199261e202d2b32ff56cafb81fa31596' } } },
+    {
+      kind: 'bash',
+      command: 'git add hello.txt && git commit -q -m hello && git rev-parse HEAD',
+      stdout: '29f85730199261e202d2b32ff56cafb81fa31596\n',
+    },
+    {
+      kind: 'mcp',
+      server: 'aoc',
+      tool: 'task_done',
+      args: { task_id: 't1', evidence: { kind: 'commit', ref: '29f85730199261e202d2b32ff56cafb81fa31596' } },
+    },
     { kind: 'text', text: 'Committed.' },
     { kind: 'endTurn', final: true },
   ],
 };
 
-const ALL_HOOKS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PostToolBatch', 'Stop', 'SessionEnd'];
+const ALL_HOOKS = [
+  'SessionStart',
+  'UserPromptSubmit',
+  'PreToolUse',
+  'PostToolUse',
+  'PostToolBatch',
+  'Stop',
+  'SessionEnd',
+];
 
 async function simulate() {
   const scenario = box.file('parity.json');
   fs.writeFileSync(scenario, JSON.stringify(SCENARIO));
   const hookLog = box.file('hooks.jsonl');
-  const settings = hookSettings(Object.fromEntries(ALL_HOOKS.map((e) => [e, [{ command: 'cat >> "$HOOK_LOG"; echo >> "$HOOK_LOG"' }]])));
+  const settings = hookSettings(
+    Object.fromEntries(ALL_HOOKS.map((e) => [e, [{ command: 'cat >> "$HOOK_LOG"; echo >> "$HOOK_LOG"' }]])),
+  );
   const run = await runSim(
     box,
     [
@@ -91,7 +144,11 @@ async function simulate() {
     { env: { HOOK_LOG: hookLog } },
   );
   expect(run.code).toBe(0);
-  return { stream: parseLines(run.stdout), transcript: readTranscript(box, SESSION_A), hooks: readJsonLines(hookLog) };
+  return {
+    stream: parseLines(run.stdout),
+    transcript: readTranscript(box, SESSION_A),
+    hooks: readJsonLines(hookLog),
+  };
 }
 
 describe('claude-sim mirrors the real CLI’s output shapes', () => {
@@ -223,7 +280,8 @@ describe('claude-sim mirrors the real CLI’s output shapes', () => {
   it('transcript: every top-level field per line kind', async () => {
     const { transcript } = await simulate();
     const real = jsonl('aoc-happy.transcript.jsonl');
-    const kind = (o: Record<string, any>) => `${o.type}${o.attachment ? `/${o.attachment.type}` : ''}${o.subtype ? `/${o.subtype}` : ''}`;
+    const kind = (o: Record<string, any>) =>
+      `${o.type}${o.attachment ? `/${o.attachment.type}` : ''}${o.subtype ? `/${o.subtype}` : ''}`;
     expect(gaps(firstOfEach(real, kind), firstOfEach(transcript, kind), 0)).toMatchInlineSnapshot(`
       {
         "assistant": [
@@ -249,7 +307,8 @@ describe('claude-sim mirrors the real CLI’s output shapes', () => {
   it('hooks: every top-level field of each event’s stdin', async () => {
     const { hooks } = await simulate();
     const real = jsonl('aoc-happy.hooks.jsonl').map((h) => h.input);
-    const kind = (o: Record<string, any>) => `${o.hook_event_name}${o.tool_name ? (String(o.tool_name).startsWith('mcp__') ? '/mcp' : `/${o.tool_name}`) : ''}`;
+    const kind = (o: Record<string, any>) =>
+      `${o.hook_event_name}${o.tool_name ? (String(o.tool_name).startsWith('mcp__') ? '/mcp' : `/${o.tool_name}`) : ''}`;
     expect(gaps(firstOfEach(real, kind), firstOfEach(hooks, kind), 0)).toMatchInlineSnapshot(`{}`);
   });
 
@@ -257,27 +316,77 @@ describe('claude-sim mirrors the real CLI’s output shapes', () => {
     const scenario = box.file('denied.json');
     fs.writeFileSync(
       scenario,
-      JSON.stringify({ name: 'denied', steps: [{ kind: 'bash', command: 'git add hello.txt && git commit -q -m hello', stdout: '' }, { kind: 'endTurn', final: true }] }),
+      JSON.stringify({
+        name: 'denied',
+        steps: [
+          { kind: 'bash', command: 'git add hello.txt && git commit -q -m hello', stdout: '' },
+          { kind: 'endTurn', final: true },
+        ],
+      }),
     );
-    const run = await runSim(box, ['-p', `go [[scenario:${scenario}]]`, '--session-id', SESSION_A, '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits']);
+    const run = await runSim(box, [
+      '-p',
+      `go [[scenario:${scenario}]]`,
+      '--session-id',
+      SESSION_A,
+      '--output-format',
+      'stream-json',
+      '--verbose',
+      '--permission-mode',
+      'acceptEdits',
+    ]);
     const stream = parseLines(run.stdout);
     const real = jsonl('aoc-permission-denied.stream-json.jsonl');
-    const denied = (lines: Record<string, any>[]) => lines.find((l) => kindOf(l) === 'system/permission_denied')!;
+    const denied = (lines: Record<string, any>[]) =>
+      lines.find((l) => kindOf(l) === 'system/permission_denied')!;
     expect(denied(stream)).toMatchObject({ tool_name: 'Bash', decision_reason_type: 'subcommandResults' });
     expect(Object.keys(denied(stream)).sort()).toEqual(Object.keys(denied(real)).sort());
     // The model is shown the same words as a tool error.
-    const shown = (lines: Record<string, any>[]) => lines.filter((l) => l.type === 'user').map((l) => l.message.content[0]).find((b) => b.is_error);
-    expect(shown(stream)).toMatchObject({ type: 'tool_result', is_error: true, content: denied(stream).message });
+    const shown = (lines: Record<string, any>[]) =>
+      lines
+        .filter((l) => l.type === 'user')
+        .map((l) => l.message.content[0])
+        .find((b) => b.is_error);
+    expect(shown(stream)).toMatchObject({
+      type: 'tool_result',
+      is_error: true,
+      content: denied(stream).message,
+    });
     expect(Object.keys(shown(stream)).sort()).toEqual(Object.keys(shown(real)).sort());
   });
 
   it('SIGINT while a tool runs: the user lines and the error_during_execution result', async () => {
     const scenario = box.file('slow.json');
-    fs.writeFileSync(scenario, JSON.stringify({ name: 'slow', steps: [{ kind: 'bash', command: 'sleep 20', stdout: '', exec: true }, { kind: 'endTurn', final: true }] }));
-    const hanging = spawnSim(box, ['-p', 'go', '--session-id', SESSION_A, '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits', '--allowedTools', 'Bash'], {
-      CLAUDE_SIM_EXEC: '1',
-      CLAUDE_SIM_SCENARIO: scenario,
-    });
+    fs.writeFileSync(
+      scenario,
+      JSON.stringify({
+        name: 'slow',
+        steps: [
+          { kind: 'bash', command: 'sleep 20', stdout: '', exec: true },
+          { kind: 'endTurn', final: true },
+        ],
+      }),
+    );
+    const hanging = spawnSim(
+      box,
+      [
+        '-p',
+        'go',
+        '--session-id',
+        SESSION_A,
+        '--output-format',
+        'stream-json',
+        '--verbose',
+        '--permission-mode',
+        'acceptEdits',
+        '--allowedTools',
+        'Bash',
+      ],
+      {
+        CLAUDE_SIM_EXEC: '1',
+        CLAUDE_SIM_SCENARIO: scenario,
+      },
+    );
     const deadline = Date.now() + 10_000;
     while (!hanging.stdout().includes('"name":"Bash"')) {
       if (Date.now() > deadline) throw new Error('the Bash call did not start');
@@ -319,7 +428,10 @@ describe('claude-sim mirrors the real CLI’s output shapes', () => {
     `);
     // The rejected call and the interruption marker, as the real CLI wrote them.
     const tail = (lines: Record<string, any>[]) => lines.filter((l) => l.type === 'user').slice(-2);
-    const content = (lines: Record<string, any>[]) => tail(lines).map((l) => l.message.content.map(({ tool_use_id: _id, ...block }: Record<string, unknown>) => block));
+    const content = (lines: Record<string, any>[]) =>
+      tail(lines).map((l) =>
+        l.message.content.map(({ tool_use_id: _id, ...block }: Record<string, unknown>) => block),
+      );
     expect(content(stream)).toEqual(content(real));
     expect(tail(stream).map((l) => l.tool_use_result)).toEqual(tail(real).map((l) => l.tool_use_result));
     expect(last(stream).terminal_reason).toBe(last(real).terminal_reason);

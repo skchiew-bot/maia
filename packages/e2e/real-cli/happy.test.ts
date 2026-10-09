@@ -43,17 +43,23 @@ describe.skipIf(!REAL_CLI_ENABLED)('real CLI: managed happy path', () => {
     try {
       await until(r, sessionId, ended, 'the session to end');
       const rep = await reportOf(r, sessionId);
-      expect(rep).toMatchObject({ lifecycle: 'ended', planFirst: true, tasksDeclared: 1, tasksDone: 1, tasksVerified: 1, outcomes: ['end_turn'] });
+      // However the model splits the work into tasks (one, or create + commit), every one is closed with verified evidence.
+      expect(rep).toMatchObject({ lifecycle: 'ended', planFirst: true, outcomes: ['end_turn'] });
+      expect(rep.tasksDeclared).toBeGreaterThanOrEqual(1);
+      expect(rep.tasksDone).toBe(rep.tasksDeclared);
+      expect(rep.tasksVerified).toBe(rep.tasksDone);
 
       // MCP server connected (the supervisor aborts a session whose `aoc` server is not), model is the registry's Haiku.
       const output = await r.h.api<{ items: { text: string }[] }>('GET', `/api/sessions/${sessionId}/output`, { as: r.dev });
       expect(output.items.map((i) => i.text)).toContain('Session started · model claude-haiku-5-5 · MCP aoc:connected');
 
       // The work really happened and the evidence is a commit that exists in the repo.
-      const done = eventsOf(r, sessionId, ['task.done'])[0]!;
-      expect(done.meta).toMatchObject({ evidenceKind: 'commit', evidenceVerified: true, flag: null });
-      expect(git(repo, 'rev-parse', done.meta.headSha as string)).toBe(done.meta.headSha);
-      expect(eventsOf(r, sessionId, ['phase.completed'])).toHaveLength(1);
+      const commit = eventsOf(r, sessionId, ['task.done']).find((e) => e.meta.evidenceKind === 'commit')!;
+      expect(commit, 'a task closed with a commit').toBeTruthy();
+      expect(commit.meta).toMatchObject({ evidenceVerified: true });
+      expect(git(repo, 'rev-parse', commit.meta.headSha as string)).toBe(commit.meta.headSha);
+      expect(git(repo, 'rev-parse', 'HEAD')).toBe(commit.meta.headSha);
+      expect(eventsOf(r, sessionId, ['phase.completed']).length).toBe(eventsOf(r, sessionId, ['plan.declared'])[0]!.meta.phaseCount);
 
       // Hooks: SessionStart arrives; every Pre/PostToolUse pair is relayed as a tool.used event with the CLI's tool_use_id.
       const hooks = hooksCaptured(r);

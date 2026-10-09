@@ -219,8 +219,17 @@ function rateLimit(o: Obj, f: StreamFacts): void {
     resetsAtMs: resets === null ? null : resets > 1e12 ? resets : resets * 1000,
     window,
   };
-  if (status !== 'allowed')
-    f.items.push({ kind: 'system', text: `Rate limit ${status}${window ? ` (${window})` : ''}` });
+  if (status === 'allowed') return;
+  // `allowed_warning` accompanies every turn of an account that is merely part-way into a window (33 % of seven_day on
+  // 2.1.295): it reads as the number it is, not as an event name that sounds like trouble.
+  const used = num(info.utilization);
+  f.items.push({
+    kind: 'system',
+    text:
+      status === 'allowed_warning'
+        ? `Plan usage ${window ?? 'window'}${used === null ? '' : ` ${Math.round(used * 100)}% used`}`
+        : `Rate limit ${status}${window ? ` (${window})` : ''}`,
+  });
 }
 
 function toolInputSummary(input: Obj | null): string {

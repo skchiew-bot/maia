@@ -34,7 +34,12 @@ function reported(streamFile: string): Record<string, Tokens> {
   return Object.fromEntries(
     Object.entries(result.modelUsage as Record<string, Record<string, number>>).map(([model, u]) => [
       model,
-      { input: u.inputTokens!, output: u.outputTokens!, cacheRead: u.cacheReadInputTokens!, cacheWrite: u.cacheCreationInputTokens! },
+      {
+        input: u.inputTokens!,
+        output: u.outputTokens!,
+        cacheRead: u.cacheReadInputTokens!,
+        cacheWrite: u.cacheCreationInputTokens!,
+      },
     ]),
   );
 }
@@ -51,16 +56,27 @@ describe('the sidecar on real transcripts', () => {
         let body = '';
         req.on('data', (c) => (body += c));
         req.on('end', () => {
-          if (req.url === '/ingest/usage') batches.push(...(JSON.parse(body) as { batches: Batch[] }).batches);
+          if (req.url === '/ingest/usage')
+            batches.push(...(JSON.parse(body) as { batches: Batch[] }).batches);
           res.writeHead(200, { 'content-type': 'application/json' });
           res.end('{"ok":true}');
         });
-      }).listen(0, '127.0.0.1', () => resolve(`http://127.0.0.1:${(server!.address() as { port: number }).port}`));
+      }).listen(0, '127.0.0.1', () =>
+        resolve(`http://127.0.0.1:${(server!.address() as { port: number }).port}`),
+      );
     });
     const dir = mkdtempSync(join(tmpdir(), 'aoc-sc-real-'));
     const copy = join(dir, 'session.jsonl');
     copyFileSync(FIXTURES + transcript, copy);
-    const sidecar = new Sidecar({ sessionId: 'ses_X', pid: 999999, transcriptPath: copy, daemonUrl: url, token: 'tok', stateDir: join(dir, 'state'), isAlive: () => false });
+    const sidecar = new Sidecar({
+      sessionId: 'ses_X',
+      pid: 999999,
+      transcriptPath: copy,
+      daemonUrl: url,
+      token: 'tok',
+      stateDir: join(dir, 'state'),
+      isAlive: () => false,
+    });
     await sidecar.exit();
     const sum: Record<string, Tokens> = {};
     for (const b of batches) {
@@ -77,7 +93,9 @@ describe('the sidecar on real transcripts', () => {
     const shipped = await shippedUsage('aoc-happy.transcript.jsonl');
     expect(shipped).toEqual(reported('aoc-happy.stream-json.jsonl'));
     // The transcript really does repeat message ids, or this would prove nothing about the dedupe.
-    const ids = jsonl('aoc-happy.transcript.jsonl').filter((l) => l.type === 'assistant').map((l) => l.message.id as string);
+    const ids = jsonl('aoc-happy.transcript.jsonl')
+      .filter((l) => l.type === 'assistant')
+      .map((l) => l.message.id as string);
     expect(new Set(ids).size).toBeLessThan(ids.length);
   });
 
@@ -94,7 +112,11 @@ describe('the sidecar on real transcripts', () => {
   });
 
   it('nothing in a healthy session’s transcript is read as a plan usage limit', () => {
-    for (const file of ['aoc-happy.transcript.jsonl', 'aoc-decision.transcript.jsonl', 'aoc-nudge.transcript.jsonl']) {
+    for (const file of [
+      'aoc-happy.transcript.jsonl',
+      'aoc-decision.transcript.jsonl',
+      'aoc-nudge.transcript.jsonl',
+    ]) {
       for (const line of jsonl(file)) {
         expect(detectThrottle(line as never), `${file}: ${line.type}`).toBeNull();
         const text = textOf(line as never);

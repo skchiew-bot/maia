@@ -24,16 +24,27 @@ function mcpResults(file: string): [string, string][] {
   const calls = new Map<string, string>();
   for (const l of lines)
     if (l.type === 'assistant')
-      for (const b of l.message.content) if (b.type === 'tool_use' && String(b.name).startsWith('mcp__aoc__')) calls.set(b.id, String(b.name).slice('mcp__aoc__'.length));
+      for (const b of l.message.content)
+        if (b.type === 'tool_use' && String(b.name).startsWith('mcp__aoc__'))
+          calls.set(b.id, String(b.name).slice('mcp__aoc__'.length));
   return lines
     .filter((l) => l.type === 'user' && Array.isArray(l.message.content))
-    .flatMap((l) => l.message.content.filter((b: Record<string, any>) => b.type === 'tool_result' && calls.has(b.tool_use_id)).map((b: Record<string, any>) => [calls.get(b.tool_use_id)!, b.content as string] as [string, string]));
+    .flatMap((l) =>
+      l.message.content
+        .filter((b: Record<string, any>) => b.type === 'tool_result' && calls.has(b.tool_use_id))
+        .map(
+          (b: Record<string, any>) => [calls.get(b.tool_use_id)!, b.content as string] as [string, string],
+        ),
+    );
 }
 
 /** What the model is shown for a call whose daemon reply is `reply`: the structured data, as Claude Code stringifies it. */
 async function shownFor(tool: string, args: Record<string, unknown>, reply: unknown): Promise<string> {
   const daemon: FakeDaemon = await startFakeDaemon(() => ({ status: 200, body: reply }));
-  const server = createAocMcpServer({ client: createClient({ daemonUrl: daemon.url, token: 'ingest-token' }), sessionId: 'ses_X' });
+  const server = createAocMcpServer({
+    client: createClient({ daemonUrl: daemon.url, token: 'ingest-token' }),
+    sessionId: 'ses_X',
+  });
   const client = new Client({ name: 'claude-code', version: '2.1.295' });
   const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
   try {
@@ -55,7 +66,9 @@ describe('what the model was shown', () => {
     expect(notice).toMatch(/^STOP — AOC task boundary \(stop_requested\)/);
     // The wording was verified on a real model: a plainer one was ignored (aoc-boundary-ignored). Changing it means
     // running `pnpm --filter @aoc/e2e real-cli:full` (boundary) again, then re-capturing this fixture.
-    expect(await shownFor('task_done', { task_id: 't1', evidence: { kind: 'test', ref: 'test.js' } }, daemonReply)).toBe(shown);
+    expect(
+      await shownFor('task_done', { task_id: 't1', evidence: { kind: 'test', ref: 'test.js' } }, daemonReply),
+    ).toBe(shown);
   });
 
   it('every other plan and task result a real model read is the daemon reply, unchanged, as one JSON object', async () => {

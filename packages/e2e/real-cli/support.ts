@@ -316,7 +316,9 @@ export interface RunReport {
   planGateDenials: number;
   tasksDeclared: number;
   tasksDone: number;
+  /** Closed with evidence the ledger verified (the flag, e.g. no_file_change for a commit task, is separate). */
   tasksVerified: number;
+  flags: (string | null)[];
   turns: number;
   outcomes: string[];
   decisions: number;
@@ -338,7 +340,8 @@ export async function reportOf(r: RealCli, sessionId: string): Promise<RunReport
     planGateDenials: denials.filter((e) => e.meta.guard === 'no-manifest').length,
     tasksDeclared: plan ? (plan.meta.taskCount as number) : 0,
     tasksDone: done.length,
-    tasksVerified: done.filter((e) => e.meta.evidenceVerified === true && e.meta.flag === null).length,
+    tasksVerified: done.filter((e) => e.meta.evidenceVerified === true).length,
+    flags: done.map((e) => (e.meta.flag as string | null) ?? null),
     turns: of('session.turn_started').length,
     outcomes: of('session.turn_ended').map((e) => String(e.meta.outcome)),
     decisions: of('decision.requested').length,
