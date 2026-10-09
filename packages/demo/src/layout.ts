@@ -17,6 +17,12 @@ export interface DemoLayout {
   repos: string;
   /** CLAUDE_CONFIG_DIR for claude-sim: transcripts and scenario state stay out of the operator's ~/.claude. */
   claudeConfig: string;
+  /** claude-sim's stand-in for ~/.claude/settings.json: grants build sessions the git commands a UAT branch needs. */
+  simSettings: string;
+  /** The scenario for prompts without a marker: intake triage and builds of the seeded tickets, rollover successors. */
+  simDefaultScenario: string;
+  /** supervisor.credentialProfilesFile: every profile the demo references, each with an empty env (0600). */
+  credentialProfiles: string;
   workspaces: string;
   logs: string;
   /** `live` launcher state: which session occupies which fleet slot (survives restarts). */
@@ -32,6 +38,9 @@ export function demoLayout(dir: string): DemoLayout {
     aocData: join(root, 'aoc'),
     repos: join(root, 'repos'),
     claudeConfig: join(root, 'claude'),
+    simSettings: join(root, 'claude', 'settings.json'),
+    simDefaultScenario: join(root, 'claude', 'demo-default-scenario.json'),
+    credentialProfiles: join(root, 'credential-profiles.json'),
     workspaces: join(root, 'workspaces'),
     logs: join(root, 'logs'),
     fleet: join(root, 'live-fleet.json'),

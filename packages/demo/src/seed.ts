@@ -26,7 +26,7 @@ import {
   type TaskSize,
 } from '@aoc/contracts';
 import { simStatePathFor, type SimState } from '@aoc/claude-sim';
-import { AocRuntime, FakeClock, createLogger, initRepo, localDate, type AocModule, type AppEnv } from '@aoc/kernel';
+import { AocRuntime, FakeClock, createGitService, createLogger, initRepo, localDate, type AocModule, type AppEnv } from '@aoc/kernel';
 import { createAuditModule } from '@aoc/mod-audit';
 import { createChangeModule } from '@aoc/mod-change';
 import { createCreditsModule } from '@aoc/mod-credits';
@@ -41,6 +41,8 @@ import { createMeteringModule } from '@aoc/mod-metering';
 import { createRegistryModule } from '@aoc/mod-registry';
 import { createSessionsModule } from '@aoc/mod-sessions';
 import { createTowerModule } from '@aoc/mod-tower';
+import { SECRET_ENV, simEnv } from './daemon-env';
+import { defaultScenario } from './default-scenario';
 import { demoLayout, resetDemoDir, type DemoTokens, type LiveKind } from './layout';
 import { PROJECT_FILES } from './repos';
 import { simPrompt } from './scenarios';
@@ -74,12 +76,11 @@ mkdirSync(layout.aocData, { recursive: true });
 
 const now = Date.now();
 const clock = new FakeClock(now - days * 86_400_000);
-// Credentials never reach sim sessions; the scenario variables do (the live launcher sets them).
-const SECRET_ENV = new Set(['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN']);
 /**
  * The daemon config for this demo (written to <dir>/aoc.config.json). Managed sessions run on claude-sim, never the
  * real `claude` CLI, and LLM-backed jobs use the fake extractor: a demo must not spend plan quota or touch real
- * repositories. Run aocd with CLAUDE_CONFIG_DIR=<dir>/claude so sim transcripts stay inside the demo.
+ * repositories. aocd runs with ./daemon-env.ts's simEnv (claude-sim settings, allowlisted here); credentials never
+ * reach sim sessions.
  */
 const demoConfig = {
   dataDir: layout.aocData,
@@ -96,10 +97,13 @@ const demoConfig = {
     // Seven demo slots plus rollover successors and resumed seeded sessions run side by side.
     maxConcurrentSessions: 12,
     envAllowlist: [
-      ...defaultConfig().supervisor.envAllowlist.filter((k) => !SECRET_ENV.has(k)),
-      'CLAUDE_SIM_SCENARIO',
-      'CLAUDE_SIM_SPEED',
+      ...new Set([
+        ...defaultConfig().supervisor.envAllowlist.filter((k) => !SECRET_ENV.has(k)),
+        ...Object.keys(simEnv(layout)),
+        'CLAUDE_SIM_SPEED',
+      ]),
     ],
+    credentialProfilesFile: layout.credentialProfiles,
   },
   selfModification: { externalAuditLog: join(layout.aocData, 'selfmod-audit.log') },
   credits: { defaultMonthlyAllocationUsd: 300 },
@@ -239,31 +243,35 @@ const planFor = (kind: string): Plan => {
 };
 
 const threads = new Set<string>();
-/** Launch request as the supervisor records it: the registry decides model and credential profile (§2.2, §3). */
-function requestLaunch(owner: string, project: Project, type: string, prompt: string, threadId: string) {
+/**
+ * Launch request as the supervisor records it: the registry decides model and credential profile (§2.2, §3).
+ * `owner` null = launched by intake for a ticket (triage), as mod-intake does.
+ */
+function requestLaunch(owner: string | null, project: Project, type: string, prompt: string, threadId: string, ticketId: string | null = null) {
   const t = registry.getType(type);
   if (!t) throw new Error(`process type ${type} is not in the registry`);
   const model = MODEL_ID_BY_TIER[registry.modelFor(type)];
   const sessionId = newId('session', clock.now());
+  const actor = owner ? human(owner) : sys('intake');
   if (!threads.has(threadId)) {
     threads.add(threadId);
-    store.append({ type: 'thread.created', actor: human(owner), scope: { projectId: project.id, threadId }, meta: { threadId, projectId: project.id }, payload: { title: prompt.split('\n')[0]!.slice(0, 80) }, source: 'api' });
+    store.append({ type: 'thread.created', actor, scope: { projectId: project.id, threadId }, meta: { threadId, projectId: project.id }, payload: { title: prompt.split('\n')[0]!.slice(0, 80) }, source: 'api' });
   }
   store.append({
     type: 'session.launch_requested',
-    actor: human(owner),
-    scope: { sessionId, projectId: project.id, threadId },
-    meta: { sessionId, projectId: project.id, threadId, processType: type, model, readOnly: t.readOnly, credentialProfile: t.readOnly ? null : t.credentialProfile, ticketId: null, parentSessionId: null, phaseId: null },
+    actor,
+    scope: { sessionId, projectId: project.id, threadId, ...(ticketId ? { ticketId } : {}) },
+    meta: { sessionId, projectId: project.id, threadId, processType: type, model, readOnly: t.readOnly, credentialProfile: t.readOnly ? null : t.credentialProfile, ticketId, parentSessionId: null, phaseId: null },
     payload: { prompt, cwd: repoOf(project) },
     source: 'supervisor',
   });
   return { sessionId, model };
 }
 
-interface SimSession { sessionId: string; claude: string; owner: string; project: Project; type: string; model: string; plan: Plan; thread: string }
+interface SimSession { sessionId: string; claude: string; owner: string | null; project: Project; type: string; model: string; plan: Plan; thread: string }
 let turnSeq = 0;
-function launch(owner: string, project: Project, type: string, prompt: string, threadId = `thr_${project.slug}_main`): SimSession {
-  const { sessionId, model } = requestLaunch(owner, project, type, prompt, threadId);
+function launch(owner: string | null, project: Project, type: string, prompt: string, threadId = `thr_${project.slug}_main`, ticketId: string | null = null): SimSession {
+  const { sessionId, model } = requestLaunch(owner, project, type, prompt, threadId, ticketId);
   const claude = randomUUID();
   store.append({ type: 'session.launched', actor: sys('supervisor'), scope: { sessionId }, meta: { sessionId, claudeSessionId: claude, pid: 40000 + ++turnSeq, model, turn: 1 }, payload: { cwd: repoOf(project), argv: [process.execPath, CLAUDE_SIM_BIN, '-p', '@prompt'], transcriptPath: transcriptPathFor(repoOf(project), claude, layout.claudeConfig) }, source: 'supervisor' });
   store.append({ type: 'session.turn_started', actor: sys('supervisor'), scope: { sessionId }, meta: { sessionId, turn: 1, reason: 'launch' }, payload: {}, source: 'supervisor' });
@@ -281,24 +289,30 @@ function queue(owner: string, project: Project, type: string, prompt: string, th
   return sessionId;
 }
 
-function declare(s: SimSession) {
+/** Repo state the ledger diffs `diff` evidence against; recorded for sessions that will work again. */
+interface TreeState { head: string | null; fingerprint: string | null }
+const git = createGitService();
+const treeOf = (p: Project): TreeState => ({ head: git.head(repoOf(p)), fingerprint: git.workingTreeFingerprint(repoOf(p)) });
+
+function declare(s: SimSession, tree?: TreeState) {
   const weight = s.plan.phases.flatMap((p) => p.tasks).reduce((n, t) => n + TASK_SIZE_WEIGHT[t.size], 0);
   store.append({
     type: 'plan.declared',
     actor: agent(s.sessionId),
     scope: { sessionId: s.sessionId, projectId: s.project.id },
-    meta: { sessionId: s.sessionId, projectId: s.project.id, threadId: s.thread, manifestVersion: 1, phaseCount: s.plan.phases.length, taskCount: s.plan.phases.flatMap((p) => p.tasks).length, totalWeight: weight },
+    meta: { sessionId: s.sessionId, projectId: s.project.id, threadId: s.thread, manifestVersion: 1, phaseCount: s.plan.phases.length, taskCount: s.plan.phases.flatMap((p) => p.tasks).length, totalWeight: weight, ...(tree ? { baseHead: tree.head, treeFingerprint: tree.fingerprint } : {}) },
     payload: { summary: `Plan for ${s.project.name}`, phases: s.plan.phases },
     source: 'mcp',
   });
 }
 
 const TOOLS = ['Read', 'Read', 'Grep', 'Edit', 'Bash', 'Read', 'Write', 'Bash', 'Glob'];
-function tools(s: SimSession, n: number, spanMs: number) {
+const READ_ONLY_TOOLS = ['Read', 'Read', 'Grep', 'Glob'];
+function tools(s: SimSession, n: number, spanMs: number, palette: readonly string[] = TOOLS) {
   const start = clock.now();
   for (let i = 0; i < n; i++) {
     at(start + Math.round((spanMs * i) / Math.max(1, n)));
-    const tool = pick(TOOLS);
+    const tool = pick(palette);
     const ok = rnd() > 0.06;
     const file = `src/${pick(['service', 'handler', 'ui', 'schema', 'telemetry'])}.ts`;
     store.append({
@@ -338,14 +352,14 @@ function usage(s: SimSession, messages: number, contextTokens: number) {
   });
 }
 
-function done(s: SimSession, taskId: string, phaseId: string, size: TaskSize, opts: { flag?: 'no_file_change' | null; kind?: 'commit' | 'test' | 'diff' } = {}) {
+function done(s: SimSession, taskId: string, phaseId: string, size: TaskSize, opts: { flag?: 'no_file_change' | null; kind?: 'commit' | 'test' | 'diff'; tree?: TreeState } = {}) {
   const kind = opts.kind ?? pick(['commit', 'test', 'diff'] as const);
   const sha = createHash('sha1').update(`${s.sessionId}${taskId}`).digest('hex');
   store.append({
     type: 'task.done',
     actor: agent(s.sessionId),
     scope: { sessionId: s.sessionId, projectId: s.project.id, taskId },
-    meta: { sessionId: s.sessionId, projectId: s.project.id, taskId, phaseId, weight: TASK_SIZE_WEIGHT[size], evidenceKind: kind, evidenceVerified: opts.flag ? false : true, flag: opts.flag ?? null, fileChangesSinceLast: opts.flag ? 0 : between(1, 9) },
+    meta: { sessionId: s.sessionId, projectId: s.project.id, taskId, phaseId, weight: TASK_SIZE_WEIGHT[size], evidenceKind: kind, evidenceVerified: opts.flag ? false : true, flag: opts.flag ?? null, fileChangesSinceLast: opts.flag ? 0 : between(1, 9), ...(opts.tree ? { headSha: opts.tree.head, treeFingerprint: opts.tree.fingerprint } : {}) },
     payload: { evidence: { kind, ref: kind === 'commit' ? sha : kind === 'test' ? `api/${taskId}.test.ts > passes` : `diff:${sha.slice(0, 12)}` } },
     source: 'mcp',
   });
@@ -499,6 +513,38 @@ for (const t of ticketSpecs) {
   tickets.push({ ticketId: r.data.ticketId, key: t.key, projectId: t.project.id });
 }
 
+// The receipts ticket went through intake triage when it came in (§7): two read-only agents agreed on the root cause,
+// so intake's own reconciliation put the fix plan to the Approver. That decision is still open. Approving it starts
+// the build on claude-sim, which commits the fix to uat/<ticket> for the requester's UAT, then the go-live gate.
+{
+  const ticketId = tickets.find((t) => t.key === 'receipts')!.ticketId;
+  at(now - 2.2 * DAY + 4 * 60_000);
+  const prompt = `You are diagnosing customer ticket ${ticketId} in READ-ONLY mode. Do not modify any file, branch or environment.`;
+  const triage = [0.86, 0.81].map((confidence, i) => ({ confidence, s: launch(null, projects.claims, 'bug-triage', prompt, `thr_claims-bot_triage_${i + 1}`, ticketId) }));
+  const scope = { ticketId, projectId: projects.claims.id };
+  store.append({ type: 'ticket.triage_started', actor: sys('intake'), scope, meta: { ticketId, sessionIds: triage.map((x) => x.s.sessionId), budgetTokens: config.intake.diagnosisBudget.tokens, budgetMinutes: config.intake.diagnosisBudget.minutes }, source: 'intake' });
+  store.append({ type: 'ticket.public_status_changed', actor: sys('intake'), scope, meta: { ticketId, publicStatus: 'being_worked_on' }, source: 'intake' });
+  for (const { s, confidence } of triage) {
+    tools(s, between(8, 14), between(4, 9) * 60_000, READ_ONLY_TOOLS);
+    usage(s, between(6, 12), between(60_000, 140_000));
+    store.append({
+      type: 'ticket.diagnosis_reported',
+      actor: agent(s.sessionId),
+      scope: { ticketId, sessionId: s.sessionId },
+      meta: { ticketId, sessionId: s.sessionId, confidence, rootCauseClass: 'exif-orientation-dropped' },
+      payload: {
+        rootCause: 'normalizeImage() re-encodes uploads and strips all metadata without applying the EXIF orientation tag first, so portrait photos taken on phones are stored rotated 90 degrees.',
+        fixPlan: "Apply the EXIF orientation (sharp().rotate()) before stripping metadata in src/uploads/normalize.ts, add a regression test with a rotated receipt, then verify on UAT with the reporter's receipt.",
+        affectedAreas: ['src/uploads/normalize.ts', 'test/uploads/normalize.test.ts'],
+      },
+      source: 'mcp',
+      bodyScope: ticketId,
+    });
+    end(s);
+  }
+  await rt.drain();
+}
+
 // ── "now": one session per liveness state ─────────────────────────────────────
 // Waiting on you / Throttled / Dead: seeded states with history. Their next turn runs on claude-sim: the scenario
 // marker in each prompt (or the resumable conversation written below for the waiting one) continues the plan.
@@ -510,13 +556,15 @@ const seeded = {
 };
 const seededContext: Record<keyof typeof seeded, number> = { waiting: 0, throttled: 0, dead: 0 };
 for (const [k, s] of Object.entries(seeded) as [keyof typeof seeded, SimSession][]) {
+  // These sessions work again on claude-sim: their next diff evidence is checked against this baseline.
+  const tree = treeOf(s.project);
   tools(s, 5, 120_000);
-  declare(s);
+  declare(s, tree);
   tools(s, between(10, 25), between(10, 25) * 60_000);
   seededContext[k] = between(60_000, 420_000);
   usage(s, between(10, 30), seededContext[k]);
   const t = s.plan.phases[0]!.tasks[0]!;
-  done(s, t.id, s.plan.phases[0]!.id, t.size, { kind: 'diff' });
+  done(s, t.id, s.plan.phases[0]!.id, t.size, { kind: 'diff', tree });
 }
 // Waiting on you: main-branch merge decision (test 1 → Approver)
 at(now - 34 * 60_000);
@@ -615,9 +663,19 @@ const out: DemoTokens = {
 };
 writeFileSync(layout.tokens, JSON.stringify(out, null, 2), { mode: 0o600 });
 writeFileSync(layout.config, JSON.stringify(demoConfig, null, 2));
+// claude-sim's side: the default scenario (intake triage and build of the receipts ticket, rollover successors) and
+// the operator settings that let build sessions run the git commands of a UAT branch (nothing else).
+mkdirSync(layout.claudeConfig, { recursive: true });
+writeFileSync(layout.simDefaultScenario, JSON.stringify(defaultScenario(tickets.find((t) => t.key === 'receipts')!.ticketId), null, 2));
+writeFileSync(layout.simSettings, JSON.stringify({ permissions: { allow: ['Bash(git checkout:*)', 'Bash(git add:*)', 'Bash(git commit:*)', 'Bash(git rev-parse:*)'] } }, null, 2));
+// Every credential profile the demo can request (the registry's, plus mod-change's promotion profile), each with an
+// empty env: never a real credential (the promotion credential stays empty until G-04, credential-isolation runbook).
+const profiles = new Set([...registry.listTypes().flatMap((t) => (t.credentialProfile ? [t.credentialProfile] : [])), 'prod-promote']);
+writeFileSync(layout.credentialProfiles, JSON.stringify({ profiles: Object.fromEntries([...profiles].map((p) => [p, { env: {} }])) }, null, 2), { mode: 0o600 });
 await rt.stop();
+const env = Object.entries({ AOC_CONFIG: layout.config, ...simEnv(layout) }).map(([k, v]) => `${k}=${v}`);
 console.log(`Seeded ${out.head.seq} events into ${layout.root}`);
 console.log(`Tokens: ${layout.tokens} (the "ceo" token signs you in as the Approver)`);
 console.log(`Live:  pnpm --filter @aoc/demo live -- --data-dir ${layout.root}`);
-console.log(`  or:  AOC_CONFIG=${layout.config} CLAUDE_CONFIG_DIR=${layout.claudeConfig} node --import tsx packages/daemon/src/main.ts`);
+console.log(`  or:  ${env.join(' ')} node --import tsx packages/daemon/src/main.ts`);
 console.log('       (managed sessions run on claude-sim, never the real claude CLI)');

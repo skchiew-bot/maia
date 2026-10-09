@@ -13,16 +13,14 @@ import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { AocConfigSchema } from '@aoc/contracts';
+import { daemonEnv } from './daemon-env';
 import { DEFAULT_TIMING, FLEET, launchBody, loadFleet, nextAction, saveFleet, type FleetState, type KeeperTiming, type SessionStatus, type SlotSpec } from './fleet';
 import { demoLayout, isSeeded, readDemoTokens, resetDemoDir, type DemoLayout, type DemoTokens } from './layout';
-import { DEFAULT_LIVE_SCENARIO } from './scenarios';
 import { claudeSimProblem } from './sim-guard';
 
 const REPO = fileURLToPath(new URL('../../..', import.meta.url));
 const HERE = dirname(fileURLToPath(import.meta.url));
 const TICK_MS = 10_000;
-/** Never handed to aocd: sim sessions need no credentials, and AOC_* would override the demo config. */
-const SECRET_ENV = new Set(['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN']);
 const RUNNING_STATES = 'launching,running';
 
 interface LiveOptions {
@@ -98,23 +96,12 @@ function ensureUi(): void {
 // ── the daemon ────────────────────────────────────────────────────────────────
 
 function startDaemon(layout: DemoLayout, port: number): ChildProcess {
-  const env: NodeJS.ProcessEnv = {};
-  for (const [k, v] of Object.entries(process.env)) if (!k.startsWith('AOC_') && !SECRET_ENV.has(k)) env[k] = v;
-  Object.assign(env, {
-    AOC_CONFIG: layout.config,
-    AOC_PORT: String(port),
-    AOC_LOG_LEVEL: process.env.AOC_LOG_LEVEL ?? 'info',
-    // claude-sim keeps transcripts and scenario state inside the demo, never in the operator's ~/.claude.
-    CLAUDE_CONFIG_DIR: layout.claudeConfig,
-    // Prompts without a scenario marker (rollover successors) run this scenario.
-    CLAUDE_SIM_SCENARIO: DEFAULT_LIVE_SCENARIO,
-  });
   mkdirSync(layout.logs, { recursive: true });
   const log = openSync(join(layout.logs, 'aocd.log'), 'a');
   // Own process group: a terminal Ctrl-C reaches only the launcher, which stops sessions before the daemon.
   const child = spawn(process.execPath, ['--import', tsxImport(), join(REPO, 'packages/daemon/src/main.ts')], {
     cwd: REPO,
-    env,
+    env: daemonEnv(layout, port),
     stdio: ['ignore', log, log],
     detached: true,
   });
@@ -185,6 +172,8 @@ class Api {
 class Keeper {
   private readonly seen = new Map<string, { sessionId: string; lifecycle: string; at: number; liveness: string | null }>();
   private readonly lastError = new Map<string, number>();
+  /** Sessions that ended before this launcher started (a previous run) are replaced at once, without the pause. */
+  private firstTick = true;
 
   constructor(
     private readonly api: Api,
@@ -206,6 +195,7 @@ class Keeper {
         this.complain(slot, `keeper error: ${(err as Error).message}`);
       }
     }
+    this.firstTick = false;
     saveFleet(this.file, this.state);
   }
 
@@ -216,7 +206,8 @@ class Keeper {
     const now = Date.now();
     let mark = this.seen.get(slot.key);
     if (s && (mark?.sessionId !== s.sessionId || mark.lifecycle !== s.lifecycle)) {
-      mark = { sessionId: s.sessionId, lifecycle: s.lifecycle, at: now, liveness: mark?.sessionId === s.sessionId ? mark.liveness : null };
+      const ranEarlier = this.firstTick && (s.lifecycle === 'ended' || s.lifecycle === 'retired');
+      mark = { sessionId: s.sessionId, lifecycle: s.lifecycle, at: ranEarlier ? 0 : now, liveness: mark?.sessionId === s.sessionId ? mark.liveness : null };
       this.seen.set(slot.key, mark);
     }
     if (s && mark && mark.liveness !== (s.liveness?.state ?? s.lifecycle)) {
@@ -242,7 +233,7 @@ class Keeper {
   }
 
   private async launch(slot: SlotSpec): Promise<void> {
-    const r = await this.api.call<{ sessionId: string; error?: { message?: string } }>('POST', '/api/sessions', this.tokens.tokens[slot.owner].token, launchBody(slot, this.tokens));
+    const r = await this.api.call<{ sessionId: string }>('POST', '/api/sessions', this.tokens.tokens[slot.owner].token, launchBody(slot, this.tokens));
     if (r.status !== 201 || !r.data?.sessionId) {
       return this.complain(slot, `launch refused: HTTP ${r.status} ${JSON.stringify(r.data).slice(0, 300)}`);
     }

@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { builtInScenario, scenarioMarker } from '@aoc/claude-sim';
+import { builtInScenario, parseScenario, scenarioMarker } from '@aoc/claude-sim';
+import { defaultScenario } from '../src/default-scenario';
 import { DEFAULT_TIMING, FLEET, launchBody, nextAction, type SessionStatus } from '../src/fleet';
 import type { DemoTokens } from '../src/layout';
-import { DEFAULT_LIVE_SCENARIO, simPrompt } from '../src/scenarios';
+import { simPrompt } from '../src/scenarios';
 
 const tokens = {
   projects: { cx: 'prj_cx', claims: 'prj_claims', aoc: 'prj_aoc' },
-  tickets: [{ ticketId: 'tkt_1', key: 'receipts', projectId: 'prj_claims' }],
+  tickets: [
+    { ticketId: 'tkt_1', key: 'receipts', projectId: 'prj_claims' },
+    { ticketId: 'tkt_2', key: 'duplicate', projectId: 'prj_claims' },
+  ],
 } as unknown as DemoTokens;
 const at = (lifecycle: string, successorSessionId: string | null = null): SessionStatus => ({ lifecycle, successorSessionId });
 const occupied = { sessionId: 'ses_1', runs: 1 };
@@ -19,12 +23,32 @@ describe('the fleet', () => {
       expect(String(body.prompt).split('\n')[0]).toBe(slot.title);
       expect(body).not.toHaveProperty('threadId');
     }
-    expect(builtInScenario(DEFAULT_LIVE_SCENARIO)).toBeDefined();
-    expect(launchBody(FLEET.find((s) => s.key === 'triage')!, tokens)).toMatchObject({ processType: 'bug-triage', ticketId: 'tkt_1' });
+    expect(launchBody(FLEET.find((s) => s.key === 'triage')!, tokens)).toMatchObject({ processType: 'bug-triage', ticketId: 'tkt_2' });
   });
 
   it('refuses prompts for scenarios claude-sim does not have', () => {
     expect(() => simPrompt('Title', 'Details', 'no-such-scenario')).toThrow(/no built-in scenario/);
+  });
+});
+
+describe('the default scenario', () => {
+  const scenario = parseScenario(defaultScenario('tkt_01ABC'), 'test');
+  const branches = scenario.steps.filter((s) => s.kind === 'branch');
+
+  it('dispatches the prompts the platform writes: rollover successors, intake triage and builds', () => {
+    expect(branches.map((b) => (b.kind === 'branch' ? [b.onResumeTextIncludes, b.goto] : null))).toEqual([
+      [['Context rollover:'], 'rollover-successor'],
+      [['diagnosing customer ticket tkt_01ABC '], 'triage-receipts'],
+      [['fix plan for ticket tkt_01ABC.'], 'build-receipts'],
+      [['diagnosing customer ticket'], 'triage-unknown'],
+    ]);
+  });
+
+  it("commits the ticket's build to uat/<ticketId> with the trailers provenance needs", () => {
+    const commands = scenario.steps.flatMap((s) => (s.kind === 'bash' ? [s.command] : []));
+    expect(commands).toContain('git checkout -B uat/tkt_01ABC');
+    expect(commands.find((c) => c.startsWith('git commit'))).toMatch(/AOC-Ticket: tkt_01ABC.*AOC-Session: \$AOC_SESSION_ID/);
+    expect(commands.at(-1)).toBe('git checkout main');
   });
 });
 

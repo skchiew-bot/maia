@@ -8,6 +8,3 @@ export function simPrompt(title: string, details: string, scenario: string): str
   if (!isBuiltInScenario(scenario)) throw new Error(`claude-sim has no built-in scenario "${scenario}"`);
   return `${title}\n\n${details}\n\n[[scenario:${scenario}]]`;
 }
-
-/** What claude-sim runs for a prompt without a marker; in the live demo that is a rollover successor. */
-export const DEFAULT_LIVE_SCENARIO = 'demo-rollover-successor';
