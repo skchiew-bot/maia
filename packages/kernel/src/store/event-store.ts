@@ -278,9 +278,9 @@ export class EventStore {
         }
         const problems = [...validateEvent(input.type, input.meta, input.payload ?? null), ...headerProblems(input as NewEventInput)];
         if (problems.length) throw new EventValidationError(input.type, problems);
-        const e = this.write(input as NewEventInput, writtenBodies);
+        const { e, payload } = this.write(input as NewEventInput, writtenBodies);
         out.push(e);
-        committed.push({ e, payload: (input.payload ?? null) as JsonValue | null });
+        committed.push({ e, payload });
       }
       this.db.exec('COMMIT');
     } catch (err) {
@@ -303,13 +303,22 @@ export class EventStore {
     return out;
   }
 
-  private write(input: NewEventInput, writtenBodies: string[]): StoredEvent {
+  /**
+   * Writes one event. Actor, scope, meta and body are brought to their canonical JSON form first, because that is what
+   * is chained, stored and read back: the event returned to the caller, handed to the projectors and to the commit
+   * listeners is then exactly what a rebuild or a later read produces, not the caller's own objects (key order,
+   * `undefined` members, fields that are not part of the record). A projector therefore cannot write one thing live
+   * and another after a rebuild, whatever the writer passed.
+   */
+  private write(input: NewEventInput, writtenBodies: string[]): { e: StoredEvent; payload: JsonValue | null } {
     const seq = this.headSeq + 1;
     const id = newId('event', this.opts.clock.now());
     const ts = this.opts.clock.iso();
-    const scope = cleanScope(input.scope ?? {});
-    const meta = (input.meta ?? {}) as JsonObject;
+    const actor: Actor = { kind: input.actor.kind, id: input.actor.id };
+    const scope = normalized(cleanScope(input.scope ?? {}));
+    const meta = normalized((input.meta ?? {}) as JsonObject);
     const hasBody = input.payload !== undefined && input.payload !== null;
+    let payload: JsonValue | null = null;
     let payloadHash: string | null = null;
     let bodyScope: string | null = null;
     if (hasBody) {
@@ -318,8 +327,9 @@ export class EventStore {
       // chained hash cannot be brute-forced back to low-entropy personal data.
       const blind = randomBytes(16).toString('hex');
       const canon = canonicalJson(input.payload);
+      payload = JSON.parse(canon) as JsonValue;
       payloadHash = sha256hex(`${blind}:${canon}`);
-      this.bodies.put(id, bodyScope, canonicalJson({ b: blind, p: input.payload }), ts);
+      this.bodies.put(id, bodyScope, canonicalJson({ b: blind, p: payload }), ts);
       writtenBodies.push(id);
     }
     const header = {
@@ -329,7 +339,7 @@ export class EventStore {
       id,
       ts,
       type: input.type,
-      actor: input.actor,
+      actor,
       scope,
       meta,
       payloadHash,
@@ -352,8 +362,8 @@ export class EventStore {
         id,
         ts,
         input.type,
-        input.actor.kind,
-        input.actor.id,
+        actor.kind,
+        actor.id,
         canonicalJson(scope),
         scope.projectId ?? null,
         scope.threadId ?? null,
@@ -380,7 +390,7 @@ export class EventStore {
       id,
       ts,
       type: input.type,
-      actor: input.actor,
+      actor,
       scope,
       meta,
       payloadHash,
@@ -392,8 +402,8 @@ export class EventStore {
       prevHash: header.prevHash,
       hash,
     };
-    this.project(e, (input.payload ?? null) as JsonValue | null, false);
-    return e;
+    this.project(e, payload, false);
+    return { e, payload };
   }
 
   /** Each projector runs in its own savepoint: a failing projector is marked degraded (rebuildable) without blocking ingestion. */
@@ -751,6 +761,11 @@ function headerProblems(input: NewEventInput): string[] {
     problems.push(`idempotencyKey: must be 1–${MAX_IDEMPOTENCY_KEY} characters without control characters`);
   }
   return problems;
+}
+
+/** A value as the log will hold it: canonical JSON read back (sorted keys, no `undefined`). */
+function normalized<T>(v: T): T {
+  return JSON.parse(canonicalJson(v)) as T;
 }
 
 function cleanScope(s: Scope): Scope {
