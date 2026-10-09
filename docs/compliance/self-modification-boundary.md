@@ -19,7 +19,7 @@ and the authors were not independent of the code.
 Therefore: **before AOC governs real work, one or more humans who were not part of the build must review the
 governance, audit and credit core (§1, Tier 1) and sign off.** The scope and the record are in §5. Until that
 sign-off exists, treat every AOC control as provisional, and say so in any evidence pack. At integration commit
-`e97e53e` no such review has taken place ([gap P-06](gaps.md)).
+`b4fdf57` no such review has taken place ([gap P-06](gaps.md)).
 
 ## 1. What the core is
 

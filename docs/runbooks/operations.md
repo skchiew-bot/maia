@@ -348,7 +348,7 @@ previous release tag, and an acceptance test.
 
 ### 8.1 Upgrade notes: changes that need an operator action
 
-The list below is complete for the code at integration commit `e97e53e`, compared with the first builds that were
+The list below is complete for the code at integration commit `b4fdf57`, compared with the first builds that were
 run against real work. Each row names the gap (G-n), review finding (R-n) or process item (P-n) in the
 [gap list](../compliance/gaps.md). Do the **A** rows before you start the new version; read the **B** rows so that
 nothing surprises you afterwards; **C** is what this release still cannot do.

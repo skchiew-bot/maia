@@ -51,7 +51,7 @@
   changing the meaning of an existing field. The hash header carries `v: 1` so the hashing scheme itself can be
   versioned.
 
-## Implementation status (integration commit `e97e53e`)
+## Implementation status (integration commit `b4fdf57`)
 
 The mitigations for blocking are built, except for projection rebuilds:
 

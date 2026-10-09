@@ -49,7 +49,7 @@
   (PostgreSQL), with a single sequencer for the chain. The kernel isolates SQL in the store and projectors to
   keep that path open.
 
-## Implementation status (integration commit `e97e53e`)
+## Implementation status (integration commit `b4fdf57`)
 
 - `aoc.db` runs with `secure_delete = ON` as well as `bodies.db`: its read models hold decrypted copies of some text,
   and the store truncates its WAL after an erasure (threat model O-24).

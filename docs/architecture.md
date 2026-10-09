@@ -20,7 +20,7 @@ Related documents:
 - Every document, by audience: [documentation index](README.md)
 
 **Status legend.** This document was written on 2026-10-09 and last brought up to date at integration commit
-`e97e53e`. **Built** means implemented and tested in the repository at that commit, by the same agents that wrote it;
+`b4fdf57`. **Built** means implemented and tested in the repository at that commit, by the same agents that wrote it;
 no human has reviewed it yet (§17). What is missing is named where it matters, and listed with owners in the
 [gap list](compliance/gaps.md).
 
@@ -308,7 +308,7 @@ in [`mcp.ts`](../packages/contracts/src/mcp.ts) before anything reaches the daem
 | --- | --- | --- |
 | `declare_plan` | Phases and tasks (id, title, size `xs`/`s`/`m`/`l`/`xl`) | `plan.declared` (ledger). Required before any file-changing tool when the type `requiresPlan` |
 | `amend_plan` | Add, remove or resize tasks, with a reason | `plan.amended`: an audited change to the denominator |
-| `task_done` | `task_id` plus **mandatory evidence** `{kind: test \| commit \| diff, ref}` | `task.done` with verification flags. Returns progress and a **boundary instruction** (continue, or stop for `credit_cap` / `rollover` / `stop_requested`) |
+| `task_done` | `task_id` plus **mandatory evidence** `{kind: test \| commit \| diff, ref}` | `task.done` with verification flags. Returns progress, a **boundary instruction** (continue, or stop for `credit_cap` / `rollover` / `stop_requested`) and, when the evidence could not be verified, `evidenceReason` |
 | `request_decision` | `test` (main, production, irreversible, ambiguity, data), 2 to 6 options, a recommendation | `decision.requested`. The reply tells the agent to **end its turn** |
 | `playbook_step` | Step progress through a distilled playbook | `playbook.step_reported` |
 | `report_diagnosis` | Triage only: root cause, confidence, fix plan | `ticket.diagnosis_reported` (intake) |
@@ -492,7 +492,8 @@ Table `events` in `aoc.db` (kernel [`event-store.ts`](../packages/kernel/src/sto
 | `prev_hash`, `hash` | The chain link |
 
 Client-supplied header fields are bounded so that nothing personal or bulky can enter the chain through them:
-`sourceTs` must be ISO-8601 (10 to 40 characters), and `idempotencyKey` at most 512 characters with no control
+`sourceTs` must be an ISO-8601 instant (10 to 40 characters that parse as a date, so a projector never meets one it
+cannot read), and `idempotencyKey` at most 512 characters with no control
 characters. Ingest derives the chained key from a hash of the session and the client's key, so one session's key
 can never collide with, and swallow, another session's event.
 
@@ -563,16 +564,26 @@ can never share a directory.
 `EventStore.eraseScope(scopeId)`, exposed through `mod-audit`'s erase API with a scope id, a reason and a decision
 id (permission `audit.erase`, Approver only). The decision id is optional and is only checked to be a resolved
 decision, so the procedure in the [key custody runbook](runbooks/key-custody.md#6-crypto-shred) ties each erasure to
-an approved change request (threat model O-28). The erasure:
+an approved change request (threat model O-28). The erasure is write-ahead: the record is validated and appended
+before anything is shredded, so a failing record never leaves shredded bodies without a trace in the chain
+([wave 4](security/review-wave4.md)). In order:
 
-1. Destroys every wrapped DEK generation of the scope and deletes the scope's body rows, blob rows and blob
-   files. It then runs `wal_checkpoint(TRUNCATE)` on `bodies.db`.
+1. Validates the `body.erased` record, counting the scope's bodies first.
 2. Calls every projector's `onErase(scopeId)` to scrub free text in read models (they show `[erased]`). Read
    models in `aoc.db` hold **decrypted copies** of some text (ticket descriptions, session titles), so this step
-   matters as much as the first. `aoc.db` runs with `secure_delete = ON` too, and the knowledge layer's FTS5 index is
+   matters as much as the shred. `aoc.db` runs with `secure_delete = ON` too, and the knowledge layer's FTS5 index is
    merged so that erased terms do not stay in live segments (threat model O-24, review finding F-08).
-3. Appends `body.erased {scopeId, reason, erasedBy, bodyCount, decisionId}`, then truncates `aoc.db`'s WAL
-   (`wal_checkpoint(TRUNCATE)`), which still held page images from before the scrub.
+3. Appends `body.erased {scopeId, reason, erasedBy, bodyCount, decisionId}`.
+4. Destroys every wrapped DEK generation of the scope and deletes the scope's body rows, blob rows and blob files,
+   then runs `wal_checkpoint(TRUNCATE)` on `bodies.db`.
+5. Runs `VACUUM` on `aoc.db`, then truncates its WAL. `secure_delete` leaves the cells that a b-tree rebalance moved
+   in the unallocated gap of a reused page, outside every table, so only a `VACUUM` removes them. It runs in the
+   daemon's thread for as long as it takes to rewrite `aoc.db`. A reader that holds an older snapshot (the backup's
+   copy of the database) keeps the WAL from being truncated: aocd logs a warning, and the pre-erasure pages go with
+   the next checkpoint. A `VACUUM` that cannot run is logged, not thrown.
+
+A crash between steps 3 and 4 leaves the bodies recoverable with the record chained; the operator runs the erasure
+again (gap G-57).
 
 **The chain stays valid**, because only blinded hashes were ever chained. Projectors receive `payload === null`
 for erased bodies on every later rebuild and must degrade gracefully. Backups taken before the erasure still hold
@@ -755,6 +766,9 @@ the UI and the tests.
   (one `rev-list`), also drop system and user config, lazy fetch and every transport by environment.
 - **No manifest, no work.** A process type with `requiresPlan` is blocked from file-changing tools until
   `declare_plan` (`session.blocked {reason: no_manifest}`).
+- **An erased manifest keeps its shape.** The titles of a plan live in its erasable body, but `plan.declared` and
+  `plan.amended` chain the ids and sizes of its phases and tasks as `meta.shape`, so a crypto-shredded manifest still
+  rebuilds to the same tasks, phases and denominator ([wave 4](security/review-wave4.md), W4-12).
 - **Amendments** (`plan.amended`) record `prevTotalWeight` and `newTotalWeight` under the amending developer's
   name, so the denominator changes visibly and scope creep is never silent (§9).
 - **Master timeline.** Project progress spans every session's manifest from every developer. It is drawn as a
@@ -1185,7 +1199,7 @@ switched off until the identity stage is signed off (R5; gap list P-10).
 
 ## 20. Implementation status and open items (2026-10-09)
 
-Built and tested at integration commit `e97e53e`: contracts, kernel, client, `aocd`, the launcher/supervisor, the
+Built and tested at integration commit `b4fdf57`: contracts, kernel, client, `aocd`, the launcher/supervisor, the
 CLI, the hook binary and git hooks, the sidecar, the MCP server, `claude-sim`, the LLM adapters, the demo seeder,
 every domain module including `mod-tower`, and the web console and portal. AOC has also been driven against the real
 Claude Code CLI (2.1.295, on Haiku, 25 sessions, about US$0.10): what held, and the divergences that were found and

@@ -48,7 +48,7 @@
 - **Bad: deferral.** A session that never reaches a clean boundary cannot roll over. Its context keeps growing until
   a task completes. Very large tasks should be split at planning time.
 
-## Implementation status (integration commit `e97e53e`)
+## Implementation status (integration commit `b4fdf57`)
 
 Built and tested on `claude-sim`. Rollover has not been run against the real CLI: it needs a context of hundreds of
 thousands of tokens ([research §13.6](../research/claude-code-integration.md#136-not-checked-and-why)). Item 5 (`--autocompact`) is still not

@@ -46,7 +46,7 @@
 - **Required:** the supervisor must pass `--model` explicitly, re-pass the same flags on every `--resume`, and never
   read a model or type from agent output.
 
-## Implementation status (integration commit `e97e53e`)
+## Implementation status (integration commit `b4fdf57`)
 
 The registry's `tools.allow` and `tools.deny` are where the shell a builder may use is decided. The shipped writer
 types grant scoped git verbs only, and the supervisor adds blanket `Bash` to a writer type whose entry says nothing

@@ -2,7 +2,8 @@
 
 Demo data and a live demo for the AOC console. Everything runs on **claude-sim** (`packages/claude-sim`), the
 deterministic stand-in for the Claude Code CLI. The real `claude` CLI is never spawned, no plan quota is used and no
-real repository is touched.
+real repository is touched. (AOC is driven against the real CLI only by the separate, opt-in real-CLI suite:
+[docs/testing.md](../../docs/testing.md).)
 
 ## `live`: one command for a live console
 
@@ -200,7 +201,9 @@ Every write-capable process type with a credential profile (`bug-fix`, `feature-
 `reset` are denied, anything else is not granted, and the protected-operation PreToolUse guard still bounces a push
 to `main` before the permission rules are consulted. `CLAUDE_SIM_EXEC=1` lets the scenarios' git steps really run, so
 a build's commits are real. There is no operator-settings workaround: the demo uses the same rules as any
-deployment. `config/process-types.json` is governed configuration; mod-audit records its changed hash.
+deployment. `config/process-types.json` is governed configuration; mod-audit records its changed hash. Under
+`claude -p` nothing can answer a permission prompt, so these types cannot run tests or builds: the scenarios only run
+git. Whether builders should get more is an open CEO decision (gap P-26, threat model O-30).
 
 `CLAUDE_SIM_SPEED` (e.g. `0.2`) passes through to the sessions and speeds every scenario up.
 

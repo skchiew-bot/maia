@@ -51,7 +51,7 @@
 - **Bad: meta discipline.** Meta can never be erased. Strict schemas catch unknown keys but not a badly chosen
   field, such as a free-text "label". Every new event type gets a meta review.
 
-## Implementation status (integration commit `e97e53e`)
+## Implementation status (integration commit `b4fdf57`)
 
 Erasure is complete in the live databases: `aoc.db` runs with `secure_delete = ON`, its WAL is truncated after each
 erasure, and the knowledge layer's FTS5 index is merged (threat model O-24, review finding F-08). aocd's own backups are

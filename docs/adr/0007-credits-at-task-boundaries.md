@@ -47,7 +47,7 @@
   [T-14](../security/threat-model.md#t-14-credit-gaming)). Metering is reconciled against supervisor-observed
   totals.
 
-## Implementation status (integration commit `e97e53e`)
+## Implementation status (integration commit `b4fdf57`)
 
 Checked against the real Claude Code ([research §13.3, D8](../research/claude-code-integration.md#133-divergences-found-and-fixed)): a model ignored the
 plain "do not start another task" notice and did the next step. The supervisor still ended the session at the end of

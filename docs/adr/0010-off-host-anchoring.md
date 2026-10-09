@@ -48,7 +48,7 @@
   gives **no** protection against a host-level attacker. Production must configure a remote
   ([anchoring runbook](../runbooks/anchoring.md)).
 
-## Implementation status (integration commit `e97e53e`)
+## Implementation status (integration commit `b4fdf57`)
 
 `mod-audit` implements the decision with these differences, tracked in the threat model (O-11) and the gap list:
 

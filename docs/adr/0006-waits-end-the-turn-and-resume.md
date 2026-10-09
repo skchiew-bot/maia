@@ -53,7 +53,7 @@
 - **Bad: turns are not tasks.** A turn can end mid-task (waiting for a decision), so turn boundaries are not task
   boundaries. Credits and rollover are enforced only at task boundaries (ADR-0007, ADR-0008).
 
-## Implementation status (integration commit `e97e53e`)
+## Implementation status (integration commit `b4fdf57`)
 
 Checked against the real Claude Code 2.1.295 ([research §13.1](../research/claude-code-integration.md#131-what-was-checked-and-what-came-out)): after
 `request_decision` the model made no further tool call, the process was gone, and the session resumed with `--resume`

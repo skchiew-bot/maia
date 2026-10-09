@@ -6,9 +6,9 @@
 - Method: STRIDE per component (§3), then abuse and gaming scenarios (§4), then the risk register R1 to R17
   cross-referenced to controls (§5), then the requested changes and open decisions this review produced (§6).
 - Date: 2026-10-09. First written at commit `fb97e98`; brought up to date at `a1c8a0c` (the supervisor, `mod-audit`,
-  the ingest hardening, projection back-fill, the CEO decisions) and again at `e97e53e`, for session isolation (G-01),
+  the ingest hardening, projection back-fill, the CEO decisions) and again at `b4fdf57`, for session isolation (G-01),
   privileged git in a service-owned clone (G-04), the push gateway (R-02), the sidecar principal (G-44), provenance
-  from the platform's own records (G-25), encrypted backups (G-21), security review waves 1 to 3, the web console and
+  from the platform's own records (G-25), encrypted backups (G-21), security review waves 1 to 4, the web console and
   portal, the Control Tower and the check against the real Claude Code CLI (2.1.295, 2026-10-09). Re-review triggers are in §7.
 - Companion documents: [architecture](../architecture.md), [ADRs](../adr/README.md),
   [credential isolation runbook](../runbooks/credential-isolation.md),
@@ -19,14 +19,14 @@
 
 | Status | Meaning |
 | --- | --- |
-| **Built** | Implemented and tested in the repository at `e97e53e`. Not yet independently reviewed by a human |
+| **Built** | Implemented and tested in the repository at `b4fdf57`. Not yet independently reviewed by a human |
 | **Required** | Not built. This review requires it; tracked in §6 |
 | **Ops** | An operational control, defined in a runbook and carried out by people |
 
 Identifiers: `R1` to `R17` (no hyphen) are the specification's risks (§5), `T-n` are the abuse scenarios (§4) and
 `O-n` the requested changes and decisions (§6). `G-n` and `P-n` are rows of the [gap list](../compliance/gaps.md).
-`F-n`, `R-n` (with a hyphen) and `W3-n` are findings of the security reviews
-([wave 1](review-wave1.md), [wave 2](review-wave2.md), [wave 3](review-wave3.md)).
+`F-n`, `R-n` (with a hyphen), `W3-n` and `W4-n` are findings of the security reviews
+([wave 1](review-wave1.md), [wave 2](review-wave2.md), [wave 3](review-wave3.md), [wave 4](review-wave4.md)).
 
 > **Read this first.** This repository was built by AI agents. Its governance, audit and credit core must have a
 > human code review before go-live ([self-modification boundary](../compliance/self-modification-boundary.md), gap
@@ -162,6 +162,8 @@ environment, is inside Zone 3**, whatever its name. Zone 3 therefore runs as a s
 | I | Ingest responses leak data | Responses are acknowledgements and hook decisions; `get_status` returns only the caller's own session | Built | — |
 | D | Event floods, decision-card spam through forged `PreToolUse` | Body caps (16 MiB per ingest request, 64 MiB per spool flush); batch caps (spool ≤ 500 items, usage ≤ 200 batches); duplicate agent decisions collapse into one open card; observer tokens are rate limited per token (600 requests a minute with a burst of 1000, 60 new observed sessions an hour, 429 with `Retry-After`, R-13) | Built / Required (O-16: per-session limits on decision cards and on ingest in general) | — |
 | E | System-token theft gives write access to every session | System tokens never leave aocd | Required | — |
+| D | A session token holder posts a value that makes a projector throw, so aocd cannot start (a usage `lastAt` of `not-a-date` did, W4-11) | Client timestamps, token counts and message ids are validated at ingest; the projector tolerates old bad rows; a rebuild isolates a projector that throws and marks it `degraded` instead of aborting (W4-04); the catalog's `zIso` must parse as an instant | Built ([wave 4](review-wave4.md)) | A deterministic bug in a projector still degrades its read model until fixed |
+| I | An unauthenticated caller learns which session and thread ids exist from 404 against 401 | The supervisor's session routes authenticate and check the role before they look the session up (W4-09) | Built | — |
 
 ### 3.3 The event store, body store and files on disk
 
@@ -172,7 +174,7 @@ environment, is inside Zone 3**, whatever its name. Zone 3 therefore runs as a s
 | T | A body is swapped or edited | Blinded hash chained; AES-GCM AAD binds each ciphertext to its event; `verifyBody` | Built | — |
 | T | A crafted scope or blob id (`..`, separators) makes a blob write or an erasure reach outside the blob directory | A path segment that is not a plain name becomes a hash, so every blob path stays inside `blobs/` | Built | — |
 | I | KEK disclosure | [Key custody](../runbooks/key-custody.md). Production refuses to start unless the KEK is an existing file outside the data directory, mode 0400 or 0600, owned by aocd's user (or a systemd credential), and refuses `AOC_MASTER_KEY`; it never generates a key. aocd never generates a KEK beside existing data in any mode. Helpers aocd starts get an allowlisted environment (G-46) | Built / Ops | Development writes the KEK next to the data (only into an empty directory) and accepts `AOC_MASTER_KEY` with a warning at every start |
-| I | Plaintext survives erasure | `bodies.db`: `secure_delete = ON` and `wal_checkpoint(TRUNCATE)` after an erasure. Projectors scrub their decrypted copies (`onErase`) | Built | `aoc.db` also runs with `secure_delete`, its WAL is truncated after an erasure, and the knowledge index is merged so erased FTS5 terms leave its pages (O-24, done). Backups taken earlier (T-18) |
+| I | Plaintext survives erasure | `bodies.db`: `secure_delete = ON` and `wal_checkpoint(TRUNCATE)` after an erasure. Projectors scrub their decrypted copies (`onErase`). The erasure is write-ahead: the `body.erased` record is validated and appended before anything is shredded | Built | `aoc.db` also runs with `secure_delete`, `eraseScope` runs a `VACUUM` after the shred (`secure_delete` leaves cells that a b-tree rebalance moved) and then truncates the WAL, and the knowledge index is merged so erased FTS5 terms leave its pages (O-24, done). The `VACUUM` runs in aocd's thread for as long as it takes to rewrite `aoc.db`. A concurrent backup makes the WAL truncation wait (a warning is logged). A crash between the record and the shred leaves the bodies recoverable until the erasure is run again (G-57). Backups taken earlier (T-18) |
 | I | Personal data or secrets in clear-text meta | Strict meta schemas (ids, enums, numbers, hashes, labels only) | Built | A badly chosen field passes schema checks: review each new event type |
 | I | Free text smuggled into the clear-text chain through `sourceTs` or `idempotencyKey`, which no meta schema covers | The kernel bounds both: `sourceTs` is an ISO timestamp of 10 to 40 characters; an idempotency key has at most 512 characters and no control characters | Built | — |
 | R | A scope is crypto-shredded without an approved request, destroying evidence bodies | `POST /api/audit/erase` needs `audit.erase` (Approver only); `body.erased` records who, the reason (an enum) and the decision id; the chain and meta stay | Built | The decision id is optional, and is only checked to be resolved, not to approve this erasure (O-28) |
@@ -251,7 +253,7 @@ environment, is inside Zone 3**, whatever its name. Zone 3 therefore runs as a s
 | I | Raw media served inline and executed by the browser | `content-disposition: attachment`, `nosniff`, `no-store` | Built | — |
 | I | Requesters learn internal state (gate names, approver identity, queue depth, timelines) | `PublicTicket` DTO with abstracted status; no SSE for Requesters | Built | — |
 | I | Builders browse raw media without need | Media only while one of their own active sessions works on that ticket; every access logged (`intake.media_accessed`) | Built | — |
-| D | Upload flooding | At most 6 files, 10 MB per image, 200 MB per video; the request body is capped at one maximum-size video plus 1 MiB (the total the portal is told, from one function shared by the kernel, aocd and `GET /portal/api/limits`), and the Requester is authenticated before the form is read; scan required; per-requester rate limits | Built / Required (O-16) | One request can still carry about 200 MiB, and the form is parsed in memory: stream uploads to disk or lower the caps (O-16) |
+| D | Upload flooding | At most 6 files, 10 MiB per image, 200 MiB per video; the request body is capped at one maximum-size video plus 1 MiB (the total the portal is told, from one function shared by the kernel, aocd and `GET /portal/api/limits`), and the Requester is authenticated before the form is read; scan required; per-requester rate limits | Built / Required (O-16) | One request can still carry about 200 MiB, and the form is parsed in memory: stream uploads to disk or lower the caps (O-16) |
 | E | CSRF on cookie sessions | See §3.1 | Built | — |
 
 ### 3.11 CLI and developer machines
@@ -672,7 +674,8 @@ A backup taken before an erasure still contains the destroyed DEKs. If the backu
     variable does not reach them either (O-13).
 - **Also:** `aoc.db` is not ciphertext-only. Its read models hold decrypted copies of text (ticket descriptions,
   session titles). Backups aocd writes are sealed (G-21); a copy made any other way must be encrypted at rest. The
-  live-database gap is closed (O-24, G-39): `secure_delete`, a WAL truncate and an FTS5 index merge after each erasure.
+  live-database gap is closed (O-24, G-39): `secure_delete`, a `VACUUM`, a WAL truncate and an FTS5 index merge after
+  each erasure.
 - **Residual:** an erasure completes only when the last older backup expires. Say so in the PDPA erasure
   response.
 
@@ -840,7 +843,7 @@ the [gap list](../compliance/gaps.md), which tracks owners and acceptance tests.
 | O-21 | Enablement gates: keep the intake portal and Builder surfaces switched off in production until the identity stage (§15.3) is signed off, even though the code exists | **Decision (CEO)** + change | CEO, `daemon` | R5, gap P-10 |
 | O-22 | **Done** in `mod-identity`: `SameSite=Strict`, `HttpOnly`, `Secure` on HTTPS, and an `Origin` check on cookie-authenticated writes. Production must set an HTTPS `publicUrl`, or the `Secure` flag is off | Ops | Ops | §3.1, gap P-21 |
 | O-23 | KEK rotation tool: an offline command that unwraps every DEK with the old KEK and re-wraps it with the new one (bodies are untouched, key ids and AAD unchanged), then verifies by sampling. Nothing in the kernel does this today | Change | `kernel`, `cli` | R6, [key custody](../runbooks/key-custody.md#5-rotation), gap G-47 |
-| O-24 | Erasure completeness in `aoc.db`: enable `secure_delete` on `aoc.db` too, and checkpoint its WAL (`TRUNCATE`) after `eraseScope`, because read models hold decrypted copies of text. **Done** (`63331da`; FTS5 index merge in `503b8df`) | Change | `kernel` | T-18, ADR-0003, gap G-39 |
+| O-24 | Erasure completeness in `aoc.db`: enable `secure_delete` on `aoc.db` too, and checkpoint its WAL (`TRUNCATE`) after `eraseScope`, because read models hold decrypted copies of text. **Done** (`63331da`; FTS5 index merge in `503b8df`). `eraseScope` also runs a `VACUUM` after the shred (`004bbf9`), because `secure_delete` leaves cells that a b-tree rebalance moved; it runs in aocd's thread for as long as it takes to rewrite `aoc.db`, and a concurrent backup makes the WAL truncation wait, with a warning in the log (`33dec29`) | Done; the crash window is G-57 | `kernel` | T-18, ADR-0003, gaps G-39, G-57 |
 | O-25 | Observed sessions whose working directory maps to no project should be dropped, or reduced to metering only, by default. Global hooks otherwise capture personal and unrelated use (PDPA) | Change + decision | `mod-sessions`, `hooks`, CEO | [Observed sessions](../runbooks/observed-sessions.md), gaps G-47, P-20 |
 | O-26 | Admin actions that do not exist yet: re-drive one dead-lettered event for one reactor (to replace the manual cursor reset in the [operations runbook](../runbooks/operations.md#5-reactor-failures)), rebuild named projections on demand, and run a job by name. Each is an audited operator action. Changed and degraded projectors already rebuild at startup | Change | `daemon`, `kernel`, `cli` | §3.4, gap G-47 |
 | O-27 | Provenance from records, not messages: a traced commit must be reachable from a HEAD that AOC recorded for a managed session linked to the approved change or ticket, not merely carry an `AOC-Session` / `AOC-Change` trailer. **Done (G-25):** the recorded heads are `task.done`, `phase.completed` and the supervisor's `session.head_recorded` at each turn end. Not built: a per-session signature issued by the supervisor, which would close the residual in T-22 | Done; signing is an optional follow-up | `mod-change`, `mod-ledger`, `supervisor` | T-22, T-1, R1, gap G-25 |

@@ -164,15 +164,21 @@ Approver-only.
    only Approver, a Builder (or the DPO's delegate) submits it.
 4. **The Approver approves.** Record the decision id.
 5. **Execute** the erasure: `POST /api/audit/erase {scopeId, reason, decisionId}` (permission `audit.erase`,
-   Approver only; `reason` is one of the four triggers above). It destroys every DEK generation of the scope,
-   deletes the ciphertext rows and blob files, checkpoints `bodies.db`, lets every projector scrub its copies
-   (`onErase`), appends `body.erased {scopeId, reason, erasedBy, bodyCount, decisionId}`, and answers with the
-   number of bodies erased and of events in the scope. **Always pass the approved change request's decision id.**
+   Approver only; `reason` is one of the four triggers above). It is write-ahead: it validates the record, lets
+   every projector scrub its copies (`onErase`), appends `body.erased {scopeId, reason, erasedBy, bodyCount,
+   decisionId}`, then destroys every DEK generation of the scope, deletes the ciphertext rows and blob files and
+   checkpoints `bodies.db`, then runs a `VACUUM` of `aoc.db` and truncates its WAL. It answers with the number of
+   bodies erased and of events in the scope. The `VACUUM` runs in aocd's thread for as long as it takes to rewrite
+   `aoc.db`, so expect the console and the hooks to wait that long on a large log: erase in a quiet moment. If a
+   backup is reading while you erase, the WAL cannot be truncated and aocd logs a warning; run `aoc backup list`,
+   wait for the backup to finish and erase again, or let the next checkpoint do it. If aocd crashes between the
+   record and the shred, the bodies are still readable although `body.erased` is chained: run the erasure again
+   (gap G-57). **Always pass the approved change request's decision id.**
    The API accepts an erasure without one, and checks only that a given decision is resolved, not that it
    approved this erasure (threat model O-28): the procedure, not the code, ties the two together.
-6. **Close the `aoc.db` gap** (until threat model O-24, gap G-39, is fixed): in the next maintenance window, run
-   `PRAGMA wal_checkpoint(TRUNCATE)` and then `VACUUM` on `aoc.db`, with aocd stopped, so that overwritten
-   read-model text does not linger in free pages.
+6. **The `aoc.db` gap is closed in code** (threat model O-24, gap G-39): `aoc.db` runs with `secure_delete`, and
+   `eraseScope` itself runs the `VACUUM` and truncates the WAL (step 5). Only for an erasure made by an earlier
+   build, run `PRAGMA wal_checkpoint(TRUNCATE)` and then `VACUUM` on `aoc.db` once, with aocd stopped.
 7. **Verify:** the events of the scope read back with `payload: null`; the affected views show `[erased]`; the
    scope's blob directory is gone; Verify still passes.
 8. **Backups.** The erasure is complete only when every backup taken before step 5 has expired. Put that date in
