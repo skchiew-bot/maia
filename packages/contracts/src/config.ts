@@ -11,6 +11,11 @@ const thresholds = z
   .default({});
 
 export const AocConfigSchema = z.object({
+  /**
+   * `production` withdraws development conveniences that weaken a binding control; today: with
+   * `intake.requireScan`, only an anti-virus engine counts as a scan (the builtin heuristic does not).
+   */
+  mode: z.enum(['development', 'production']).default('development'),
   /** Where aoc.db, bodies.db, keys, spool and artifacts live. */
   dataDir: z.string().default('.aoc/data'),
   host: z.string().default('127.0.0.1'),
@@ -100,8 +105,9 @@ export const AocConfigSchema = z.object({
       maxImageBytes: z.number().int().positive().default(10 * 1024 * 1024),
       maxVideoBytes: z.number().int().positive().default(200 * 1024 * 1024),
       maxAttachments: z.number().int().positive().default(6),
-      scanner: z.enum(['clamav', 'builtin', 'none']).default('builtin'),
-      /** Reject uploads that cannot be scanned. */
+      /** `auto`: ClamAV (clamdscan / clamscan on PATH) when present, else the builtin heuristic (not anti-virus). */
+      scanner: z.enum(['auto', 'clamav', 'builtin', 'none']).default('auto'),
+      /** Reject uploads that cannot be scanned (in production mode: that no anti-virus engine scanned). */
       requireScan: z.boolean().default(true),
       triageAgents: z.number().int().min(1).max(4).default(2),
       diagnosisBudget: z.object({ tokens: z.number().int().positive().default(400_000), minutes: z.number().int().positive().default(30) }).default({}),

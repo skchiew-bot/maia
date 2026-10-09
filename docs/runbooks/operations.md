@@ -25,6 +25,7 @@ production, use absolute paths. A minimal production configuration (`/etc/aoc/ao
 
 ```json
 {
+  "mode": "production",
   "dataDir": "/var/lib/aoc/data",
   "publicUrl": "https://aoc.example.internal",
   "keys": { "masterKeyFile": "/run/credentials/aocd.service/aoc-kek" },
@@ -111,6 +112,7 @@ Daily, or continuously from monitoring:
 | Service up | `systemctl is-active aocd`; an HTTP request to the console | Active; 200 |
 | Integrity | Control Tower integrity panel (`chainOk`, `lastVerifiedAt`, `anchorAgeMs`, `unanchoredEvents`) | `chainOk` true; anchor age within cadence ([anchoring](anchoring.md#5-daily-checks)) |
 | Projections | `projection_health` (below); Tower `projection_degraded` | No rows with status `degraded` |
+| Malware scanner | `GET /api/health` with a builder or approver token: `checks.intake` (anonymous callers see `ok` only); `aoc doctor` | `ok` true, `avEngine` true (ClamAV). In `mode: production` without an engine, attachments are refused (503) |
 | Reactors | `reactor_failures` in the last 24 h; Tower `reactorFailures24h` | None, or each one explained |
 | Jobs | `job_runs.last_status` | `ok` for every job |
 | Decisions | The oldest open card; gate latency p90 (Tower) | Within the agreed SLA (R15) |

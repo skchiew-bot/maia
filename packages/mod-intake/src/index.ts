@@ -14,14 +14,16 @@ import { HttpError, readJson, requireIngest, requirePermission, requireUser, typ
 import { z } from 'zod';
 import { INTAKE_ACTOR, IntakeFlow, type TicketRow } from './flow';
 import { intakeProjector } from './projector';
-import { declaredMatches, safeFileName, scannerFor, sha256, sniff, type Scanner } from './upload';
+import { declaredMatches, resolveScanner, safeFileName, sha256, sniff, type ResolvedScanner, type Scanner } from './upload';
 
-export { sniff, builtinScanner, clamavScanner, safeFileName, type Scanner } from './upload';
+export { sniff, builtinScanner, clamavScanner, resolveScanner, safeFileName, type Scanner, type ScannerStatus } from './upload';
 export { IntakeFlow } from './flow';
 
 export interface IntakeModuleOptions {
-  /** Override the configured scanner (tests / custom AV integration). */
+  /** Override the configured scanner (tests / custom AV integration); an AV engine unless named `builtin` or `none`. */
   scanner?: Scanner;
+  /** PATH lookup for the ClamAV clients (tests). */
+  findBinary?: (binary: string) => string | null;
 }
 
 const McpBody = z.object({ sessionId: z.string(), input: z.unknown() });
@@ -85,11 +87,21 @@ function defaultProject(ctx: ModuleContext): string | null {
 
 export function createIntakeModule(opts: IntakeModuleOptions = {}): AocModule {
   let flow: IntakeFlow;
+  let config: ModuleContext['config'];
+  // Resolved per use (a PATH lookup), so installing ClamAV takes effect without a restart.
+  const scanning = (): ResolvedScanner => resolveScanner(config.intake, config.mode, { find: opts.findBinary, custom: opts.scanner });
   return {
     name: 'intake',
     projectors: [intakeProjector],
     init(ctx) {
       flow = new IntakeFlow(ctx);
+      config = ctx.config;
+    },
+    health() {
+      const { status } = scanning();
+      // Production without an anti-virus engine is degraded even when attachments are still accepted (requireScan off).
+      const ok = status.attachments === 'accepted' && (status.avEngine || config.mode !== 'production');
+      return { ok, detail: { mode: config.mode, scanner: status.active, configured: status.configured, avEngine: status.avEngine, attachments: status.attachments, reason: status.reason } };
     },
     reactors: [
       {
@@ -172,7 +184,6 @@ export function createIntakeModule(opts: IntakeModuleOptions = {}): AocModule {
       },
     ],
     routes(app, ctx) {
-      const scanner = opts.scanner ?? scannerFor(ctx.config.intake.scanner);
       const cfg = ctx.config.intake;
 
       // ── requester portal ────────────────────────────────────────────────────
@@ -192,6 +203,11 @@ export function createIntakeModule(opts: IntakeModuleOptions = {}): AocModule {
         const raw = form['files'] ?? form['files[]'];
         const files = (Array.isArray(raw) ? raw : raw ? [raw] : []).filter((f): f is File => typeof f !== 'string');
         if (files.length > cfg.maxAttachments) throw new HttpError(413, 'too_many_files', `At most ${cfg.maxAttachments} attachments`);
+        const { scanner, status } = scanning();
+        if (files.length && status.attachments === 'refused') {
+          ctx.log.warn('intake: attachments refused, no usable malware scanner', { scanner: status.active, reason: status.reason });
+          throw new HttpError(503, 'scanner_unavailable', 'Attachments cannot be scanned right now; please try again later or submit without attachments');
+        }
 
         const ticketId = newId('ticket', ctx.clock.now());
         const accepted: { attachmentId: string; sha: string; mime: string; bytes: number; name: string; scan: string; scanner: string; buf: Buffer }[] = [];
