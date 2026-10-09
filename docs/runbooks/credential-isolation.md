@@ -392,8 +392,8 @@ AOC ships the guard in `packages/hooks/git/pre-push`. It carries the marker `aoc
 push that updates or deletes `main`, `master`, `production` or `release/*` unless `AOC_SUPERVISOR_PUSH=1`. AOC's
 own pushes never meet it: they run from the service clone with hooks switched off (§4 item 9). Next to it is
 `prepare-commit-msg`, which adds the `AOC-Session`,
-`AOC-Change` and `AOC-Ticket` trailers inside managed sessions and does nothing elsewhere. The supervisor does not
-install either hook in managed workspaces yet (gap G-37).
+`AOC-Change` and `AOC-Ticket` trailers inside managed sessions and does nothing elsewhere. The hook binary installs
+both in a managed workspace when the session starts, unless the project already has a hook of that name (gap G-37).
 
 Install it for every repository on a developer machine:
 

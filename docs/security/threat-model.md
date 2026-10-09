@@ -688,23 +688,23 @@ charged (R14).
 
 ### T-22. Forged provenance trailers
 
-**A finding of this review.** The provenance gate (§14: "no orphan commits to main") classifies a commit as
-traced when its **message** carries an `AOC-Session: <id>` or `AOC-Change: <id>` trailer that leads to an approved
-change record or an approved fix plan (`mod-change`, `provenance.ts`). Managed sessions are told to add those
-trailers by their system prompt; the `prepare-commit-msg` hook that would write them is not installed in managed
-workspaces yet (gap G-37). Either way a trailer is plain text: anyone can type it. Approved change ids
-are visible to every Builder. A commit written on a laptop, or by an agent outside its change, passes the gate by
-copying a trailer.
+**A finding of this review** (fixed by G-25, below). The provenance gate (§14: "no orphan commits to main")
+classified a commit as traced when its **message** carried an `AOC-Session: <id>` or `AOC-Change: <id>` trailer
+leading to an approved change record or fix plan (`mod-change`, `provenance.ts`). The `prepare-commit-msg` hook
+writes those trailers in managed workspaces (gap G-37), but a trailer is plain text: anyone can type it, and
+approved change ids are visible to every Builder. A commit written on a laptop, or by an agent outside its change,
+passed the gate by copying a trailer.
 
-- **Controls today:** the go-live decision is a human gate with a passkey, and the Approver sees the diff (Built);
+- **Controls:** the go-live decision is a human gate with a passkey, and the Approver sees the diff (Built);
   only the supervisor can move `main` (Ops).
-- **Required (O-27, gap G-25):** cross-check every traced commit against AOC's **own records**, not the message. For
+- **Built (O-27, gap G-25):** a trailer counts only through a session the platform linked to the change or ticket,
+  for a commit reachable from a HEAD AOC recorded for it (`packages/mod-change/src/provenance.ts`). As designed:
+  cross-check every traced commit against AOC's **own records**, not the message. For
   example, require each commit to be reachable from a HEAD that AOC recorded for a managed session linked to that
   change or ticket (`task.done.headSha`, `change.completed.pinnedSha`, `phase.completed.pinnedSha`), and not
   reachable from the base. A stronger option: per-session commit-signing keys issued by the supervisor, verified at
   promotion; a laptop has no such key.
-- **Residual until O-27:** the gate proves only that commit messages **claim** a governed origin. It does not stop
-  off-platform work (T-1) that copies a trailer.
+- **Residual:** per-session commit signing is not built.
 
 ---
 
@@ -757,7 +757,7 @@ the [gap list](../compliance/gaps.md), which tracks owners and acceptance tests.
 | O-6 | Bind each observer token to a person (today the Approver issues them with a label and an expiry, but no user id), and rate-limit observed ingest | Change | `mod-identity`, `cli` | T-12 |
 | O-7 | **Done for identity events**, which use the scope `user:<userId>`. It remains a review rule: every event type that carries personal data needs a scope that can be erased on its own, because the kernel default falls back to `global` | Review rule | Lead, module owners | ADR-0003, PDPA |
 | O-8 | Separation of duties with a single Approver. **Decided by the CEO on 2026-10-09:** no exception; `decisions.soleApproverFallback` stays `false`, so the Approver's own Approver-level requests wait for a second Approver. Remaining actions: appoint a second Approver with a passkey; add the `decisions` settings to the governed configuration, so that turning the flag on is chained as `config.changed` | **Decided (CEO)**; follow-up Ops + change | CEO, `mod-audit` | T-8, R15, gaps G-35, P-11 |
-| O-9 | Route Requester UAT feedback through a human or a read-only triage pass before it reaches a credentialed build session; restrict build-session network egress. The feedback is already fenced in a random delimiter | Change + decision | `mod-intake`, CEO | T-11, R4, gap G-45 |
+| O-9 | Route Requester UAT feedback through a human or a read-only triage pass before it reaches a credentialed build session; restrict build-session network egress. **Done (G-45):** feedback reaches only read-only triage and the fix-plan gate. Egress is still open (with O-14) | Change + decision | `mod-intake`, CEO | T-11, R4, gap G-45 |
 | O-10 | Self-modification boundary (the guard and external log are built): set `aocRepoPaths` in production; review `protectedPaths` (the default now covers all of Tier 1); put the external log off-host; CODEOWNERS with required human review; complete the human review of the AI-built core before go-live | **Decision (CEO)** + change | CEO, lead, `mod-audit` | T-21, R14, gaps G-41, P-06, P-07, P-18 |
 | O-11 | Configure an off-host anchor remote that forbids force-pushes and deletions, owned by another account; anchor hourly and after high-value events (today nightly and on demand); use a qualified TSA; let `aocd`'s config pass the TSA CA file and the anchor signing key to `mod-audit` (today only code can) | Ops + change | Platform architect, `mod-audit`, `daemon` | T-13, R2, gaps G-40, G-42, P-04 |
 | O-12 | Set backup retention within the PDPA erasure promise, and state "erased from backups within N days" in erasure responses | **Decision (CEO, DPO)** | CEO | T-18, R6, gap P-03 |
@@ -775,7 +775,7 @@ the [gap list](../compliance/gaps.md), which tracks owners and acceptance tests.
 | O-24 | Erasure completeness in `aoc.db`: enable `secure_delete` on `aoc.db` too, and checkpoint its WAL (`TRUNCATE`) after `eraseScope`, because read models hold decrypted copies of text. **Done** (`63331da`; FTS5 index merge in `503b8df`) | Change | `kernel` | T-18, ADR-0003, gap G-39 |
 | O-25 | Observed sessions whose working directory maps to no project should be dropped, or reduced to metering only, by default. Global hooks otherwise capture personal and unrelated use (PDPA) | Change + decision | `mod-sessions`, `hooks`, CEO | [Observed sessions](../runbooks/observed-sessions.md), gaps G-47, P-20 |
 | O-26 | Admin actions that do not exist yet: re-drive one dead-lettered event for one reactor (to replace the manual cursor reset in the [operations runbook](../runbooks/operations.md#5-reactor-failures)), rebuild named projections on demand, and run a job by name. Each is an audited operator action. Changed and degraded projectors already rebuild at startup | Change | `daemon`, `kernel`, `cli` | §3.4, gap G-47 |
-| O-27 | Provenance from records, not messages: a traced commit must be reachable from a HEAD that AOC recorded for a managed session linked to the approved change or ticket (or carry a per-session signature issued by the supervisor), not merely carry an `AOC-Session` / `AOC-Change` trailer | Change | `mod-change`, `mod-ledger`, `supervisor` | T-22, T-1, R1, gap G-25 |
+| O-27 | Provenance from records, not messages: a traced commit must be reachable from a HEAD that AOC recorded for a managed session linked to the approved change or ticket (or carry a per-session signature issued by the supervisor), not merely carry an `AOC-Session` / `AOC-Change` trailer. **Done (G-25)** via recorded HEADs; signing not built | Change | `mod-change`, `mod-ledger`, `supervisor` | T-22, T-1, R1, gap G-25 |
 | O-28 | Erasure needs an approved request: make `decisionId` mandatory on `POST /api/audit/erase`, and check that the decision approved erasing that scope, by someone other than the person erasing. Today it is optional and only checked to be resolved | Change + decision (CEO, DPO) | `mod-audit`, `mod-decisions` | §3.3, ADR-0003, PDPA |
 | O-29 | Evidence packs must verify anchors against the off-host records, as `aoc verify` does (reuse `mod-audit`'s Verify), and say "not verifiable" when those records are unavailable. **Done (G-42):** packs take the `audit` service's Verify; no service, an unreadable or unreachable anchor store, or anchors not held off-host → `not_verifiable` | Change | `mod-evidence`, `mod-audit` | T-13, R2, gap G-42 |
 

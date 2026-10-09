@@ -283,8 +283,8 @@ idempotencyKey}` to `/ingest/hook` and applies the daemon's `HookIngestResponse`
 - **Git hooks for managed workspaces.** The hooks package also ships a `pre-push` guard (it refuses pushes to `main`,
   `master`, `production` and `release/*` unless `AOC_SUPERVISOR_PUSH=1`, which only the promotion executor sets)
   and a `prepare-commit-msg` hook that adds the `AOC-Session`, `AOC-Change` and `AOC-Ticket` trailers. Like every
-  client-side hook, they are speed bumps. The supervisor does not install them in managed workspaces yet (gap
-  G-37): today the system prompt asks the agent to add the trailers.
+  client-side hook, they are speed bumps. The hook binary installs both in a managed workspace at `SessionStart`,
+  as the session user, leaving a project's own hook of the same name alone (gap G-37).
 - **Observed mode** (global hooks on developer machines, observer token). It never blocks: the ingest does not
   run guards for observed sessions, and the kernel policy would turn any denial into an allow with a "would deny"
   note anyway. When aocd is down, events are buffered in the local spool and replayed later (§2,
@@ -970,10 +970,10 @@ flowchart LR
 - **Provenance guarantee** (§14). `ChangeService.provenance(projectId, sha)` checks that every commit between main
   and the candidate traces through an approved change record, a UAT sign-off and a gate. Otherwise the promotion is
   refused (`promotion.refused {reason, orphanShas}`). Break-glass is the sole exception, and it is marked as such.
-  Today a commit is "traced" by its `AOC-Session` or `AOC-Change` message trailer, which the system prompt asks
-  managed agents to add (the `prepare-commit-msg` hook is not installed in managed workspaces yet, gap G-37).
-  Trailers are plain text that anyone can copy, so they must be cross-checked against commits AOC itself
-  recorded (threat model T-22, gap G-25).
+  A commit is traced only through a session the platform linked to the approved change or ticket, and only when
+  it is reachable from a HEAD AOC recorded for that session (`task.done.meta.headSha`,
+  `phase.completed.meta.pinnedSha`). The `AOC-Session` / `AOC-Change` trailers that `prepare-commit-msg` adds are
+  corroborated, never trusted on their own (threat model T-22, gaps G-25 and G-37).
 - Only the supervisor's machine identity can move `main` and `release/*`. That is enforced by GitHub, not by AOC
   ([credential isolation runbook](runbooks/credential-isolation.md)).
 
@@ -1115,8 +1115,7 @@ Open items found while writing this document. Owners and details are in the
 2. Agents and aocd must run as different OS users, and sessions must not inherit aocd's `HOME`. Otherwise every
    0600 file of aocd, and the service user's `~/.ssh`, git credentials and `~/.claude`, are reachable from every
    agent.
-3. The provenance gate trusts commit-message trailers, which anyone can copy (threat model T-22, gap G-25). Until it
-   checks AOC's own records of session commits, it proves only what the commit messages claim.
+3. Promotions without a ticket need no UAT sign-off; whether every promotion should is the CEO's call (gap G-25).
 4. With a single Approver, Approver-level decisions raised from the Approver's own sessions **wait for a second
    Approver**, including a break-glass the Approver invokes. That is the CEO's decision (the fallback is off), so the
    remaining action is to appoint a second Approver, or to have Builders invoke break-glass.
@@ -1129,9 +1128,8 @@ Open items found while writing this document. Owners and details are in the
    the off-host records through the `audit` service, as `aoc verify` does (threat model O-29, gap G-42, closed).
 7. FX now follows the BNM research (§11, gap G-36): the 1700 middle rate from 18:00 MYT. The CEO has yet to
    confirm the 1700 (end of day) rate over the 1200 (noon) rate (P-19).
-8. The supervisor does not install the `pre-push` and `prepare-commit-msg` hooks in managed workspaces (gap
-   G-37), and guard denials that raise a card answer `deny`, so ending the turn still depends on the agent (gap
-   G-48, ADR-0006).
+8. Guard denials that raise a card answer `deny`, so ending the turn still depends on the agent (gap G-48,
+   ADR-0006).
 
 ## Glossary
 
