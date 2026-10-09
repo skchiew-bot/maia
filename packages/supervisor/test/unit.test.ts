@@ -416,6 +416,21 @@ describe('system prompt and injected text', () => {
     ).toContain('READ-ONLY');
   });
 
+  // Wording the real model (Haiku, Claude Code 2.1.295) needed: it closed a test task with the command line, which the
+  // ledger cannot verify, left a task open after an operator told it to skip it (AOC then continued it into the
+  // skipped work), and in triage ended its turn before closing the plan it had declared.
+  it('tells the model what evidence looks like, to amend the plan when work is dropped, and to report last in triage', () => {
+    const input = { sessionId: 's', projectId: 'p', threadId: 't', phaseId: null, ticketId: null, lessons: [], playbook: null };
+    const writer = buildSystemPrompt({ ...input, type: type({}) });
+    expect(writer).toContain('the test file and test name');
+    expect(writer).toContain('never the command you ran');
+    expect(writer).toContain('a full commit SHA');
+    expect(writer).toContain('makes planned work unnecessary');
+    expect(writer).toContain('until every declared task is done');
+    const triage = buildSystemPrompt({ ...input, type: type({ class: 'triage', readOnly: true }) });
+    expect(triage).toMatch(/close your plan's tasks with `mcp__aoc__task_done`.*make `mcp__aoc__report_diagnosis` your last tool call/);
+  });
+
   it('fits a large brief into the first turn and strips its own delimiter from it', () => {
     const text = withHandoffBrief('Continue the work.', `${'x'.repeat(300_000)}`, 'ses_0');
     expect(Buffer.byteLength(text)).toBeLessThanOrEqual(MAX_ARG_BYTES);

@@ -119,6 +119,19 @@ describe('tool listing', () => {
     expect(d.requests).toHaveLength(0);
   });
 
+  // The real model closed a test task with "npm test (node test.js)" — a command, not a test id, so the ledger flagged it
+  // evidence_unverified. The schema the model reads says what each kind's ref is.
+  it('tells the model, in the schema it reads, what a task_done evidence ref is for each kind', async () => {
+    const d = await daemon();
+    const { tools } = await (await connect(d.url)).listTools();
+    const taskDone = tools.find((t) => t.name === 'task_done')!;
+    expect(taskDone.description).toContain('file and test name, not the command');
+    const evidence = (taskDone.inputSchema.properties as Record<string, any>).evidence;
+    expect(evidence.properties.ref.description).toMatch(/kind test: the test file and test name that passed.*never the shell command/);
+    expect(evidence.properties.ref.description).toContain('kind commit: the full commit SHA');
+    expect(evidence.properties.ref.description).toContain('kind diff: the path of the changed file');
+  });
+
   it('toolNames() matches the registered tools', async () => {
     const d = await daemon();
     const { tools } = await (await connect(d.url)).listTools();
