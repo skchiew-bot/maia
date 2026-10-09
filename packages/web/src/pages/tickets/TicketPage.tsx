@@ -27,6 +27,7 @@ import { useClock, useNow } from '../../lib/clock';
 import { cx } from '../../lib/dom';
 import { formatAge, formatDateTime, formatInteger, formatTokens } from '../../lib/format';
 import { decisionHref } from '../../lib/links';
+import { can } from '../audit/permissions';
 import { usePasskeys, useDecisionActions } from '../decisions/actions';
 import { RecommendationBox } from '../decisions/DecisionDetail';
 import { useDirectory, type Directory } from '../decisions/directory';
@@ -166,6 +167,9 @@ function CloseDialog({
   onClosed: () => void;
 }) {
   const toast = useToast();
+  const { user } = useAuth();
+  // "Withdrawn" speaks for the requester: the daemon records it only for an Approver (ticket.close_any).
+  const resolutions = CLOSE_RESOLUTIONS.filter((r) => r !== 'withdrawn' || can(user, 'ticket.close_any'));
   const cancelRef = useRef<HTMLButtonElement>(null);
   const [resolution, setResolution] = useState<CloseResolution>('duplicate');
   const [note, setNote] = useState('');
@@ -224,7 +228,7 @@ function CloseDialog({
           label="Resolution"
           value={resolution}
           onChange={(e) => setResolution(e.target.value as CloseResolution)}
-          options={CLOSE_RESOLUTIONS.map((r) => ({ value: r, label: RESOLUTION_LABEL[r]! }))}
+          options={resolutions.map((r) => ({ value: r, label: RESOLUTION_LABEL[r]! }))}
         />
         <TextArea
           label="Note (optional)"
