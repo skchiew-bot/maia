@@ -1,5 +1,5 @@
 import type { AuditEventHeaderDTO } from '@aoc/contracts';
-import { EmptyState, Icon, RelativeTime } from '../../components';
+import { Button, EmptyState, Icon, RelativeTime } from '../../components';
 import { formatInteger } from '../../lib/format';
 import { ActorName } from './people';
 
@@ -12,11 +12,16 @@ export function SelfModBlocks({
   total,
   last24h,
   onOpen,
+  onShowAll,
+  max = 6,
 }: {
   events: readonly AuditEventHeaderDTO[];
   total: number;
   last24h: number;
   onOpen: (e: AuditEventHeaderDTO) => void;
+  /** Filters the explorer to every blocked attempt. */
+  onShowAll: () => void;
+  max?: number;
 }) {
   return (
     <div className="audit-selfmod">
@@ -33,7 +38,7 @@ export function SelfModBlocks({
         />
       ) : (
         <ol className="audit-selfmod__list">
-          {events.slice(0, 12).map((e) => (
+          {events.slice(0, max).map((e) => (
             <li key={e.seq}>
               <p className="audit-selfmod__line">
                 <code>{String(e.meta.rule ?? 'blocked')}</code>
@@ -55,10 +60,14 @@ export function SelfModBlocks({
           ))}
         </ol>
       )}
-      {events.length > 12 && (
-        <p className="audit-muted">
-          Showing the newest 12 of {formatInteger(events.length)}; filter the explorer by selfmod.blocked for
-          the rest.
+      {total > Math.min(max, events.length) && (
+        <p className="audit-selfmod__more">
+          <span className="audit-muted">
+            Newest {formatInteger(Math.min(max, events.length))} of {formatInteger(total)}
+          </span>
+          <Button size="sm" variant="ghost" icon="arrow-down" onClick={onShowAll}>
+            Show all in the explorer
+          </Button>
         </p>
       )}
     </div>

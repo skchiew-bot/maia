@@ -48,19 +48,6 @@ function ComplianceView() {
 
       <Widget
         span={12}
-        flush
-        title="Clause → evidence"
-        subtitle="each AOC control, the clause it evidences, and what an auditor can check"
-      >
-        {current ? (
-          <MappingTable mapping={current} />
-        ) : (
-          <Skeleton label="Loading the mapping rows" blocks={[320]} />
-        )}
-      </Widget>
-
-      <Widget
-        span={12}
         title="Evidence packs"
         subtitle="frozen, hash-verified, date-ranged and control-mapped"
         info="One button produces an evidence bundle for a date range (§14): the chained headers (never bodies), the chain and anchor verification, the control mapping with its stamp state, and the rate card in force. It is written once, its sha256 recorded in the chain and re-checked before every download."
@@ -79,6 +66,19 @@ function ComplianceView() {
             <Skeleton label="Loading evidence packs" blocks={[140]} />
           )}
         </div>
+      </Widget>
+      <Widget
+        span={12}
+        flush
+        className="gov-flush"
+        title="Clause → evidence"
+        subtitle="each AOC control, the clause it evidences, and what an auditor can check"
+      >
+        {current ? (
+          <MappingTable mapping={current} />
+        ) : (
+          <Skeleton label="Loading the mapping rows" blocks={[320]} />
+        )}
       </Widget>
     </WidgetGrid>
   );

@@ -274,6 +274,7 @@ function ChangeRecord({ id }: { id: string }) {
         <Widget
           span={12}
           flush
+          className="gov-flush"
           title="Audit trail"
           subtitle="this record's events in the hash-chained log"
           actions={

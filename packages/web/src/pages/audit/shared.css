@@ -174,3 +174,10 @@
 .audit-body--none {
   color: var(--text-3);
 }
+
+@media (max-width: 640px) {
+  /* Edge-to-edge tables become cards on a phone; their sort control keeps the card body's inset. */
+  .gov-flush .aoc-dt__mobile-sort {
+    padding: 0 var(--sp-4);
+  }
+}

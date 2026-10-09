@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import type { ComplianceMappingDTO, ComplianceMappingRowDTO } from '@aoc/contracts';
 import { apiPost } from '../../api/client';
 import {
@@ -35,6 +35,7 @@ export function CoverageStrip({
 }) {
   const counts = familyCounts(rows);
   const total = rows.length || 1;
+  const max = Math.max(1, ...counts.map((c) => c.rows));
   const summary = `${formatInteger(rows.length)} mapped rows across ${counts.length} clause families, all ${
     stamped ? 'stamped' : 'provisional'
   }: ${counts.map((c) => `${c.family.label} ${c.rows}`).join(', ')}.`;
@@ -49,7 +50,7 @@ export function CoverageStrip({
               c.family.annex ? 'is-annex' : 'is-clause',
               stamped ? 'is-stamped' : 'is-provisional',
             )}
-            style={{ flexGrow: c.rows / total }}
+            style={{ '--share': c.rows / total, '--rel': c.rows / max } as CSSProperties}
             title={`${c.family.label}: ${c.rows} ${c.rows === 1 ? 'row' : 'rows'}`}
           >
             <span className="compliance-strip__key">{c.family.key}</span>
@@ -294,6 +295,57 @@ export function MappingStatus({
   );
 }
 
+/** Long text trimmed to a few lines with a more/less toggle; the full text stays in the DOM for screen readers. */
+function Clamp({ text, lines, label }: { text: string; lines: number; label: string }) {
+  const [open, setOpen] = useState(false);
+  const [overflows, setOverflows] = useState(false);
+  const ref = useRef<HTMLSpanElement>(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || open) return;
+    const measure = () => setOverflows(el.scrollHeight > el.clientHeight + 1);
+    measure();
+    if (typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [open, text]);
+  return (
+    <span className="compliance-clamp">
+      <span
+        ref={ref}
+        className={cx('compliance-clamp__text', !open && 'is-clamped')}
+        style={open ? undefined : { WebkitLineClamp: lines }}
+      >
+        {text}
+      </span>
+      {(open || overflows) && (
+        <button
+          type="button"
+          className="aoc-link-button compliance-clamp__toggle"
+          aria-expanded={open}
+          onClick={() => setOpen((o) => !o)}
+        >
+          {open ? 'less' : 'more'}
+          <span className="aoc-sr-only"> of the {label}</span>
+        </button>
+      )}
+    </span>
+  );
+}
+
+function RowStatus({ status }: { status: ComplianceMappingRowDTO['status'] }) {
+  return status === 'stamped' ? (
+    <Badge tone="ok" icon="ok">
+      stamped
+    </Badge>
+  ) : (
+    <Badge tone="warn" icon="warn">
+      provisional
+    </Badge>
+  );
+}
+
 /** Clause → evidence, one row per mapped AOC control, in clause order. */
 export function MappingTable({ mapping }: { mapping: ComplianceMappingDTO }) {
   const [family, setFamily] = useState('');
@@ -313,6 +365,11 @@ export function MappingTable({ mapping }: { mapping: ComplianceMappingDTO }) {
       .sort((a, b) => compareClauses(a.clause, b.clause));
   }, [mapping.rows, family, search]);
 
+  const rank = useMemo(() => {
+    const sorted = [...mapping.rows].sort((a, b) => compareClauses(a.clause, b.clause));
+    return new Map(sorted.map((r, i) => [r.id, i]));
+  }, [mapping.rows]);
+
   const columns = useMemo<DataTableColumn<ComplianceMappingRowDTO>[]>(
     () => [
       {
@@ -320,10 +377,13 @@ export function MappingTable({ mapping }: { mapping: ComplianceMappingDTO }) {
         header: 'Clause',
         primary: true,
         width: '22%',
-        sortValue: (r) => clauseFamily(r.clause).order * 1000 + (Number(r.clause.split('.').pop()) || 0),
+        sortValue: (r) => rank.get(r.id),
         cell: (r) => (
           <span className="compliance-clause">
-            <code>{r.clause}</code>
+            <span className="compliance-clause__head">
+              <code>{r.clause}</code>
+              <RowStatus status={r.status} />
+            </span>
             <span>{r.clauseTitle}</span>
             {r.relatedClauses.length > 0 && (
               <span className="compliance-muted">also {r.relatedClauses.join(', ')}</span>
@@ -338,7 +398,9 @@ export function MappingTable({ mapping }: { mapping: ComplianceMappingDTO }) {
         cell: (r) => (
           <span className="compliance-control">
             <strong>{r.aocControl}</strong>
-            <span className="compliance-muted">{r.aocFeature}</span>
+            <span className="compliance-muted">
+              <Clamp text={r.aocFeature} lines={2} label="AOC feature" />
+            </span>
           </span>
         ),
       },
@@ -347,15 +409,9 @@ export function MappingTable({ mapping }: { mapping: ComplianceMappingDTO }) {
         header: 'Evidence',
         cell: (r) => (
           <span className="compliance-evidence">
-            {r.evidence.length > 0 && (
-              <ul className="compliance-list">
-                {r.evidence.map((e) => (
-                  <li key={e}>{e}</li>
-                ))}
-              </ul>
-            )}
-            {r.eventTypes.length > 0 ? (
-              <span className="compliance-chips">
+            {r.evidence.length > 0 && <Clamp text={r.evidence.join(' · ')} lines={4} label="evidence" />}
+            {r.eventTypes.length > 0 && (
+              <span className="compliance-chips" aria-label="Event types an auditor can query">
                 {r.eventTypes.slice(0, 6).map((t) => (
                   <Chip key={t}>{t}</Chip>
                 ))}
@@ -363,8 +419,6 @@ export function MappingTable({ mapping }: { mapping: ComplianceMappingDTO }) {
                   <span className="compliance-muted">+{r.eventTypes.length - 6} event types</span>
                 )}
               </span>
-            ) : (
-              <span className="compliance-muted">documentary evidence (no event types cited)</span>
             )}
           </span>
         ),
@@ -372,31 +426,18 @@ export function MappingTable({ mapping }: { mapping: ComplianceMappingDTO }) {
       {
         id: 'note',
         header: 'Correction / review note',
-        width: '24%',
-        hideOnMobile: false,
+        width: '26%',
         cell: (r) =>
           r.correctionNote ? (
-            <span className="compliance-correction">{r.correctionNote}</span>
+            <span className="compliance-correction">
+              <Clamp text={r.correctionNote} lines={3} label="correction note" />
+            </span>
           ) : (
             <span className="compliance-muted">—</span>
           ),
       },
-      {
-        id: 'status',
-        header: 'Status',
-        cell: (r) =>
-          r.status === 'stamped' ? (
-            <Badge tone="ok" icon="ok">
-              stamped
-            </Badge>
-          ) : (
-            <Badge tone="warn" icon="warn">
-              provisional
-            </Badge>
-          ),
-      },
     ],
-    [],
+    [rank],
   );
 
   return (

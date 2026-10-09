@@ -390,6 +390,7 @@ function ChangesView({ projects }: { projects: ProjectIndex }) {
         <Widget
           span={12}
           flush
+          className="gov-flush"
           title="Change requests"
           subtitle={stage ? `${STATUS_META[stage].label} only` : 'needs-a-human first, then by time in stage'}
         >

@@ -247,6 +247,7 @@ function RollbacksView() {
         <Widget
           span={7}
           flush
+          className="gov-flush"
           title="Pinned states"
           subtitle={`${projects.nameOf(pinsProject)} · the states a rollback can return to`}
           info="Every phase completion and completed change record pins an immutable tag or SHA (§8). Each is checked against the repository: a tag that was deleted or moved cannot be restored."
@@ -324,6 +325,7 @@ function RollbacksView() {
         <Widget
           span={12}
           flush
+          className="gov-flush"
           title="Promotions to main"
           subtitle="with the provenance check: every commit must trace to an approved gate"
           info="No orphan commits reach main (§14): each promotion traces every commit through an approved change record or fix plan, a UAT sign-off and a gate, or it is refused. Break-glass is the sole exception and says so. Select a promotion to see each commit's trace."

@@ -297,6 +297,10 @@ function AuditView() {
               total={health.data.selfmodBlocked.total}
               last24h={health.data.selfmodBlocked.last24h}
               onOpen={openEvent}
+              onShowAll={() => {
+                setParam('prefix', 'selfmod.blocked');
+                document.getElementById('audit-explorer')?.scrollIntoView({ block: 'start' });
+              }}
             />
           ) : selfmod.error ? (
             <LoadFailed what="self-modification blocks" error={selfmod.error} onRetry={selfmod.reload} />
@@ -306,7 +310,7 @@ function AuditView() {
         </Widget>
       </WidgetGrid>
 
-      <section className="audit-section" aria-label="Event explorer">
+      <section id="audit-explorer" className="audit-section" aria-label="Event explorer">
         <FilterBar label="Event filters">
           <SegmentedControl
             label="Time range"
@@ -358,6 +362,7 @@ function AuditView() {
           <Widget
             span={12}
             flush
+            className="gov-flush"
             title="Event explorer"
             subtitle="newest first · seq, hash and previous hash for every event; bodies for Approvers only"
           >

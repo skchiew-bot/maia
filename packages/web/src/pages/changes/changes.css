@@ -562,7 +562,7 @@
 }
 .changes-field__facts {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(84px, 1fr));
   gap: 6px 12px;
   margin-top: auto;
   padding-top: 8px;

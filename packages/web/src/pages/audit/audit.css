@@ -407,3 +407,12 @@
 .audit-selfmod__line--sub {
   font-size: var(--fs-xs);
 }
+.audit-selfmod__more {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 8px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}

@@ -4,6 +4,7 @@ import { apiGet } from '../../api/client';
 import { useEventStream, type StreamMessage } from '../../api/stream';
 import { useResource } from '../../api/useResource';
 import { Button, EmptyState, InlineAlert, describeError } from '../../components';
+import { useMediaQuery } from '../../lib/dom';
 import { formatInteger } from '../../lib/format';
 import { EventTable } from './EventTable';
 import { parseScopeFilter, parseTypeFilter, rangeCutoff, withinRange, type RangePreset } from './model';
@@ -19,13 +20,15 @@ export interface ExplorerFilters {
   range: RangePreset;
 }
 
+/** Events per page: a phone shows each event as a card, so it pages in smaller steps. */
 const PAGE = 100;
+const PHONE_PAGE = 25;
 
 /** The daemon query for the filters (newest first). */
-export function explorerQuery(f: ExplorerFilters) {
+export function explorerQuery(f: ExplorerFilters, limit = PAGE) {
   return {
     order: 'desc' as const,
-    limit: PAGE,
+    limit,
     ...parseTypeFilter(f.q),
     actorId: f.actorId || undefined,
     ...parseScopeFilter(f.scopeId),
@@ -57,7 +60,8 @@ export function Explorer({
   now: number;
   onOpen: (e: AuditEventHeaderDTO) => void;
 }) {
-  const query = useMemo(() => explorerQuery(filters), [filters]);
+  const phone = useMediaQuery('(max-width: 640px)');
+  const query = useMemo(() => explorerQuery(filters, phone ? PHONE_PAGE : PAGE), [filters, phone]);
   const first = useResource<AuditEventPageDTO>('/api/audit/events', { query });
   const [older, setOlder] = useState<{ events: AuditEventHeaderDTO[]; next: number | null } | null>(null);
   const [loadingOlder, setLoadingOlder] = useState(false);
