@@ -392,6 +392,10 @@ importers:
       zod:
         specifier: 3.25.76
         version: 3.25.76
+    devDependencies:
+      '@aoc/mod-credits':
+        specifier: workspace:*
+        version: link:../mod-credits
 
   packages/mod-metering:
     dependencies:
