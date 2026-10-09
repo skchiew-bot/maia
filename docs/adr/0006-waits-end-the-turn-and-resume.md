@@ -32,10 +32,11 @@
    Restart means resuming a dead or stalled session from its transcript. Throttle resets, top-ups and
    auto-continue (`autoContinueLimit`) work the same way. A stop is honoured at the next task boundary, or at once if
    the session is idle.
-4. **`defer`, where the agent should perform the approved action itself.** For example: a migration on a dev
-   database. A guard may return `defer`; on approval the supervisor resumes without a prompt and the hook allows that
-   `tool_use_id`. This does not depend on the model choosing to stop. It is **not** used where the approved action is
-   performed by the supervisor, such as a promotion to main, because the session has no rights for it.
+4. **`defer`, where the agent should perform the approved action itself** (an option the design keeps open; no
+   guard uses it yet). For example: a migration on a dev database. A guard may return `defer`; on approval the
+   supervisor resumes without a prompt and the hook allows that `tool_use_id`. This does not depend on the model
+   choosing to stop. It is **not** for cases where the approved action is performed by the supervisor, such as a
+   promotion to main, because the session has no rights for it.
 
 ## Consequences
 

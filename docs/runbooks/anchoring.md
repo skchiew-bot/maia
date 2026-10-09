@@ -18,6 +18,11 @@
   undetectable tampering.**
 - **The default configuration does not mitigate R2.** `audit.anchorProvider: git` with no `audit.anchorRemote`
   only commits to a local repository on the same host. Configure §2 or §3 before production.
+- **What is built** (`mod-audit`): one provider at a time (`audit.anchorProvider`: `git`, `rfc3161` or `none`);
+  the nightly `audit.anchor` job at `audit.anchorAtLocalTime` (governed-config check, anchor with two retries
+  30 s apart, then Verify); `aoc anchor` and `aoc verify` on demand. Anchoring **refuses** a chain that no longer
+  matches the anchors already made (`anchor_mismatch`, `chain_invalid`), so a rewritten history is never
+  laundered into a fresh anchor.
 
 ## 2. Git anchor (provider `git`)
 
@@ -26,11 +31,17 @@
 2. **Protect its default branch** with a ruleset that has no bypass actors: block force pushes, restrict deletions.
    Even the AOC host must not be able to rewrite history.
 3. **Give the AOC host a write deploy key for this repository only**, stored with the service user (mode 0600).
-   It is not a credential profile and never reaches a session.
-4. **Commit signing.** Configure an SSH or GPG signing key for the service user's anchor commits
-   (`git config gpg.format ssh`, `user.signingkey …`, `commit.gpgsign true` inside the anchor repo). The signature
-   attributes each commit to the AOC host. The real protection, though, is the append-only history on the remote,
-   because the signing key also lives on the host.
+   It is not a credential profile. But until sessions run as their own OS user (threat model O-1), an agent can
+   read it: it could push extra anchor files, which makes anchoring and Verify fail (a false alarm and a
+   denial of service), though it cannot rewrite or delete history on a protected remote. Recover by committing
+   the removal of the bogus file; the history keeps both.
+4. **Commit signing.** `mod-audit` signs anchor commits with OpenPGP when it is given a key id (the module
+   option `gpgKeyId`, with an optional `GNUPGHOME`); Verify then rejects unsigned commits and commits signed by
+   another key. **`aocd` cannot pass that option yet** (threat model O-11), so anchor commits are unsigned in the
+   default build. Signing settings in the anchor repository's own git config have no effect: `mod-audit` sets
+   the identity and signing flags on every commit (`commit.gpgsign=false` without a key) and runs git with hooks
+   disabled. The real protection is the append-only history on the remote anyway, because a signing key would
+   also live on the host.
 5. **Configure aocd:**
 
    ```json
@@ -44,32 +55,46 @@
    }
    ```
 
-6. **Optional mirror:** push to a second remote with another provider for redundancy. Verify accepts either.
+6. **Optional mirror:** let the anchor remote mirror itself to a second provider (a push mirror configured on the
+   remote). AOC pushes to, and verifies against, `anchorRemote` only, so check the mirror by hand (§5).
 
-The anchor-commit file layout is defined by `mod-audit`. Each commit must carry at least the chain id, the
-sequence, the head hash and the time.
+**What an anchor commit holds.** One file per anchor, `anchors/<YYYY-MM-DD>-<seq>.json`, containing
+`{chainId, seq, hash, anchoredAt, previousAnchor}`, committed as `AOC Anchor <aoc-anchor@localhost>` and pushed
+to `anchorRemote`. `anchor.created` records the proof reference `git:<commit>:<file>` with `signed` and `pushed`.
+A failed push keeps the local commit, appends `anchor.failed {reason: push_failed}` and notifies Builders and the
+Approver ("Audit anchor was not pushed off-host"): until the next successful push, that anchor is local only.
 
 ## 3. RFC 3161 anchor (provider `rfc3161`)
 
 1. **Choose a TSA.** The default `https://freetsa.org/tsr` is a free service with no SLA: fine for development
    only. For compliance evidence, use a commercial TSA or one run by a licensed certification authority, and
    record its certificate chain.
-2. **Configure** `audit.anchorProvider: "rfc3161"` and `audit.tsaUrl`.
-3. **Keep every timestamp token** (`.tsr`) where the AOC host cannot delete it: for example, commit the tokens to
-   the anchor repository as well, or put them in object storage with object lock. A token that only exists on the
-   AOC host can be deleted. It cannot be forged for a past time, but a missing anchor is still lost evidence.
-4. **Check a token by hand:**
+2. **Configure** `audit.anchorProvider: "rfc3161"` and `audit.tsaUrl`. `mod-audit` hashes the anchor record into
+   a time-stamp query (`openssl ts -query -sha256 -cert`), posts it to the TSA, and keeps the record, query and
+   token (`.json`, `.tsq`, `.tsr`) in `<dataDir>/anchors`. `openssl` must be on the service's `PATH`.
+3. **Keep every timestamp token** (`.tsr`) where the AOC host cannot delete it: for example, copy the tokens to
+   the anchor repository as well, or to object storage with object lock. A token that only exists on the AOC host
+   can be deleted. It cannot be forged for a past time, but a missing anchor is still lost evidence.
+4. **Know what Verify checks.** It checks each token's imprint against the anchor record and rejects a TSA time
+   more than 1 h from the record's `anchoredAt` (no back-dating). It checks the TSA's signature and certificate
+   chain (`openssl ts -verify`) **only when a CA file is configured**, and that is a module option (`tsaCaFile`)
+   that `aocd` cannot pass yet (threat model O-11). Until then Verify warns that token signatures are not
+   verified, and a host-level attacker could forge a token: check tokens by hand (below) for evidence purposes.
+5. **Check a token by hand:**
 
    ```bash
-   openssl ts -reply -in anchor-<seq>.tsr -text            # shows the time and the message imprint
-   openssl ts -verify -in anchor-<seq>.tsr -digest <imprint-hex> -CAfile tsa-chain.pem
+   cd <dataDir>/anchors
+   openssl ts -reply -in <date>-<seq>.tsr -text                                  # the TSA time and the imprint
+   sha256sum <date>-<seq>.json                                                   # must equal the imprint
+   openssl ts -verify -data <date>-<seq>.json -in <date>-<seq>.tsr -CAfile tsa-chain.pem
    ```
 
-   The imprint is the digest that `mod-audit` submits for the head hash. Its exact construction is part of the
-   anchor record format.
+   The imprint is the SHA-256 of the anchor record file itself (`{chainId, seq, hash, anchoredAt,
+   previousAnchor}`), so the token covers the head hash and the anchoring time together.
 
-**Using both providers** is the strongest option: git for availability and easy reading, the TSA for an
-independently signed time.
+**Both providers at once** would be the strongest option (git for availability and easy reading, the TSA for an
+independently signed time), but `mod-audit` runs one provider at a time. Prefer `git` with a protected off-host
+remote; choose `rfc3161` where an independently signed time matters more and its tokens are copied off the host.
 
 ## 4. Cadence
 
@@ -80,7 +105,9 @@ independently signed time.
 | After high-value events | Gates are protected within minutes | Anchor after `decision.resolved` for go-live, rollback or break-glass, and after `promotion.completed`, `rollback.executed`, `body.erased` and `config.changed` |
 
 Hourly and event-triggered anchoring are a requested change to `mod-audit` (threat model O-11). Until they ship,
-run `aoc audit anchor` hourly from cron, under a dedicated identity whose token is stored with mode 0600 (see
+run `aoc anchor` hourly from cron. It needs the `audit.verify` permission (Builders and the Approver), so use a
+dedicated user for it, run the cron job under an OS account other than the aocd service user (whose home
+sessions can read today, O-1), and keep that token at mode 0600 (see
 [operations](operations.md#7-running-a-job-by-hand)).
 
 Run the nightly backup **after** an anchor, so every backup is covered ([key custody](key-custody.md#4-backups-off-host-nightly)).
@@ -88,10 +115,12 @@ Run the nightly backup **after** an anchor, so every backup is covered ([key cus
 ## 5. Daily checks
 
 - The Control Tower integrity panel shows the **anchor age** (`anchorAgeMs`), the **unanchored event count**, and
-  `chainOk`. The anchor age must stay below the cadence plus a margin.
-- `anchor.failed` events and `anchor.missed` notifications reach the Approver. Treat a missed anchor as a P2
-  incident: fix the cause (network, deploy key, TSA outage), then run `aoc audit anchor` and confirm a new
-  `anchor.created`.
+  `chainOk`. The anchor age must stay below the cadence plus a margin. Audit health warns `anchor_stale` once the
+  newest anchor is older than 26 h, and `anchor_failed` after a failure newer than the last anchor.
+- `anchor.failed` events and `anchor.missed` notifications reach Builders and the Approver. Treat a missed
+  anchor as an incident, Sev-2 once the newest anchor is more than a day old
+  ([incidents](incident-break-glass.md#1-severity)): fix the cause (network, deploy key, TSA outage), then run
+  `aoc anchor` and confirm a new `anchor.created` with `pushed: true`.
 - The remote really holds the anchors. From any machine other than the AOC host:
 
   ```bash
@@ -102,22 +131,28 @@ Run the nightly backup **after** an anchor, so every backup is covered ([key cus
 
 ## 6. Verify
 
-**Inside AOC** (`aoc audit verify`, or the console; permission `audit.verify`, held by Builders and the Approver):
-Verify recomputes the whole chain
-(`EventStore.verifyChain({atSeqs})`) and compares the recomputed hash at every anchored sequence with the
-**external** record. It records `chain.verified {ok, headSeq, checked, anchorsChecked, anchorsMatched,
-firstBadSeq}`.
+**Inside AOC** (`aoc verify`, or the console; permission `audit.verify`, held by Builders and the Approver):
+Verify recomputes the whole chain (`EventStore.verifyChain({atSeqs})`), including the check that every event's
+indexed scope columns agree with its chained scope, and compares the recomputed hash at every anchored sequence
+with the **external** record. It records `chain.verified {ok, headSeq, checked, anchorsChecked, anchorsMatched,
+firstBadSeq, unanchoredTail}`. `aoc verify` exits non-zero unless the chain recomputes **and** every anchor
+matches.
+
+With an `anchorRemote`, Verify fetches the remote branch into `refs/aoc/anchor-remote/<branch>` and compares it
+with the local anchor repository: an anchor missing locally, or different between the two, is a problem, and the
+remote copy wins. **If the remote cannot be fetched, Verify still runs against the local copy and only warns
+("anchor remote unreachable"). Treat that warning as a failed check.**
 
 Rules that make Verify meaningful:
 
-1. Read the anchors from a **fresh clone of the remote**, or from the stored TSA tokens, never from the local anchor
-   repository on the AOC host and never from `anchor.created` rows in the database being verified. An attacker who
-   controls the host controls both of those.
+1. Read the anchors from the **remote** (as AOC's Verify does when it can fetch it, or from a fresh clone), or
+   from the stored TSA tokens, never from the local anchor repository alone and never from `anchor.created` rows
+   in the database being verified. An attacker who controls the host controls both of those.
 2. Check that the anchors form an unbroken series at the expected cadence. A gap is a missing proof and must be
    explained.
 3. For TSA anchors, check the token signature, the certificate chain, and that the token's time is close to the
    anchor's recorded time. An attacker who rewrote history could obtain **new** tokens, but only with current
-   times.
+   times. AOC checks the time and the imprint; the signature and chain only with a CA file (§3).
 
 **Independent verification** (quarterly, and for the auditor): give the auditor a copy of `aoc.db` (the chain
 tables are enough; bodies are not needed) and read access to the anchor remote. The auditor recomputes every hash

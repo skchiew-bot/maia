@@ -54,8 +54,9 @@
 - **Bad: forgeable events.** The ingest token reaches the hook through the `claude` environment, so the model can
   reach it too. Hook-relayed events are agent-asserted claims, and gates must not trust them alone
   ([threat model T-3](../security/threat-model.md#t-3-the-model-reads-its-own-environment)).
-- **Required launch checks** (supervisor): validate the generated settings before launch; treat a missing
-  `SessionStart` hook event within N seconds as a failed launch; abort if the `aoc` MCP server is not `connected`.
+- **Launch checks** (supervisor): the generated settings are validated before launch, and the session is aborted if
+  the `aoc` MCP server is not `connected` (both built). A missing `SessionStart` hook event within N seconds should
+  also fail the launch; that check does not exist yet (threat model O-15).
 
 ## Alternatives rejected
 
