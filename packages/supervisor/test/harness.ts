@@ -167,13 +167,15 @@ export class StubLedger implements LedgerService {
     const t = this.threads.get(threadId);
     if (t?.activeWriterSessionId === sessionId) t.activeWriterSessionId = null;
   }
+  /** Appended to the brief text: agent-written records (task titles, decision context) feed the real brief. */
+  briefSuffix = '';
   buildHandoffBrief(threadId: string, fromSessionId: string): HandoffBrief {
     const t = this.threads.get(threadId)!;
     return {
       threadId,
       projectId: t.projectId,
       fromSessionId,
-      text: `HANDOFF ${threadId}: open tasks t3, t4; decision dec_x chose option B; see src/auth.ts`,
+      text: `HANDOFF ${threadId}: open tasks t3, t4; decision dec_x chose option B; see src/auth.ts${this.briefSuffix}`,
       openTaskIds: ['t3', 't4'],
       openDecisionIds: [],
       filePointers: ['src/auth.ts'],

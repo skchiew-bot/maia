@@ -68,6 +68,7 @@ import {
   decisionAnswersText,
   nudgeText,
   rolloverPrompt,
+  withHandoffBrief,
 } from './prompts';
 import { RegistryAccess } from './registry-access';
 import { RingBuffer } from './ring-buffer';
@@ -567,7 +568,9 @@ export class Supervisor implements SupervisorService {
       throw new HttpError(422, 'invalid', 'Invalid launch request', details);
     }
     const r = parsed.data;
-    checkText(r.prompt);
+    // The first turn carries a rollover brief as fenced data (R-10); it is the launch prompt replayed on recovery.
+    const prompt = r.brief ? withHandoffBrief(r.prompt, r.brief, r.parentSessionId ?? null) : r.prompt;
+    checkText(prompt);
     this.assertConfigured();
     if (!this.ctx.services.maybe('identity')) {
       throw new HttpError(
@@ -628,7 +631,7 @@ export class Supervisor implements SupervisorService {
             parentSessionId: r.parentSessionId ?? null,
             phaseId: r.phaseId ?? null,
           },
-          payload: { prompt: r.prompt, cwd },
+          payload: { prompt, cwd },
           source: 'supervisor',
           causationId: o.causationId,
         }),
@@ -648,7 +651,7 @@ export class Supervisor implements SupervisorService {
       const s = this.mustGet(sessionId);
       this.claudeIds.set(sessionId, randomUUID());
       this.tokenFor(sessionId, actor);
-      this.writeSystemPrompt(s, type, r.brief ?? null, actor);
+      this.writeSystemPrompt(s, type, actor);
       const boundary = this.ctx.services.maybe('credits')?.checkBoundary(sessionId, null, actor);
       if (boundary && !boundary.continue && boundary.reason === 'credit_cap') {
         this.setLifecycle(sessionId, 'blocked', 'credit_cap', actor);
@@ -658,7 +661,7 @@ export class Supervisor implements SupervisorService {
       const started = this.requestTurn({
         sessionId,
         reason,
-        text: r.prompt,
+        text: prompt,
         actor,
         causationId: o.causationId,
         priority: o.priority,
@@ -722,12 +725,7 @@ export class Supervisor implements SupervisorService {
   }
 
   /** The appended system prompt is fixed at launch (Claude Code snapshots it per conversation) and reused on resume. */
-  private writeSystemPrompt(
-    s: SupervisedSession,
-    type: ProcessType,
-    brief: string | null,
-    actor: Actor | null,
-  ): string {
+  private writeSystemPrompt(s: SupervisedSession, type: ProcessType, actor: Actor | null): string {
     const learning = this.ctx.services.maybe('learning');
     let lessons: LessonInfo[] = [];
     try {
@@ -744,7 +742,6 @@ export class Supervisor implements SupervisorService {
       type,
       lessons,
       playbook: this.registry.activePlaybook(type.id),
-      brief: brief ? { fromSessionId: s.parentSessionId, text: brief } : null,
     });
     writePrivate(join(this.ensureSessionDir(s.sessionId), 'system-prompt.md'), text);
     if (actor && learning && lessons.length) {
@@ -991,7 +988,7 @@ export class Supervisor implements SupervisorService {
     writePrivate(settingsPath, JSON.stringify(buildHookSettings(sup.hookCommand), null, 2));
     const systemPrompt = existsSync(promptPath)
       ? readFileSync(promptPath, 'utf8')
-      : this.writeSystemPrompt(s, type, null, null);
+      : this.writeSystemPrompt(s, type, null);
     const claudeSessionId = s.claudeSessionId ?? this.claudeIds.get(s.sessionId) ?? randomUUID();
     this.claudeIds.set(s.sessionId, claudeSessionId);
     // Claude Code names the transcript after its process cwd, which is the physical path (symlinks resolved).

@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { FILE_CHANGING_TOOLS, HOOK_EVENTS, ProcessTypeSchema } from '@aoc/contracts';
 import { MANAGED_HOOK_EVENTS } from '../src/claude-facts';
 import {
+  MAX_ARG_BYTES,
   buildClaudeArgs,
   buildHookSettings,
   buildMcpConfig,
@@ -14,7 +15,7 @@ import {
   shellQuote,
   toolPolicy,
 } from '../src/launch-config';
-import { buildSystemPrompt, decisionAnswersText } from '../src/prompts';
+import { buildSystemPrompt, decisionAnswersText, withHandoffBrief } from '../src/prompts';
 import { RingBuffer } from '../src/ring-buffer';
 import { readStreamLine } from '../src/stream';
 import { isLegacyLimitResult, isLimitNotice, parseResetAt, strongestSignal } from '../src/throttle';
@@ -342,7 +343,7 @@ describe('stream-json reader', () => {
 });
 
 describe('system prompt and injected text', () => {
-  it('carries the AOC rules, trailers, lessons, the approved playbook and the brief', () => {
+  it('carries the AOC rules, trailers, lessons and the approved playbook', () => {
     const text = buildSystemPrompt({
       sessionId: 'ses_1',
       projectId: 'prj_1',
@@ -367,7 +368,6 @@ describe('system prompt and injected text', () => {
         status: 'approved',
         steps: [{ id: 's1', title: 'Write the test' }],
       },
-      brief: { fromSessionId: 'ses_0', text: 'BRIEF TEXT' },
     });
     for (const s of [
       'mcp__aoc__declare_plan',
@@ -381,8 +381,6 @@ describe('system prompt and injected text', () => {
       'Run tests first',
       '1. Write the test',
       'pbk_1',
-      'BRIEF TEXT',
-      'ses_0',
     ]) {
       expect(text).toContain(s);
     }
@@ -397,9 +395,15 @@ describe('system prompt and injected text', () => {
         type: type({ class: 'triage', readOnly: true }),
         lessons: [],
         playbook: null,
-        brief: null,
       }),
     ).toContain('READ-ONLY');
+  });
+
+  it('fits a large brief into the first turn and strips its own delimiter from it', () => {
+    const text = withHandoffBrief('Continue the work.', `${'x'.repeat(300_000)}`, 'ses_0');
+    expect(Buffer.byteLength(text)).toBeLessThanOrEqual(MAX_ARG_BYTES);
+    expect(text).toContain('[truncated by AOC]');
+    expect(text.endsWith('Continue the work.')).toBe(true);
   });
 
   it('formats decision answers', () => {
