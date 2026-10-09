@@ -144,6 +144,93 @@ describe('aoc evidence', () => {
     expect(existsSync(join(cwd, 'aoc-evidence-2026-10-01_2026-10-01.zip'))).toBe(true);
   });
 
+  // The daemon's EvidencePackJobDTO (packages/mod-evidence/src/index.ts, jobDto).
+  const job = (status: string, extra: Record<string, unknown> = {}) => ({
+    jobId: 'evj_1',
+    status,
+    from: '2026-10-01',
+    to: '2026-10-08',
+    requestedBy: 'usr_1',
+    requestedAt: '2026-10-09T10:00:00.000Z',
+    position: status === 'queued' ? 1 : 0,
+    pack: null,
+    error: null,
+    statusUrl: '/api/evidence/jobs/evj_1',
+    ...extra,
+  });
+
+  it('follows a queued pack job until it is built, then downloads the pack (G-56)', async () => {
+    d.on('POST', '/api/evidence/packs', { status: 202, json: job('queued') });
+    d.on(
+      'GET',
+      '/api/evidence/jobs/evj_1',
+      { json: job('queued') },
+      { json: job('running') },
+      { json: job('done', { pack: meta }) },
+    );
+    d.on('GET', '/api/evidence/packs/evp_1/download', { body: zip, contentType: 'application/zip' });
+    const cwd = tempDir();
+    const r = await aoc(['evidence', '--from', '2026-10-01', '--to', '2026-10-08'], { homeDir: home, cwd });
+    expect(r.code).toBe(0);
+    expect(r.stderr).toContain('queued behind another evidence pack (position 1)');
+    expect(d.calls('GET', '/api/evidence/jobs/evj_1')).toHaveLength(3);
+    expect(d.calls('GET', '/api/evidence/jobs/evj_1')[0]!.headers.authorization).toBe(`Bearer ${TOKEN}`);
+    expect(readFileSync(join(cwd, 'aoc-evidence-2026-10-01_2026-10-08.zip')).equals(zip)).toBe(true);
+    expect(r.stdout).toContain(`${sha} (matches the pack hash)`);
+  });
+
+  it('reports a queued pack job that fails and saves nothing', async () => {
+    d.on('POST', '/api/evidence/packs', { status: 202, json: job('queued') });
+    d.on('GET', '/api/evidence/jobs/evj_1', {
+      json: job('failed', { error: 'Evidence pack generation failed (see the aocd log)' }),
+    });
+    const cwd = tempDir();
+    const r = await aoc(['evidence', '--from', '2026-10-01', '--to', '2026-10-08'], { homeDir: home, cwd });
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain(
+      'evidence pack generation failed: Evidence pack generation failed (see the aocd log)',
+    );
+    expect(existsSync(join(cwd, 'aoc-evidence-2026-10-01_2026-10-08.zip'))).toBe(false);
+  });
+
+  it('gives up on a job still queued after 10 minutes and says how to follow it', async () => {
+    d.on('POST', '/api/evidence/packs', { status: 202, json: job('queued') });
+    d.on('GET', '/api/evidence/jobs/evj_1', { json: job('running') });
+    let t = 0;
+    const r = await aoc(['evidence', '--from', '2026-10-01', '--to', '2026-10-08'], {
+      homeDir: home,
+      cwd: tempDir(),
+      now: () => (t += 4 * 60_000),
+    });
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain('still running after 10 minutes');
+    expect(r.stderr).toContain('GET /api/evidence/jobs/evj_1');
+  });
+
+  // Codes and messages as packages/mod-evidence/src/jobs.ts refuses them.
+  it.each([
+    [
+      'pack_pending',
+      'Your previous evidence pack is still being built',
+      'wait for your pack being built to finish, then try again in 10 s',
+    ],
+    ['rate_limited', 'At most 6 evidence packs per user per hour', 'try again in 1800 s'],
+    ['queue_full', 'Too many evidence packs are waiting to be built', 'try again in 30 s'],
+  ])('names a 429 %s and when to retry', async (code, message, hint) => {
+    const retryAfterMs = { pack_pending: 10_000, rate_limited: 1_800_000, queue_full: 30_000 }[code]!;
+    d.on('POST', '/api/evidence/packs', {
+      status: 429,
+      json: { error: { code, message, details: { jobId: 'evj_0', retryAfterMs } } },
+    });
+    const r = await aoc(['evidence', '--from', '2026-10-01', '--to', '2026-10-08'], {
+      homeDir: home,
+      cwd: tempDir(),
+    });
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain(`${message} (${code})`);
+    expect(r.stderr).toContain(hint);
+  });
+
   it('validates the date range before calling the daemon (exit 2)', async () => {
     expect(
       (await aoc(['evidence', '--from', '2026-13-01', '--to', '2026-10-08'], { homeDir: home })).code,

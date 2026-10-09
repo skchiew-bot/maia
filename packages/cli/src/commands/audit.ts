@@ -128,18 +128,20 @@ export function registerAudit(program: Command, ctx: CommandContext): void {
           { from, to },
           { accept: `application/json, ${zipAccept}` },
         );
+        if (created.status === 429) throw packRefusal(created);
         if (created.status < 200 || created.status >= 300)
           throw toApiError(created, 'POST', API_PATHS.evidencePacks);
         let meta: Record<string, unknown> = {};
         let zip = created;
         if (!isZip(created)) {
-          let parsed: unknown;
-          try {
-            parsed = JSON.parse(new TextDecoder().decode(created.bytes));
-          } catch {
-            throw new CliError(
-              `unexpected response from POST ${API_PATHS.evidencePacks} (${created.contentType || 'no content type'})`,
-            );
+          let parsed = jsonOf(created, 'POST', API_PATHS.evidencePacks);
+          // Another pack is being built: the daemon queued this one (202) and builds it in turn.
+          if (created.status === 202 && isRecord(parsed) && typeof parsed.statusUrl === 'string') {
+            if (!opts.json)
+              ctx.warn(
+                `queued behind another evidence pack (position ${String(parsed.position ?? '?')}); waiting…`,
+              );
+            parsed = await followPackJob(ctx, api, api.pathFor(parsed.statusUrl));
           }
           meta = isRecord(parsed) && isRecord(parsed.pack) ? parsed.pack : isRecord(parsed) ? parsed : {};
           const packId = str(meta.packId) ?? str(meta.id);
@@ -197,4 +199,49 @@ export function registerAudit(program: Command, ctx: CommandContext): void {
         );
       },
     );
+}
+
+const PACK_JOB_POLL_MS = 2000;
+const PACK_JOB_TIMEOUT_MS = 10 * 60_000;
+
+function jsonOf(r: RawResponse, method: string, path: string): unknown {
+  try {
+    return JSON.parse(new TextDecoder().decode(r.bytes)) as unknown;
+  } catch {
+    throw new CliError(`unexpected response from ${method} ${path} (${r.contentType || 'no content type'})`);
+  }
+}
+
+/** A 429 from POST /api/evidence/packs names why (pack_pending, rate_limited, queue_full) and when to retry. */
+function packRefusal(r: RawResponse): CliError {
+  const err = toApiError(r, 'POST', API_PATHS.evidencePacks);
+  const details = isRecord(err.details) ? err.details : {};
+  const ms = typeof details.retryAfterMs === 'number' ? details.retryAfterMs : null;
+  const retry = ms !== null ? `try again in ${Math.max(1, Math.ceil(ms / 1000))} s` : 'try again later';
+  return new CliError(`${err.message} (${err.code ?? 'refused'})`, EXIT.ERROR, {
+    hint: err.code === 'pack_pending' ? `wait for your pack being built to finish, then ${retry}` : retry,
+  });
+}
+
+/** Polls a queued pack job until it is done (returns the job, whose `pack` is the summary) or failed. */
+async function followPackJob(
+  ctx: CommandContext,
+  api: ReturnType<CommandContext['api']>,
+  path: string,
+): Promise<Record<string, unknown>> {
+  const deadline = ctx.deps.now() + PACK_JOB_TIMEOUT_MS;
+  for (;;) {
+    await ctx.deps.sleep(PACK_JOB_POLL_MS);
+    const r = await api.raw('GET', path, undefined, { accept: 'application/json' });
+    if (r.status < 200 || r.status >= 300) throw toApiError(r, 'GET', path);
+    const job = jsonOf(r, 'GET', path);
+    if (!isRecord(job)) throw new CliError(`unexpected response from GET ${path}`);
+    if (job.status === 'done') return job;
+    if (job.status === 'failed')
+      throw new CliError(`evidence pack generation failed: ${str(job.error) ?? 'see the aocd log'}`);
+    if (ctx.deps.now() > deadline)
+      throw new CliError(`the evidence pack is still ${String(job.status)} after 10 minutes`, EXIT.ERROR, {
+        hint: `follow it with GET ${path}, or run \`aoc evidence\` again later`,
+      });
+  }
 }
