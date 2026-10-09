@@ -586,9 +586,24 @@ export class EventStore {
     }
     const erased = this.append({ type: 'body.erased', actor: input.actor, meta, source: 'api' });
     this.bodies.eraseScope(scopeId, this.opts.clock.iso());
+    this.purgeResidue();
+    return erased;
+  }
+
+  /**
+   * secure_delete zeroes the cells a DELETE removes, but when SQLite rebalances sibling pages it rebuilds one in
+   * place and leaves the cells it moved in the page's unallocated gap, outside every table, so erased rows can
+   * outlive their own deletion. VACUUM writes every page afresh. The scrub and the shred are done by now: a VACUUM
+   * that cannot run is logged, not thrown, so the erasure is still reported as done.
+   */
+  private purgeResidue(): void {
+    try {
+      this.db.exec('VACUUM');
+    } catch (err) {
+      this.opts.log.error('VACUUM after an erasure failed: erased text may remain in aoc.db until the next one', { err: String(err) });
+    }
     // The WAL still holds page images from before the scrub: fold it into the main file and truncate it.
     this.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
-    return erased;
   }
 
   /**
