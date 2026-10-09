@@ -24,16 +24,21 @@ export function sniff(buf: Buffer): SniffResult | null {
   return null;
 }
 
+/** Declared types that match a sniffed kind, with their usual extensions (the portal's file picker lists these). */
+export const ACCEPTED_MEDIA: readonly { mime: string; kind: MediaKind; extensions: readonly string[] }[] = [
+  { mime: 'image/png', kind: 'image', extensions: ['.png'] },
+  { mime: 'image/jpeg', kind: 'image', extensions: ['.jpg', '.jpeg'] },
+  { mime: 'image/gif', kind: 'image', extensions: ['.gif'] },
+  { mime: 'image/webp', kind: 'image', extensions: ['.webp'] },
+  { mime: 'video/mp4', kind: 'video', extensions: ['.mp4', '.m4v'] },
+  { mime: 'video/quicktime', kind: 'video', extensions: ['.mov'] },
+  { mime: 'video/webm', kind: 'video', extensions: ['.webm'] },
+  { mime: 'application/pdf', kind: 'document', extensions: ['.pdf'] },
+];
+
 const DECLARED_FAMILY: Record<string, MediaKind> = {
-  'image/png': 'image',
-  'image/jpeg': 'image',
+  ...Object.fromEntries(ACCEPTED_MEDIA.map((m) => [m.mime, m.kind])),
   'image/jpg': 'image',
-  'image/gif': 'image',
-  'image/webp': 'image',
-  'video/mp4': 'video',
-  'video/quicktime': 'video',
-  'video/webm': 'video',
-  'application/pdf': 'document',
 };
 
 /** A declared type that contradicts the sniffed content is rejected (polyglot / disguised uploads). */

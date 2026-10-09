@@ -5,6 +5,8 @@ import {
   ReportDiagnosisInput,
   SEVERITIES,
   hasPermission,
+  type AocConfig,
+  type IntakeLimits,
   type InternalTicket,
   type McpErrorResult,
   type PublicTicket,
@@ -14,7 +16,7 @@ import { HttpError, readJson, requireIngest, requirePermission, requireUser, typ
 import { z } from 'zod';
 import { INTAKE_ACTOR, IntakeFlow, type TicketRow } from './flow';
 import { intakeProjector } from './projector';
-import { declaredMatches, safeFileName, scannerFor, sha256, sniff, type Scanner } from './upload';
+import { ACCEPTED_MEDIA, declaredMatches, safeFileName, scannerFor, sha256, sniff, type Scanner } from './upload';
 
 export { sniff, builtinScanner, clamavScanner, safeFileName, type Scanner } from './upload';
 export { IntakeFlow } from './flow';
@@ -25,6 +27,22 @@ export interface IntakeModuleOptions {
 }
 
 const McpBody = z.object({ sessionId: z.string(), input: z.unknown() });
+
+const TITLE_LENGTH = { min: 3, max: 200 } as const;
+const DESCRIPTION_LENGTH = { min: 10, max: 20_000 } as const;
+
+/** The upload rules POST /portal/api/intakes enforces, published so the portal can check before it uploads. */
+export function intakeLimits(cfg: AocConfig['intake']): IntakeLimits {
+  return {
+    maxAttachments: cfg.maxAttachments,
+    maxBytes: { image: cfg.maxImageBytes, video: cfg.maxVideoBytes, document: cfg.maxImageBytes },
+    // aocd caps an intake request body at one maximum-size video plus the form envelope.
+    maxTotalBytes: cfg.maxVideoBytes,
+    titleLength: { ...TITLE_LENGTH },
+    descriptionLength: { ...DESCRIPTION_LENGTH },
+    accepted: ACCEPTED_MEDIA.map((m) => ({ mime: m.mime, kind: m.kind, extensions: [...m.extensions] })),
+  };
+}
 
 function publicView(ctx: ModuleContext, flow: IntakeFlow, t: TicketRow): PublicTicket {
   const canSign = flow.openDecisions(t.ticket_id).some((d) => d.kind === 'uat_signoff');
@@ -176,6 +194,11 @@ export function createIntakeModule(opts: IntakeModuleOptions = {}): AocModule {
       const cfg = ctx.config.intake;
 
       // ── requester portal ────────────────────────────────────────────────────
+      app.get('/portal/api/limits', (c) => {
+        requirePermission(c, 'intake.submit');
+        return c.json(intakeLimits(cfg));
+      });
+
       app.post('/portal/api/intakes', async (c) => {
         const auth = requirePermission(c, 'intake.submit');
         const form = await c.req.parseBody({ all: true });
@@ -184,8 +207,8 @@ export function createIntakeModule(opts: IntakeModuleOptions = {}): AocModule {
         const description = field('description');
         const comment = field('comment') || undefined;
         const severity = (field('severity') || 'medium') as Severity;
-        if (title.length < 3 || title.length > 200) throw new HttpError(422, 'invalid', 'Title must be 3–200 characters');
-        if (description.length < 10 || description.length > 20_000) throw new HttpError(422, 'invalid', 'Description must be 10–20000 characters');
+        if (title.length < TITLE_LENGTH.min || title.length > TITLE_LENGTH.max) throw new HttpError(422, 'invalid', `Title must be ${TITLE_LENGTH.min}–${TITLE_LENGTH.max} characters`);
+        if (description.length < DESCRIPTION_LENGTH.min || description.length > DESCRIPTION_LENGTH.max) throw new HttpError(422, 'invalid', `Description must be ${DESCRIPTION_LENGTH.min}–${DESCRIPTION_LENGTH.max} characters`);
         if (!SEVERITIES.includes(severity)) throw new HttpError(422, 'invalid', 'Unknown severity');
         const projectId = field('projectId') || defaultProject(ctx);
         if (!projectId || !projectExists(ctx, projectId)) throw new HttpError(422, 'invalid', 'Unknown product');
