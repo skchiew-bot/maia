@@ -55,9 +55,11 @@ export const AocConfigSchema = z.object({
       /** Env vars copied from aocd into sessions (everything else is dropped — credential isolation, §3). */
       envAllowlist: z.array(z.string()).default(['PATH', 'HOME', 'LANG', 'LC_ALL', 'TERM', 'TZ', 'TMPDIR', 'SHELL', 'USER', 'CLAUDE_CONFIG_DIR', 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'HTTPS_PROXY', 'HTTP_PROXY', 'NO_PROXY', 'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE']),
       /**
-       * JSON file `{ profiles: { [name]: { env: Record<string,string>, files?: Record<string,string> } } }` readable
-       * only by aocd's user. `files` names key files; an env value refers to one as `{{file:<name>}}` and a session
-       * gets a private per-session copy of it (deleted when its turn ends).
+       * JSON file `{ profiles: { [name]: { env, files?, push?: { refs }, session?: { env, files? } } } }` readable
+       * only by aocd's user. `env`/`files` are the credential, held by aocd alone (R-02): the push gateway forwards
+       * a session's pushes with it, to the branches `push.refs` allows; a session never receives it. `session` is what
+       * the session itself gets (model-visible: never a key that can push). A file is named by an env value as
+       * `{{file:<name>}}`; a session's `session.files` come as private per-turn copies (deleted when the turn ends).
        */
       credentialProfilesFile: z.string().optional(),
       /**

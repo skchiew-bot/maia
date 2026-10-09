@@ -156,7 +156,7 @@ describe('a turn leaves nothing running behind it', () => {
 });
 
 describe('session secrets never reach the builder-visible output (§3, R1)', () => {
-  it("redacts the session's credential-profile values and ingest token from its output", async () => {
+  it("redacts what the session's credential profile hands it, and its ingest token, from its output", async () => {
     const hh = (h = await createHarness());
     const id = await hh.launch('[[fake:printenv]] show me the environment');
     await hh.waitLifecycle(id, 'idle');
@@ -164,9 +164,9 @@ describe('session secrets never reach the builder-visible output (§3, R1)', () 
     const shown = JSON.stringify(hh.sup.output(id));
     expect(shown).toContain('x-access-token:');
     expect(shown).toContain('[redacted]');
-    expect(shown).not.toContain(SECRETS.gitFeature);
+    expect(shown).not.toContain(SECRETS.sessionRead);
     expect(shown).not.toContain(ingestToken);
     const ended = hh.events('session.turn_ended', id).map((e) => JSON.stringify(hh.payload(e)));
-    expect(ended.join('\n')).not.toContain(SECRETS.gitFeature);
+    expect(ended.join('\n')).not.toContain(SECRETS.sessionRead);
   });
 });

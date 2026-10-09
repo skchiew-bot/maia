@@ -1,7 +1,7 @@
 import type { Context } from 'hono';
 import type { z } from 'zod';
 import type { AocConfig, AuthContext, IngestPrincipal, Permission } from '@aoc/contracts';
-import { hasPermission, INGEST_PATHS } from '@aoc/contracts';
+import { hasPermission, INGEST_GIT_PREFIX, INGEST_PATHS, MAX_PUSH_BYTES } from '@aoc/contracts';
 import { EventValidationError } from '../store/event-store';
 import type { AppEnv } from './module';
 
@@ -77,7 +77,14 @@ export function errorResponse(err: unknown, c: Ctx): Response {
 
 const MiB = 1024 * 1024;
 /** Request-body caps (bytes). The spool carries batches of hook bodies; hook bodies carry tool input/output. */
-export const MAX_BODY_BYTES = { spool: 64 * MiB, ingest: 16 * MiB, api: 4 * MiB, formOverhead: MiB } as const;
+export const MAX_BODY_BYTES = {
+  spool: 64 * MiB,
+  ingest: 16 * MiB,
+  /** A session's push through the supervisor's gateway carries a git pack. */
+  push: MAX_PUSH_BYTES,
+  api: 4 * MiB,
+  formOverhead: MiB,
+} as const;
 
 /**
  * Cap for a request path, enforced before authentication or any parsing so an anonymous client cannot make the
@@ -85,6 +92,7 @@ export const MAX_BODY_BYTES = { spool: 64 * MiB, ingest: 16 * MiB, api: 4 * MiB,
  */
 export function bodyLimitFor(path: string, config: AocConfig): number {
   if (path === INGEST_PATHS.spool) return MAX_BODY_BYTES.spool;
+  if (path.startsWith(INGEST_GIT_PREFIX)) return MAX_BODY_BYTES.push;
   if (path.startsWith('/ingest/')) return MAX_BODY_BYTES.ingest;
   if (path.startsWith('/portal/')) {
     const i = config.intake;

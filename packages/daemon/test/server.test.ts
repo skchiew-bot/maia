@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
+import { MAX_PUSH_BYTES } from '@aoc/contracts';
 import { silentLogger, type AocModule } from '@aoc/kernel';
 import { createIntakeModule } from '@aoc/mod-intake';
 import { CONTENT_SECURITY_POLICY, JSON_BODY_LIMIT } from '../src/http';
@@ -25,6 +26,7 @@ const echoModule: AocModule = {
     app.post('/api/echo', async (c) => c.json({ bytes: (await c.req.arrayBuffer()).byteLength }));
     app.post('/portal/api/intakes', async (c) => c.json({ bytes: (await c.req.arrayBuffer()).byteLength }));
     app.post('/ingest/hook', async (c) => c.json({ bytes: (await c.req.arrayBuffer()).byteLength }));
+    app.post('/ingest/git/:repo/git-receive-pack', async (c) => c.json({ bytes: (await c.req.arrayBuffer()).byteLength }));
   },
 };
 
@@ -201,6 +203,27 @@ describe('aocd HTTP surface', () => {
       duplex: 'half',
     } as RequestInit);
     expect(await smallStream.json()).toEqual({ bytes: 1000 });
+  });
+
+  it('lets a push to the git gateway carry a pack that the JSON cap would refuse, up to its own cap (R-02)', async () => {
+    const t = await boot({ modules: [echoModule] });
+    const auth = { authorization: `Bearer ${t.identity.issueObserverToken()}` };
+    const n = 2 * JSON_BODY_LIMIT;
+    const push = await t.request('/ingest/git/prj_a.git/git-receive-pack', {
+      method: 'POST',
+      body: chunked(n),
+      headers: auth,
+      duplex: 'half',
+    } as RequestInit);
+    expect(await push.json()).toEqual({ bytes: n });
+    const hook = await t.request('/ingest/hook', { method: 'POST', body: chunked(n), headers: auth, duplex: 'half' } as RequestInit);
+    expect(hook.status).toBe(413);
+    const announced = await t.request('/ingest/git/prj_a.git/git-receive-pack', {
+      method: 'POST',
+      body: '{}',
+      headers: { ...auth, 'content-length': String(MAX_PUSH_BYTES + 1) },
+    });
+    expect(announced.status).toBe(413);
   });
 
   it('lets intake uploads through up to the video cap', async () => {

@@ -186,6 +186,8 @@ describe('ticket lifecycle', () => {
     await t.drain();
     const build = s.launches.find((l) => l.processType === 'bug-fix')!;
     expect(build.prompt).toMatch(/APPROVED fix plan/);
+    // pushed through the supervisor's gateway (R-02): the build session is not given the UAT credential
+    expect(build.prompt).toContain(`git push aoc HEAD:refs/heads/uat/${ticketId}`);
     const uatSha = repo.pushUat(ticketId);
     endBuild(build.sessionId);
     await t.drain();

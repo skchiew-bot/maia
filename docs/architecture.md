@@ -184,9 +184,11 @@ The supervisor is a module inside aocd (`SupervisorService` in
 - **MCP config** declares the `aoc` server with `alwaysLoad: true`. If `system/init` does not report `aoc` as
   `connected`, the supervisor aborts the turn and fails the session ("fail loudly").
 - **Environment.** Only `supervisor.envAllowlist` variables cross from aocd, and never an `AOC_*` one. The supervisor
-  adds `TZ` and the session's own `AOC_*` values. A credential profile's variables are added only when the type
-  names a profile and is not read-only. Read-only types also get every file-changing tool disallowed, whatever the
-  registry says.
+  adds `TZ` and the session's own `AOC_*` values. Only the `session` part of a credential profile (read-only
+  values; never a key that can push) is added, and only when the type names a profile and is not read-only. The
+  profile's `env` and `files` are the push credential and stay with aocd: a session with `push.refs` gets git
+  settings that make remote `aoc` the push gateway instead (below). Read-only types also get every file-changing
+  tool disallowed, whatever the registry says.
 - **Sidecar.** Started with the session id, the `claude` pid, the transcript path and the daemon URL. Its ingest
   token travels in the environment, never in argv, because a command line is readable by every local user.
 - **End of a turn** (one process is one turn), checked in this order: an open decision → `waiting_decision`; a
@@ -212,6 +214,13 @@ The supervisor is a module inside aocd (`SupervisorService` in
 - **Rollover** to a fresh session with a deterministic handoff brief, only at a clean task boundary (§14, ADR-0008).
 - **`runIsolated`** runs rollback verification and promotion commands with an allowlisted environment plus, for
   promotion, the promotion credential profile. It is never exposed to agents.
+- **Push gateway** (§3, R-02). A session pushes with `git push aoc <commit>:refs/heads/<branch>`; remote `aoc` is
+  `<publicUrl>/ingest/git/<project>.git`, git's smart HTTP served by the supervisor's routes under the ingest
+  prefix, authenticated by the session's ingest token and accepted only while one of its turns runs. aocd receives
+  the push into a service-owned bare repository (`<dataDir>/git/<project>.git`), refuses the whole push if any ref
+  is `main`, `master`, `production`, `release/*`, a tag, a deletion or outside the profile's `push.refs`, and forwards
+  the rest to the `origin` an operator set on that repository, through `runIsolated` with the profile's credential.
+  Every push is a `session.git_pushed` event. See the [runbook](runbooks/credential-isolation.md) §4, item 11.
 
 Not in place yet (see the [threat model](security/threat-model.md)): sessions and `runIsolated` still run as aocd's
 own OS user and inherit its `HOME` (O-1, O-2); there is no "no `SessionStart` hook within N seconds" launch check

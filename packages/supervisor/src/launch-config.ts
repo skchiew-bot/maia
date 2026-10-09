@@ -302,10 +302,34 @@ export function resolveFileRefs(
   return out;
 }
 
-/** Env of a named profile with key files at their original paths (supervisor-run commands, dev sessions). */
+/**
+ * Env of a named profile's credential with key files at their original paths: for commands aocd runs itself
+ * (the push gateway's upstream push, promotion). It never goes into a session (R-02).
+ */
 export function readCredentialProfile(file: string, profile: string): Record<string, string> {
   const p = readCredentialProfileSpec(file, profile);
   return resolveFileRefs(p.env, p.files);
+}
+
+/** Name of the git remote that is the push gateway in a session's environment. */
+export const GATEWAY_REMOTE = 'aoc';
+
+/**
+ * Git config for a session's environment (GIT_CONFIG_COUNT/KEY_n/VALUE_n outranks every config file, so the workspace
+ * cannot redirect it): remote `aoc` is the supervisor's push gateway, authenticated by the session's ingest token.
+ * The token is already in the session's environment (hooks and the MCP server need it); it opens no door but the
+ * gateway's own checks, and only while one of the session's turns runs.
+ */
+export function gatewayGitEnv(gatewayUrl: string, token: string): Record<string, string> {
+  return {
+    GIT_CONFIG_COUNT: '2',
+    GIT_CONFIG_KEY_0: `remote.${GATEWAY_REMOTE}.url`,
+    GIT_CONFIG_VALUE_0: gatewayUrl,
+    GIT_CONFIG_KEY_1: `http.${gatewayUrl}.extraHeader`,
+    GIT_CONFIG_VALUE_1: `Authorization: Bearer ${token}`,
+    // A session has no terminal: a refused push must fail, never wait for a password.
+    GIT_TERMINAL_PROMPT: '0',
+  };
 }
 
 /**

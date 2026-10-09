@@ -21,6 +21,7 @@ import { z } from 'zod';
 import {
   AOC_ENV,
   AOC_MCP_SERVER_NAME,
+  INGEST_GIT_PREFIX,
   MODEL_CONTEXT_TOKENS,
   MODEL_ID_BY_TIER,
   claudeConfigDir,
@@ -66,6 +67,7 @@ import {
   buildHookSettings,
   buildMcpConfig,
   buildSessionEnv,
+  gatewayGitEnv,
   keyFileSecrets,
   readCredentialProfile,
   readCredentialProfileSpec,
@@ -76,9 +78,12 @@ import {
   toolPolicy,
   userSettingsProblems,
   workspaceSettingsProblems,
+  GATEWAY_REMOTE,
   type CredentialProfile,
+  type ProfileCredentials,
 } from './launch-config';
 import { killProcessGroup, processMatches, runCommand, signalProcess, signalTree } from './process-utils';
+import { PushGateway, expandPattern, type PushPrincipal, type PushRecord } from './push-gateway';
 import { SupervisorView, TERMINAL_LIFECYCLES, type SupervisedSession } from './projection';
 import {
   CONTINUE_TEXT,
@@ -107,6 +112,13 @@ import {
 export interface SupervisorModuleOptions {
   /** Per-session directories (default `<dataDir>/sessions`; a temp dir when the store is in memory). */
   sessionsDir?: string;
+  /** Service-owned repositories behind the push gateway (default `<dataDir>/git`; a temp dir when in memory). */
+  gatewayDir?: string;
+  /** Pushes one session may make per window, and the window (defaults: 30 per 10 minutes). */
+  pushesPerWindow?: number;
+  pushWindowMs?: number;
+  /** Largest pack one push may carry (default MAX_PUSH_BYTES, 256 MiB). */
+  maxPackBytes?: number;
   /** Registry file used when mod-registry is not loaded (default `config.registryFile`). */
   registryFile?: string;
   /** SIGINT → SIGKILL grace when a turn is interrupted (default 10 s). */
@@ -254,6 +266,10 @@ export class Supervisor implements SupervisorService {
   private readonly ownsSessionsRoot: boolean;
   /** Session users and their directories (supervisor.isolation 'user'); null = sessions run as aocd (development). */
   private readonly isolation: SessionIsolation | null;
+  /** The push gateway (R-02): sessions push to a service-owned repository, the supervisor forwards upstream. */
+  readonly gateway: PushGateway;
+  private readonly gatewayRoot: string;
+  private readonly ownsGatewayRoot: boolean;
   private stopping = false;
 
   constructor(
@@ -273,11 +289,35 @@ export class Supervisor implements SupervisorService {
       : this.ownsSessionsRoot
         ? mkdtempSync(join(tmpdir(), 'aoc-sessions-'))
         : resolve(ctx.dataDir, 'sessions');
+    // The same directory mod-change's service-owned clone uses (G-04): one `origin` per project serves both.
+    this.ownsGatewayRoot = !opts.gatewayDir && ctx.dataDir === ':memory:';
+    this.gatewayRoot = opts.gatewayDir
+      ? resolve(opts.gatewayDir)
+      : this.ownsGatewayRoot
+        ? mkdtempSync(join(tmpdir(), 'aoc-git-'))
+        : resolve(ctx.dataDir, 'git');
+    this.gateway = new PushGateway(
+      {
+        principal: (sessionId, repoName) => this.pushPrincipal(sessionId, repoName),
+        forward: (input) => this.forwardPush(input),
+        record: (r) => this.recordPush(r),
+        env: () => this.sourceEnv(),
+        now: () => ctx.clock.now(),
+        log: this.log,
+      },
+      {
+        root: this.gatewayRoot,
+        pushesPerWindow: opts.pushesPerWindow,
+        windowMs: opts.pushWindowMs,
+        maxPackBytes: opts.maxPackBytes,
+      },
+    );
     if (isolation) {
       try {
         this.checkIsolation(isolation);
       } catch (err) {
         if (this.ownsSessionsRoot) rmSync(this.sessionsRoot, { recursive: true, force: true });
+        if (this.ownsGatewayRoot) rmSync(this.gatewayRoot, { recursive: true, force: true });
         throw err;
       }
     }
@@ -299,6 +339,7 @@ export class Supervisor implements SupervisorService {
       ...(kek ? [resolve(kek)] : []),
       ...(profiles ? [profiles, ...profileKeyFiles(profiles)] : []),
       this.sessionsRoot,
+      this.gatewayRoot,
     ];
     prepareHomesRoot(iso);
     const workspaces = resolve(sup.workspacesDir);
@@ -674,6 +715,7 @@ export class Supervisor implements SupervisorService {
     await settleWithin(lives, 1_000);
     for (const sc of this.sidecars) sc.kill('SIGTERM');
     if (this.ownsSessionsRoot) rmSync(this.sessionsRoot, { recursive: true, force: true });
+    if (this.ownsGatewayRoot) rmSync(this.gatewayRoot, { recursive: true, force: true });
   }
 
   // ── launch ────────────────────────────────────────────────────────────────
@@ -884,6 +926,15 @@ export class Supervisor implements SupervisorService {
     } catch (err) {
       this.log.warn('lessons unavailable', { sessionId: s.sessionId, err: String(err) });
     }
+    let gitPush: { remote: string; refs: string[] } | null = null;
+    if (!s.readOnly && type.credentialProfile) {
+      try {
+        const profile = this.credentialsFor(type.credentialProfile);
+        if (profile?.push) gitPush = { remote: GATEWAY_REMOTE, refs: this.pushableRefs(s, profile) };
+      } catch (err) {
+        this.log.warn('credential profile unavailable for the system prompt', { sessionId: s.sessionId, err: String(err) });
+      }
+    }
     const text = buildSystemPrompt({
       sessionId: s.sessionId,
       projectId: s.projectId,
@@ -893,6 +944,7 @@ export class Supervisor implements SupervisorService {
       type,
       lessons,
       playbook: this.registry.activePlaybook(type.id),
+      gitPush,
     });
     writePrivate(join(this.ensureSessionDir(s.sessionId), 'system-prompt.md'), text);
     if (actor && learning && lessons.length) {
@@ -1144,23 +1196,22 @@ export class Supervisor implements SupervisorService {
         { problems: own },
       );
     try {
-      const keyPaths = profile ? (dirs && user ? this.keyCopies(dirs, user, profile) : profile.files) : {};
-      const credentials = profile ? resolveFileRefs(profile.env, keyPaths) : null;
       // The model can print anything in its env or its key files, and every builder can read a session's output.
+      // So the session gets the profile's `session` part only: the credential itself never enters it (R-02). Its
+      // pushes go through the gateway (remote `aoc`), which forwards them upstream with that credential.
+      const keyPaths = profile ? (dirs && user ? this.keyCopies(dirs, user, profile.session) : profile.session.files) : {};
+      const credentials = profile ? resolveFileRefs(profile.session.env, keyPaths) : null;
       this.secrets.set(
         s.sessionId,
-        secretsToRedact([
-          token,
-          ...Object.values(credentials ?? {}),
-          ...keyFileSecrets(profile?.files ?? {}),
-        ]),
+        secretsToRedact([token, ...Object.values(credentials ?? {}), ...this.profileSecrets(profile)]),
       );
+      const gateway = profile?.push ? gatewayGitEnv(this.gatewayUrl(s.projectId), token) : {};
       const env = buildSessionEnv({
         source: this.sourceEnv(),
         allowlist: sup.envAllowlist,
         credentials,
         readOnly: s.readOnly,
-        aoc,
+        aoc: { ...aoc, ...gateway },
         timezone: this.ctx.config.timezone,
         isolated:
           dirs && user
@@ -1229,10 +1280,10 @@ export class Supervisor implements SupervisorService {
     }
   }
 
-  /** Private copies of the profile's key files for this turn only (removed when it ends, G-01). */
-  private keyCopies(dirs: SessionDirs, user: OsUser, profile: CredentialProfile): Record<string, string> {
+  /** Private copies of the session's key files for this turn only (removed when it ends, G-01). */
+  private keyCopies(dirs: SessionDirs, user: OsUser, creds: ProfileCredentials): Record<string, string> {
     try {
-      return materializeKeyFiles(dirs, user, profile.files);
+      return materializeKeyFiles(dirs, user, creds.files);
     } catch (err) {
       throw new HttpError(500, 'credential_profile_unavailable', (err as Error).message);
     }
@@ -1951,6 +2002,102 @@ export class Supervisor implements SupervisorService {
     } catch (err) {
       throw new HttpError(500, 'credential_profile_unavailable', (err as Error).message);
     }
+  }
+
+  /** Every secret a profile holds or hands out (raw and as stream-json strings), for output redaction. */
+  private profileSecrets(profile: CredentialProfile | null): string[] {
+    if (!profile) return [];
+    return [
+      ...Object.values(resolveFileRefs(profile.env, profile.files)),
+      ...keyFileSecrets(profile.files),
+      ...Object.values(resolveFileRefs(profile.session.env, profile.session.files)),
+      ...keyFileSecrets(profile.session.files),
+    ];
+  }
+
+  // ── push gateway (R-02) ───────────────────────────────────────────────────
+
+  /** `<publicUrl>/ingest/git/<project>.git`: what remote `aoc` points at in a session's environment. */
+  private gatewayUrl(projectId: string): string {
+    return `${this.ctx.config.publicUrl.replace(/\/+$/, '')}${INGEST_GIT_PREFIX}${this.gateway.repoName(projectId)}`;
+  }
+
+  /** The branches a session may push, with its own ids filled in (shown to it in its system prompt). */
+  private pushableRefs(s: SupervisedSession, profile: CredentialProfile | null): string[] {
+    const vars = { sessionId: s.sessionId, projectId: s.projectId, threadId: s.threadId, ticketId: s.ticketId };
+    return (profile?.push?.refs ?? []).map((p) => expandPattern(p, vars)).filter((r): r is string => r !== null);
+  }
+
+  /** Who a gateway request is, now: a credentialed session, in a running turn, on its own project's repository. */
+  private pushPrincipal(sessionId: string, repoName: string): PushPrincipal {
+    const s = this.view.get(sessionId);
+    if (!s || TERMINAL_LIFECYCLES.includes(s.lifecycle))
+      return { ok: false, status: 403, reason: 'aoc: not an active managed session' };
+    if (s.readOnly) return { ok: false, status: 403, reason: 'aoc: read-only sessions cannot push' };
+    // A token alone is not enough: pushes are accepted while one of the session's turns is running.
+    const live = this.running.get(sessionId);
+    if (!live?.started || live.exit)
+      return { ok: false, status: 403, reason: 'aoc: pushes are accepted only while a turn of the session is running' };
+    if (repoName !== this.gateway.repoName(s.projectId))
+      return { ok: false, status: 404, reason: "aoc: not this session's repository" };
+    const profileName = this.registry.getType(s.processType)?.credentialProfile ?? null;
+    if (!profileName) return { ok: false, status: 403, reason: 'aoc: this process type holds no credential profile' };
+    let profile: CredentialProfile | null;
+    try {
+      profile = this.credentialsFor(profileName);
+    } catch (err) {
+      this.log.error('push gateway: credential profile unavailable', { profile: profileName, err: String(err) });
+      return { ok: false, status: 503, reason: 'aoc: the credential profile is unavailable (see the aocd log)' };
+    }
+    if (!profile) return { ok: false, status: 503, reason: 'aoc: no credential profiles are configured' };
+    return {
+      ok: true,
+      vars: { sessionId, projectId: s.projectId, threadId: s.threadId, ticketId: s.ticketId },
+      actor: { kind: 'agent', id: sessionId },
+      profileName,
+      patterns: profile.push?.refs ?? null,
+    };
+  }
+
+  /** The upstream push of a gateway request: run by aocd with the profile's credential, which no session ever holds. */
+  private async forwardPush(input: {
+    repo: string;
+    command: string[];
+    profileName: string;
+    timeoutMs: number;
+  }): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+    const r = await this.runIsolated({
+      cwd: input.repo,
+      command: input.command,
+      credentialProfile: input.profileName,
+      timeoutMs: input.timeoutMs,
+    });
+    // Whatever git or the remote echoed, no credential value leaves aocd.
+    const secrets = secretsToRedact(this.profileSecrets(this.credentialsFor(input.profileName)));
+    return { exitCode: r.exitCode, stdout: redactSecrets(r.stdout, secrets), stderr: redactSecrets(r.stderr, secrets) };
+  }
+
+  private recordPush(r: PushRecord): void {
+    const s = this.view.get(r.vars.sessionId);
+    if (!s) return;
+    const count = (result: 'forwarded' | 'refused' | 'failed') => r.results.filter((x) => x.result === result).length;
+    this.ctx.store.append(
+      ev({
+        type: 'session.git_pushed',
+        actor: { kind: 'agent', id: r.vars.sessionId },
+        scope: scopeOf(s),
+        meta: {
+          sessionId: s.sessionId,
+          credentialProfile: label(r.profileName),
+          refs: r.results.length,
+          forwarded: count('forwarded'),
+          refused: count('refused'),
+          failed: count('failed'),
+        },
+        payload: { results: r.results },
+        source: 'supervisor',
+      }),
+    );
   }
 
   private tokenFor(sessionId: string, actor: Actor): string {

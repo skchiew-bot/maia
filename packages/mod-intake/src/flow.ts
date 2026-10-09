@@ -276,7 +276,7 @@ export class IntakeFlow {
     const supervisor = this.ctx.services.maybe('supervisor');
     if (!t || !t.project_id || !supervisor) return;
     const prompt = [
-      `Implement the APPROVED fix plan for ticket ${ticketId}. Work on branch uat/${ticketId}; push it for UAT when done (the supervisor holds the UAT deploy credential).`,
+      `Implement the APPROVED fix plan for ticket ${ticketId}. Work on branch uat/${ticketId}; when done, push it for UAT with \`git push aoc HEAD:refs/heads/uat/${ticketId}\` (the supervisor forwards it with the UAT deploy credential; you hold none).`,
       'Every commit must carry the trailers `AOC-Ticket: ' + ticketId + '` and `AOC-Session: $AOC_SESSION_ID`.',
       `Approved fix plan:\n${t.fix_plan ?? ''}`,
     ].join('\n\n');

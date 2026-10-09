@@ -67,6 +67,8 @@ export interface SystemPromptInput {
   type: ProcessType;
   lessons: LessonInfo[];
   playbook: PlaybookInfo | null;
+  /** The push gateway remote and the branches (the session's own ids filled in) its credential profile allows. */
+  gitPush?: { remote: string; refs: string[] } | null;
 }
 
 export const MAX_LESSONS = 40;
@@ -102,6 +104,12 @@ export function buildSystemPrompt(i: SystemPromptInput): string {
   if (t.readOnly) {
     rules.push(
       `9. This is a READ-ONLY session: never modify files. Diagnose, call \`mcp__aoc__report_diagnosis\`, then end your turn.`,
+    );
+  }
+  if (i.gitPush) {
+    const allowed = i.gitPush.refs.length ? i.gitPush.refs.map((r) => `\`${r}\``).join(', ') : 'none';
+    rules.push(
+      `9. Pushing: you hold no credential for the upstream repository. Push with \`git push ${i.gitPush.remote} <commit>:refs/heads/<branch>\`: AOC checks the branch and forwards it upstream for you. Branches you may push: ${allowed}. \`main\`, \`release/*\`, other branches, tags, deletions and forced pushes are refused; do not look for another way to push.`,
     );
   }
   const parts = [
