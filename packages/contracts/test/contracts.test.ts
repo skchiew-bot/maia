@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
 import {
   ALL_EVENTS,
   EVENT_CATALOG,
@@ -23,6 +23,7 @@ import {
   projectSlug,
   transcriptPathFor,
   type LivenessInput,
+  type ProcessEventRequest,
 } from '../src';
 
 const base: LivenessInput = {
@@ -192,5 +193,14 @@ describe('intake upload allowance', () => {
     }).intake;
     expect(intakeTotalBytes(many)).toBe(4096);
     expect(intakeRequestBytes(many)).toBe(4096 + INTAKE_ENVELOPE_BYTES);
+  });
+});
+
+describe('ingest wire types', () => {
+  it('a process exit report can name the process it is about, so a stale sidecar is told apart from the current one', () => {
+    const named: ProcessEventRequest = { sessionId: 'ses_A', event: 'exited', exitCode: 0, signal: null, at: '2026-10-09T10:00:00.000Z', pid: 4242 };
+    const unnamed: ProcessEventRequest = { sessionId: 'ses_A', event: 'exited', exitCode: null, signal: 'SIGKILL', at: '2026-10-09T10:00:00.000Z' };
+    expectTypeOf<ProcessEventRequest['pid']>().toEqualTypeOf<number | null | undefined>();
+    expect([named.pid, unnamed.pid]).toEqual([4242, undefined]);
   });
 });

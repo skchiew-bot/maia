@@ -129,6 +129,12 @@ export interface ProcessEventRequest {
   exitCode: number | null;
   signal: string | null;
   at: string;
+  /**
+   * The process the sidecar watched. The supervisor starts a sidecar per turn and one can outlive its process, so a
+   * report about a pid that is no longer the session's current one says nothing about the session. Absent or null:
+   * the report does not say which process it is about, and counts for the current one.
+   */
+  pid?: number | null;
 }
 export interface McpIngestRequest<TInput = unknown> {
   sessionId: string;

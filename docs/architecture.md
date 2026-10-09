@@ -241,8 +241,9 @@ Thinking must be told apart from Stalled (§2.1). The sidecar fills that gap:
   batches every 10 s or 50 messages, with a content-hash idempotency key.
 - It detects plan-limit hits in transcript text (the text fallback in `THROTTLE_PATTERNS`; structured signals
   come first, see §6) and reports `/ingest/throttle`.
-- It reports the process exit (`/ingest/process`), flushes and stops. Its offsets and counted state persist in a
-  0600 state file, so a restart does not double-count.
+- It reports the process exit (`/ingest/process`, with the pid it watched: a sidecar can outlive its process into the
+  next turn, and the daemon ignores a report about a pid that is no longer the session's current one), flushes and
+  stops. Its offsets and counted state persist in a 0600 state file, so a restart does not double-count.
 - **It has its own principal (G-44).** The supervisor issues one `sidecar` ingest token (`aoc_c_…`) per managed
   session and passes it only in the sidecar's environment (`AOC_INGEST_TOKEN`, never argv, never the `claude`
   environment). `/ingest/usage`, `heartbeat`, `activity`, `process` and `throttle` for a managed session accept only
