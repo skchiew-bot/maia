@@ -2,6 +2,7 @@ export {
   ApiError,
   apiDelete,
   apiGet,
+  apiPatch,
   apiPost,
   apiPut,
   isPortalPath,
