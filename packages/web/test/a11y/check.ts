@@ -14,7 +14,8 @@ import { createWriteStream, existsSync, readdirSync, readFileSync, writeFileSync
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { build } from 'esbuild';
+import { bundleProbe } from './bundle';
+import { focusChangesPixels } from './pixels';
 import { loadChromium, type Browser, type Page, type Request, type StorageState } from './playwright';
 import type { Animations, ChartInfo, FocusInfo, Overflow, PrimaryAction } from './probe';
 import { renderReport } from './report';
@@ -31,6 +32,7 @@ import {
   type Variant,
 } from './results';
 import { readRoutes, type RouteEntry } from './routes';
+import { probeSelfTest } from './selftest';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WEB = resolve(HERE, '../..');
@@ -38,7 +40,7 @@ const REPO = resolve(WEB, '../..');
 const require = createRequire(join(WEB, 'package.json'));
 
 const AXE_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa', 'best-practice'];
-const MAX_TABS = 120;
+const MAX_TABS = 150;
 const SETTLE_TIMEOUT_MS = 10_000;
 const MISSING_ID = 'a11y-missing-id';
 const NO_SUCH_PAGE = 'a11y-no-such-page';
@@ -331,10 +333,11 @@ async function keyboardWalk(page: Page, viewport: Variant): Promise<Keyboard> {
     invisible: [],
     offscreen: [],
   };
-  for (let i = 1; i <= MAX_TABS; i++) {
+  // Walk the whole tab order (not just up to the primary action) so every stop's focus indicator is checked.
+  let i = 1;
+  for (; i <= MAX_TABS; i++) {
     await page.keyboard.press('Tab');
     const info = await page.evaluate<FocusInfo | null>('__aocProbe.focusInfo()');
-    k.tabs = i;
     if (!info) {
       k.ended = 'end of tab order';
       break;
@@ -348,13 +351,14 @@ async function keyboardWalk(page: Page, viewport: Variant): Promise<Keyboard> {
     const r = info.rect;
     const onScreen = r.x + r.width > 0 && r.y + r.height > 0 && r.x < viewport.width && r.y < viewport.height;
     if (!onScreen) k.offscreen.push(stop);
-    else if (!info.indicator && !(await focusChangesPixels(page, info, viewport))) k.invisible.push(stop);
-    if (info.isPrimary) {
+    else if (!info.indicator && !(await focusChangesPixels(page, info.rect, viewport))) k.invisible.push(stop);
+    if (info.isPrimary && !k.reached) {
       k.reached = true;
-      break;
+      k.tabs = i;
     }
-    if (i === MAX_TABS) k.ended = 'limit';
   }
+  if (i > MAX_TABS) k.ended = 'limit';
+  if (!k.reached) k.tabs = Math.min(i, MAX_TABS);
   if (await page.evaluate<boolean>('__aocProbe.focusSkipLink()')) {
     await page.keyboard.press('Enter');
     await page.waitForTimeout(50);
@@ -366,20 +370,6 @@ async function keyboardWalk(page: Page, viewport: Variant): Promise<Keyboard> {
     }
   }
   return k;
-}
-
-/** Compares the focused element's pixels with and without focus (Tab continues from a blurred element). */
-async function focusChangesPixels(page: Page, info: FocusInfo, viewport: Variant): Promise<boolean> {
-  const pad = 5;
-  const x = Math.max(0, Math.floor(info.rect.x - pad));
-  const y = Math.max(0, Math.floor(info.rect.y - pad));
-  const width = Math.min(viewport.width, Math.ceil(info.rect.x + info.rect.width + pad)) - x;
-  const height = Math.min(viewport.height, Math.ceil(info.rect.y + info.rect.height + pad)) - y;
-  if (width < 2 || height < 2) return true;
-  const focused = await page.screenshot({ clip: { x, y, width, height } });
-  await page.evaluate('document.activeElement && document.activeElement.blur()');
-  const blurred = await page.screenshot({ clip: { x, y, width, height } });
-  return !focused.equals(blurred);
 }
 
 interface Visit {
@@ -511,18 +501,7 @@ async function main(): Promise<number> {
   const axeSource = readFileSync(require.resolve('axe-core/axe.min.js'), 'utf8');
   const axeVersion = (JSON.parse(readFileSync(require.resolve('axe-core/package.json'), 'utf8')) as { version: string })
     .version;
-  const probe = await build({
-    entryPoints: [join(HERE, 'probe.ts')],
-    bundle: true,
-    format: 'iife',
-    globalName: '__aocProbe',
-    // page.evaluate runs the bundle in a scope where `var` does not become a global.
-    footer: { js: 'window.__aocProbe = __aocProbe;' },
-    target: 'chrome120',
-    write: false,
-    logLevel: 'silent',
-  });
-  const probeSource = probe.outputFiles[0]!.text;
+  const probeSource = await bundleProbe();
 
   const routes = readRoutes(join(WEB, 'src', 'routes.tsx')).filter(
     (r) => !opts.routes || opts.routes.includes(r.path),
@@ -545,6 +524,8 @@ async function main(): Promise<number> {
   try {
     const base = `http://localhost:${opts.port}`;
     browser = await loadChromium().launch({ headless: true });
+    const misses = await probeSelfTest(browser, probeSource);
+    if (misses.length) throw new Error(`probe self-test failed, the gates cannot be trusted: ${misses.join('; ')}`);
     const storage: Shared['storage'] = {};
     for (const role of roles) {
       const token = bearer(demo, role);
@@ -575,7 +556,7 @@ async function main(): Promise<number> {
     for (const [role, path, expected] of checks)
       if (roles.includes(role)) routing.push(await routeCheck(shared, role, path, expected));
 
-    const notes: string[] = [];
+    const notes: string[] = ['Probe self-test passed: every gate fired on its synthetic defect before the visits.'];
     for (const r of readRoutes(join(WEB, 'src', 'routes.tsx')))
       if (r.component === null) notes.push(`\`${r.path}\` renders no page (role landing redirect); covered by Role routing.`);
     const placeholders = [...new Set(visits.filter((v) => v.placeholder).map((v) => v.route.path))];

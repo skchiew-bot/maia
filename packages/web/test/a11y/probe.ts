@@ -269,23 +269,29 @@ function accessibleName(el: Element): string {
   return title?.textContent?.trim() ?? '';
 }
 
-/** Visible digits near the chart: in its figure / chart wrapper, outside the svg itself. */
-function hasAdjacentNumbers(svg: SVGSVGElement): boolean {
-  const container =
-    svg.closest('figure') ??
-    svg.closest('[class*="aoc-chart"], [class*="aoc-spark"], [class*="aoc-trend"], .aoc-kpi, .aoc-meter') ??
-    svg.parentElement?.parentElement ??
-    null;
-  if (!container) return false;
-  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+/** Text with a digit that is painted on screen (not visually hidden) under `root`, skipping `skip`. */
+function hasVisibleDigits(root: Element, skip: Element | null): boolean {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   for (let n = walker.nextNode(); n; n = walker.nextNode()) {
     if (!/\d/.test(n.textContent ?? '')) continue;
     const parent = n.parentElement;
-    if (!parent || svg.contains(parent)) continue;
+    if (!parent || (skip && skip.contains(parent))) continue;
     const r = parent.getBoundingClientRect();
     if (r.width > 1 && r.height > 1 && isVisible(parent)) return true;
   }
   return false;
+}
+
+/** Numbers printed beside the chart: in its figure, a KPI tile, or within three ancestors of the svg. */
+function hasAdjacentNumbers(svg: SVGSVGElement): boolean {
+  const near: Element[] = [];
+  for (let p = svg.parentElement, depth = 0; p && depth < 3; p = p.parentElement, depth++) {
+    if (p.tagName.toLowerCase() === 'main' || p.classList.contains('aoc-widget__body')) break;
+    near.push(p);
+  }
+  const figure = svg.closest('figure, .aoc-kpi');
+  if (figure) near.push(figure);
+  return near.some((c) => hasVisibleDigits(c, svg));
 }
 
 /** Every chart-sized svg: does it carry its numbers as text, and do its data colours clear 3:1? */
@@ -307,17 +313,20 @@ export function charts(): ChartInfo[] {
     const name = hidden ? '' : accessibleName(image ?? svg);
     const nameHasNumber = /\d/.test(name);
     const adjacentNumbers = hasAdjacentNumbers(svg);
+    // §12: the number is rendered as text (phones) and reaches screen readers (the image's name, or the
+    // printed text beside it).
+    const printed = adjacentNumbers || [...svg.querySelectorAll('text')].some((t) => hasVisibleDigits(t, null));
+    const spoken = adjacentNumbers || (!hidden && nameHasNumber);
     let problem: string | null = null;
-    if (hidden) {
-      if (!adjacentNumbers) problem = 'hidden from assistive tech and no numbers are printed beside it';
-    } else if (!role) {
+    if (!hidden && !role)
       problem =
         'the svg has no role: give it role="img" and an aria-label that states the numbers, or aria-hidden="true" when the numbers are printed beside it';
-    } else if (!name) {
-      problem = `svg role="${role}" has no accessible name`;
-    } else if (!nameHasNumber && !adjacentNumbers) {
-      problem = 'its name has no numbers and no numbers are printed beside it';
-    }
+    else if (!hidden && !name) problem = `svg role="${role}" has no accessible name`;
+    else if (!printed) problem = 'no number is printed with it (it must also render its numbers as text, for phones)';
+    else if (!spoken)
+      problem = hidden
+        ? 'it is hidden from assistive tech and its numbers are only drawn inside the svg'
+        : 'its accessible name has no numbers and its numbers are only drawn inside the svg';
 
     const background = backgroundBehind(svg);
     const low = new Map<string, number>();

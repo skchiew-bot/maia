@@ -106,8 +106,12 @@ export function renderReport(run: RunResult): string {
   lines.push('- **axe** — axe-core rules tagged wcag2a/aa, wcag21a/aa, wcag22aa and best-practice; serious and critical fail, moderate and minor warn.');
   lines.push('- **scroll** — no horizontal page scroll at 360 px.');
   lines.push('- **motion** — no infinite CSS or SMIL animation (§12: a mark moves only when an event moved it); anything still running at rest warns.');
-  lines.push('- **charts** — every chart-sized SVG has a text equivalent: `role="img"` with an accessible name that states numbers, or visible numbers beside it. Data colours under 3:1 against the surface behind the chart warn.');
-  lines.push('- **keyboard** — from page load, Tab reaches the primary action (first `[data-primary-action]`, else `.aoc-btn--primary` in main, else main\'s first control) and every stop shows a focus indicator; the skip link moves focus to main.');
+  lines.push(
+    '- **charts** — every chart-sized SVG prints its numbers as visible text (beside it or as SVG text, for phones) and gives them to screen readers (a `role="img"` name that states them, or the printed text beside it); an exposed svg needs `role="img"` and a name, or `aria-hidden`. Data colours under 3:1 against the surface behind the chart warn.',
+  );
+  lines.push(
+    "- **keyboard** — from page load, Tab reaches the primary action (first `[data-primary-action]`, else `.aoc-btn--primary` in main, else main's first control); the whole tab order is walked and every stop must show a focus indicator; following the skip link puts focus in main.",
+  );
   lines.push('- **console / requests** — no console errors or uncaught exceptions, no failed or ≥ 400 requests (except the 404 of a deliberately missing id, and the anonymous `/api/auth/me` probe).');
   lines.push('');
 

@@ -32,10 +32,10 @@ export interface FocusStop {
 
 export interface Keyboard {
   primary: PrimaryAction;
-  /** Tab presses from page load until the primary action had focus (or the walk ended). */
+  /** Tab presses from page load until the primary action had focus (or until the walk ended without it). */
   tabs: number;
   reached: boolean;
-  /** Why the walk stopped without reaching the primary action. */
+  /** Why the walk over the whole tab order stopped. */
   ended: 'end of tab order' | 'focus cycled' | 'limit' | null;
   skipLinkFirst: boolean;
   /** Following the skip link puts keyboard focus in its target; null when not applicable or not verifiable. */
