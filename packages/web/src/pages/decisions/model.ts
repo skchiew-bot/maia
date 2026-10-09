@@ -1,8 +1,18 @@
 /**
  * Pure rules behind the Decisions inbox: SLA aging, queue order, viewer-facing wording and latency statistics.
- * Labels mirror `@aoc/contracts` (typed against it); only types are imported so zod never reaches the bundle.
+ * Most labels mirror `@aoc/contracts` (typed against it). The §6 assurance labels are imported from it as values:
+ * vite.config.ts keeps the package's zod schemas out of the bundle, so only what is used here ships.
  */
-import type { DecisionBlockReason, DecisionCardView, DecisionKind, DecisionTest, Role } from '@aoc/contracts';
+import {
+  RESOLUTION_ASSURANCE_LABEL,
+  resolutionAssurance,
+  type DecisionBlockReason,
+  type DecisionCardView,
+  type DecisionKind,
+  type DecisionTest,
+  type ResolutionAssurance,
+  type Role,
+} from '@aoc/contracts';
 import { formatAge } from '../../lib/format';
 
 const MIN = 60_000;
@@ -136,11 +146,39 @@ export function sortByUrgency<T extends AgingInput>(cards: readonly T[], now: nu
     .map((x) => x.card);
 }
 
-/** How a resolution was made, in the §6 words: a bearer token only attributes; a passkey signs. */
-export function methodLabel(r: NonNullable<DecisionCardView['resolution']>): string {
-  if (r.method === 'passkey' && r.passkeyVerified) return 'Signed (passkey)';
-  if (r.method === 'policy') return 'Platform policy';
-  return 'Attribution (bearer token)';
+/** A resolution as the card or the `decision.resolved` event carries it. */
+export interface ResolutionFacts {
+  method: 'button' | 'passkey' | 'policy';
+  passkeyVerified: boolean;
+  /** Set by the decisions API; older cards and event metadata leave it to `resolutionAssurance`. */
+  assurance?: ResolutionAssurance;
+}
+
+/** What a resolution proves about who decided (§6): a bearer token only attributes, a verified passkey signs. */
+export function assuranceOf(r: ResolutionFacts): ResolutionAssurance {
+  return r.assurance ?? resolutionAssurance(r);
+}
+
+/** The contracts' words for an assurance ("Signed (passkey)", "Attribution (bearer token)", "Platform policy"). */
+export function assuranceName(a: ResolutionAssurance): string {
+  return RESOLUTION_ASSURANCE_LABEL[a];
+}
+
+/** The same words for a resolution. */
+export function assuranceLabel(r: ResolutionFacts): string {
+  return assuranceName(assuranceOf(r));
+}
+
+/** What each assurance means, as a fragment to follow its label (no final stop). */
+export const ASSURANCE_MEANING: Record<ResolutionAssurance, string> = {
+  signature: 'a WebAuthn assertion bound to this decision and option was verified before it was recorded',
+  attribution: 'records which token was used, not a signature (§6)',
+  policy: 'the once-per-period credit auto-grant; no person signed it',
+};
+
+/** How an open card's resolution will be recorded: passkey cards are signed, every other card is attributed to the token. */
+export function expectedAssurance(card: Pick<DecisionCardView, 'requiresPasskey'>): ResolutionAssurance {
+  return card.requiresPasskey ? 'signature' : 'attribution';
 }
 
 export interface PeopleLookup {

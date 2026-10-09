@@ -14,6 +14,7 @@ import {
   type DataTableColumn,
 } from '../../components';
 import { formatInteger } from '../../lib/format';
+import { decisionHref } from '../../lib/links';
 import { actorKindOf, shortId } from '../changes/model';
 import { ActorName, PersonName } from '../audit/people';
 import { LoadFailed, Skeleton } from '../audit/Skeleton';
@@ -178,9 +179,7 @@ export function PromotionsTable({
                 {
                   term: 'Gate',
                   value: open.decisionId ? (
-                    <Link to={`/decisions?focus=${encodeURIComponent(open.decisionId)}`}>
-                      go-live decision
-                    </Link>
+                    <Link to={decisionHref(open.decisionId)}>go-live decision</Link>
                   ) : open.breakglass ? (
                     'break-glass decision (provenance waived)'
                   ) : (

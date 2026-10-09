@@ -385,7 +385,7 @@ export default function SessionPage() {
           title="Event log"
           subtitle="This session's slice of the hash-chained log · gaps in seq are other sessions"
           actions={
-            <Link to={`/audit?sessionId=${enc(d.sessionId)}`} className="session-link-sm">
+            <Link to={`/audit?sessionId=${enc(d.sessionId)}&range=all`} className="session-link-sm">
               Open in Audit
             </Link>
           }

@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 import type { DecisionCardView, FxRateDTO, FxStatusDTO } from '@aoc/contracts';
 import { Badge, InlineAlert, RelativeTime, Widget } from '../../components';
 import { formatShortDate } from '../../lib/format';
+import { decisionHref } from '../../lib/links';
 import { FxHistoryChart } from './FxHistoryChart';
 import { carryForwardState, dayLabel, fxExtractorText, fxReasonText, fxSessionLabel } from './meteringModel';
 
@@ -104,7 +105,7 @@ export function FxPanel({ status, rates, tickets }: FxPanelProps) {
           <p className="met-quiet">
             The day stays carried forward until a human chooses a figure.{' '}
             {status.openDiscrepancyCount > 1 ? `${status.openDiscrepancyCount} discrepancies are open. ` : ''}
-            <Link to="/decisions">Review the decision</Link>
+            <Link to={decisionHref(open.decisionId)}>Review the decision</Link>
           </p>
         </div>
       )}
@@ -142,7 +143,7 @@ export function FxPanel({ status, rates, tickets }: FxPanelProps) {
                     {t.resolution ? ` · ${t.options.find((o) => o.id === t.resolution!.optionId)?.label ?? t.resolution.optionId}` : ''}
                   </>
                 )}{' '}
-                · <Link to="/decisions">decision</Link>
+                · <Link to={decisionHref(t.id)}>decision</Link>
               </p>
             </li>
           ))}

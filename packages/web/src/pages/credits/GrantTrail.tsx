@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { Badge, DataTable, EmptyState, RelativeTime, type DataTableColumn } from '../../components';
 import { formatDateTime, formatUsd } from '../../lib/format';
+import { decisionHref } from '../../lib/links';
 import type { GrantRow } from './creditsModel';
 
 export interface GrantTrailProps {
@@ -82,7 +83,8 @@ export function GrantTrail({ rows, meId, nameOf }: GrantTrailProps) {
       id: 'decision',
       header: 'Decision',
       hideOnMobile: true,
-      cell: (g) => (g.decisionId ? <Link to="/decisions">decision</Link> : <span className="crd-muted">—</span>),
+      cell: (g) =>
+        g.decisionId ? <Link to={decisionHref(g.decisionId)}>decision</Link> : <span className="crd-muted">—</span>,
     },
   ];
   return (

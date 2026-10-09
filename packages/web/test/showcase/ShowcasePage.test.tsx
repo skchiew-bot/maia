@@ -95,7 +95,7 @@ describe('showcase', () => {
     // A decision waiting on a session rides on its node; others wait as diamonds on their lane.
     expect(track(/^Normalise policy numbers/)).toHaveAccessibleName(/Waiting on you.*decision waiting 34m/);
     const cx = screen.getByRole('region', { name: 'CX Copilot' });
-    expect(within(cx).getByRole('link', { name: /Fix plan/ })).toHaveAttribute('href', '/decisions');
+    expect(within(cx).getByRole('link', { name: /Fix plan/ })).toHaveAttribute('href', '/decisions?focus=dec_fix');
     expect(
       within(screen.getByRole('region', { name: 'Across projects' })).getByText('Credit top-up'),
     ).toBeInTheDocument();

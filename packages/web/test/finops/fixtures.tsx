@@ -6,6 +6,7 @@ import { configure, render, type RenderResult } from '@testing-library/react';
 import type { ReactElement } from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import type {
+  CostPerOutcomeDTO,
   CreditAccount,
   CreditTopupRequest,
   DecisionCardView,
@@ -585,6 +586,79 @@ export function project(projectId: string, name: string): ProjectSummary {
   };
 }
 export const PROJECTS = [project('prj_aoc', 'AOC Platform'), project('prj_claims', 'Claims Intake Bot'), project('prj_cxcopilot', 'CX Copilot')];
+
+// ── cost per outcome ───────────────────────────────────────────────────────
+const item = (refId: string, projectId: string | null, completedAt: string, notionalUsd: number, sessions: number, unpriced = false) => ({
+  refId,
+  projectId,
+  completedAt,
+  notionalUsd,
+  sessions,
+  unpriced,
+});
+
+const NO_STATS = { count: 0, totalUsd: 0, meanUsd: null, medianUsd: null, p90Usd: null, minUsd: null, maxUsd: null };
+
+/**
+ * `GET /api/metering/cost-per-outcome` as the daemon serves it (stats by type-7 percentiles, six decimals; items by
+ * completion time). Two tickets fixed ($14, $20), two changes shipped ($20, and $1 spanning projects) and three phases,
+ * all with usage no rate priced.
+ */
+export const OUTCOMES: CostPerOutcomeDTO = {
+  costBasis: 'notional_api_equivalent',
+  costLabel: 'Notional API-equivalent cost (decision support, not a bill)',
+  lens: 'portfolio',
+  notice: 'Portfolio lens only — spend per outcome, never a ranking of individuals.',
+  from: '2026-09-10',
+  to: '2026-10-09',
+  ticketsFixed: {
+    kind: 'ticket_fixed',
+    stats: { count: 2, totalUsd: 34, meanUsd: 17, medianUsd: 17, p90Usd: 19.4, minUsd: 14, maxUsd: 20 },
+    items: [
+      item('tkt_01M4FC3GS5VXC370PY64VM0XE8', 'prj_claims', '2026-10-08T07:30:00.000Z', 14, 2),
+      item('tkt_01M4FC3GS5VXC370PY64VM0XE9', 'prj_claims', '2026-10-09T01:10:00.000Z', 20, 1),
+    ],
+  },
+  changesShipped: {
+    kind: 'change_shipped',
+    stats: { count: 2, totalUsd: 21, meanUsd: 10.5, medianUsd: 10.5, p90Usd: 18.1, minUsd: 1, maxUsd: 20 },
+    items: [
+      item('chg_01M4FDBZYA4VBEQ8CKEK7FP42E', 'prj_claims', '2026-10-07T09:00:00.000Z', 20, 1),
+      item('chg_01M4FDC0CVARB5BHJ5HX4BB3RC', null, '2026-10-09T03:00:00.000Z', 1, 2),
+    ],
+  },
+  phasesCompleted: {
+    kind: 'phase_completed',
+    stats: {
+      count: 3,
+      totalUsd: 34.819075,
+      meanUsd: 11.606358,
+      medianUsd: 8.800845,
+      p90Usd: 20.107528,
+      minUsd: 3.084031,
+      maxUsd: 22.934199,
+    },
+    items: [
+      item('prj_claims/design', 'prj_claims', '2026-09-28T16:24:58.198Z', 3.084031, 4, true),
+      item('prj_claims/build', 'prj_claims', '2026-09-28T16:55:58.198Z', 8.800845, 4, true),
+      item('prj_aoc/build', 'prj_aoc', '2026-09-29T16:47:51.143Z', 22.934199, 9, true),
+    ],
+  },
+  method: {
+    attribution: 'Tickets: lifetime notional spend of sessions launched for, triaging or building the ticket.',
+    window: 'Outcomes completed on a local date within from..to; their spend may predate the window.',
+    percentile: 'Median and p90 by linear interpolation between closest ranks (type 7).',
+  },
+  generatedAt: '2026-10-09T06:00:00.000Z',
+};
+
+/** A range in which nothing was completed. */
+export const NO_OUTCOMES: CostPerOutcomeDTO = {
+  ...OUTCOMES,
+  ticketsFixed: { kind: 'ticket_fixed', stats: NO_STATS, items: [] },
+  changesShipped: { kind: 'change_shipped', stats: NO_STATS, items: [] },
+  phasesCompleted: { kind: 'phase_completed', stats: NO_STATS, items: [] },
+};
 
 // ── credits ────────────────────────────────────────────────────────────────
 export function account(over: Partial<CreditAccount> & Pick<CreditAccount, 'userId' | 'userName'>): CreditAccount {

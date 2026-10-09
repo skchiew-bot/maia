@@ -27,7 +27,7 @@ export interface WidgetProps {
   rowSpan?: number;
   /** Remove body padding (edge-to-edge tables and charts). */
   flush?: boolean;
-  /** A refresh is in flight: the previous render stays visible at reduced opacity (no skeleton flash). */
+  /** A refresh is in flight: the previous render stays visible at full contrast (no skeleton flash), marked by a hairline and aria-busy. */
   busy?: boolean;
   /** Heading level for the title. Default 2 (pages own the h1). */
   headingLevel?: 2 | 3;
