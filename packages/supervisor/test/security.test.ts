@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createHarness, type Harness } from './harness';
+import { createHarness, SECRETS, type Harness } from './harness';
 
 let h: Harness | null = null;
 const dirs: string[] = [];
@@ -53,5 +53,21 @@ describe('managed turns never start with workspace settings that subvert AOC (§
     writeFileSync(join(cwd, '.claude', 'settings.local.json'), JSON.stringify({ disableAllHooks: true }));
     await expect(h.sup.nudge(id, 'carry on', h.ownerActor)).rejects.toMatchObject({ code: 'workspace_settings_override' });
     expect(h.callsFor(id)).toHaveLength(1);
+  });
+});
+
+describe('session secrets never reach the builder-visible output (§3, R1)', () => {
+  it("redacts the session's credential-profile values and ingest token from its output", async () => {
+    const hh = (h = await createHarness());
+    const id = await hh.launch('[[fake:printenv]] show me the environment');
+    await hh.waitLifecycle(id, 'idle');
+    const ingestToken = hh.callsFor(id)[0]!.env.AOC_INGEST_TOKEN!;
+    const shown = JSON.stringify(hh.sup.output(id));
+    expect(shown).toContain('x-access-token:');
+    expect(shown).toContain('[redacted]');
+    expect(shown).not.toContain(SECRETS.gitFeature);
+    expect(shown).not.toContain(ingestToken);
+    const ended = hh.events('session.turn_ended', id).map((e) => JSON.stringify(hh.payload(e)));
+    expect(ended.join('\n')).not.toContain(SECRETS.gitFeature);
   });
 });

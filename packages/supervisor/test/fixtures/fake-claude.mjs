@@ -169,6 +169,17 @@ async function main() {
       for (let i = 0; i < Number(params.count ?? 600); i++) text(`line ${i}`);
       result('chatty done');
       return finish(0);
+    case 'printenv': {
+      // What `env`, a chatty model or a failing push with a tokenised remote URL put on the session's output.
+      const token = process.env.GIT_PUSH_TOKEN ?? '';
+      const ingest = process.env.AOC_INGEST_TOKEN ?? '';
+      assistant([{ type: 'tool_use', id: `toolu_${turn}`, name: 'Bash', input: { command: `git push https://x-access-token:${token}@example.com/r.git` } }]);
+      emit({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: `toolu_${turn}`, content: `GIT_PUSH_TOKEN=${token}\nAOC_INGEST_TOKEN=${ingest}` }] } });
+      text(`The push token is ${token} and the ingest token is ${ingest}`);
+      process.stderr.write(`fatal: unable to access 'https://x-access-token:${token}@example.com/r.git/'\n`);
+      result(`Printed ${token}`);
+      return finish(0);
+    }
     default:
       fail(`unknown fake mode ${mode}`);
   }

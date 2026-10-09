@@ -107,6 +107,26 @@ export function buildSessionEnv(i: SessionEnvInput): Record<string, string> {
   return { ...env, ...i.aoc };
 }
 
+/**
+ * What to redact from a session's output: its ingest token and credential values, raw and as they appear inside
+ * stream-json strings, longest first. Values under 8 characters are too common to redact and too short to be secrets.
+ */
+export function secretsToRedact(values: readonly string[]): string[] {
+  const out = new Set<string>();
+  for (const v of values) {
+    if (v.length < 8) continue;
+    out.add(v);
+    out.add(JSON.stringify(v).slice(1, -1));
+  }
+  return [...out].sort((a, b) => b.length - a.length);
+}
+
+export function redactSecrets(text: string, secrets: readonly string[]): string {
+  let out = text;
+  for (const s of secrets) if (out.includes(s)) out = out.split(s).join('[redacted]');
+  return out;
+}
+
 const CredentialProfilesSchema = z.object({
   profiles: z.record(z.object({ env: z.record(z.string()) })),
 });

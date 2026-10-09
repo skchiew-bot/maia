@@ -50,6 +50,8 @@ import {
   buildSessionEnv,
   readCredentialProfile,
   redactArgv,
+  redactSecrets,
+  secretsToRedact,
   toolPolicy,
   workspaceSettingsProblems,
 } from './launch-config';
@@ -193,6 +195,8 @@ export class Supervisor implements SupervisorService {
   private readonly queue: TurnRequest[] = [];
   private readonly outputs = new Map<string, RingBuffer<SessionOutputItem>>();
   private readonly tokens = new Map<string, string>();
+  /** Per session: values that must never appear verbatim in its builder-visible output (§3). */
+  private readonly secrets = new Map<string, string[]>();
   private readonly claudeIds = new Map<string, string>();
   private readonly conversations = new Set<string>();
   private readonly lastContext = new Map<string, number>();
@@ -943,6 +947,8 @@ export class Supervisor implements SupervisorService {
     };
     const credentials =
       s.readOnly || !type.credentialProfile ? null : this.credentialsFor(type.credentialProfile);
+    // The model can print anything in its env, and every builder can read a session's output.
+    this.secrets.set(s.sessionId, secretsToRedact([token, ...Object.values(credentials ?? {})]));
     const env = buildSessionEnv({
       source: this.sourceEnv(),
       allowlist: sup.envAllowlist,
@@ -1051,7 +1057,7 @@ export class Supervisor implements SupervisorService {
     const id = live.sessionId;
     // While the model generates, stdout is the only activity signal (stream deltas, thinking tokens, status).
     this.liveness()?.recordActivity(id, 'stream', this.ctx.clock.now());
-    const f = readStreamLine(line);
+    const f = readStreamLine(redactSecrets(line, this.secrets.get(id) ?? []));
     for (const item of f.items) this.pushOutput(id, item);
     if (f.conversation) this.conversations.add(id);
     if (f.contextTokens !== null) {
@@ -1084,8 +1090,9 @@ export class Supervisor implements SupervisorService {
       live.signals.push({ rank: 4, resetAt: this.resetAt(f.cliText), message: f.cliText, source: 'stream' });
   }
 
-  private onStderrLine(live: LiveTurn, line: string): void {
-    if (!line.trim()) return;
+  private onStderrLine(live: LiveTurn, raw: string): void {
+    if (!raw.trim()) return;
+    const line = redactSecrets(raw, this.secrets.get(live.sessionId) ?? []);
     this.pushOutput(live.sessionId, { kind: 'system', text: clip(`stderr: ${line}`) });
     if (isLimitNotice(line))
       live.signals.push({ rank: 4, resetAt: this.resetAt(line), message: line, source: 'exit' });
@@ -1705,6 +1712,7 @@ export class Supervisor implements SupervisorService {
 
   private revokeToken(sessionId: string, actor: Actor): void {
     this.tokens.delete(sessionId);
+    this.secrets.delete(sessionId);
     this.ctx.services.maybe('identity')?.revokeIngestTokensFor(sessionId, actor);
   }
 
