@@ -180,6 +180,8 @@ export class DecisionAlerts {
       .then(() =>
         fetchImpl(url, {
           method: 'POST',
+          // A redirect would let the receiver point aocd at internal endpoints: a 3xx is just a failed delivery.
+          redirect: 'manual',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify(body),
           signal: ac.signal,
