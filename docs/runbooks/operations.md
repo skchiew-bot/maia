@@ -56,6 +56,12 @@ built-in default is, which is not a governed mapping. A minimal production confi
 }
 ```
 
+Production mode refuses to start in two more cases that this file can avoid. The credential profiles file must define
+`prod-promote`, or whichever profiles the optional `promotion` section names for the push to a protected remote
+([credential isolation](credential-isolation.md) §4 item 9). And an aocd started from a source checkout of AOC needs
+`selfModification.aocRepoPaths` (the example above names the clone; a dist install, as in the unit below, is not
+asked, so list its clones by hand: [self-modification boundary](../compliance/self-modification-boundary.md) §2).
+
 ## 2. Start and stop
 
 **Start** (development): `node dist/bin/aocd.mjs` (or `aoc serve`), after `pnpm build`.
@@ -108,11 +114,15 @@ Look in the log for `registry.changed` or `config.changed` events. They are expe
    boundary** on running sessions (`session.stop_requested`).
 2. Wait until no session is in `running`. Sessions that are **waiting** (on a decision, a top-up or a throttle)
    have no process. They survive restarts and resume later by themselves.
-3. `systemctl stop aocd`. On SIGTERM aocd stops the scheduler (no job starts from then on), drains queued reactions,
-   stops modules in reverse order (a running anchor or backup is aborted), waits up to 10 s for a job that is still
-   running so that its run is recorded, and closes the databases. Reactions to events a finishing job appends are
-   replayed at the next start. The supervisor interrupts any turn still running (SIGINT, then SIGKILL after 2 s) and
-   stops the sidecars, without appending anything. At the next start those sessions are marked failed and show Dead.
+3. `systemctl stop aocd`. On SIGTERM aocd first lets the modules wind down while it still answers requests: the
+   supervisor interrupts any turn still running (SIGINT, then SIGKILL after 2 s) and tells every sidecar to send its
+   last usage report, waiting up to 5 s for it (a sidecar still there after that is killed), so the last usage of a
+   session that ended just before the stop is not lost; it appends nothing, and starts no new turn or launch (503
+   `shutting_down`). Then aocd stops accepting connections and lets in-flight requests finish, stops the scheduler
+   (no job starts from then on), drains queued reactions, stops modules in reverse order (a running anchor or backup
+   is aborted), waits up to 10 s for a job that is still running so that its run is recorded, and closes the
+   databases. Reactions to events a finishing job appends are replayed at the next start. At the next start the
+   interrupted sessions are marked failed and show Dead.
 
 An **unplanned** stop (crash or kill) loses no committed events. Running turns lose their daemon, so their next
 hook fails closed and they stop. At the next start the supervisor marks them failed, interrupting any that are
@@ -168,7 +178,7 @@ projector that is new on an existing log, whose fingerprint changed, or that is 
 
 1. Plan a maintenance window and stop running sessions first (§2): while the rebuild runs, hooks cannot get an
    answer and fail closed.
-2. Take a backup: `aoc anchor`, then `aoc backup now` ([backup and restore](backup-restore.md)).
+2. Take a backup: `aoc anchor`, then `aoc backup now` with the Approver's token ([backup and restore](backup-restore.md)).
 3. **Make sure the right KEK is configured.** A rebuild reads every body; with a wrong KEK it fails and rolls
    back. Never let aocd start with a generated key
    ([key custody §3](key-custody.md#3-store-the-kek-options-weakest-to-strongest)).
@@ -233,7 +243,7 @@ A dead-lettered reaction means something that should have happened did not.
 
 ## 6. Backups
 
-aocd backs itself up daily once `audit.backupKeyFile` is set (`aoc backup now` / `aoc backup list`; restore with
+aocd backs itself up daily once `audit.backupKeyFile` is set (`aoc backup now` needs the Approver token, `aoc backup list` does not; restore with
 `aocd restore`): see the [backup and restore runbook](backup-restore.md). Key custody and the manual procedure are in
 [key custody §4](key-custody.md#4-backups-off-host-nightly) and the drill in
 [key custody §7](key-custody.md#7-restore-drill-quarterly). The rules that matter most:

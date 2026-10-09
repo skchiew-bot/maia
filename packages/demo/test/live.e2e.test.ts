@@ -53,7 +53,7 @@ describe('pnpm --filter @aoc/demo live', () => {
     }
     expect(stopped, out).toEqual({ code: 0, signal: null });
     expect(out).toContain('Stopped.');
-    // "Stopped." means nothing is left: aocd's sidecars outlive it for a final flush, and the launcher waits for them.
+    // "Stopped." means nothing is left: aocd waits for its sidecars, and the launcher checks its process group.
     const daemonPid = Number(/aocd pid (\d+)/.exec(out)?.[1]);
     expect(daemonPid).toBeGreaterThan(0);
     expect(groupAlive(daemonPid)).toBe(false);

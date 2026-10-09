@@ -45,7 +45,10 @@ export function launch(
   t: TestRuntime,
   s: {
     sessionId: string;
+    /** The launching human (the event's actor); without `recordedOwnerId` this is also the session's owner. */
     ownerId?: string | null;
+    /** The owner the launch records in its meta (null: nobody); omitted, as in logs written before it existed. */
+    recordedOwnerId?: string | null;
     projectId?: string;
     processType?: string;
     model?: string;
@@ -70,6 +73,7 @@ export function launch(
       ticketId: s.ticketId ?? null,
       parentSessionId: s.parentSessionId ?? null,
       phaseId: s.phaseId ?? null,
+      ...(s.recordedOwnerId !== undefined ? { ownerId: s.recordedOwnerId } : {}),
     },
     payload: { prompt: 'build it', cwd: '/tmp/x' },
     source: 'api',
@@ -133,6 +137,46 @@ export function taskDone(
       fileChangesSinceLast: 1,
     },
     payload: { evidence: { kind: 'commit', ref: 'abc1234' } },
+    source: 'mcp',
+  });
+}
+
+export function closeTicket(
+  t: TestRuntime,
+  ticketId: string,
+  resolution: 'fixed' | 'wont_fix' = 'fixed',
+): void {
+  t.rt.store.append({
+    type: 'ticket.closed',
+    actor: SYSTEM,
+    scope: { ticketId },
+    meta: { ticketId, resolution },
+    payload: {},
+    source: 'api',
+  });
+}
+
+/** The intake module linking a build session (and optionally its change) to a ticket. */
+export function buildStarted(
+  t: TestRuntime,
+  s: { ticketId: string; sessionId: string; changeId?: string | null },
+): void {
+  t.rt.store.append({
+    type: 'ticket.build_started',
+    actor: SYSTEM,
+    meta: { ticketId: s.ticketId, sessionId: s.sessionId, changeId: s.changeId ?? null },
+    source: 'intake',
+  });
+}
+
+export function phaseCompleted(
+  t: TestRuntime,
+  s: { sessionId: string; projectId: string; phaseId: string },
+): void {
+  t.rt.store.append({
+    type: 'phase.completed',
+    actor: SYSTEM,
+    meta: { ...s, pinnedSha: null, pinnedTag: null },
     source: 'mcp',
   });
 }

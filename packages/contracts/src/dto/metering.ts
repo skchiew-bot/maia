@@ -215,7 +215,12 @@ export interface MeteringSessionDTO {
   generatedAt: string;
 }
 
-/** Cost-per-outcome is a PORTFOLIO lens only — it never carries per-person fields (§14, ranking corrupts behaviour). */
+/**
+ * Cost-per-outcome is a PORTFOLIO lens only — it never carries per-person fields (§14, ranking corrupts behaviour).
+ * Every figure is notional API-equivalent US$ with a ringgit twin made on the server like the rest of metering: per
+ * usage day, at that day's stamped USD→MYR rate (a closed day keeps the stamp it was closed with; BNM rates carry
+ * 4 decimals), never one average rate over a total. Money is rounded to 6 decimals once, at the edge.
+ */
 export interface OutcomeCostStatsDTO {
   count: number;
   totalUsd: number;
@@ -224,6 +229,18 @@ export interface OutcomeCostStatsDTO {
   p90Usd: number | null;
   minUsd: number | null;
   maxUsd: number | null;
+  /**
+   * Ringgit twins of the US$ figures, over the items whose RM is complete (`rmComplete`) only: an item missing a
+   * day's rate is left out, never estimated. null when no item has a complete RM.
+   */
+  totalRm: number | null;
+  meanRm: number | null;
+  medianRm: number | null;
+  p90Rm: number | null;
+  minRm: number | null;
+  maxRm: number | null;
+  /** false when some item's RM is incomplete: the RM twins then describe fewer outcomes than `count`. */
+  rmComplete: boolean;
 }
 export interface OutcomeCostItemDTO {
   /** ticket id / change id / "projectId/phaseId". */
@@ -231,8 +248,14 @@ export interface OutcomeCostItemDTO {
   projectId: string | null;
   completedAt: string;
   notionalUsd: number;
+  /** Σ per usage day (US$ × that day's stamped FX rate). null when usage exists but no usage day has a rate. */
+  notionalRm: number | null;
+  /** false when a day with usage had no stamped FX rate (notionalRm then excludes those days, as in the totals rows). */
+  rmComplete: boolean;
   sessions: number;
   unpriced: boolean;
+  /** The process type behind most of the spend (rule in `method.processType`); null when none or undecidable. A machine label. */
+  processType: string | null;
 }
 export interface OutcomeCostClassDTO {
   kind: 'ticket_fixed' | 'change_shipped' | 'phase_completed';
@@ -250,7 +273,15 @@ export interface CostPerOutcomeDTO {
   ticketsFixed: OutcomeCostClassDTO;
   changesShipped: OutcomeCostClassDTO;
   phasesCompleted: OutcomeCostClassDTO;
-  method: { attribution: string; window: string; percentile: string };
+  method: {
+    attribution: string;
+    window: string;
+    percentile: string;
+    /** How the ringgit figures are made and when they are incomplete. */
+    fx: string;
+    /** How an outcome's `processType` is chosen. */
+    processType: string;
+  };
   generatedAt: string;
 }
 

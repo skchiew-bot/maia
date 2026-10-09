@@ -105,8 +105,8 @@ export function scheduleTickets(w: SeedWorld): TicketOutput {
         actor: agent(s.sessionId),
         scope: { ticketId, sessionId: s.sessionId },
         // The class is agent-written text from a session that reads untrusted ticket text: it travels in the erasable
-        // body with the rest of the diagnosis, never in the clear chain (the contract's meta field stays null).
-        meta: { ticketId, sessionId: s.sessionId, confidence: d.confidence, rootCauseClass: null },
+        // body with the rest of the diagnosis, never in the clear chain.
+        meta: { ticketId, sessionId: s.sessionId, confidence: d.confidence },
         payload: { rootCause: d.rootCause, fixPlan: d.fixPlan, affectedAreas: d.affectedAreas, rootCauseClass: d.rootCauseClass },
         source: 'mcp',
         bodyScope: ticketId,

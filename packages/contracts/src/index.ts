@@ -9,6 +9,7 @@ export * from './roles';
 export * from './decisions';
 export * from './registry';
 export * from './config';
+export * from './git-remote';
 export * from './ingest';
 export * from './services';
 export * from './dto';

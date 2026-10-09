@@ -1,6 +1,8 @@
 /** aocd configuration. `AocConfigSchema.parse({})` yields a complete, safe local default. */
 import { z } from 'zod';
+import { zLabel } from './events/define';
 import { FX_SESSIONS } from './events/fx';
+import { promotionRemoteProblem } from './git-remote';
 
 const thresholds = z
   .object({
@@ -10,6 +12,8 @@ const thresholds = z
     deadAfterMs: z.number().int().positive().default(45_000),
   })
   .default({});
+
+const PROJECT_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
 
 /** HH:MM, 24-hour, zero-padded (daily jobs compare it as a string with the local time in `timezone`). */
 const LOCAL_TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -52,12 +56,34 @@ export const DEFAULT_PROTECTED_PATHS = [
   'docs/compliance/',
 ] as const;
 
+/** One project's promotion settings. Misspelt keys are errors: a remote that silently does not apply is worse. */
+const PromotionProjectSchema = z
+  .object({
+    /**
+     * Protected remote (ssh, https or an absolute local path) that promotions, rollbacks and break-glass of the project
+     * push to. Wins over the `origin` an operator set in the project's service clone; never read from the project
+     * repository, whose config agents can write. Credentials do not belong in the URL.
+     */
+    promotionRemote: z
+      .string()
+      .superRefine((url, ctx) => {
+        const problem = promotionRemoteProblem(url);
+        if (problem) ctx.addIssue({ code: z.ZodIssueCode.custom, message: problem });
+      })
+      .optional(),
+    /** Credential profile of that push for this project; the section's default when absent. */
+    promoteCredentialProfile: zLabel.optional(),
+  })
+  .strict();
+
 export const AocConfigSchema = z.object({
   /**
    * 'production' turns binding controls into startup refusals and withdraws development conveniences:
    * - managed sessions must run isolated from aocd (supervisor.isolation 'user', a separate read-only session user);
    * - the KEK must come from an existing keys.masterKeyFile outside dataDir (mode 0400/0600, owned by aocd's user) —
    *   never AOC_MASTER_KEY, never generated (docs/runbooks/credential-isolation.md §4, key-custody.md §3);
+   * - every credential profile of the `promotion` section must be defined in supervisor.credentialProfilesFile;
+   * - aocd run from a source checkout of AOC needs selfModification.aocRepoPaths (the daemon checks; gap P-18);
    * - with intake.requireScan, only an anti-virus engine counts as a scan (the builtin heuristic does not).
    */
   mode: z.enum(['development', 'production']).default('development'),
@@ -266,6 +292,23 @@ export const AocConfigSchema = z.object({
       buildProcessType: z.string().default('bug-fix'),
     })
     .default({}),
+  /**
+   * Where promotions push and with which credential (docs/runbooks/credential-isolation.md §4 item 9). A project with
+   * no entry pushes to the `origin` of its service clone (`<dataDir>/git/<projectId>.git`) with the default profile.
+   * Governed configuration: a change is chained as `config.changed`.
+   */
+  promotion: z
+    .object({
+      /**
+       * Credential profile of the push to a protected remote (promotion, rollback, break-glass) when a project names
+       * none. Only aocd holds it: no session type may name it, and none can.
+       */
+      promoteCredentialProfile: zLabel.default('prod-promote'),
+      projects: z
+        .record(z.string().regex(PROJECT_ID, 'project ids are 1-64 letters, digits, . _ : -'), PromotionProjectSchema)
+        .default({}),
+    })
+    .default({}),
   selfModification: z
     .object({
       /** Repo roots that ARE the AOC platform itself. */
@@ -300,6 +343,24 @@ export const AocConfigSchema = z.object({
 });
 export type AocConfig = z.infer<typeof AocConfigSchema>;
 export const defaultConfig = (): AocConfig => AocConfigSchema.parse({});
+
+/** Where the configuration names the credential profile of the push to a protected remote: the default and each project's. */
+export function promotionProfileUses(config: Pick<AocConfig, 'promotion'>): { profile: string; key: string }[] {
+  const { promoteCredentialProfile, projects } = config.promotion;
+  return [
+    { profile: promoteCredentialProfile, key: 'promotion.promoteCredentialProfile' },
+    ...Object.entries(projects).flatMap(([projectId, p]) =>
+      p.promoteCredentialProfile
+        ? [{ profile: p.promoteCredentialProfile, key: `promotion.projects.${projectId}.promoteCredentialProfile` }]
+        : [],
+    ),
+  ];
+}
+
+/** Credential profiles that push to a protected remote: the default and every project's own. Never a session's. */
+export function promotionProfilesOf(config: Pick<AocConfig, 'promotion'>): string[] {
+  return [...new Set(promotionProfileUses(config).map((u) => u.profile))];
+}
 
 /** The effective session isolation: explicit setting, else 'user' once a session user is named or in production. */
 export function sessionIsolationOf(config: Pick<AocConfig, 'mode' | 'supervisor'>): 'none' | 'user' {

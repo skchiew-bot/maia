@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type {
   ChangeScope,
+  DecisionRequestInput,
+  IsolatedRunInput,
   LearningService,
   LedgerService,
   SelfModificationService,
@@ -15,19 +17,11 @@ import {
   initRepo,
   type AocModule,
   type BroadcastMessage,
+  type Logger,
   type TestRuntime,
   type TestUser,
 } from '@aoc/kernel';
 import { createChangeModule, type ChangeModule, type ChangeModuleOptions } from '../src';
-
-export interface IsolatedCall {
-  cwd: string;
-  command: string[];
-  credentialProfile: string | null;
-  timeoutMs: number;
-  env?: Record<string, string>;
-  sandbox?: { handOver?: string[] };
-}
 
 /** Git env isolated from the host's config so tests are deterministic. */
 const GIT_ENV = { GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0' };
@@ -37,12 +31,12 @@ const GIT_ENV = { GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_
  * the caller's env, then the credential profile's env — as the current user (no session user is configured).
  */
 export class FakeSupervisor implements SupervisorService {
-  readonly calls: IsolatedCall[] = [];
+  readonly calls: IsolatedRunInput[] = [];
   readonly profiles: Record<string, Record<string, string>> = {
     'prod-promote': { TEST_PROMOTION_TOKEN: 'prod-promote' },
   };
 
-  runIsolated(input: IsolatedCall): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  runIsolated(input: IsolatedRunInput): Promise<{ exitCode: number; stdout: string; stderr: string }> {
     this.calls.push(input);
     if (input.sandbox && input.credentialProfile)
       return Promise.reject(new Error('runIsolated: a sandboxed run never gets a credential profile'));
@@ -153,7 +147,7 @@ export function makeRepo(files: Record<string, string> = { 'README.md': '# app\n
 
 /**
  * A bare remote wired as the project repository's `origin` (the developers' view), plus the developers' pre-push
- * speed bump there: it refuses pushes unless AOC_SUPERVISOR_PUSH=1. AOC itself never runs that hook any more.
+ * speed bump there: it refuses every push. AOC itself never runs that hook: it pushes from its service clone.
  */
 export function addGuardedRemote(repo: TestRepo): string {
   const remote = tempDir('aoc-chg-remote-');
@@ -164,7 +158,7 @@ export function addGuardedRemote(repo: TestRepo): string {
   const hook = join(repo.dir, '.git', 'hooks', 'pre-push');
   writeFileSync(
     hook,
-    '#!/bin/sh\n[ "$AOC_SUPERVISOR_PUSH" = "1" ] || { echo "pre-push: only the AOC supervisor may push" >&2; exit 1; }\n',
+    '#!/bin/sh\necho "pre-push: protected branches change only through an AOC promotion" >&2\nexit 1\n',
   );
   chmodSync(hook, 0o755);
   return remote;
@@ -214,6 +208,8 @@ export interface Harness {
   builder: TestUser;
   approver: TestUser;
   notifications: Extract<BroadcastMessage, { event: 'notification' }>['data'][];
+  /** What the change module asked the decision service for, by the id of the card it got. */
+  requested: Map<string, DecisionRequestInput>;
   /** Drain reactors and background verifications until everything is quiet. */
   settle(): Promise<void>;
   addProject(projectId: string, repo: string, extra?: Record<string, string>): void;
@@ -231,6 +227,7 @@ export async function harness(
     /** More modules, e.g. the real supervisor (with `supervisor: false`). */
     modules?: AocModule[];
     config?: Parameters<typeof createTestRuntime>[0]['config'];
+    log?: Logger;
   } = {},
 ): Promise<Harness> {
   const sup = new FakeSupervisor();
@@ -244,7 +241,18 @@ export async function harness(
     modules: [mod, ...(opts.modules ?? [])],
     services,
     config: opts.config,
+    log: opts.log,
   });
+  const requested: Harness['requested'] = new Map();
+  const decisions = t.decisions;
+  if (decisions) {
+    const raise = decisions.request.bind(decisions);
+    decisions.request = (input, actor) => {
+      const card = raise(input, actor);
+      requested.set(card.id, input);
+      return card;
+    };
+  }
   const notifications: Harness['notifications'] = [];
   t.rt.broadcaster.subscribe({
     role: 'approver',
@@ -257,6 +265,7 @@ export async function harness(
     builder: t.user('builder', 'Bea Builder'),
     approver: t.user('approver', 'Ada Approver'),
     notifications,
+    requested,
     async settle() {
       for (let i = 0; i < 50; i++) {
         await t.drain();

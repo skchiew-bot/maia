@@ -427,6 +427,12 @@
   align-items: center;
   gap: 4px var(--sp-2);
 }
+/* WCAG 2.2 target size: a link in a dense list is still a 24px target */
+.tkt-links a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+}
 .tkt-links__sub {
   color: var(--text-3);
   font-size: var(--fs-xs);

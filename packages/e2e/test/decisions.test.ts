@@ -44,9 +44,8 @@ describe('(c) protected operation', () => {
     expect(h.events({ types: ['session.blocked'], sessionId: s.sessionId }).map((e) => e.meta.reason)).toEqual(['protected_operation']);
 
     const card = await h.api<DecisionCardView>('GET', `/api/decisions/${decisionId}`, { as: ceo });
-    // mod-change raises guard cards as agent_decision (test main); the domain also defines protected_operation.
     expect(card).toMatchObject({
-      kind: 'agent_decision',
+      kind: 'protected_operation',
       status: 'open',
       test: 'main',
       title: 'Protected operation: git push to main',
@@ -60,7 +59,7 @@ describe('(c) protected operation', () => {
 
     await waitFor(async () => (await detail()).liveness?.state === 'waiting_on_you', { what: 'Waiting on you' });
     const d = await detail();
-    expect(d.openDecision).toMatchObject({ decisionId, kind: 'agent_decision' });
+    expect(d.openDecision).toMatchObject({ decisionId, kind: 'protected_operation' });
     const consoleView = await h.api<{ kpis: { waitingOnYou: number } }>('GET', '/api/console', { as: ceo });
     expect(consoleView.kpis.waitingOnYou).toBeGreaterThanOrEqual(1);
     expect((await h.api<{ resolvableByMe: number }>('GET', '/api/decisions/summary', { as: ceo })).resolvableByMe).toBeGreaterThanOrEqual(1);
@@ -76,7 +75,7 @@ describe('(c) protected operation', () => {
     const resolved = await h.api<DecisionCardView>('POST', `/api/decisions/${decisionId}/resolve`, { as: ceo, body: { optionId: 'approve', comment: 'Release window is open.' } });
     expect(resolved).toMatchObject({ status: 'resolved', resolution: { optionId: 'approve', resolvedBy: ceo.user.id, method: 'button', selfApproved: false } });
     const r = h.events({ types: ['decision.resolved'], decisionId })[0]!;
-    expect(r.meta).toMatchObject({ kind: 'agent_decision', optionId: 'approve', resolvedBy: ceo.user.id });
+    expect(r.meta).toMatchObject({ kind: 'protected_operation', optionId: 'approve', resolvedBy: ceo.user.id });
     await waitFor(async () => (await detail()).liveness?.state !== 'waiting_on_you', { what: 'no longer waiting once answered' });
     expect((await detail()).openDecision).toBeNull();
 

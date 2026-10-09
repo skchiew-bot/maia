@@ -19,14 +19,13 @@ import {
   type MeteringSummaryRow,
   type MeteringThrottleDTO,
   type MigrationRecommendationDTO,
-  type OutcomeCostClassDTO,
   type OutcomeCostItemDTO,
   type RateCardDTO,
   type RateCardVersionDTO,
   type RateCardVersionsDTO,
 } from '@aoc/contracts';
 import { addDays } from '@aoc/kernel';
-import { AccMap, CostAcc } from './acc';
+import { AccMap, CostAcc, type UsageAggRow } from './acc';
 import { DAYS_PER_MONTH, HOUR_MS, earliestEffectiveFrom, eachDay, minDate } from './dates';
 import { recommendMigration, type MigrationAssumptionInput, type MigrationData } from './migration';
 import {
@@ -36,9 +35,10 @@ import {
   type RollupRecord,
   type SubscriptionRecord,
 } from './model';
+import { dominantProcessType, OUTCOME_METHOD, outcomeClass } from './outcomes';
 import { effectiveCard } from './pricing';
 import { loadPricingCards } from './projector';
-import { percentile, round2, round6 } from './stats';
+import { round2, round6 } from './stats';
 
 export interface RangeQuery {
   from: string;
@@ -311,15 +311,20 @@ export function buildThrottle(m: MeteringModel, q: RangeQuery): MeteringThrottle
   };
 }
 
+/** A day's USD→MYR as metering reports it everywhere: the stamp frozen when the day closed, else the fx service's view. */
+function dayRates(m: MeteringModel): (date: string) => number | null {
+  const cache = new Map<string, number | null>();
+  return (date) => {
+    if (!cache.has(date)) cache.set(date, m.fxStamp(date).rate);
+    return cache.get(date)!;
+  };
+}
+
 export function buildSession(m: MeteringModel, sessionId: string): MeteringSessionDTO | null {
   const rec = m.sessionRecord(sessionId);
   if (!rec) return null;
   const q = { ...ALL_DAYS, sessionId };
-  const fxCache = new Map<string, number | null>();
-  const fxRate = (date: string) => {
-    if (!fxCache.has(date)) fxCache.set(date, m.fxStamp(date).rate);
-    return fxCache.get(date)!;
-  };
+  const fxRate = dayRates(m);
   const grouped = (group: 'model' | 'task' | 'none'): AccMap => {
     const map = new AccMap();
     for (const r of m.usageAgg({ ...q, group }))
@@ -349,63 +354,54 @@ export function buildSession(m: MeteringModel, sessionId: string): MeteringSessi
   };
 }
 
-function outcomeClass(kind: OutcomeCostClassDTO['kind'], items: OutcomeCostItemDTO[]): OutcomeCostClassDTO {
-  const costs = items.map((i) => i.notionalUsd);
-  const total = costs.reduce((s, c) => s + c, 0);
-  const r = (v: number | null) => (v === null ? null : round6(v));
-  return {
-    kind,
-    stats: {
-      count: costs.length,
-      totalUsd: round6(total),
-      meanUsd: costs.length ? round6(total / costs.length) : null,
-      medianUsd: r(percentile(costs, 0.5)),
-      p90Usd: r(percentile(costs, 0.9)),
-      minUsd: costs.length ? round6(Math.min(...costs)) : null,
-      maxUsd: costs.length ? round6(Math.max(...costs)) : null,
-    },
-    items,
-  };
-}
-
 /** Portfolio lens only: spend per outcome, never per person (§14) — no actor/owner field is ever produced here. */
 export function buildCostPerOutcome(m: MeteringModel, q: { from: string; to: string }): CostPerOutcomeDTO {
+  const rateOn = dayRates(m);
   const items: Record<'ticket' | 'change' | 'phase', OutcomeCostItemDTO[]> = {
     ticket: [],
     change: [],
     phase: [],
   };
   for (const o of m.outcomes(q.from, q.to)) {
+    // Usage arrives per day: each day is converted at its own rate, and its spend is also tallied per process type.
+    const cost = new CostAcc();
+    const spendByType = new Map<string | null, number>();
+    const book = (rows: UsageAggRow[], share: number) => {
+      for (const r of rows) {
+        cost.addUsage(r, rateOn(r.date), share);
+        spendByType.set(r.k, (spendByType.get(r.k) ?? 0) + r.usd * share);
+      }
+    };
+    let projectId: string | null;
+    let sessions: number;
     if (o.kind === 'phase') {
-      const projectId = o.projectId ?? '';
-      const u = m.phaseUsage(projectId, o.refId.slice(projectId.length + 1));
-      items.phase.push({
-        refId: o.refId,
-        projectId: o.projectId,
-        completedAt: o.completedAt,
-        notionalUsd: round6(u.usd),
-        sessions: u.sessions,
-        unpriced: u.unpriced,
-      });
-      continue;
+      const phaseProject = o.projectId ?? '';
+      const phase = { projectId: phaseProject, phaseId: o.refId.slice(phaseProject.length + 1) };
+      book(m.usageAgg({ ...ALL_DAYS, group: 'processType', phase }), 1);
+      projectId = o.projectId;
+      sessions = m.phaseSessions(phase);
+    } else {
+      const links = m.linkedSessions(o.kind, o.refId);
+      const projects = new Set<string>();
+      for (const l of links) {
+        book(m.usageAgg({ ...ALL_DAYS, group: 'processType', sessionId: l.sessionId }), l.share);
+        const project = m.sessionProject(l.sessionId);
+        if (project) projects.add(project);
+      }
+      projectId = projects.size === 1 ? [...projects][0]! : null;
+      sessions = links.length;
     }
-    let usd = 0;
-    let unpriced = false;
-    const projects = new Set<string>();
-    const links = m.linkedSessions(o.kind, o.refId);
-    for (const l of links) {
-      const s = m.sessionUsage(l.sessionId);
-      usd += s.usd * l.share;
-      unpriced ||= s.unpriced;
-      if (s.projectId) projects.add(s.projectId);
-    }
+    const row = cost.toRow();
     items[o.kind].push({
       refId: o.refId,
-      projectId: projects.size === 1 ? [...projects][0]! : null,
+      projectId,
       completedAt: o.completedAt,
-      notionalUsd: round6(usd),
-      sessions: links.length,
-      unpriced,
+      notionalUsd: row.notionalUsd,
+      notionalRm: row.notionalRm,
+      rmComplete: row.rmComplete,
+      sessions,
+      unpriced: row.unpriced,
+      processType: dominantProcessType(spendByType),
     });
   }
   return {
@@ -417,14 +413,7 @@ export function buildCostPerOutcome(m: MeteringModel, q: { from: string; to: str
     ticketsFixed: outcomeClass('ticket_fixed', items.ticket),
     changesShipped: outcomeClass('change_shipped', items.change),
     phasesCompleted: outcomeClass('phase_completed', items.phase),
-    method: {
-      attribution:
-        'Tickets: lifetime notional spend of sessions launched for, triaging or building the ticket. Changes: sessions that drafted, started or built the change. ' +
-        'A session linked to several tickets (or changes) is split evenly between them. Phases: usage attributed to the phase’s tasks plus unattributed usage of sessions launched into the phase.',
-      window:
-        'Outcomes completed (ticket closed as fixed, change completed, phase completed) on a local date within from..to; their spend may predate the window.',
-      percentile: 'Median and p90 by linear interpolation between closest ranks (type 7).',
-    },
+    method: OUTCOME_METHOD,
     generatedAt: m.ctx.clock.iso(),
   };
 }

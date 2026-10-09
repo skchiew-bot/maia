@@ -79,7 +79,10 @@ export function launch(
   o: {
     at?: number;
     projectId?: string;
+    /** The launching human (the event's actor); without `ownerId` this is also the session's owner. */
     owner?: string | null;
+    /** The owner the launch records in its meta (null: nobody); omitted, as in logs written before it existed. */
+    ownerId?: string | null;
     processType?: string;
     model?: string;
     ticketId?: string | null;
@@ -104,6 +107,7 @@ export function launch(
         ticketId: o.ticketId ?? null,
         parentSessionId: null,
         phaseId: null,
+        ...(o.ownerId !== undefined ? { ownerId: o.ownerId } : {}),
       },
       payload: { prompt: 'secret prompt text', cwd: '/tmp/repo' },
       source: 'supervisor',

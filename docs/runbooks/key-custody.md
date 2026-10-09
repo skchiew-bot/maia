@@ -151,6 +151,8 @@ Approver-only.
    - a ticket `tkt_…`: the requester's text and media;
    - a session `ses_…`: prompts and tool summaries;
    - a user `user:<userId>`: the identity events about that person (profile data);
+   - a change record `chg_…`: the decision cards raised for it (change request, rollback, go-live) and the comments
+     typed on them. The record's own text (drafts, affirmed fields, reasons) is under its project, so erase both;
    - a project `prj_…`: shreds every project-scoped body, so use it only if intended;
    - **never `global`**, which is shared by everything without a narrower scope.
 

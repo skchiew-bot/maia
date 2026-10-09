@@ -28,11 +28,13 @@ import {
   claudeConfigDir,
   modelTierOf,
   newId,
+  promotionProfilesOf,
   transcriptPathFor,
   type Actor,
   type DecisionCard,
   type EventType,
   type HandoffBrief,
+  type IsolatedRunInput,
   type LaunchRequest,
   type LessonInfo,
   type MetaOf,
@@ -72,6 +74,7 @@ import {
   keyFileSecrets,
   readCredentialProfile,
   readCredentialProfileSpec,
+  readCredentialProfiles,
   redactArgv,
   redactSecrets,
   resolveFileRefs,
@@ -84,6 +87,7 @@ import {
   type ProfileCredentials,
 } from './launch-config';
 import { killProcessGroup, processMatches, runCommand, signalProcess, signalTree } from './process-utils';
+import { checkPromotionProfiles } from './promotion-profiles';
 import { PushGateway, expandPattern, type PushPrincipal, type PushRecord } from './push-gateway';
 import { handOver, isolatedRunEnv, secretValues } from './sandbox';
 import { SupervisorView, TERMINAL_LIFECYCLES, type SupervisedSession } from './projection';
@@ -131,6 +135,8 @@ export interface SupervisorModuleOptions {
    * one that never did gets it after this grace, and SIGKILL after twice the grace (default 5 s).
    */
   sidecarGraceMs?: number;
+  /** Time a sidecar that was told to stop gets for its last report, at a session's end and at shutdown (default 5 s). */
+  sidecarFlushMs?: number;
   /** Retry delay for a usage limit whose reset time is unknown (default 30 min). */
   throttleFallbackMs?: number;
   /** Output items kept per session for GET /api/sessions/:id/output (default 500). */
@@ -180,6 +186,16 @@ const CLOSE_GRACE_MS = 2_000;
 const SIDECAR_GRACE_MS = 5_000;
 /** After SIGTERM a sidecar makes its final usage flush (one request, 4 s client timeout) and exits. */
 const SIDECAR_FLUSH_MS = 5_000;
+/** How long the HEAD read at a turn's end may take, and what it drops from git's environment (as the ledger's reads do). */
+const HEAD_READ_MS = 4_000;
+const HEAD_READ_ENV: Record<string, string> = {
+  GIT_CONFIG_NOSYSTEM: '1',
+  GIT_CONFIG_SYSTEM: '/dev/null',
+  GIT_CONFIG_GLOBAL: '/dev/null',
+  GIT_OPTIONAL_LOCKS: '0',
+  GIT_NO_LAZY_FETCH: '1',
+  GIT_ALLOW_PROTOCOL: '',
+};
 const MAX_BUFFERED_SESSIONS = 256;
 /** Turn outcomes that prove the model answered, so the conversation exists even when its transcript is not found. */
 const ANSWERED_OUTCOMES = new Set(['end_turn', 'decision', 'credit_cap', 'stop_requested', 'rollover']);
@@ -286,7 +302,10 @@ export class Supervisor implements SupervisorService {
   readonly gateway: PushGateway;
   private readonly gatewayRoot: string;
   private readonly ownsGatewayRoot: boolean;
+  /** Credential profiles of the push to a protected remote: aocd's own, never handed to a session (R1). */
+  private readonly promotionProfiles: ReadonlySet<string>;
   private stopping = false;
+  private shutdownRun: Promise<void> | null = null;
 
   constructor(
     private readonly ctx: ModuleContext,
@@ -299,6 +318,21 @@ export class Supervisor implements SupervisorService {
     const { isolation, warnings } = resolveIsolation(ctx.config);
     this.isolation = isolation;
     for (const w of warnings) this.log.warn(w);
+    this.promotionProfiles = new Set(promotionProfilesOf(ctx.config));
+    checkPromotionProfiles(
+      ctx.config,
+      {
+        definedProfiles: (file) => Object.keys(readCredentialProfiles(resolve(file))),
+        types: () => {
+          try {
+            return this.registry.listTypes();
+          } catch {
+            return null;
+          }
+        },
+      },
+      this.log,
+    );
     this.ownsSessionsRoot = !opts.sessionsDir && ctx.dataDir === ':memory:';
     this.sessionsRoot = opts.sessionsDir
       ? resolve(opts.sessionsDir)
@@ -502,14 +536,7 @@ export class Supervisor implements SupervisorService {
    * caller's `env`, then the credential profile when one is named. A `sandbox` run is code AOC does not trust and
    * never gets a credential profile.
    */
-  async runIsolated(input: {
-    cwd: string;
-    command: string[];
-    credentialProfile: string | null;
-    timeoutMs: number;
-    env?: Record<string, string>;
-    sandbox?: { handOver?: string[] };
-  }): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  async runIsolated(input: IsolatedRunInput): Promise<{ exitCode: number; stdout: string; stderr: string }> {
     const sup = this.ctx.config.supervisor;
     if (input.sandbox && input.credentialProfile)
       throw new Error('runIsolated: a sandboxed run never gets a credential profile');
@@ -548,13 +575,7 @@ export class Supervisor implements SupervisorService {
    */
   private async runAsSessionUser(
     iso: SessionIsolation,
-    input: {
-      cwd: string;
-      command: string[];
-      timeoutMs: number;
-      env?: Record<string, string>;
-      sandbox?: { handOver?: string[] };
-    },
+    input: Omit<IsolatedRunInput, 'credentialProfile'>,
   ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
     const [bin, ...args] = input.command;
     if (!bin) throw new Error('runIsolated: command is required');
@@ -757,10 +778,17 @@ export class Supervisor implements SupervisorService {
     }
   }
 
-  /** Daemon shutdown: interrupt running turns; the next start marks them Dead. Nothing is appended. */
-  async shutdown(): Promise<void> {
-    // Ended sessions keep no valid token across a restart, even if their sidecars are still flushing.
-    for (const revoke of [...this.pendingRevocations.values()]) revoke();
+  /**
+   * Daemon shutdown: interrupt running turns (the next start marks them Dead), then let every sidecar send its last
+   * report. Nothing else is appended. aocd runs this while its HTTP server still answers (the module's quiesce), since
+   * a sidecar that cannot reach it only spools a report nobody replays; once, whichever of quiesce and stop comes first.
+   */
+  shutdown(): Promise<void> {
+    this.shutdownRun ??= this.runShutdown();
+    return this.shutdownRun;
+  }
+
+  private async runShutdown(): Promise<void> {
     this.stopping = true;
     this.queue.length = 0;
     for (const t of this.timers) clearTimeout(t);
@@ -769,9 +797,38 @@ export class Supervisor implements SupervisorService {
     await settleWithin(lives, 2_000);
     for (const l of lives) if (!l.exit) signalTree(l.pid!, 'SIGKILL');
     await settleWithin(lives, 1_000);
-    for (const sc of this.sidecars) sc.kill('SIGTERM');
+    await this.stopSidecars();
+    // Ended sessions keep no valid token across a restart: what a sidecar did not release by now is revoked.
+    for (const revoke of [...this.pendingRevocations.values()]) revoke();
     if (this.ownsSessionsRoot) rmSync(this.sessionsRoot, { recursive: true, force: true });
     if (this.ownsGatewayRoot) rmSync(this.gatewayRoot, { recursive: true, force: true });
+  }
+
+  /** Every running sidecar reports what is left and exits; one that takes longer than the flush time is killed. */
+  private async stopSidecars(): Promise<void> {
+    const running = () => [...this.sidecars].filter((sc) => sc.exitCode === null && sc.signalCode === null);
+    const targets = running();
+    if (!targets.length) return;
+    const exited = Promise.all(
+      targets.map(
+        (sc) =>
+          new Promise<void>((done) => {
+            sc.once('exit', () => done());
+            sc.once('error', () => done());
+          }),
+      ),
+    );
+    for (const sc of targets) sc.kill('SIGTERM');
+    let timer: NodeJS.Timeout | undefined;
+    await Promise.race([
+      exited,
+      new Promise<void>((r) => {
+        timer = setTimeout(r, this.sidecarFlushMs());
+        timer.unref();
+      }),
+    ]);
+    clearTimeout(timer);
+    for (const sc of running()) sc.kill('SIGKILL');
   }
 
   // ── launch ────────────────────────────────────────────────────────────────
@@ -799,6 +856,7 @@ export class Supervisor implements SupervisorService {
     // The first turn carries a rollover brief as fenced data (R-10); it is the launch prompt replayed on recovery.
     const prompt = r.brief ? withHandoffBrief(r.prompt, r.brief, r.parentSessionId ?? null) : r.prompt;
     checkText(prompt);
+    assertNotShuttingDown(this.stopping);
     this.assertConfigured();
     if (!this.ctx.services.maybe('identity')) {
       throw new HttpError(
@@ -1029,6 +1087,7 @@ export class Supervisor implements SupervisorService {
 
   /** Validates and reserves synchronously (a slot or a queue place), so concurrent callers can never double-start. */
   private requestTurn(req: TurnRequest): Promise<void> {
+    assertNotShuttingDown(this.stopping);
     const s = this.mustGet(req.sessionId);
     assertNotEnded(s);
     if (this.rollingOver.has(s.sessionId))
@@ -1519,6 +1578,7 @@ export class Supervisor implements SupervisorService {
     this.afterReports(live.sessionId, () => reported.then(() => this.reconcileTurn(live)));
     live.markClosed();
     if (this.stopping) return;
+    void this.recordHead(live);
     try {
       this.finishTurn(live);
     } catch (err) {
@@ -1533,6 +1593,58 @@ export class Supervisor implements SupervisorService {
     // Dead in between. A follow-up turn already holds the session and reports its own process when it spawns.
     if (!this.busy(live.sessionId)) this.liveness()?.recordProcess(live.sessionId, false, null);
     this.pump();
+  }
+
+  /**
+   * G-25: when a build session's turn ends, the HEAD of the project repository it works in is recorded, so a commit made
+   * after its last task close can still be traced to it. The sha is read here, by the kernel git service, which runs
+   * git as the repository's owner with the safety settings (never as root inside a tree the agent can write) and,
+   * like every read on aocd's thread, asynchronously and within a time limit; the session supplies nothing. A HEAD
+   * that did not move since the last record adds no event, and a repository that cannot be read costs the turn
+   * nothing (the turn's outcome is already recorded when the answer arrives). The proof is the one `task.done` gives:
+   * the commit was in the workspace.
+   */
+  private async recordHead(live: LiveTurn): Promise<void> {
+    const s = this.view.get(live.sessionId);
+    if (!s || s.readOnly) return;
+    try {
+      const repo = this.projectRepoOf(s);
+      const sha = repo ? await this.readHead(repo) : null;
+      // aocd may have begun to stop while git answered: nothing is appended from then on.
+      if (!sha || this.stopping) return;
+      const last = this.ctx.store.list({ sessionId: s.sessionId, types: ['session.head_recorded'], order: 'desc', limit: 1 })[0];
+      if (last?.meta.sha === sha) return;
+      this.ctx.store.append(
+        ev({
+          type: 'session.head_recorded',
+          actor: SYSTEM,
+          scope: scopeOf(s),
+          meta: { sessionId: s.sessionId, projectId: s.projectId, sha, turn: live.turn },
+          source: 'supervisor',
+          idempotencyKey: `supervisor:head:${s.sessionId}:${live.turn}`,
+        }),
+      );
+    } catch (err) {
+      this.log.warn('could not record the session HEAD', { sessionId: s.sessionId, err: String(err) });
+    }
+  }
+
+  /** The commit HEAD names; null for a repository without commits yet, an error for one git would not or could not read. */
+  private async readHead(repo: string): Promise<string | null> {
+    const r = await this.ctx.services
+      .get('git')
+      .runAsync(repo, ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'], { env: HEAD_READ_ENV, timeoutMs: HEAD_READ_MS });
+    const sha = r.stdout.trim();
+    if (r.code === 0 && /^[0-9a-f]{7,64}$/.test(sha)) return sha;
+    if (r.code === 1 && !r.timedOut) return null; // --quiet: no output and exit 1 when HEAD names no commit
+    throw new Error(r.timedOut ? 'git did not answer in time' : `git exited ${r.code}: ${r.stderr.split('\n')[0]!.slice(0, 200)}`);
+  }
+
+  /** The project's repository, when the session works in it: a HEAD read anywhere else says nothing about the session. */
+  private projectRepoOf(s: SupervisedSession): string | null {
+    const repo = this.ledger()?.projectRepoPath(s.projectId);
+    if (!repo || !s.cwd || !isDirectory(repo)) return null;
+    return isWithin(realpathOr(s.cwd), realpathOr(repo)) ? repo : null;
   }
 
   /**
@@ -1913,6 +2025,7 @@ export class Supervisor implements SupervisorService {
             prompt: rolloverPrompt(s.sessionId, s.threadId),
             cwd: s.cwd,
             ticketId: s.ticketId,
+            changeId: s.changeId,
             parentSessionId: s.sessionId,
             brief: brief.text,
             idempotencyKey: `rollover:${startedEvent.id}`,
@@ -2130,7 +2243,18 @@ export class Supervisor implements SupervisorService {
 
   // ── environment, files, helpers ───────────────────────────────────────────
 
+  /**
+   * The profile a session of a process type holds, read by every path that serves a session (launch, turn start,
+   * system prompt, push gateway). The promotion credential is refused here whatever the registry says: it is aocd's
+   * own push's, and a registry edit after start would otherwise hand it to every session of a type (R1).
+   */
   private credentialsFor(profile: string): CredentialProfile | null {
+    if (this.promotionProfiles.has(profile))
+      throw new HttpError(
+        500,
+        'promotion_profile_forbidden',
+        `Credential profile "${profile}" is the promotion profile: only aocd's own push holds it, so no process type may name it`,
+      );
     const file = this.ctx.config.supervisor.credentialProfilesFile;
     if (!file) {
       this.warnOnce(
@@ -2288,11 +2412,15 @@ export class Supervisor implements SupervisorService {
     };
     if (!this.sessionSidecars.get(sessionId)?.size) return revoke();
     this.pendingRevocations.set(sessionId, revoke);
-    this.later(revoke, this.sidecarGraceMs() + SIDECAR_FLUSH_MS);
+    this.later(revoke, this.sidecarGraceMs() + this.sidecarFlushMs());
   }
 
   private sidecarGraceMs(): number {
     return this.opts.sidecarGraceMs ?? SIDECAR_GRACE_MS;
+  }
+
+  private sidecarFlushMs(): number {
+    return this.opts.sidecarFlushMs ?? SIDECAR_FLUSH_MS;
   }
 
   /** Runs `next` once the session's earlier reports are in (one chain per session, in turn order). */
@@ -2509,6 +2637,11 @@ function checkText(text: string): void {
 function assertNotEnded(s: SupervisedSession): void {
   if (TERMINAL_LIFECYCLES.includes(s.lifecycle))
     throw new HttpError(409, 'session_ended', `Session ${s.sessionId} has ${s.lifecycle}`);
+}
+
+/** aocd keeps serving while it winds the supervisor down: nothing new may start in that window. */
+function assertNotShuttingDown(stopping: boolean): void {
+  if (stopping) throw new HttpError(503, 'shutting_down', 'aocd is shutting down');
 }
 
 function assertNotStopping(live: LiveTurn): void {

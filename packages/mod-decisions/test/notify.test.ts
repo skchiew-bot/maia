@@ -77,6 +77,21 @@ describe('decision.new notifications', () => {
     expect(toApprover).toHaveLength(2);
   });
 
+  it('name the test a guard-raised card tripped, as the card of an agent decision does', async () => {
+    const { t, engine } = (h = await harness());
+    const toApprover = captureNotifications(t, 'approver');
+    const agent = { kind: 'agent' as const, id: 'ses_1' };
+    const raise = (kind: 'protected_operation' | 'agent_decision', test: 'main' | 'data') =>
+      engine.request(decisionInput({ kind, test, requesterId: 'session:ses_1' }), agent);
+    raise('protected_operation', 'main');
+    raise('agent_decision', 'data');
+    await t.drain();
+    expect(toApprover.map((n) => n.title)).toEqual([
+      'Decision needed: Protected operation — Touches main / protected branch',
+      'Decision needed: Agent decision — Touches data (migrations, deletes, PII)',
+    ]);
+  });
+
   it('skip cards already closed when the reaction runs (policy auto-grant)', async () => {
     const { t, engine, builderA } = (h = await harness());
     const toApprover = captureNotifications(t, 'approver');
