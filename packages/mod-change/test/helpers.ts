@@ -17,6 +17,7 @@ import {
   initRepo,
   type AocModule,
   type BroadcastMessage,
+  type Logger,
   type TestRuntime,
   type TestUser,
 } from '@aoc/kernel';
@@ -226,6 +227,7 @@ export async function harness(
     /** More modules, e.g. the real supervisor (with `supervisor: false`). */
     modules?: AocModule[];
     config?: Parameters<typeof createTestRuntime>[0]['config'];
+    log?: Logger;
   } = {},
 ): Promise<Harness> {
   const sup = new FakeSupervisor();
@@ -239,6 +241,7 @@ export async function harness(
     modules: [mod, ...(opts.modules ?? [])],
     services,
     config: opts.config,
+    log: opts.log,
   });
   const requested: Harness['requested'] = new Map();
   const decisions = t.decisions;

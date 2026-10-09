@@ -22,7 +22,10 @@ import {
   validateEvent,
   AocConfigSchema,
   projectSlug,
+  promotionProfilesOf,
+  promotionRemoteProblem,
   transcriptPathFor,
+  transportOf,
   type LivenessInput,
   type ProcessEventRequest,
 } from '../src';
@@ -211,5 +214,77 @@ describe('ingest wire types', () => {
     const unnamed: ProcessEventRequest = { sessionId: 'ses_A', event: 'exited', exitCode: null, signal: 'SIGKILL', at: '2026-10-09T10:00:00.000Z' };
     expectTypeOf<ProcessEventRequest['pid']>().toEqualTypeOf<number | null | undefined>();
     expect([named.pid, unnamed.pid]).toEqual([4242, undefined]);
+  });
+});
+
+describe('promotion configuration (per-project remote and credential profile)', () => {
+  const parse = (promotion: unknown) => AocConfigSchema.safeParse({ promotion });
+
+  it('defaults to no project entries and the prod-promote profile', () => {
+    const config = AocConfigSchema.parse({});
+    expect(config.promotion).toEqual({ promoteCredentialProfile: 'prod-promote', projects: {} });
+    expect(promotionProfilesOf(config)).toEqual(['prod-promote']);
+  });
+
+  it('takes a remote and a credential profile per project, and names every profile in use', () => {
+    const config = AocConfigSchema.parse({
+      promotion: {
+        promoteCredentialProfile: 'release-bot',
+        projects: {
+          prj_web: { promotionRemote: 'git@github.com:acme/web.git', promoteCredentialProfile: 'web-promote' },
+          prj_api: { promotionRemote: 'https://github.com/acme/api.git' },
+          prj_ops: { promoteCredentialProfile: 'web-promote' },
+          'prj.mirror:1': { promotionRemote: '/srv/git/mirror.git' },
+        },
+      },
+    });
+    expect(config.promotion.projects.prj_web).toEqual({
+      promotionRemote: 'git@github.com:acme/web.git',
+      promoteCredentialProfile: 'web-promote',
+    });
+    expect(promotionProfilesOf(config)).toEqual(['release-bot', 'web-promote']);
+  });
+
+  it('refuses a remote AOC would not push to, one with a credential in it, and a misspelt or malformed entry', () => {
+    const remote = (promotionRemote: string) => parse({ projects: { prj_web: { promotionRemote } } });
+    expect(remote('ssh://git@github.com/acme/web.git').success).toBe(true);
+    for (const bad of [
+      'http://github.com/acme/web.git',
+      'git://github.com/acme/web.git',
+      'ext::sh -c touch% /tmp/pwned',
+      '-oProxyCommand=evil:x',
+      'relative/web.git',
+      '',
+    ]) {
+      const r = remote(bad);
+      expect(r.success, bad).toBe(false);
+      expect(r.error?.issues[0]?.path, bad).toEqual(['promotion', 'projects', 'prj_web', 'promotionRemote']);
+    }
+    const secret = 'https://x-access-token:ghs_SECRET@github.com/acme/web.git';
+    const withSecret = remote(secret);
+    expect(withSecret.success).toBe(false);
+    expect(JSON.stringify(withSecret.error?.issues)).toContain('must not embed credentials');
+    expect(JSON.stringify(withSecret.error?.issues)).not.toContain('ghs_SECRET'); // a message never echoes the URL
+    expect(remote('https://ghs_SECRET@github.com/acme/web.git').success).toBe(false);
+    expect(remote('ssh://git:ghs_SECRET@github.com/acme/web.git').success).toBe(false);
+
+    expect(parse({ projects: { prj_web: { promotionRemotee: '/srv/git/web.git' } } }).success).toBe(false);
+    expect(parse({ projects: { 'not a project': { promotionRemote: '/srv/git/web.git' } } }).success).toBe(false);
+    expect(parse({ projects: { prj_web: { promoteCredentialProfile: 'has spaces' } } }).success).toBe(false);
+    expect(parse({ promoteCredentialProfile: '' }).success).toBe(false);
+  });
+
+  it('judges transports and embedded credentials the same way for every consumer', () => {
+    expect(transportOf('git@github.com:org/app.git')).toBe('ssh');
+    expect(transportOf('ssh://git@github.com/org/app.git')).toBe('ssh');
+    expect(transportOf('https://github.com/org/app.git')).toBe('https');
+    expect(transportOf('/srv/git/app.git')).toBe('file');
+    expect(transportOf('file:///srv/git/app.git')).toBe('file');
+    expect(transportOf('helper::address')).toBeNull();
+    expect(promotionRemoteProblem('git@github.com:org/app.git')).toBeNull();
+    expect(promotionRemoteProblem('ssh://git@github.com/org/app.git')).toBeNull();
+    expect(promotionRemoteProblem('https://github.com/org/app.git')).toBeNull();
+    expect(promotionRemoteProblem('https://github.com/org/app@v1')).toBeNull();
+    expect(promotionRemoteProblem('http://github.com/org/app.git')).toMatch(/ssh, https or absolute/);
   });
 });
