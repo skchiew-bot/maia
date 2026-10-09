@@ -245,8 +245,10 @@ export class AuditService {
       if (listing.problems.length)
         return fail('anchor_store_invalid', listing.problems.slice(0, 3).join('; '));
       const known = this.chainAnchors().filter((a) => a.provider === name);
+      // Captured in the same tick as the verifier's upper bound (the stored head), so rows added behind the store's
+      // back show up as a head mismatch while events appended during the chunked pass do not.
       const head = store.head();
-      const v = store.verifyChain({
+      const v = await store.verifyChainAsync({
         atSeqs: [...known.map((a) => a.seq), ...listing.anchors.map((a) => a.record.seq)],
       });
       if (v.headSeq !== head.seq || v.headHash !== head.hash)
@@ -362,7 +364,7 @@ export class AuditService {
     }
     const seqs = new Set<number>(chainAnchors.map((a) => a.seq));
     for (const name of PROVIDERS) for (const a of listings[name].anchors) seqs.add(a.record.seq);
-    const v = store.verifyChain({ atSeqs: [...seqs] });
+    const v = await store.verifyChainAsync({ atSeqs: [...seqs] });
     problems.push(...v.problems.map((p) => `in-file chain: ${p}`));
 
     const checks: AnchorCheckDTO[] = [];

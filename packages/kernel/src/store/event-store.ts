@@ -488,69 +488,48 @@ export class EventStore {
 
   // ── verification ──────────────────────────────────────────────────────────
   /**
-   * Recompute every hash and link. NOTE: an in-file chain alone is defeatable (drop trigger + recompute);
-   * mod-audit compares `hashesAt` with off-host anchors — that is the real verification (§13, R2).
+   * Recompute every hash and link in one synchronous pass (tests, offline tools). NOTE: an in-file chain alone is
+   * defeatable (drop trigger + recompute); mod-audit compares `hashesAt` with off-host anchors — that is the real
+   * verification (§13, R2). Inside aocd use verifyChainAsync, which never stalls the sole writer.
    */
   verifyChain(opts: { atSeqs?: number[]; batch?: number } = {}): ChainVerifyResult {
-    const want = new Set(opts.atSeqs ?? []);
-    const hashesAt: Record<number, string> = {};
-    const problems: string[] = [];
-    let prev = this.genesis;
-    let expectSeq = 1;
-    let checked = 0;
-    let firstBad: number | null = null;
+    const v = new ChainVerifier(this.chainId, this.genesis, opts.atSeqs);
+    const stmt = this.db.prepare('SELECT * FROM events WHERE seq >= ? ORDER BY seq LIMIT ?');
     const batch = opts.batch ?? 5000;
     let from = 1;
     for (;;) {
-      const rows = this.db.prepare('SELECT * FROM events WHERE seq >= ? ORDER BY seq LIMIT ?').all(from, batch) as unknown as EventRow[];
+      const rows = stmt.all(from, batch) as unknown as EventRow[];
       if (!rows.length) break;
-      for (const r of rows) {
-        const e = rowToEvent(r);
-        if (e.seq !== expectSeq) {
-          problems.push(`gap: expected seq ${expectSeq}, found ${e.seq}`);
-          firstBad ??= e.seq;
-        }
-        if (e.prevHash !== prev) {
-          problems.push(`seq ${e.seq}: prevHash does not link`);
-          firstBad ??= e.seq;
-        }
-        const recomputed = sha256hex(
-          canonicalJson({
-            v: 1,
-            chainId: this.chainId,
-            seq: e.seq,
-            id: e.id,
-            ts: e.ts,
-            type: e.type,
-            actor: e.actor,
-            scope: e.scope,
-            meta: e.meta,
-            payloadHash: e.payloadHash,
-            bodyScope: e.bodyScope,
-            source: e.source,
-            sourceTs: e.sourceTs,
-            idempotencyKey: e.idempotencyKey,
-            causationId: e.causationId,
-            prevHash: e.prevHash,
-          }),
-        );
-        if (recomputed !== e.hash) {
-          problems.push(`seq ${e.seq}: hash mismatch`);
-          firstBad ??= e.seq;
-        }
-        // Queries filter on the indexed copies of the scope, which the hash does not cover: they must agree with it.
-        if (SCOPE_COLUMNS.some(([k, col]) => ((e.scope as Record<string, string | undefined>)[k] ?? null) !== (r[col] ?? null))) {
-          problems.push(`seq ${e.seq}: indexed scope columns disagree with the chained scope`);
-          firstBad ??= e.seq;
-        }
-        if (want.has(e.seq)) hashesAt[e.seq] = recomputed;
-        prev = e.hash;
-        expectSeq = e.seq + 1;
-        checked++;
-      }
+      for (const r of rows) v.add(r);
       from = rows[rows.length - 1]!.seq + 1;
     }
-    return { ok: problems.length === 0, chainId: this.chainId, headSeq: expectSeq - 1, headHash: prev, checked, firstBadSeq: firstBad, problems: problems.slice(0, 50), hashesAt };
+    return v.result();
+  }
+
+  /**
+   * verifyChain in chunks of `batch` rows, yielding to the event loop between chunks, so ingest, the API and SSE
+   * keep being served while a large chain is recomputed. Verifies the events present when called (up to `toSeq`,
+   * default the stored head at that moment); events appended meanwhile are left for the next run. Rows are
+   * immutable, so the result equals a synchronous pass over the same range.
+   */
+  async verifyChainAsync(
+    opts: { atSeqs?: number[]; batch?: number; toSeq?: number; signal?: AbortSignal } = {},
+  ): Promise<ChainVerifyResult> {
+    const toSeq =
+      opts.toSeq ?? (this.db.prepare('SELECT COALESCE(MAX(seq), 0) AS s FROM events').get() as { s: number }).s;
+    const v = new ChainVerifier(this.chainId, this.genesis, opts.atSeqs);
+    const stmt = this.db.prepare('SELECT * FROM events WHERE seq >= ? AND seq <= ? ORDER BY seq LIMIT ?');
+    const batch = opts.batch ?? 500;
+    let from = 1;
+    while (from <= toSeq) {
+      opts.signal?.throwIfAborted();
+      const rows = stmt.all(from, toSeq, batch) as unknown as EventRow[];
+      if (!rows.length) break;
+      for (const r of rows) v.add(r);
+      from = rows[rows.length - 1]!.seq + 1;
+      if (from <= toSeq) await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    return v.result();
   }
 
   // ── erasure & rebuild ─────────────────────────────────────────────────────
@@ -616,6 +595,79 @@ export class EventStore {
   close(): void {
     this.db.close();
     this.bodies.close();
+  }
+}
+
+/** Recomputes the chain row by row (rows must arrive in seq order); shared by the sync and chunked verifiers. */
+class ChainVerifier {
+  private readonly want: Set<number>;
+  private readonly hashesAt: Record<number, string> = {};
+  private readonly problems: string[] = [];
+  private prev: string;
+  private expectSeq = 1;
+  private checked = 0;
+  private firstBad: number | null = null;
+
+  constructor(
+    private readonly chainId: string,
+    genesis: string,
+    atSeqs: number[] = [],
+  ) {
+    this.prev = genesis;
+    this.want = new Set(atSeqs);
+  }
+
+  add(r: EventRow): void {
+    const e = rowToEvent(r);
+    if (e.seq !== this.expectSeq) this.problem(e.seq, `gap: expected seq ${this.expectSeq}, found ${e.seq}`);
+    if (e.prevHash !== this.prev) this.problem(e.seq, `seq ${e.seq}: prevHash does not link`);
+    const recomputed = sha256hex(
+      canonicalJson({
+        v: 1,
+        chainId: this.chainId,
+        seq: e.seq,
+        id: e.id,
+        ts: e.ts,
+        type: e.type,
+        actor: e.actor,
+        scope: e.scope,
+        meta: e.meta,
+        payloadHash: e.payloadHash,
+        bodyScope: e.bodyScope,
+        source: e.source,
+        sourceTs: e.sourceTs,
+        idempotencyKey: e.idempotencyKey,
+        causationId: e.causationId,
+        prevHash: e.prevHash,
+      }),
+    );
+    if (recomputed !== e.hash) this.problem(e.seq, `seq ${e.seq}: hash mismatch`);
+    // Queries filter on the indexed copies of the scope, which the hash does not cover: they must agree with it.
+    if (SCOPE_COLUMNS.some(([k, col]) => ((e.scope as Record<string, string | undefined>)[k] ?? null) !== (r[col] ?? null))) {
+      this.problem(e.seq, `seq ${e.seq}: indexed scope columns disagree with the chained scope`);
+    }
+    if (this.want.has(e.seq)) this.hashesAt[e.seq] = recomputed;
+    this.prev = e.hash;
+    this.expectSeq = e.seq + 1;
+    this.checked++;
+  }
+
+  private problem(seq: number, text: string): void {
+    if (this.problems.length < 50) this.problems.push(text);
+    this.firstBad ??= seq;
+  }
+
+  result(): ChainVerifyResult {
+    return {
+      ok: this.firstBad === null,
+      chainId: this.chainId,
+      headSeq: this.expectSeq - 1,
+      headHash: this.prev,
+      checked: this.checked,
+      firstBadSeq: this.firstBad,
+      problems: [...this.problems],
+      hashesAt: this.hashesAt,
+    };
   }
 }
 
