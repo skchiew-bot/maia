@@ -3,6 +3,7 @@
  * the per-session MCP config and the hook settings. Verified against Claude Code 2.1.295 (research §2, §4.5, §8).
  */
 import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { z } from 'zod';
 import { AOC_MCP_SERVER_NAME, FILE_CHANGING_TOOLS, type ProcessType } from '@aoc/contracts';
 import { builtinToolsOf, MANAGED_HOOK_EVENTS } from './claude-facts';
@@ -106,6 +107,26 @@ export function buildSessionEnv(i: SessionEnvInput): Record<string, string> {
   return { ...env, ...i.aoc };
 }
 
+/**
+ * What to redact from a session's output: its ingest token and credential values, raw and as they appear inside
+ * stream-json strings, longest first. Values under 8 characters are too common to redact and too short to be secrets.
+ */
+export function secretsToRedact(values: readonly string[]): string[] {
+  const out = new Set<string>();
+  for (const v of values) {
+    if (v.length < 8) continue;
+    out.add(v);
+    out.add(JSON.stringify(v).slice(1, -1));
+  }
+  return [...out].sort((a, b) => b.length - a.length);
+}
+
+export function redactSecrets(text: string, secrets: readonly string[]): string {
+  let out = text;
+  for (const s of secrets) if (out.includes(s)) out = out.split(s).join('[redacted]');
+  return out;
+}
+
 const CredentialProfilesSchema = z.object({
   profiles: z.record(z.object({ env: z.record(z.string()) })),
 });
@@ -132,6 +153,46 @@ export function readCredentialProfile(file: string, profile: string): Record<str
   const p = parsed.data.profiles[profile];
   if (!p) throw new Error(`credential profile "${profile}" is not defined`);
   return { ...p.env };
+}
+
+/**
+ * Project and local Claude Code settings live in the workspace, which the agent (or the repository) controls, and
+ * every turn is a new process that loads them. `disableAllHooks` would switch AOC's hooks off, and any `env` entry
+ * overrides the environment the supervisor composed (§3): AOC_* (the hooks' mode and token), NODE_OPTIONS or PATH
+ * (the hook and MCP binaries), ANTHROPIC_BASE_URL (where the conversation goes). A file that is not plain JSON
+ * cannot be shown to be harmless.
+ */
+export function workspaceSettingsProblems(cwd: string): string[] {
+  const problems: string[] = [];
+  for (const name of ['settings.json', 'settings.local.json']) {
+    const shown = `.claude/${name}`;
+    let text: string;
+    try {
+      text = readFileSync(join(cwd, '.claude', name), 'utf8');
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') problems.push(`${shown} is unreadable`);
+      continue;
+    }
+    let settings: unknown;
+    try {
+      settings = JSON.parse(text);
+    } catch {
+      problems.push(`${shown} is not plain JSON`);
+      continue;
+    }
+    if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
+      problems.push(`${shown} is not a JSON object`);
+      continue;
+    }
+    const s = settings as Record<string, unknown>;
+    if (s.disableAllHooks) problems.push(`${shown} sets disableAllHooks`);
+    if (s.env !== undefined) {
+      const keys = s.env && typeof s.env === 'object' && !Array.isArray(s.env) ? Object.keys(s.env) : null;
+      if (!keys) problems.push(`${shown} has a malformed env`);
+      else if (keys.length) problems.push(`${shown} sets env (${keys.slice(0, 10).join(', ')})`);
+    }
+  }
+  return problems;
 }
 
 // ── per-session MCP config and hook settings ───────────────────────────────

@@ -8,6 +8,7 @@
 // usage_limit | rate_limited | error | hang (until SIGINT) | hang_hard (ignores SIGINT) | chatty (count=<n>).
 // Params: context=<tokens>, reset=<epoch s>, gate=<path>, mcp=<status reported for the aoc server>.
 // FAKE_CLAUDE_LOG=<file> receives one JSON line per invocation (argv, env, cwd, pid, turn, mode, prompt).
+import { spawn } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
@@ -169,6 +170,26 @@ async function main() {
       for (let i = 0; i < Number(params.count ?? 600); i++) text(`line ${i}`);
       result('chatty done');
       return finish(0);
+    case 'background': {
+      // A Bash call like `npm run dev &`: the child outlives the turn in claude's process group.
+      const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+      child.unref();
+      writeFileSync(params.pidfile, String(child.pid));
+      text('Started a background server');
+      result('done');
+      return finish(0);
+    }
+    case 'printenv': {
+      // What `env`, a chatty model or a failing push with a tokenised remote URL put on the session's output.
+      const token = process.env.GIT_PUSH_TOKEN ?? '';
+      const ingest = process.env.AOC_INGEST_TOKEN ?? '';
+      assistant([{ type: 'tool_use', id: `toolu_${turn}`, name: 'Bash', input: { command: `git push https://x-access-token:${token}@example.com/r.git` } }]);
+      emit({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: `toolu_${turn}`, content: `GIT_PUSH_TOKEN=${token}\nAOC_INGEST_TOKEN=${ingest}` }] } });
+      text(`The push token is ${token} and the ingest token is ${ingest}`);
+      process.stderr.write(`fatal: unable to access 'https://x-access-token:${token}@example.com/r.git/'\n`);
+      result(`Printed ${token}`);
+      return finish(0);
+    }
     default:
       fail(`unknown fake mode ${mode}`);
   }

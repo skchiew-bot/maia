@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@aoc/contracts": "workspace:*",
+    "@aoc/distill": "workspace:*",
     "@aoc/kernel": "workspace:*",
     "@aoc/llm": "workspace:*",
     "hono": "4.13.13",
