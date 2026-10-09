@@ -135,6 +135,8 @@ export default function TicketsPage() {
             <span className="tkt-cell-title__main">{t.title}</span>
             <span className="tkt-cell-title__sub">
               <code>{shortTicketId(t.ticketId)}</code> · {t.requesterName ?? 'Unknown requester'}
+              {t.diagnoses.length + (t.buildSessionId ? 1 : 0) > 0 &&
+                ` · sessions: ${t.diagnoses.length} triage${t.buildSessionId ? ', 1 build' : ''}`}
             </span>
           </span>
         ),
@@ -175,7 +177,7 @@ export default function TicketsPage() {
       {
         id: 'diagnosis',
         header: 'Diagnosis',
-        width: '190px',
+        width: '230px',
         sortValue: (t) =>
           diagnosisOf(latestRound(t.diagnoses, budgets.get(t.ticketId))).best?.confidence ?? null,
         cell: (t) => {
@@ -201,6 +203,9 @@ export default function TicketsPage() {
                     ? ' · agents disagree'
                     : ''}
               </span>
+              <span className="tkt-cell-diag__cause" title={d.best.rootCause ?? undefined}>
+                {d.best.rootCause ?? '[erased]'}
+              </span>
             </span>
           );
         },
@@ -208,7 +213,7 @@ export default function TicketsPage() {
       {
         id: 'gates',
         header: 'Gates',
-        width: '210px',
+        width: '196px',
         cell: (t) => <GateTrail gates={gatesOf(t)} compact />,
       },
       {
