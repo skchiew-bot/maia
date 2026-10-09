@@ -51,15 +51,18 @@ async function turn(id: string, text: string): Promise<void> {
   await h!.sup.nudge(id, text, h!.ownerActor);
   await h!.waitFor(() => turnsEnded(id) === before + 1, `turn ${before + 1} of ${id} to end`);
 }
+/** The HEAD is read after the turn's outcome is recorded: wait for the record rather than for the turn. */
+const waitRecorded = (id: string, n: number) => h!.waitFor(() => recorded(id).length >= n, `${n} HEAD record(s) of ${id}`);
 
 describe("a build session's HEAD is recorded when its turn ends (G-25)", () => {
-  it('records the HEAD the service reads, once per move, before the turn is closed', async () => {
+  it('records the HEAD the service reads, once per move', async () => {
     h = await createHarness();
     const p = project();
     const start = p.head();
     p.work();
     const id = await h.launch(p.prompt('Build the login page'));
     await h.waitLifecycle(id, 'idle');
+    await waitRecorded(id, 1);
     const first = p.head();
     expect(first).not.toBe(start);
     const [event] = h.events('session.head_recorded', id);
@@ -70,13 +73,12 @@ describe("a build session's HEAD is recorded when its turn ends (G-25)", () => {
       meta: { sessionId: id, projectId: 'prj_demo', sha: first, turn: 1 },
     });
     expect(h.payload(event!)).toBeNull();
-    expect(event!.seq).toBeLessThan(h.events('session.turn_ended', id)[0]!.seq);
 
     await turn(id, 'carry on'); // nothing was committed: the HEAD did not move
-    expect(recorded(id)).toEqual([[first, 1]]);
-
     p.work();
     await turn(id, 'once more');
+    await waitRecorded(id, 2);
+    // Turn 2 added no record: it would stand between these two.
     expect(recorded(id)).toEqual([
       [first, 1],
       [p.head(), 3],
@@ -84,13 +86,21 @@ describe("a build session's HEAD is recorded when its turn ends (G-25)", () => {
     expect(p.head()).not.toBe(first);
   });
 
-  it('records a session that never committed once, at the HEAD it started from', async () => {
+  it('records a session that has not committed yet, once, at the HEAD it started from', async () => {
     h = await createHarness();
     const p = project();
+    const start = p.head();
     const id = await h.launch(p.prompt('Read the code'));
     await h.waitLifecycle(id, 'idle');
+    await waitRecorded(id, 1);
     await turn(id, 'again');
-    expect(recorded(id)).toEqual([[p.head(), 1]]);
+    p.work();
+    await turn(id, 'now write it');
+    await waitRecorded(id, 2);
+    expect(recorded(id)).toEqual([
+      [start, 1],
+      [p.head(), 3],
+    ]);
   });
 
   it('records the HEAD the repository has at the end of the turn, wherever the session left it', async () => {
@@ -100,8 +110,10 @@ describe("a build session's HEAD is recorded when its turn ends (G-25)", () => {
     p.work();
     const id = await h.launch(p.prompt('Build the login page'));
     await h.waitLifecycle(id, 'idle');
+    await waitRecorded(id, 1);
     git.run(p.repo, ['reset', '-q', '--hard', start]);
     await turn(id, 'again');
+    await waitRecorded(id, 2);
     expect(recorded(id).map(([sha]) => sha)).toEqual([expect.not.stringMatching(start), start]);
   });
 
@@ -119,9 +131,16 @@ describe("a build session's HEAD is recorded when its turn ends (G-25)", () => {
     const elsewhere = await h.launch(p.prompt('Build somewhere else'), { cwd: join(workspaces, 'prj_demo') });
     await h.waitLifecycle(elsewhere, 'idle');
 
+    h.ledger.projects.add('prj_other');
     const none = await h.launch(p.prompt('Build without a repository'), { projectId: 'prj_other' });
     await h.waitLifecycle(none, 'idle');
-    expect(h.events('session.head_recorded')).toEqual([]);
+
+    // A build in the repository itself records, so the silence above is not a read that is merely late.
+    p.work();
+    const control = await h.launch(p.prompt('Build in the repository'));
+    await h.waitLifecycle(control, 'idle');
+    await waitRecorded(control, 1);
+    expect(h.events('session.head_recorded').map((e) => e.meta.sessionId)).toEqual([control]);
   });
 });
 
@@ -129,18 +148,40 @@ describe('a repository that cannot be read does not fail the turn', () => {
   it('a directory that is no repository, or a service that throws, is logged and the turn ends as usual', async () => {
     const lines: string[] = [];
     h = await createHarness({ log: createLogger({ level: 'warn', sink: (l) => lines.push(l) }) });
+    const failures = () => lines.filter((l) => l.includes('could not record the session HEAD')).length;
     const notARepo = tempDir('aoc-notrepo-');
     h.ledger.repoPaths.set('prj_demo', notARepo);
     const plain = await h.launch('Build the login page');
     await h.waitLifecycle(plain, 'idle');
+    await h.waitFor(() => failures() === 1, 'the unreadable repository to be logged');
     expect(h.events('session.turn_ended', plain).map((e) => e.meta.outcome)).toEqual(['end_turn']);
 
     const p = project();
-    h.t.rt.services.override('git', { ...createGitService(), head: () => { throw new Error('repository is locked'); } });
+    const real = createGitService();
+    h.t.rt.services.override('git', {
+      ...real,
+      runAsync: () => {
+        throw new Error('repository is locked');
+      },
+    });
     const broken = await h.launch(p.prompt('Build the login page'));
     await h.waitLifecycle(broken, 'idle');
+    await h.waitFor(() => failures() === 2, 'the failing read to be logged');
     expect(h.events('session.turn_ended', broken).map((e) => e.meta.outcome)).toEqual(['end_turn']);
     expect(h.events('session.head_recorded')).toEqual([]);
-    expect(lines.filter((l) => l.includes('could not record the session HEAD'))).toHaveLength(1);
+  });
+
+  it('a git that does not answer in time is logged, not waited for', async () => {
+    const lines: string[] = [];
+    h = await createHarness({ log: createLogger({ level: 'warn', sink: (l) => lines.push(l) }) });
+    const p = project();
+    h.t.rt.services.override('git', {
+      ...createGitService(),
+      runAsync: async () => ({ code: 124, stdout: '', stderr: 'git rev-parse timed out', timedOut: true }),
+    });
+    const id = await h.launch(p.prompt('Build the login page'));
+    await h.waitLifecycle(id, 'idle');
+    await h.waitFor(() => lines.some((l) => l.includes('did not answer in time')), 'the timeout to be logged');
+    expect(h.events('session.head_recorded')).toEqual([]);
   });
 });

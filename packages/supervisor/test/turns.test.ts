@@ -351,7 +351,7 @@ describe('turn end: read-only triage ends at its diagnosis', () => {
       type: 'ticket.diagnosis_reported',
       actor: { kind: 'agent', id: sessionId },
       scope: { ticketId, sessionId },
-      meta: { ticketId, sessionId, confidence: 0.82, rootCauseClass: null },
+      meta: { ticketId, sessionId, confidence: 0.82 },
       payload: { rootCause: 'Seconds compared with milliseconds', fixPlan: 'Normalise both values' },
       source: 'mcp',
       bodyScope: ticketId,

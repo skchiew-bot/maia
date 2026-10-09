@@ -182,6 +182,16 @@ const CLOSE_GRACE_MS = 2_000;
 const SIDECAR_GRACE_MS = 5_000;
 /** After SIGTERM a sidecar makes its final usage flush (one request, 4 s client timeout) and exits. */
 const SIDECAR_FLUSH_MS = 5_000;
+/** How long the HEAD read at a turn's end may take, and what it drops from git's environment (as the ledger's reads do). */
+const HEAD_READ_MS = 4_000;
+const HEAD_READ_ENV: Record<string, string> = {
+  GIT_CONFIG_NOSYSTEM: '1',
+  GIT_CONFIG_SYSTEM: '/dev/null',
+  GIT_CONFIG_GLOBAL: '/dev/null',
+  GIT_OPTIONAL_LOCKS: '0',
+  GIT_NO_LAZY_FETCH: '1',
+  GIT_ALLOW_PROTOCOL: '',
+};
 const MAX_BUFFERED_SESSIONS = 256;
 /** Turn outcomes that prove the model answered, so the conversation exists even when its transcript is not found. */
 const ANSWERED_OUTCOMES = new Set(['end_turn', 'decision', 'credit_cap', 'stop_requested', 'rollover']);
@@ -1560,7 +1570,7 @@ export class Supervisor implements SupervisorService {
     this.afterReports(live.sessionId, () => reported.then(() => this.reconcileTurn(live)));
     live.markClosed();
     if (this.stopping) return;
-    this.recordHead(live);
+    void this.recordHead(live);
     try {
       this.finishTurn(live);
     } catch (err) {
@@ -1580,17 +1590,20 @@ export class Supervisor implements SupervisorService {
   /**
    * G-25: when a build session's turn ends, the HEAD of the project repository it works in is recorded, so a commit made
    * after its last task close can still be traced to it. The sha is read here, by the kernel git service, which runs
-   * git as the repository's owner with the safety settings (never as root inside a tree the agent can write); the
-   * session supplies nothing. A HEAD that did not move since the last record adds no event, and a repository that
-   * cannot be read costs the turn nothing. The proof is the one `task.done` gives: the commit was in the workspace.
+   * git as the repository's owner with the safety settings (never as root inside a tree the agent can write) and,
+   * like every read on aocd's thread, asynchronously and within a time limit; the session supplies nothing. A HEAD
+   * that did not move since the last record adds no event, and a repository that cannot be read costs the turn
+   * nothing (the turn's outcome is already recorded when the answer arrives). The proof is the one `task.done` gives:
+   * the commit was in the workspace.
    */
-  private recordHead(live: LiveTurn): void {
+  private async recordHead(live: LiveTurn): Promise<void> {
     const s = this.view.get(live.sessionId);
     if (!s || s.readOnly) return;
     try {
       const repo = this.projectRepoOf(s);
-      const sha = repo ? this.ctx.services.get('git').head(repo) : null;
-      if (!sha) return;
+      const sha = repo ? await this.readHead(repo) : null;
+      // aocd may have begun to stop while git answered: nothing is appended from then on.
+      if (!sha || this.stopping) return;
       const last = this.ctx.store.list({ sessionId: s.sessionId, types: ['session.head_recorded'], order: 'desc', limit: 1 })[0];
       if (last?.meta.sha === sha) return;
       this.ctx.store.append(
@@ -1606,6 +1619,17 @@ export class Supervisor implements SupervisorService {
     } catch (err) {
       this.log.warn('could not record the session HEAD', { sessionId: s.sessionId, err: String(err) });
     }
+  }
+
+  /** The commit HEAD names; null for a repository without commits yet, an error for one git would not or could not read. */
+  private async readHead(repo: string): Promise<string | null> {
+    const r = await this.ctx.services
+      .get('git')
+      .runAsync(repo, ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'], { env: HEAD_READ_ENV, timeoutMs: HEAD_READ_MS });
+    const sha = r.stdout.trim();
+    if (r.code === 0 && /^[0-9a-f]{7,64}$/.test(sha)) return sha;
+    if (r.code === 1 && !r.timedOut) return null; // --quiet: no output and exit 1 when HEAD names no commit
+    throw new Error(r.timedOut ? 'git did not answer in time' : `git exited ${r.code}: ${r.stderr.split('\n')[0]!.slice(0, 200)}`);
   }
 
   /** The project's repository, when the session works in it: a HEAD read anywhere else says nothing about the session. */
