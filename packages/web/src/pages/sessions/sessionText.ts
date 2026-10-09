@@ -36,7 +36,7 @@ function since(iso: string | null | undefined, now: number): string | null {
 
 /** Context after the badge word: "decision 34m", "resets 14:05", "no heartbeat 4m". */
 export function livenessDetail(
-  s: Pick<SessionSummary, 'liveness' | 'lifecycle' | 'openDecision' | 'throttledUntil' | 'endedAt'>,
+  s: Pick<SessionSummary, 'liveness' | 'lifecycle' | 'openDecision' | 'throttledUntil' | 'endedAt' | 'lastActivityAt' | 'startedAt'>,
   now: number,
 ): string | undefined {
   const state = sessionLiveness(s);
@@ -56,8 +56,13 @@ export function livenessDetail(
       if (reason === 'never_reported') return 'never reported';
       if (reason === 'process_exited') return withAge('exited');
       return withAge('process failed');
-    case 'stalled':
-      return reason === 'tool_hung' ? withAge('tool running') : withAge('no output');
+    case 'stalled': {
+      if (reason === 'tool_hung') return withAge('tool hung');
+      // `since` is when the stall threshold was crossed, so the quiet time is measured from the last
+      // recorded activity instead (the daemon's own rule: the later of start and last activity).
+      const quietFrom = Math.max(toEpoch(s.startedAt), s.lastActivityAt ? toEpoch(s.lastActivityAt) : 0);
+      return Number.isFinite(quietFrom) && quietFrom > 0 ? `no output ${formatAge(now - quietFrom)}` : withAge('no output');
+    }
     case 'thinking':
       return reason === 'starting' ? 'starting' : withAge('generating');
     case 'working':

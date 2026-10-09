@@ -81,7 +81,7 @@ export function SessionTile({ session: s, apmMax, rolloverPct, activitySeq, now 
             <AliveIndicator
               activitySeq={activitySeq}
               state={state}
-              label={activitySeq ? `Activity event ${activitySeq}, ${lastActivity}` : lastActivity}
+              label={lastActivity}
             />
           )}
           <span className="console-tile__owner">

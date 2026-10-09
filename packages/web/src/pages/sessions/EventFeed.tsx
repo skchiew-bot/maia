@@ -77,7 +77,7 @@ export interface EventFeedProps {
 export function EventFeed({ events, limit, onMore, nameOf }: EventFeedProps) {
   const columns = useMemo<DataTableColumn<FeedEvent>[]>(
     () => [
-      { id: 'seq', header: 'Seq', numeric: true, width: '64px', cell: (e) => formatInteger(e.seq) },
+      { id: 'seq', header: 'Seq', numeric: true, width: '64px', hideOnMobile: true, cell: (e) => formatInteger(e.seq) },
       {
         id: 'time',
         header: 'Time',

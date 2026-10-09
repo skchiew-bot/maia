@@ -37,7 +37,14 @@ describe('livenessDetail', () => {
     expect(livenessDetail(at('throttled', 'plan_limit'), NOW)).toBe('reset time unknown');
     expect(livenessDetail(at('dead', 'no_heartbeat', 21), NOW)).toBe('no heartbeat 21m');
     expect(livenessDetail(at('dead', 'never_reported'), NOW)).toBe('never reported');
-    expect(livenessDetail(at('stalled', 'no_activity', 11), NOW)).toBe('no output 11m');
+    // quiet time runs from the last activity, not from when the 10-minute threshold flipped the badge
+    expect(livenessDetail(summary({ liveness: { state: 'stalled', reason: 'no_activity', since: ago(1) }, lastActivityAt: ago(11) }), NOW)).toBe(
+      'no output 11m',
+    );
+    expect(
+      livenessDetail(summary({ liveness: { state: 'stalled', reason: 'no_activity', since: ago(2) }, lastActivityAt: null, startedAt: ago(12) }), NOW),
+    ).toBe('no output 12m');
+    expect(livenessDetail(at('stalled', 'tool_hung', 3), NOW)).toBe('tool hung 3m');
     expect(livenessDetail(at('thinking', 'streaming', 2), NOW)).toBe('generating 2m');
     expect(livenessDetail(at('working', 'recent_tool', 40), NOW)).toBe('for 40m');
     expect(livenessDetail(summary({ lifecycle: 'ended', liveness: null, endedAt: ago(30) }), NOW)).toBe(formatClock(NOW - 30 * MIN));

@@ -878,3 +878,17 @@ details[open] > .session-phase__summary .session-phase__chev {
   flex-shrink: 0;
   margin-top: 1px;
 }
+/* Narrow panels: the model table keeps every column by tightening instead of clipping. */
+@container session (max-width: 520px) {
+  .session-mtable {
+    font-size: var(--fs-xs);
+  }
+  .session-mtable th,
+  .session-mtable td {
+    padding: 4px 3px;
+  }
+  .session-mtable thead th {
+    white-space: normal;
+    vertical-align: bottom;
+  }
+}
