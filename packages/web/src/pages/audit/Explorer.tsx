@@ -4,7 +4,6 @@ import { apiGet } from '../../api/client';
 import { useEventStream, type StreamMessage } from '../../api/stream';
 import { useResource } from '../../api/useResource';
 import { Button, EmptyState, InlineAlert, describeError } from '../../components';
-import { useMediaQuery } from '../../lib/dom';
 import { formatInteger } from '../../lib/format';
 import { EventTable } from './EventTable';
 import { parseScopeFilter, parseTypeFilter, rangeCutoff, withinRange, type RangePreset } from './model';
@@ -60,8 +59,11 @@ export function Explorer({
   now: number;
   onOpen: (e: AuditEventHeaderDTO) => void;
 }) {
-  const phone = useMediaQuery('(max-width: 640px)');
-  const query = useMemo(() => explorerQuery(filters, phone ? PHONE_PAGE : PAGE), [filters, phone]);
+  // Chosen once: a later resize keeps the loaded pages instead of refetching them at another size.
+  const [pageSize] = useState(() =>
+    typeof window !== 'undefined' && window.matchMedia?.('(max-width: 640px)').matches ? PHONE_PAGE : PAGE,
+  );
+  const query = useMemo(() => explorerQuery(filters, pageSize), [filters, pageSize]);
   const first = useResource<AuditEventPageDTO>('/api/audit/events', { query });
   const [older, setOlder] = useState<{ events: AuditEventHeaderDTO[]; next: number | null } | null>(null);
   const [loadingOlder, setLoadingOlder] = useState(false);

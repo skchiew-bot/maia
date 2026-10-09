@@ -13,6 +13,12 @@ import type { IconName } from '../../components/Icon';
 import type { Tone } from '../../components/tone';
 import { toEpoch } from '../../lib/format';
 
+/**
+ * The blind one-click-confirm threshold, mirroring `BLIND_AFFIRM_DWELL_MS` in the change contract (a test pins them
+ * equal): a value import would bundle the whole contracts package (zod, event catalog) into this page.
+ */
+export const BLIND_DWELL_MS = 3000;
+
 export const FIELD_ORDER: readonly ChangeField[] = ['impact', 'mitigation', 'rollbackPlan', 'acceptanceTest'];
 
 export const FIELD_META: Record<ChangeField, { label: string; prompt: string }> = {

@@ -1,10 +1,5 @@
 import { useEffect, useId, useRef, useState, type RefObject } from 'react';
-import {
-  BLIND_AFFIRM_DWELL_MS,
-  type ChangeFieldDTO,
-  type ChangeRequestDTO,
-  type PinListDTO,
-} from '@aoc/contracts';
+import type { ChangeFieldDTO, ChangeRequestDTO, PinListDTO } from '@aoc/contracts';
 import { apiPost } from '../../api/client';
 import { Badge } from '../../components/Badge';
 import { Button } from '../../components/Button';
@@ -19,7 +14,7 @@ import { cx } from '../../lib/dom';
 import { formatDuration, formatPercent } from '../../lib/format';
 import { PersonName } from '../audit/people';
 import { RefValue } from './bits';
-import { FIELD_META, authorship, fieldState, hasAiDraft, type FieldState } from './model';
+import { BLIND_DWELL_MS, FIELD_META, authorship, fieldState, hasAiDraft, type FieldState } from './model';
 import { RollbackTargetPicker } from './RollbackTargetPicker';
 
 const STATE_BADGE: Record<FieldState, { label: string; tone: Tone; icon: IconName }> = {
@@ -130,7 +125,7 @@ export function FieldCard({ change, field, editable, pins, onSaved }: FieldCardP
         toast.notify({
           tone: 'warn',
           title: `${meta.label} recorded as a blind one-click confirm`,
-          body: `It was affirmed without an edit within ${formatDuration(BLIND_AFFIRM_DWELL_MS)} of being shown (§14).`,
+          body: `It was affirmed without an edit within ${formatDuration(BLIND_DWELL_MS)} of being shown (§14).`,
         });
     } catch (err) {
       setError(err);
@@ -205,7 +200,7 @@ export function FieldCard({ change, field, editable, pins, onSaved }: FieldCardP
             <span className="changes-field__hint">
               {missing ??
                 (ai && !changed
-                  ? `Affirming a draft without an edit within ${formatDuration(BLIND_AFFIRM_DWELL_MS)} is flagged.`
+                  ? `Affirming a draft without an edit within ${formatDuration(BLIND_DWELL_MS)} is flagged.`
                   : '')}
             </span>
           </div>
@@ -272,7 +267,7 @@ export function FieldCard({ change, field, editable, pins, onSaved }: FieldCardP
               {formatDuration(field.dwellMs)}
               {field.blind && (
                 <span className="changes-field__sub">
-                  below the {formatDuration(BLIND_AFFIRM_DWELL_MS)} threshold
+                  below the {formatDuration(BLIND_DWELL_MS)} threshold
                 </span>
               )}
             </dd>
