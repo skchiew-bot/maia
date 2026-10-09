@@ -141,7 +141,8 @@ const ProcessSchema = z.object({
 }) satisfies z.ZodType<ProcessEventRequest>;
 const SpoolSchema = z.object({ items: z.array(z.object({ path: z.string().max(200), body: z.unknown(), queuedAt: zTs })).max(500) });
 
-const READ_ONLY_PREFIX = /^\s*(ls|cat|head|tail|wc|grep|rg|pwd|echo|which|file|stat|du|df|tree|git\s+(log|show|diff|status|blame|branch|rev-parse))\b/;
+// Followed by a space or the end: `ls-evil` and `git log-evil` are other programs (git runs `git-log-evil` from the PATH).
+const READ_ONLY_PREFIX = /^\s*(ls|cat|head|tail|wc|grep|rg|pwd|echo|which|file|stat|du|df|tree|git\s+(log|show|diff|status|blame|branch|rev-parse))(?=\s|$)/;
 
 export function summarize(v: unknown, max = 500): string {
   let s: string | undefined;
@@ -167,13 +168,27 @@ function filePathsOf(input: Record<string, unknown>): string[] {
   return out;
 }
 
-/** Defence in depth for read-only (triage) sessions; primary enforcement is the supervisor's --tools/--disallowedTools. */
+/** `git branch` as an inspection: only these flags. A name after it creates a branch, and -d/-m/-c/-u change one. */
+const READ_ONLY_GIT_BRANCH =
+  /^\s*git\s+branch(\s+(-a|--all|-r|--remotes|-vv?|--verbose|--show-current|-l|--list|--color|--no-color|--column|--no-column|-i|--ignore-case|--abbrev=\d+|--no-abbrev))*\s*$/;
+
+/**
+ * Defence in depth for read-only (triage) sessions; primary enforcement is the supervisor's --tools/--disallowedTools.
+ * Accepts one simple command of the listed inspection programs: a second command after a line break, a substitution
+ * (including `<(…)`), a pipe, a redirection, or a flag that makes the program write a file or run another one fails it.
+ */
 export function isReadOnlyBash(command: string): boolean {
-  if (/[>|;&`$]|\b(rm|mv|cp|tee|sed\s+-i|chmod|chown|mkdir|touch|dd|truncate|git\s+(commit|push|checkout|reset|merge|rebase|apply|stash|tag))\b/.test(command)) {
+  if (/[\r\n\0>|;&`$()<]/.test(command)) return false;
+  if (/\b(rm|mv|cp|tee|sed\s+-i|chmod|chown|mkdir|touch|dd|truncate|git\s+(commit|push|checkout|reset|merge|rebase|apply|stash|tag))\b/.test(command)) {
     return false;
   }
   // Two independent tests rather than `find.*-exec`: that backtracks quadratically, on the daemon thread.
   if (/\bfind\b/.test(command) && /\s-(delete|exec|execdir|ok)\b/.test(command)) return false;
+  // git diff/log/show --output=<file> writes; rg --pre / --hostname-bin run a program; tree -o writes; file -C compiles a magic file.
+  if (/\s--(output|pre|hostname-bin)\b/.test(command)) return false;
+  if (/^\s*tree\b/.test(command) && /\s-[A-Za-z]*o\b/.test(command)) return false;
+  if (/^\s*file\b/.test(command) && /\s(-[A-Za-z]*C|--compile)\b/.test(command)) return false;
+  if (/^\s*git\s+branch\b/.test(command) && !READ_ONLY_GIT_BRANCH.test(command)) return false;
   return READ_ONLY_PREFIX.test(command);
 }
 
