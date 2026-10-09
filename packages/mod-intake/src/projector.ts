@@ -12,7 +12,7 @@ const DDL = [
     submitted_at TEXT NOT NULL, updated_at TEXT NOT NULL,
     fix_plan TEXT, fix_plan_session_id TEXT, build_session_id TEXT, build_attempts INTEGER NOT NULL DEFAULT 0,
     triage_round INTEGER NOT NULL DEFAULT 0,
-    uat_ref TEXT, uat_sha TEXT, uat_failed_at TEXT, uat_feedback TEXT, resolution TEXT
+    uat_ref TEXT, uat_sha TEXT, uat_failed_at TEXT, uat_feedback TEXT, uat_passed_at TEXT, resolution TEXT
   )`,
   `CREATE TABLE IF NOT EXISTS itk_attachments (
     attachment_id TEXT PRIMARY KEY, ticket_id TEXT NOT NULL, sha256 TEXT NOT NULL, mime TEXT NOT NULL, bytes INTEGER NOT NULL,
@@ -108,19 +108,21 @@ export const intakeProjector: Projector = {
         stage(db, m.ticketId as string, 'fix_plan_gate', e.ts);
         break;
       case 'ticket.build_started':
-        db.prepare('UPDATE itk_tickets SET build_session_id = ?, build_attempts = build_attempts + 1 WHERE ticket_id = ?').run(m.sessionId as string, m.ticketId as string);
+        db.prepare('UPDATE itk_tickets SET build_session_id = ?, build_attempts = build_attempts + 1, uat_passed_at = NULL WHERE ticket_id = ?').run(m.sessionId as string, m.ticketId as string);
         stage(db, m.ticketId as string, 'building', e.ts);
         break;
       case 'ticket.uat_ready':
         // A new build to test: earlier UAT feedback is answered.
-        db.prepare('UPDATE itk_tickets SET uat_ref = ?, uat_sha = ?, uat_failed_at = NULL, uat_feedback = NULL WHERE ticket_id = ?').run(m.uatRef as string, m.uatSha as string, m.ticketId as string);
+        db.prepare('UPDATE itk_tickets SET uat_ref = ?, uat_sha = ?, uat_failed_at = NULL, uat_feedback = NULL, uat_passed_at = NULL WHERE ticket_id = ?').run(m.uatRef as string, m.uatSha as string, m.ticketId as string);
         stage(db, m.ticketId as string, 'uat', e.ts);
         break;
       case 'ticket.uat_result':
         // A failed UAT goes back through read-only triage and the fix-plan gate before another build.
         if (m.verdict === 'fail') {
-          db.prepare('UPDATE itk_tickets SET uat_failed_at = ?, uat_feedback = ? WHERE ticket_id = ?').run(e.ts, p ? (s(p.comment) ?? '') : '[erased]', m.ticketId as string);
+          db.prepare('UPDATE itk_tickets SET uat_failed_at = ?, uat_feedback = ?, uat_passed_at = NULL WHERE ticket_id = ?').run(e.ts, p ? (s(p.comment) ?? '') : '[erased]', m.ticketId as string);
           stage(db, m.ticketId as string, 'triage', e.ts);
+        } else {
+          db.prepare('UPDATE itk_tickets SET uat_passed_at = ? WHERE ticket_id = ?').run(e.ts, m.ticketId as string);
         }
         break;
       case 'ticket.golive_requested':

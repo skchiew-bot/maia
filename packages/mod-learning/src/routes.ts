@@ -10,7 +10,7 @@ import {
   type AuthContext,
   type MetaOf,
 } from '@aoc/contracts';
-import { HttpError, parseQuery, readJson, requireIngest, requirePermission, type App } from '@aoc/kernel';
+import { HttpError, parseQuery, readJson, requireIngest, requirePermission, sha256hex, type App } from '@aoc/kernel';
 import type { LearningEngine } from './engine';
 import type { LearningReads } from './reads';
 import { humanTransitionAllowed, unusedStreak } from './rules';
@@ -165,8 +165,9 @@ export function registerRoutes(app: App, engine: () => LearningEngine, reads: ()
         fix: body.input.fix,
         rootCauseHint: body.input.root_cause_class,
         codeArea: body.input.code_area,
+        // Bound to the session (a key cannot swallow another session's report) and hashed (the chain carries no client text).
         idempotencyKey: body.idempotencyKey
-          ? `report_error:${body.sessionId}:${body.idempotencyKey}`
+          ? `report_error:${sha256hex([body.sessionId, body.idempotencyKey].join('\n'))}`
           : undefined,
       },
       { kind: 'agent', id: body.sessionId },

@@ -278,9 +278,9 @@ export class EventStore {
         }
         const problems = [...validateEvent(input.type, input.meta, input.payload ?? null), ...headerProblems(input as NewEventInput)];
         if (problems.length) throw new EventValidationError(input.type, problems);
-        const e = this.write(input as NewEventInput, writtenBodies);
+        const { e, payload } = this.write(input as NewEventInput, writtenBodies);
         out.push(e);
-        committed.push({ e, payload: (input.payload ?? null) as JsonValue | null });
+        committed.push({ e, payload });
       }
       this.db.exec('COMMIT');
     } catch (err) {
@@ -303,13 +303,22 @@ export class EventStore {
     return out;
   }
 
-  private write(input: NewEventInput, writtenBodies: string[]): StoredEvent {
+  /**
+   * Writes one event. Actor, scope, meta and body are brought to their canonical JSON form first, because that is what
+   * is chained, stored and read back: the event returned to the caller, handed to the projectors and to the commit
+   * listeners is then exactly what a rebuild or a later read produces, not the caller's own objects (key order,
+   * `undefined` members, fields that are not part of the record). A projector therefore cannot write one thing live
+   * and another after a rebuild, whatever the writer passed.
+   */
+  private write(input: NewEventInput, writtenBodies: string[]): { e: StoredEvent; payload: JsonValue | null } {
     const seq = this.headSeq + 1;
     const id = newId('event', this.opts.clock.now());
     const ts = this.opts.clock.iso();
-    const scope = cleanScope(input.scope ?? {});
-    const meta = (input.meta ?? {}) as JsonObject;
+    const actor: Actor = { kind: input.actor.kind, id: input.actor.id };
+    const scope = normalized(cleanScope(input.scope ?? {}));
+    const meta = normalized((input.meta ?? {}) as JsonObject);
     const hasBody = input.payload !== undefined && input.payload !== null;
+    let payload: JsonValue | null = null;
     let payloadHash: string | null = null;
     let bodyScope: string | null = null;
     if (hasBody) {
@@ -318,8 +327,9 @@ export class EventStore {
       // chained hash cannot be brute-forced back to low-entropy personal data.
       const blind = randomBytes(16).toString('hex');
       const canon = canonicalJson(input.payload);
+      payload = JSON.parse(canon) as JsonValue;
       payloadHash = sha256hex(`${blind}:${canon}`);
-      this.bodies.put(id, bodyScope, canonicalJson({ b: blind, p: input.payload }), ts);
+      this.bodies.put(id, bodyScope, canonicalJson({ b: blind, p: payload }), ts);
       writtenBodies.push(id);
     }
     const header = {
@@ -329,7 +339,7 @@ export class EventStore {
       id,
       ts,
       type: input.type,
-      actor: input.actor,
+      actor,
       scope,
       meta,
       payloadHash,
@@ -352,8 +362,8 @@ export class EventStore {
         id,
         ts,
         input.type,
-        input.actor.kind,
-        input.actor.id,
+        actor.kind,
+        actor.id,
         canonicalJson(scope),
         scope.projectId ?? null,
         scope.threadId ?? null,
@@ -380,7 +390,7 @@ export class EventStore {
       id,
       ts,
       type: input.type,
-      actor: input.actor,
+      actor,
       scope,
       meta,
       payloadHash,
@@ -392,31 +402,42 @@ export class EventStore {
       prevHash: header.prevHash,
       hash,
     };
-    this.project(e, (input.payload ?? null) as JsonValue | null, false);
-    return e;
+    this.project(e, payload, false);
+    return { e, payload };
   }
 
   /** Each projector runs in its own savepoint: a failing projector is marked degraded (rebuildable) without blocking ingestion. */
   private project(e: StoredEvent, payload: JsonValue | null, replaying: boolean): void {
     for (const p of this.projectors) {
       if (p.handles && !p.handles.includes(e.type)) continue;
-      const sp = `p_${p.name.replace(/[^a-z0-9_]/gi, '_')}`;
-      this.db.exec(`SAVEPOINT ${sp}`);
-      try {
-        p.apply({ db: this.db, replaying }, e, payload);
-        this.db.exec(`RELEASE ${sp}`);
-      } catch (err) {
-        this.db.exec(`ROLLBACK TO ${sp}`);
-        this.db.exec(`RELEASE ${sp}`);
-        this.opts.log.error('projector failed', { projector: p.name, type: e.type, seq: e.seq, err: String(err) });
-        this.db
-          .prepare(
-            `INSERT INTO projection_health (name, status, last_error, failed_seq, updated_at) VALUES (?, 'degraded', ?, ?, ?)
-             ON CONFLICT(name) DO UPDATE SET status='degraded', last_error=excluded.last_error, failed_seq=excluded.failed_seq, updated_at=excluded.updated_at`,
-          )
-          .run(p.name, String(err).slice(0, 500), e.seq, this.opts.clock.iso());
-      }
+      const err = this.applyIsolated(p, e, payload, replaying);
+      if (err !== null) this.markDegraded(p.name, e.seq, err);
     }
+  }
+
+  /** Apply one event to one projector inside a savepoint; the error it threw (its half-done writes undone), or null. */
+  private applyIsolated(p: Projector, e: StoredEvent, payload: JsonValue | null, replaying: boolean): string | null {
+    const sp = `p_${p.name.replace(/[^a-z0-9_]/gi, '_')}`;
+    this.db.exec(`SAVEPOINT ${sp}`);
+    try {
+      p.apply({ db: this.db, replaying }, e, payload);
+      this.db.exec(`RELEASE ${sp}`);
+      return null;
+    } catch (err) {
+      this.db.exec(`ROLLBACK TO ${sp}`);
+      this.db.exec(`RELEASE ${sp}`);
+      this.opts.log.error('projector failed', { projector: p.name, type: e.type, seq: e.seq, replaying, err: String(err) });
+      return String(err);
+    }
+  }
+
+  private markDegraded(name: string, seq: number, error: string): void {
+    this.db
+      .prepare(
+        `INSERT INTO projection_health (name, status, last_error, failed_seq, updated_at) VALUES (?, 'degraded', ?, ?, ?)
+         ON CONFLICT(name) DO UPDATE SET status='degraded', last_error=excluded.last_error, failed_seq=excluded.failed_seq, updated_at=excluded.updated_at`,
+      )
+      .run(name, error.slice(0, 500), seq, this.opts.clock.iso());
   }
 
   // ── reads ─────────────────────────────────────────────────────────────────
@@ -475,13 +496,18 @@ export class EventStore {
     return (JSON.parse(text) as { b: string; p: JsonValue }).p;
   }
 
-  /** Check a body against its chained blinded hash (false if tampered; null if erased/absent). */
+  /** Check a body against its chained blinded hash (false if tampered or unreadable; null if erased/absent). */
   verifyBody(e: Pick<StoredEvent, 'id' | 'payloadHash'>): boolean | null {
     if (!e.payloadHash) return null;
-    const text = this.bodies.get(e.id);
-    if (text === null) return null;
-    const { b, p } = JSON.parse(text) as { b: string; p: JsonValue };
-    return sha256hex(`${b}:${canonicalJson(p)}`) === e.payloadHash;
+    try {
+      const text = this.bodies.get(e.id);
+      if (text === null) return null;
+      const { b, p } = JSON.parse(text) as { b: string; p: JsonValue };
+      return sha256hex(`${b}:${canonicalJson(p)}`) === e.payloadHash;
+    } catch {
+      // AES-GCM refuses a ciphertext that was edited or moved to another event: that is the finding, not a crash.
+      return false;
+    }
   }
 
   static headerOf(e: StoredEvent): EventHeader {
@@ -535,9 +561,21 @@ export class EventStore {
   }
 
   // ── erasure & rebuild ─────────────────────────────────────────────────────
-  /** Crypto-shred a body scope and scrub projections; the chain remains valid. Appends body.erased. */
+  /**
+   * Crypto-shred a body scope and scrub projections; the chain remains valid. Appends body.erased.
+   * Write-ahead: everything that can refuse (the record's validity, a projector that cannot scrub) and the record
+   * itself come before the irreversible shred, so a body is never destroyed without its body.erased event.
+   */
   eraseScope(scopeId: string, input: { actor: Actor; reason: 'pdpa_request' | 'secret_leak' | 'retention' | 'other'; decisionId?: string | null }): StoredEvent {
-    const n = this.bodies.eraseScope(scopeId, this.opts.clock.iso());
+    const meta = {
+      scopeId,
+      reason: input.reason,
+      erasedBy: input.actor.id,
+      bodyCount: this.bodies.countScope(scopeId),
+      decisionId: input.decisionId ?? null,
+    };
+    const problems = validateEvent('body.erased', meta, null);
+    if (problems.length) throw new EventValidationError('body.erased', problems);
     this.db.exec('BEGIN IMMEDIATE');
     try {
       for (const p of this.projectors) p.onErase?.(this.db, scopeId);
@@ -546,18 +584,36 @@ export class EventStore {
       this.db.exec('ROLLBACK');
       throw err;
     }
-    const erased = this.append({
-      type: 'body.erased',
-      actor: input.actor,
-      meta: { scopeId, reason: input.reason, erasedBy: input.actor.id, bodyCount: n, decisionId: input.decisionId ?? null },
-      source: 'api',
-    });
-    // The WAL still holds page images from before the scrub: fold it into the main file and truncate it.
-    this.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+    const erased = this.append({ type: 'body.erased', actor: input.actor, meta, source: 'api' });
+    this.bodies.eraseScope(scopeId, this.opts.clock.iso());
+    this.purgeResidue();
     return erased;
   }
 
-  /** Drop and rebuild projections from the log (payloads decrypted; null where erased). */
+  /**
+   * secure_delete zeroes the cells a DELETE removes, but when SQLite rebalances sibling pages it rebuilds one in
+   * place and leaves the cells it moved in the page's unallocated gap, outside every table, so erased rows can
+   * outlive their own deletion. VACUUM writes every page afresh. The scrub and the shred are done by now: a VACUUM
+   * that cannot run is logged, not thrown, so the erasure is still reported as done.
+   */
+  private purgeResidue(): void {
+    try {
+      this.db.exec('VACUUM');
+    } catch (err) {
+      this.opts.log.error('VACUUM after an erasure failed: erased text may remain in aoc.db until the next one', { err: String(err) });
+    }
+    // The WAL still holds page images from before the scrub: fold it into the main file and truncate it. A reader
+    // holding an older snapshot (a backup copying the database) stops that: the pages stay until the next checkpoint.
+    const checkpoint = this.db.prepare('PRAGMA wal_checkpoint(TRUNCATE)').get() as { busy: number } | undefined;
+    if (checkpoint?.busy)
+      this.opts.log.warn('the WAL could not be truncated after an erasure: a reader holds an older snapshot, so pre-erasure pages stay in aoc.db and its WAL until the next checkpoint');
+  }
+
+  /**
+   * Drop and rebuild projections from the log (payloads decrypted; null where erased). An event a projector cannot
+   * handle is isolated exactly as it is live: skipped for that projector, which is marked degraded again. Aborting
+   * instead would make one poison event unrebuildable, and aocd rebuilds degraded projections before it starts.
+   */
   rebuildProjections(names?: string[]): void {
     const targets = this.projectors.filter((p) => !names || names.includes(p.name));
     this.db.exec('BEGIN IMMEDIATE');
@@ -566,6 +622,7 @@ export class EventStore {
         for (const t of p.tables) this.db.exec(`DROP TABLE IF EXISTS ${t}`);
         for (const ddl of p.ddl) this.db.exec(ddl);
       }
+      const failed = new Map<string, { seq: number; error: string }>();
       let from = 1;
       for (;;) {
         const rows = this.db.prepare('SELECT * FROM events WHERE seq >= ? ORDER BY seq LIMIT 2000').all(from) as unknown as EventRow[];
@@ -575,12 +632,17 @@ export class EventStore {
           const payload = this.readPayload(e);
           for (const p of targets) {
             if (p.handles && !p.handles.includes(e.type)) continue;
-            p.apply({ db: this.db, replaying: true }, e, payload);
+            const err = this.applyIsolated(p, e, payload, true);
+            if (err !== null) failed.set(p.name, { seq: e.seq, error: err });
           }
         }
         from = rows[rows.length - 1]!.seq + 1;
       }
-      for (const p of targets) this.db.prepare('DELETE FROM projection_health WHERE name = ?').run(p.name);
+      for (const p of targets) {
+        this.db.prepare('DELETE FROM projection_health WHERE name = ?').run(p.name);
+        const f = failed.get(p.name);
+        if (f) this.markDegraded(p.name, f.seq, f.error);
+      }
       this.db.exec('COMMIT');
     } catch (err) {
       this.db.exec('ROLLBACK');
@@ -623,10 +685,38 @@ class ChainVerifier {
   }
 
   add(r: EventRow): void {
-    const e = rowToEvent(r);
+    let e: StoredEvent;
+    let recomputed: string;
+    try {
+      e = rowToEvent(r);
+      recomputed = this.hashOf(e);
+    } catch {
+      // A column the chain hashes is not JSON (or holds a number JSON cannot carry): the row cannot be recomputed.
+      // That is itself the finding. Report it at its seq instead of letting the verifier die, and keep linking on
+      // the stored hashes so rows after it are still checked.
+      if (r.seq !== this.expectSeq) this.problem(r.seq, `gap: expected seq ${this.expectSeq}, found ${r.seq}`);
+      if (r.prev_hash !== this.prev) this.problem(r.seq, `seq ${r.seq}: prevHash does not link`);
+      this.problem(r.seq, `seq ${r.seq}: row cannot be read (scope or meta is not valid JSON)`);
+      this.prev = r.hash;
+      this.expectSeq = r.seq + 1;
+      this.checked++;
+      return;
+    }
     if (e.seq !== this.expectSeq) this.problem(e.seq, `gap: expected seq ${this.expectSeq}, found ${e.seq}`);
     if (e.prevHash !== this.prev) this.problem(e.seq, `seq ${e.seq}: prevHash does not link`);
-    const recomputed = sha256hex(
+    if (recomputed !== e.hash) this.problem(e.seq, `seq ${e.seq}: hash mismatch`);
+    // Queries filter on the indexed copies of the scope, which the hash does not cover: they must agree with it.
+    if (SCOPE_COLUMNS.some(([k, col]) => ((e.scope as Record<string, string | undefined>)[k] ?? null) !== (r[col] ?? null))) {
+      this.problem(e.seq, `seq ${e.seq}: indexed scope columns disagree with the chained scope`);
+    }
+    if (this.want.has(e.seq)) this.hashesAt[e.seq] = recomputed;
+    this.prev = e.hash;
+    this.expectSeq = e.seq + 1;
+    this.checked++;
+  }
+
+  private hashOf(e: StoredEvent): string {
+    return sha256hex(
       canonicalJson({
         v: 1,
         chainId: this.chainId,
@@ -646,15 +736,6 @@ class ChainVerifier {
         prevHash: e.prevHash,
       }),
     );
-    if (recomputed !== e.hash) this.problem(e.seq, `seq ${e.seq}: hash mismatch`);
-    // Queries filter on the indexed copies of the scope, which the hash does not cover: they must agree with it.
-    if (SCOPE_COLUMNS.some(([k, col]) => ((e.scope as Record<string, string | undefined>)[k] ?? null) !== (r[col] ?? null))) {
-      this.problem(e.seq, `seq ${e.seq}: indexed scope columns disagree with the chained scope`);
-    }
-    if (this.want.has(e.seq)) this.hashesAt[e.seq] = recomputed;
-    this.prev = e.hash;
-    this.expectSeq = e.seq + 1;
-    this.checked++;
   }
 
   private problem(seq: number, text: string): void {
@@ -698,6 +779,11 @@ function headerProblems(input: NewEventInput): string[] {
     problems.push(`idempotencyKey: must be 1–${MAX_IDEMPOTENCY_KEY} characters without control characters`);
   }
   return problems;
+}
+
+/** A value as the log will hold it: canonical JSON read back (sorted keys, no `undefined`). */
+function normalized<T>(v: T): T {
+  return JSON.parse(canonicalJson(v)) as T;
 }
 
 function cleanScope(s: Scope): Scope {

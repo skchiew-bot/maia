@@ -107,6 +107,19 @@ describe('portal ticket page', () => {
     expect(within(status).getByRole('list', { name: 'Progress' })).toHaveTextContent('Being worked on (current step)');
   });
 
+  it('still thanks a requester who has passed the test when they come back to the page later', async () => {
+    routes(
+      get(
+        '/portal/api/tickets/tkt_7',
+        ticket({ ticketId: 'tkt_7', status: 'being_worked_on', statusLabel: 'Being worked on', fixConfirmed: true }),
+      ),
+    );
+    renderPortal('/portal/tickets/tkt_7', REQUESTER);
+    expect(await screen.findByText(/Thanks for testing\. We are finishing up/)).toBeInTheDocument();
+    expect(screen.queryByText(/we will ask you to test it here/)).toBeNull();
+    expect(screen.queryByRole('form', { name: 'Does the fix work for you?' })).toBeNull();
+  });
+
   it('rejects the fix only with a description of what is still wrong', async () => {
     const user = userEvent.setup();
     const record: { body?: unknown } = {};

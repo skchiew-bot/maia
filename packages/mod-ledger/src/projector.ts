@@ -91,6 +91,18 @@ function playbookStepKey(
 
 type Handler = (db: DatabaseSync, e: StoredEvent, payload: JsonValue | null) => void;
 
+/** A plan as the projector reads it: from the body when there is one, else from the shape in meta (names and titles null). */
+interface PlanPhase {
+  id: string;
+  name: string | null;
+  tasks: { id: string; title: string | null; size: TaskSize; acceptance: string | null }[];
+}
+interface PlanChange {
+  add: { id: string; phaseId: string; phaseName: string | null; title: string | null; size: TaskSize; acceptance: string | null }[];
+  remove: string[];
+  resize: { taskId: string; size: TaskSize }[];
+}
+
 function touchProject(db: DatabaseSync, projectId: string, ts: string): void {
   db.prepare('UPDATE ledger_projects SET last_activity_at = ? WHERE project_id = ?').run(ts, projectId);
 }
@@ -254,6 +266,10 @@ const handlers: Record<string, Handler> = {
   'plan.declared'(db, e, p) {
     const m = e.meta as MetaOf<'plan.declared'>;
     const b = p as PayloadOf<'plan.declared'> | null;
+    // With the body erased, the shape in meta still says which phases and tasks there are (titles and names are gone).
+    const phases: PlanPhase[] | null = b
+      ? b.phases.map((ph) => ({ id: ph.id, name: ph.name, tasks: ph.tasks.map((t) => ({ id: t.id, title: t.title, size: t.size, acceptance: t.acceptance ?? null })) }))
+      : (m.shape?.map((ph) => ({ id: ph.id, name: null, tasks: ph.tasks.map((t) => ({ id: t.id, title: null, size: t.size, acceptance: null })) })) ?? null);
     db.prepare(
       `INSERT INTO ledger_manifests (session_id, project_id, thread_id, owner_id, version, declared_at, declared_seq, summary, base_weight, total_weight, base_head, base_fingerprint, updated_at)
        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(session_id) DO NOTHING`,
@@ -273,9 +289,9 @@ const handlers: Record<string, Handler> = {
       e.ts,
     );
     ensureSessionState(db, m.sessionId);
-    if (b) {
+    if (phases) {
       const ids: string[] = [];
-      for (const ph of b.phases) {
+      for (const ph of phases) {
         ensurePhase(db, m.sessionId, ph.id, m.projectId, ph.name);
         for (const t of ph.tasks) {
           insertTask(db, {
@@ -285,7 +301,7 @@ const handlers: Record<string, Handler> = {
             threadId: m.threadId,
             phaseId: ph.id,
             title: t.title,
-            acceptance: t.acceptance ?? null,
+            acceptance: t.acceptance,
             size: t.size,
             ownerId: m.ownerId ?? null,
             ts: e.ts,
@@ -326,11 +342,24 @@ const handlers: Record<string, Handler> = {
       m.newTotalWeight,
       b?.reason ?? null,
     );
-    if (b) {
+    const change: PlanChange | null = b
+      ? {
+          add: (b.add ?? []).map((t) => ({ id: t.id, phaseId: t.phaseId, phaseName: t.phaseName ?? t.phaseId, title: t.title, size: t.size, acceptance: t.acceptance ?? null })),
+          remove: b.remove ?? [],
+          resize: b.resize ?? [],
+        }
+      : m.shape
+        ? {
+            add: (m.shape.add ?? []).map((t) => ({ id: t.id, phaseId: t.phaseId, phaseName: null, title: null, size: t.size, acceptance: null })),
+            remove: m.shape.remove ?? [],
+            resize: m.shape.resize ?? [],
+          }
+        : null;
+    if (change) {
       const ownerId = m.ownerId ?? man?.owner_id ?? null;
       const threadId = man?.thread_id ?? null;
-      for (const t of b.add ?? []) {
-        ensurePhase(db, m.sessionId, t.phaseId, m.projectId, t.phaseName ?? t.phaseId);
+      for (const t of change.add) {
+        ensurePhase(db, m.sessionId, t.phaseId, m.projectId, t.phaseName);
         // New work in a completed phase reopens it; the last pin stays as a rollback point.
         db.prepare('UPDATE ledger_phases SET completed_at = NULL WHERE session_id = ? AND phase_id = ?').run(
           m.sessionId,
@@ -343,26 +372,26 @@ const handlers: Record<string, Handler> = {
           threadId,
           phaseId: t.phaseId,
           title: t.title,
-          acceptance: t.acceptance ?? null,
+          acceptance: t.acceptance,
           size: t.size,
           ownerId,
           ts: e.ts,
           seq: e.seq,
         });
       }
-      if (threadId && b.add?.length)
+      if (threadId && change.add.length)
         carryOver(
           db,
           threadId,
           m.sessionId,
-          b.add.map((t) => t.id),
+          change.add.map((t) => t.id),
         );
-      for (const id of b.remove ?? []) {
+      for (const id of change.remove) {
         db.prepare(
           "UPDATE ledger_tasks SET status = 'removed' WHERE session_id = ? AND task_id = ? AND status = 'open'",
         ).run(m.sessionId, id);
       }
-      for (const r of b.resize ?? []) {
+      for (const r of change.resize) {
         db.prepare(
           "UPDATE ledger_tasks SET size = ?, weight = ? WHERE session_id = ? AND task_id = ? AND status = 'open'",
         ).run(r.size, weightOfSize(r.size), m.sessionId, r.taskId);

@@ -1843,7 +1843,7 @@ export class ChangeEngine implements ChangeService {
   }
 
   async requestPromotion(
-    input: { projectId: string; fromRef: string; ticketId?: string | null; changeId?: string | null },
+    input: { projectId: string; fromRef: string; ticketId?: string | null; changeId?: string | null; title?: string | null },
     actor: Actor,
   ): Promise<{ promotionId: string; decisionId: string | null; refused: string[] | null }> {
     const ticketId = input.ticketId ?? null;
@@ -1948,7 +1948,7 @@ export class ChangeEngine implements ChangeService {
     const card = decisions.request(
       {
         kind: 'go_live',
-        title: `Go live: promote ${input.fromRef} to ${branch} in ${input.projectId}`,
+        title: input.title?.trim() || `Go live: promote ${input.fromRef} to ${branch} in ${input.projectId}`,
         question: `Promote ${short(fromSha)} (${prov.commits.length} commit${prov.commits.length === 1 ? '' : 's'}, every one traced to a gate) to ${branch}?`,
         options: APPROVE_REJECT,
         context: [

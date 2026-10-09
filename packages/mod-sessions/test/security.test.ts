@@ -48,6 +48,59 @@ describe('read-only guard on agent-controlled commands', () => {
     expect(isReadOnlyBash('find . -name x -exec rm {} +')).toBe(false);
     expect(isReadOnlyBash('rg -n TODO src')).toBe(true);
   });
+
+  it('is one simple command, and none of the listed ones can be made to write a file, run another program or change a branch', () => {
+    const writesOrRuns = [
+      'ls\nnode -e "require(\'fs\').writeFileSync(\'x\', \'y\')"', // a second command on the next line
+      'ls\r\npython3 evil.py',
+      'cat <(node evil.js)', // process substitution runs a program
+      'git branch -D main',
+      'git branch -m old new',
+      'git branch feature-x', // creates a branch
+      'git diff --output=/tmp/x',
+      'git log --output /tmp/x',
+      'git show --output=/tmp/x HEAD',
+      'rg --pre ./evil.sh foo .', // runs a program over every file it searches
+      'rg --pre=./evil.sh foo',
+      'rg --hostname-bin ./evil.sh foo',
+      'tree -o out.txt',
+      'tree -aCo out.txt',
+      'file -C -m magic',
+      'ls-evil -la', // another program that starts like an inspection command
+      'cat.sh README.md',
+      'git log-evil', // git runs git-log-evil from the PATH
+    ];
+    for (const command of writesOrRuns) expect(isReadOnlyBash(command), command).toBe(false);
+    const inspection = [
+      'git log -5',
+      'git log --oneline -n 20',
+      'git diff HEAD~1',
+      'git show HEAD',
+      'git status',
+      'git blame README.md',
+      'git rev-parse HEAD',
+      'git branch',
+      'git branch -a',
+      'git branch --show-current',
+      'git branch -vv',
+      'rg -n TODO src',
+      'grep -rn "two words" src',
+      'ls -la',
+      'cat README.md',
+      'head -n 20 file.txt',
+      'tail -n 5 file.txt',
+      'wc -l file.txt',
+      'tree -L 2',
+      'file image.png',
+      'du -sh .',
+      'df -h',
+      'stat file.txt',
+      'pwd',
+      'which node',
+      'echo hello',
+    ];
+    for (const command of inspection) expect(isReadOnlyBash(command), command).toBe(true);
+  });
 });
 
 describe('ingest authentication comes before body parsing', () => {

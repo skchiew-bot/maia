@@ -18,8 +18,45 @@ import { z } from 'zod';
 import type { SessionsEngine } from './engine';
 import type { ObserverLimiter } from './rate-limit';
 
-/** Chained as the event's sourceTs: a timestamp, never free text. */
-const zSentAt = z.string().min(10).max(40).refine((s) => !Number.isNaN(Date.parse(s)), 'must be an ISO-8601 timestamp');
+/**
+ * A client timestamp is chained in clear (as an event's sourceTs or a meta field) and parsed by projectors, so it must
+ * be an ISO-8601 instant: never free text, never something Date.parse cannot read (an unreadable one made the sessions
+ * projector throw, which degrades the projection and then fails every rebuild on the same event).
+ */
+const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2})$/;
+const zTs = z
+  .string()
+  .min(10)
+  .max(40)
+  .regex(ISO_INSTANT, 'must be an ISO-8601 timestamp')
+  .refine((s) => !Number.isNaN(Date.parse(s)), 'must be an ISO-8601 timestamp');
+const zSentAt = zTs;
+const zSessionRef = z.string().min(1).max(128);
+/** Token counts are whole numbers; the bound keeps sums inside what a REAL column and JSON hold exactly. */
+const zTokens = z.number().int().min(0).max(1e12);
+
+/**
+ * The hook fields the dispatcher dereferences are typed here, so a malformed one is a 422 and not a TypeError; the
+ * rest of the payload (Claude Code adds fields between versions) passes through untouched.
+ */
+const zHook = z
+  .object({
+    session_id: z.string().min(1).max(128),
+    hook_event_name: z.string().min(1).max(64),
+    cwd: z.string().max(4096).default(''),
+    transcript_path: z.string().max(4096).optional(),
+    tool_name: z.string().min(1).max(256).optional(),
+    tool_use_id: z.string().max(256).nullish(),
+    tool_input: z.record(z.unknown()).nullish(),
+    prompt: z.string().optional(),
+    error: z.string().max(100_000).optional(),
+    last_assistant_message: z.string().optional(),
+  })
+  .passthrough()
+  .superRefine((h, ctx) => {
+    if (['PreToolUse', 'PostToolUse', 'PostToolUseFailure'].includes(h.hook_event_name) && !h.tool_name)
+      ctx.addIssue({ code: 'custom', path: ['tool_name'], message: `${h.hook_event_name} needs tool_name` });
+  });
 
 /** How far before its receipt a usage batch may be dated: the sidecar ships every 10 s, a spool replay later. */
 export const USAGE_MAX_AGE_MS = 3_600_000;
@@ -49,7 +86,7 @@ export function boundUsageTimes(
 const HookIngestSchema = z.object({
   mode: z.enum(['managed', 'observed']),
   aocSessionId: z.string().max(64).nullable(),
-  hook: z.object({ session_id: z.string().min(1).max(128), hook_event_name: z.string(), cwd: z.string().default('') }).passthrough(),
+  hook: zHook,
   sentAt: zSentAt,
   idempotencyKey: z.string().min(8).max(200),
 });
@@ -65,54 +102,57 @@ function usageKey(sessionId: string, clientKey: string, batch: number): string {
   return `usage:${sha256hex([sessionId, clientKey].join('\n'))}:${batch}`;
 }
 const HeartbeatSchema = z.object({
-  sessionId: z.string(),
+  sessionId: zSessionRef,
   pid: z.number().int().nullable(),
   alive: z.boolean(),
-  at: z.string(),
+  at: zTs,
   transcriptBytes: z.number().min(0),
-  lastTranscriptWriteAt: z.string().nullable(),
+  lastTranscriptWriteAt: zTs.nullable(),
 });
-const ActivitySchema = z.object({ sessionId: z.string(), kind: z.enum(['stream', 'transcript']), at: z.string() });
+const ActivitySchema = z.object({ sessionId: zSessionRef, kind: z.enum(['stream', 'transcript']), at: zTs });
 const UsageSchema = z.object({
-  sessionId: z.string(),
+  sessionId: zSessionRef,
   idempotencyKey: z.string().min(8).max(200),
   batches: z
     .array(
       z.object({
         model: z.string().min(1).max(80),
-        inputTokens: z.number().min(0),
-        outputTokens: z.number().min(0),
-        cacheReadTokens: z.number().min(0),
-        cacheWrite5mTokens: z.number().min(0),
-        cacheWrite1hTokens: z.number().min(0),
-        messageIds: z.array(z.string()).min(1).max(5000),
-        firstAt: zSentAt,
-        lastAt: zSentAt,
-        contextTokens: z.number().min(0),
+        inputTokens: zTokens,
+        outputTokens: zTokens,
+        cacheReadTokens: zTokens,
+        cacheWrite5mTokens: zTokens,
+        cacheWrite1hTokens: zTokens,
+        messageIds: z.array(z.string().min(1).max(200)).min(1).max(5000),
+        firstAt: zTs,
+        lastAt: zTs,
+        contextTokens: zTokens,
       }),
     )
     .max(200),
 });
-const ThrottleSchema = z.object({ sessionId: z.string(), resetAt: z.string().nullable(), message: z.string().max(2000), source: z.enum(['stream', 'transcript', 'exit']) });
+const ThrottleSchema = z.object({ sessionId: zSessionRef, resetAt: zTs.nullable(), message: z.string().max(2000), source: z.enum(['stream', 'transcript', 'exit']) });
 const ProcessSchema = z.object({
-  sessionId: z.string(),
+  sessionId: zSessionRef,
   event: z.literal('exited'),
   exitCode: z.number().int().nullable(),
-  signal: z.string().nullable(),
-  at: z.string(),
+  signal: z.string().max(32).nullable(),
+  at: zTs,
   pid: z.number().int().nullable().optional(),
 }) satisfies z.ZodType<ProcessEventRequest>;
-const SpoolSchema = z.object({ items: z.array(z.object({ path: z.string(), body: z.unknown(), queuedAt: z.string() })).max(500) });
+const SpoolSchema = z.object({ items: z.array(z.object({ path: z.string().max(200), body: z.unknown(), queuedAt: zTs })).max(500) });
 
-const READ_ONLY_PREFIX = /^\s*(ls|cat|head|tail|wc|grep|rg|pwd|echo|which|file|stat|du|df|tree|git\s+(log|show|diff|status|blame|branch|rev-parse))\b/;
+// Followed by a space or the end: `ls-evil` and `git log-evil` are other programs (git runs `git-log-evil` from the PATH).
+const READ_ONLY_PREFIX = /^\s*(ls|cat|head|tail|wc|grep|rg|pwd|echo|which|file|stat|du|df|tree|git\s+(log|show|diff|status|blame|branch|rev-parse))(?=\s|$)/;
 
 export function summarize(v: unknown, max = 500): string {
-  let s: string;
+  let s: string | undefined;
   try {
     s = typeof v === 'string' ? v : JSON.stringify(v);
   } catch {
     s = String(v);
   }
+  // JSON.stringify(undefined) is undefined, not a string.
+  s ??= '';
   return s.length > max ? `${s.slice(0, max)}…` : s;
 }
 
@@ -128,13 +168,27 @@ function filePathsOf(input: Record<string, unknown>): string[] {
   return out;
 }
 
-/** Defence in depth for read-only (triage) sessions; primary enforcement is the supervisor's --tools/--disallowedTools. */
+/** `git branch` as an inspection: only these flags. A name after it creates a branch, and -d/-m/-c/-u change one. */
+const READ_ONLY_GIT_BRANCH =
+  /^\s*git\s+branch(\s+(-a|--all|-r|--remotes|-vv?|--verbose|--show-current|-l|--list|--color|--no-color|--column|--no-column|-i|--ignore-case|--abbrev=\d+|--no-abbrev))*\s*$/;
+
+/**
+ * Defence in depth for read-only (triage) sessions; primary enforcement is the supervisor's --tools/--disallowedTools.
+ * Accepts one simple command of the listed inspection programs: a second command after a line break, a substitution
+ * (including `<(…)`), a pipe, a redirection, or a flag that makes the program write a file or run another one fails it.
+ */
 export function isReadOnlyBash(command: string): boolean {
-  if (/[>|;&`$]|\b(rm|mv|cp|tee|sed\s+-i|chmod|chown|mkdir|touch|dd|truncate|git\s+(commit|push|checkout|reset|merge|rebase|apply|stash|tag))\b/.test(command)) {
+  if (/[\r\n\0>|;&`$()<]/.test(command)) return false;
+  if (/\b(rm|mv|cp|tee|sed\s+-i|chmod|chown|mkdir|touch|dd|truncate|git\s+(commit|push|checkout|reset|merge|rebase|apply|stash|tag))\b/.test(command)) {
     return false;
   }
   // Two independent tests rather than `find.*-exec`: that backtracks quadratically, on the daemon thread.
   if (/\bfind\b/.test(command) && /\s-(delete|exec|execdir|ok)\b/.test(command)) return false;
+  // git diff/log/show --output=<file> writes; rg --pre / --hostname-bin run a program; tree -o writes; file -C compiles a magic file.
+  if (/\s--(output|pre|hostname-bin)\b/.test(command)) return false;
+  if (/^\s*tree\b/.test(command) && /\s-[A-Za-z]*o\b/.test(command)) return false;
+  if (/^\s*file\b/.test(command) && /\s(-[A-Za-z]*C|--compile)\b/.test(command)) return false;
+  if (/^\s*git\s+branch\b/.test(command) && !READ_ONLY_GIT_BRANCH.test(command)) return false;
   return READ_ONLY_PREFIX.test(command);
 }
 
