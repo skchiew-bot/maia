@@ -10,7 +10,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, realpathSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { runServiceGit, type GitRunResult } from '@aoc/kernel';
+import { runServiceGit, uploadPackFor, type GitRunResult } from '@aoc/kernel';
 import { RepoOpError, commitTreeArgs, output, type CommitSpec, type GitIdentity } from './repo';
 
 const FULL_SHA = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
@@ -101,12 +101,14 @@ export class ServiceClone {
   }
 
   /**
-   * Copies commit `sha` and what it needs from the project repository, by id: the project's upload-pack serves it,
-   * objects are checked on the way in (transfer.fsckObjects), and only the local transport is open.
+   * Copies commit `sha` and what it needs from the project repository, by id: the project's upload-pack serves it
+   * (as the repository's owner when that is the session user, G-01), objects are checked on the way in
+   * (transfer.fsckObjects), and only the local transport is open.
    */
   fetchCommit(projectRepo: string, sha: string): void {
     if (!FULL_SHA.test(sha)) throw new RepoOpError('commit_unavailable', `${sha} is not a full commit id`);
     if (this.hasCommit(sha)) return;
+    const uploadPack = uploadPackFor(projectRepo);
     const r = this.run([
       '-c',
       'protocol.file.allow=user',
@@ -117,6 +119,7 @@ export class ServiceClone {
       '--no-tags',
       '--no-recurse-submodules',
       '--no-write-fetch-head',
+      ...(uploadPack ? [`--upload-pack=${uploadPack}`] : []),
       '--',
       resolve(projectRepo),
       sha,

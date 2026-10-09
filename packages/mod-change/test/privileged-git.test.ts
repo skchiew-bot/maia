@@ -4,8 +4,8 @@
  * the push alone; acceptance tests run sandboxed in a fresh checkout.
  */
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { PromotionDTO, RollbackDTO } from '@aoc/contracts';
 import { createSupervisorModule } from '@aoc/supervisor';
@@ -66,9 +66,15 @@ interface Planted {
  * program records its name — and whether it saw the promotion credential — in `marker`, then fails. With a remote,
  * the project's config also redirects that remote (url.*.insteadOf, pushurl) to a decoy repository.
  */
-function plant(repo: TestRepo, opts: { remote?: string } = {}): Planted {
+function plant(repo: TestRepo, opts: { remote?: string; anyUser?: boolean } = {}): Planted {
   const dir = tempDir('aoc-g04-planted-');
   const marker = join(dir, 'MARK');
+  if (opts.anyUser) {
+    // Runnable, and able to leave a mark, whichever user git runs as.
+    chmodSync(dir, 0o755);
+    writeFileSync(marker, '', { mode: 0o666 });
+    chmodSync(marker, 0o666);
+  }
   const trip = (name: string, where = join(dir, name)) => {
     writeFileSync(where, `#!/bin/sh\necho "${name} credential=\${TEST_PROMOTION_TOKEN:-none}" >> '${marker}'\nexit 1\n`);
     chmodSync(where, 0o755);
@@ -97,6 +103,7 @@ function plant(repo: TestRepo, opts: { remote?: string } = {}): Planted {
     repo.git('config', `url.${decoy}.insteadOf`, opts.remote);
     repo.git('config', 'remote.origin.pushurl', decoy);
   }
+  if (opts.anyUser) chmodSync(hooksPath, 0o755);
   return { marker, decoy, read: () => (existsSync(marker) ? readFileSync(marker, 'utf8') : '') };
 }
 
@@ -440,7 +447,16 @@ describe('G-04 end to end, with the real supervisor', { timeout: 60_000 }, () =>
       const head = repo.commit('feat: c', { 'state.txt': 'c\n' });
       repo.git('push', '-q', remote, 'main');
       writeFileSync(pushLog, '');
-      const planted = plant(repo);
+      const planted = plant(repo, { anyUser: true });
+      const sandbox = spawnSync('getent', ['passwd', SANDBOX_USER], { encoding: 'utf8' }).stdout.split(':');
+      const [sandboxUid, sandboxGid] = [Number(sandbox[2]), Number(sandbox[3])];
+      // As session isolation leaves it: the project repository belongs to the session user.
+      chmodSync(dirname(repo.dir), 0o755);
+      spawnSync('chown', ['-R', `${sandboxUid}:${sandboxGid}`, repo.dir]);
+      const projectHead = () =>
+        spawnSync('git', ['-c', `safe.directory=${repo.dir}`, '-C', repo.dir, 'rev-parse', 'main'], {
+          encoding: 'utf8',
+        }).stdout.trim();
 
       // Session isolation (G-01) with `nobody` as the session user, in directories it can reach.
       const reachable = tempDir('aoc-g04-iso-');
@@ -481,9 +497,6 @@ describe('G-04 end to end, with the real supervisor', { timeout: 60_000 }, () =>
         await h!.settle();
         return t.json<RollbackDTO>('GET', `/api/rollbacks/${rb.rollbackId}`, { headers: h!.builder.headers });
       };
-      const sandboxUid = Number(
-        spawnSync('getent', ['passwd', SANDBOX_USER], { encoding: 'utf8' }).stdout.split(':')[2],
-      );
 
       // Target A only writes its own checkout: clean, approved, pushed.
       const a = await verify('aoc/phase/a');
@@ -494,6 +507,10 @@ describe('G-04 end to end, with the real supervisor', { timeout: 60_000 }, () =>
       const done = await t.json<RollbackDTO>('GET', `/api/rollbacks/${a.rollbackId}`, { headers: h.builder.headers });
       expect(done).toMatchObject({ status: 'executed', execution: { mainShaBefore: head } });
       expect(remoteHead(remote)).toBe(done.execution!.mainShaAfter);
+      // The project repository followed, written by the session user (its owner), not by root.
+      expect(projectHead()).toBe(done.execution!.mainShaAfter);
+      expect(statSync(join(repo.dir, 'state.txt')).uid).toBe(sandboxUid);
+      expect(h.notifications.some((n) => n.title.includes('not updated'))).toBe(false);
 
       // Target B's acceptance test writes outside its checkout: as the session user that fails, and nothing reaches
       // the approver.

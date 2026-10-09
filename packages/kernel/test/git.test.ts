@@ -1,9 +1,27 @@
-import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { GIT_SERVICE_ENV, createGitService, initRepo, runServiceGit, serviceGitEnv } from '../src';
+import {
+  GIT_SERVICE_ENV,
+  createGitService,
+  gitOwnerOf,
+  initRepo,
+  runServiceGit,
+  serviceGitEnv,
+  uploadPackFor,
+} from '../src';
 
 const temps: string[] = [];
 const temp = (prefix: string) => {
@@ -185,4 +203,56 @@ describe('service-owned repositories (runServiceGit)', () => {
     expect(fetched).toMatchObject({ code: 0 });
     expect(runServiceGit(bare, ['--git-dir', bare, 'cat-file', '-t', head]).stdout.trim()).toBe('commit');
   });
+});
+
+const OWNER = 'nobody';
+const owner = (() => {
+  const line = spawnSync('getent', ['passwd', OWNER], { encoding: 'utf8' }).stdout.split('\n')[0] ?? '';
+  const [, , uid, gid] = line.split(':');
+  return uid && gid ? { uid: Number(uid), gid: Number(gid) } : null;
+})();
+const ownerUnavailable =
+  process.getuid?.() !== 0 ? 'aocd must be root to run git as another user' : owner ? null : `no "${OWNER}" user`;
+
+describe('a repository owned by the session user, with aocd as root (G-01, G-04)', () => {
+  /** A repository as session isolation leaves it: owned by the session user, under a directory it can reach. */
+  function ownedRepo(): { repo: string; head: string } {
+    const dir = temp('aoc-git-owned-');
+    chmodSync(dir, 0o755);
+    const repo = join(dir, 'repo');
+    const head = initRepo(repo, { files: { 'a.txt': 'one\n' } });
+    execFileSync('chown', ['-R', `${owner!.uid}:${owner!.gid}`, repo]);
+    return { repo, head };
+  }
+
+  it.skipIf(ownerUnavailable !== null)(
+    `runs git there as its owner: no dubious-ownership refusal, and what it writes stays the owner's${ownerUnavailable ? ` (skipped: ${ownerUnavailable})` : ''}`,
+    () => {
+      const { repo, head } = ownedRepo();
+      expect(() => raw(repo, 'rev-parse', 'HEAD')).toThrow(/dubious ownership/);
+      expect(gitOwnerOf(repo)).toEqual(owner);
+      const git = createGitService();
+      expect(git.isRepo(repo)).toBe(true);
+      expect(git.head(repo)).toBe(head);
+      writeFileSync(join(repo, 'a.txt'), 'two\n');
+      expect(git.workingTreeFingerprint(repo)).toMatch(/^[0-9a-f]{64}$/);
+      git.tag(repo, 'aoc/pin/1', head, 'pin');
+      expect(statSync(join(repo, '.git', 'refs', 'tags', 'aoc', 'pin', '1')).uid).toBe(owner!.uid);
+    },
+  );
+
+  it.skipIf(ownerUnavailable !== null)(
+    `fetches from it into a repository of aocd's through an upload-pack run as the owner${ownerUnavailable ? ` (skipped: ${ownerUnavailable})` : ''}`,
+    () => {
+      const { repo, head } = ownedRepo();
+      const bare = join(temp('aoc-git-clone-'), 'clone.git');
+      raw(tmpdir(), 'init', '-q', '--bare', bare);
+      const fetch = (extra: string[]) =>
+        runServiceGit(bare, [`--git-dir=${bare}`, '-c', 'protocol.file.allow=user', 'fetch', '-q', '--no-tags', ...extra, '--', repo, head]);
+      expect(fetch([]).stderr).toContain('dubious ownership');
+      expect(uploadPackFor(bare)).toBeNull();
+      expect(fetch([`--upload-pack=${uploadPackFor(repo)!}`])).toMatchObject({ code: 0 });
+      expect(runServiceGit(bare, [`--git-dir=${bare}`, 'cat-file', '-t', head]).stdout.trim()).toBe('commit');
+    },
+  );
 });

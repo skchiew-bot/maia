@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { GitCommit, GitService } from '@aoc/contracts';
 import { childEnv } from './child-env';
@@ -91,16 +91,58 @@ export function runServiceGit(
 }
 
 /**
+ * Who git runs as in `dir`. With session isolation (G-01) aocd is root and the agents' repositories belong to the
+ * session user: git there runs as that owner, so root never parses a repository an agent can write (threat model
+ * T-2), and git's ownership check passes without `safe.directory`. Null: as aocd itself.
+ */
+export function gitOwnerOf(dir: string): { uid: number; gid: number } | null {
+  if (process.geteuid?.() !== 0) return null;
+  try {
+    const st = statSync(dir);
+    return st.uid === 0 ? null : { uid: st.uid, gid: st.gid };
+  } catch {
+    return null;
+  }
+}
+
+/** What git as another user needs instead of root's account: no home, no system or global config. */
+const OWNER_ENV = { HOME: '/nonexistent', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
+
+/** Switches to a uid/gid (aocd is root), then runs the rest of argv with this process's stdio. */
+const SWITCH_USER = [
+  'const [uid, gid, ...cmd] = process.argv.slice(1);',
+  'process.setgroups([]); process.setgid(Number(gid)); process.setuid(Number(uid));',
+  "const r = require('node:child_process').spawnSync(cmd[0], cmd.slice(1), { stdio: 'inherit' });",
+  'process.exit(r.status ?? 1);',
+].join(' ');
+const shellQuote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
+
+/**
+ * The `--upload-pack` command for fetching from `repo` when someone other than root owns it (G-01): git's server
+ * side runs as that owner, while the fetching side — and the repository it writes — stays aocd's. Null: the
+ * default upload-pack will do. git runs it through `sh -c` with the repository path appended.
+ */
+export function uploadPackFor(repo: string): string | null {
+  const owner = gitOwnerOf(repo);
+  if (!owner) return null;
+  return [process.execPath, '-e', SWITCH_USER, String(owner.uid), String(owner.gid), 'git', ...GIT_SAFETY_ARGS, 'upload-pack']
+    .map(shellQuote)
+    .join(' ');
+}
+
+/**
  * git sees an allowlisted environment (no AOC_*, keys or tokens, and no inherited GIT_DIR / GIT_WORK_TREE that
- * would redirect it) plus what the caller passes explicitly.
+ * would redirect it) plus what the caller passes explicitly, and runs as the directory's owner (gitOwnerOf).
  */
 function git(dir: string, args: string[], opts: { env?: Record<string, string>; timeoutMs?: number } = {}) {
+  const owner = gitOwnerOf(dir);
   const r = spawnSync('git', [...GIT_SAFETY_ARGS, ...args], {
     cwd: dir,
     encoding: 'utf8',
-    env: childEnv(process.env, { GIT_TERMINAL_PROMPT: '0', ...opts.env }),
+    env: childEnv(process.env, { GIT_TERMINAL_PROMPT: '0', ...(owner ? OWNER_ENV : {}), ...opts.env }),
     timeout: opts.timeoutMs ?? 60_000,
     maxBuffer: 64 * 1024 * 1024,
+    ...(owner ? { uid: owner.uid, gid: owner.gid } : {}),
   });
   return { code: r.status ?? 1, stdout: r.stdout ?? '', stderr: r.stderr ?? (r.error ? String(r.error) : '') };
 }
