@@ -1,4 +1,5 @@
-import { statSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { HOOK_EVENTS, type Actor } from '@aoc/contracts';
@@ -298,6 +299,72 @@ describe('launch', () => {
       expect: 201,
     });
     expect(h.events('session.launch_requested', ok.sessionId)[0]!.meta.model).toBe('claude-sonnet-5-5');
+  });
+
+  it('refuses an unknown project with 404 before anything is recorded: no launch, thread or workspace', async () => {
+    h = await createHarness();
+    const builder = h.owner.headers;
+    const res = await h.t.request('POST', '/api/sessions', {
+      headers: builder,
+      body: { processType: 'docs', projectId: 'prj_typo', prompt: 'x' },
+    });
+    expect(res.status).toBe(404);
+    const err = ((await res.json()) as { error: { code: string; message: string } }).error;
+    expect(err.code).toBe('unknown_project');
+    expect(err.message).toContain('prj_typo');
+    await expect(
+      h.sup.launch({ processType: 'docs', projectId: 'prj_typo', prompt: 'x' }, h.ownerActor),
+    ).rejects.toMatchObject({ status: 404, code: 'unknown_project' });
+    expect(h.events('session.launch_requested')).toEqual([]);
+    expect(h.ledger.threads.size).toBe(0);
+    expect(existsSync(join(h.t.config.supervisor.workspacesDir, 'prj_typo'))).toBe(false);
+
+    // An existing project launches; so does one created since (the check asks the ledger every time).
+    h.ledger.projects.add('prj_typo');
+    const ok = await h.t.json<{ sessionId: string }>('POST', '/api/sessions', {
+      headers: builder,
+      body: { processType: 'docs', projectId: 'prj_typo', prompt: 'x' },
+      expect: 201,
+    });
+    expect(h.events('session.launch_requested', ok.sessionId)[0]!.meta.projectId).toBe('prj_typo');
+  });
+
+  it('names the unknown project before it looks at the cwd, and a refusal spends no idempotency key (R-07, R-09)', async () => {
+    h = await createHarness();
+    const intake = { kind: 'system', id: 'intake' } as const;
+    const req = {
+      processType: 'bug-triage',
+      projectId: 'prj_late',
+      prompt: 'Diagnose ticket 9',
+      idempotencyKey: 'intake.triage:evt_9:0',
+    };
+    // A typo is "unknown project", not a baffling "cwd outside the project".
+    await expect(h.sup.launch({ ...req, cwd: tmpdir() }, intake)).rejects.toMatchObject({
+      status: 404,
+      code: 'unknown_project',
+    });
+    await expect(h.sup.launch(req, intake)).rejects.toMatchObject({ status: 404, code: 'unknown_project' });
+    expect(h.events('session.launch_requested')).toEqual([]);
+
+    // The refusals recorded nothing, so the key is free: once the project exists the same delivery launches, once.
+    h.ledger.projects.add('prj_late');
+    const first = await h.sup.launch(req, intake);
+    const again = await h.sup.launch(req, intake);
+    expect(again.sessionId).toBe(first.sessionId);
+    await h.waitLifecycle(first.sessionId, 'idle');
+    expect(h.events('session.launch_requested')).toHaveLength(1);
+    expect(h.calls()).toHaveLength(1);
+  });
+
+  it('checks the process type as well: an unknown type is a 422 whatever the project', async () => {
+    h = await createHarness();
+    for (const projectId of ['prj_demo', 'prj_typo']) {
+      await expect(
+        h.sup.launch({ processType: 'opus-please', projectId, prompt: 'x' }, h.ownerActor),
+      ).rejects.toMatchObject({ status: 422, code: 'unknown_process_type' });
+    }
+    expect(h.events('session.launch_requested')).toEqual([]);
+    expect(h.ledger.threads.size).toBe(0);
   });
 
   it('refuses a second writer on a thread (409) until the first one ends', async () => {

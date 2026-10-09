@@ -69,9 +69,27 @@ export function resolved(
       resolvedAt,
       method,
       passkeyVerified: method === 'passkey',
+      // The decisions API always sets it (contracts DecisionCard.resolution.assurance).
+      assurance: method === 'passkey' ? 'signature' : 'attribution',
       selfApproved: false,
       comment: null,
     },
+    viewer: { canResolve: false, reason: 'not_open', canWithdraw: false, canEscalate: false },
+  };
+}
+
+/**
+ * A card that ran out of time (`decision.expired`): closed, with no resolution and no withdrawal record, exactly
+ * as the API serves it.
+ */
+export function expired(c: DecisionCardView, ageMs: number): DecisionCardView {
+  return {
+    ...c,
+    status: 'expired',
+    ageMs,
+    closedAt: iso(Date.parse(c.createdAt) + ageMs),
+    resolution: null,
+    withdrawal: null,
     viewer: { canResolve: false, reason: 'not_open', canWithdraw: false, canEscalate: false },
   };
 }

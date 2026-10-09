@@ -20,6 +20,7 @@ import {
 } from '../../components';
 import { cx } from '../../lib/dom';
 import { formatAge, formatDateTime } from '../../lib/format';
+import { decisionHref } from '../../lib/links';
 import { PersonName, usePeople } from '../audit/people';
 import { RefValue } from '../changes/bits';
 import { blockedBySoleApprover, shortId } from '../changes/model';
@@ -130,7 +131,7 @@ export function BreakglassItem({
       {b.status === 'pending' && (
         <div className="rollbacks-item__action">
           <ButtonLink
-            to={`/decisions?focus=${encodeURIComponent(b.decisionId)}`}
+            to={decisionHref(b.decisionId)}
             variant={canApprove ? 'primary' : 'secondary'}
             size="sm"
             icon="key"

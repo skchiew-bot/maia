@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import type { IdentityTokenDto, IdentityUserDto, Role } from '@aoc/contracts';
-import { apiDelete, useAuth, useResource, type StreamMessage } from '../../api';
+import { apiDelete, combine, useAuth, useResource, type StreamMessage } from '../../api';
 import { SegmentBar } from '../../charts';
 import {
   Badge,
@@ -24,7 +24,7 @@ import {
   useToast,
   type DataTableColumn,
 } from '../../components';
-import { combine, useSectionScroll } from '../learning/resources';
+import { useSectionScroll } from '../../lib/sectionScroll';
 import { CreateUserDialog } from './CreateUserDialog';
 import { GateCoverage } from './GateCoverage';
 import { AttributionNote, IssueTokenDialog, type TokenTarget } from './IssueTokenDialog';

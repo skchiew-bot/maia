@@ -11,11 +11,13 @@ import { formatAge, formatClock, formatDateTime } from '../../lib/format';
 import type { DecisionActions, PasskeyState } from './actions';
 import type { Directory } from './directory';
 import {
+  ASSURANCE_MEANING,
   ROLE_WORD,
   TEST_LABEL,
   agingOf,
+  assuranceLabel,
+  assuranceOf,
   closedWithinSla,
-  methodLabel,
   outcomeLabel,
   recommendedOption,
   requesterOf,
@@ -77,7 +79,7 @@ export function DecisionHistory({ card, directory }: { card: DecisionCardView; d
       key: 'resolved',
       icon: 'ok',
       at: r.resolvedAt,
-      text: `Resolved: ${outcomeLabel(card)} — by ${requesterOf(r.resolvedBy, directory).name} · ${methodLabel(r)}${
+      text: `Resolved: ${outcomeLabel(card)} — by ${requesterOf(r.resolvedBy, directory).name} · ${assuranceLabel(r)}${
         r.selfApproved ? ' · self-approved' : ''
       }`,
       detail: `Waited ${formatAge(card.ageMs)}${within === null ? '' : within ? ' (within SLA)' : ' (over SLA)'}${
@@ -85,6 +87,7 @@ export function DecisionHistory({ card, directory }: { card: DecisionCardView; d
       }`,
     });
   }
+  // A card that ran out of time (`decision.expired`) has no withdrawal record: its status and close time say so.
   if (card.withdrawal)
     items.push({
       key: 'withdrawn',
@@ -94,6 +97,14 @@ export function DecisionHistory({ card, directory }: { card: DecisionCardView; d
         requesterOf(card.withdrawal.by, directory).name
       }`,
       detail: card.withdrawal.note,
+    });
+  else if (card.status === 'expired')
+    items.push({
+      key: 'expired',
+      icon: 'clock',
+      at: card.closedAt ?? new Date(Date.parse(card.createdAt) + card.ageMs).toISOString(),
+      text: 'Expired unanswered',
+      detail: `Nobody decided in ${formatAge(card.ageMs)}`,
     });
   return (
     <ol className="dec-history" aria-label="Decision history">
@@ -319,12 +330,8 @@ export function DecisionDetail({
         <DecisionHistory card={card} directory={directory} />
         {!open && card.resolution && (
           <p className="dec-detail__method">
-            <Icon name={card.resolution.method === 'passkey' ? 'key' : 'user'} size={12} />
-            {card.resolution.method === 'passkey'
-              ? 'Signed (passkey): a WebAuthn assertion bound to this decision and option was verified before it was recorded.'
-              : card.resolution.method === 'policy'
-                ? 'Resolved by a platform policy (the once-per-period credit auto-grant).'
-                : 'Attribution (bearer token): records which token was used, not a signature (§6).'}
+            <Icon name={assuranceOf(card.resolution) === 'signature' ? 'key' : 'user'} size={12} />
+            {assuranceLabel(card.resolution)}: {ASSURANCE_MEANING[assuranceOf(card.resolution)]}.
           </p>
         )}
       </section>

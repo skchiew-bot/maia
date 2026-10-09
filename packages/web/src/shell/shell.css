@@ -212,16 +212,23 @@
   line-height: 1.35;
 }
 
-/* ---- Side nav ---- */
+/*
+ * ---- Side nav ----
+ * The aside is the whole nav column: it stretches to the full page height, so its background and rule run to the
+ * bottom of a long page (and of a full-page capture). Only the nav inside it sticks, at viewport height under the
+ * top bar, so the links stay in reach while the page scrolls.
+ */
 .aoc-sidebar {
-  position: sticky;
-  top: var(--topbar-h);
   z-index: var(--z-nav);
   grid-area: nav;
-  height: calc(100vh - var(--topbar-h));
-  height: calc(100dvh - var(--topbar-h));
   border-right: 1px solid var(--border);
   background: var(--surface);
+}
+.aoc-sidebar > .aoc-nav {
+  position: sticky;
+  top: var(--topbar-h);
+  height: calc(100vh - var(--topbar-h));
+  height: calc(100dvh - var(--topbar-h));
 }
 .aoc-nav {
   display: flex;

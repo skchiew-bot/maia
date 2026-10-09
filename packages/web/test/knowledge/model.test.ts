@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import { refLinks } from '../../src/pages/knowledge/KnowledgeSearch';
 import {
   blockedReason,
-  decisionHref,
   filterLessons,
   isKnowledgeEvent,
   payoffRows,
@@ -59,10 +58,6 @@ describe('pending lesson decisions', () => {
   it('explains why the viewer cannot decide', () => {
     expect(blockedReason(DECISIONS[0]!)).toBeNull();
     expect(blockedReason(DECISIONS[1]!)).toBe('You proposed it, so another Approver decides.');
-  });
-
-  it('links decisions to the inbox focus', () => {
-    expect(decisionHref('dec 1')).toBe('/decisions?focus=dec%201');
   });
 });
 

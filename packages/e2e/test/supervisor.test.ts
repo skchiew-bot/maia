@@ -185,6 +185,37 @@ describe('supervisor + claude-sim: a managed session end to end', () => {
     expect(typesOf(sessionId)).toEqual(expect.arrayContaining(['thread.writer_released', 'token.revoked', 'usage.recorded', 'prompt.submitted']));
     expect(h.store.verifyChain().ok).toBe(true);
   });
+
+  it('a launch into a project that does not exist is a 404 and conjures nothing; an unknown process type is a 422', async () => {
+    const dev = await h.user('builder', 'Dev');
+    const { projectId } = await h.project(dev, 'Real Project');
+    const projectIds = async () =>
+      (await h.api<{ projectId: string }[]>('GET', '/api/projects', { as: dev })).map((p) => p.projectId);
+    const before = await projectIds();
+    const records = () =>
+      ['session.launch_requested', 'thread.created', 'project.created'].map(
+        (type) => h.events({ types: [type] }).length,
+      );
+    const recordsBefore = records();
+
+    const typo = await h.request('POST', '/api/sessions', {
+      as: dev,
+      body: { processType: 'feature-build', projectId: 'prj_typo', prompt: 'Work. [[scenario:happy-path]]' },
+    });
+    expect(typo.status).toBe(404);
+    expect(((await typo.json()) as { error: { code: string } }).error.code).toBe('unknown_project');
+    const badType = await h.request('POST', '/api/sessions', {
+      as: dev,
+      body: { processType: 'opus-please', projectId, prompt: 'Work.' },
+    });
+    expect(badType.status).toBe(422);
+    expect(((await badType.json()) as { error: { code: string } }).error.code).toBe('unknown_process_type');
+
+    // Nothing was recorded for either: no project appeared (in the API or the log), no thread, no launch.
+    expect(await projectIds()).toEqual(before);
+    expect(records()).toEqual(recordsBefore);
+    expect(h.events({ types: ['project.created'] }).some((e) => e.meta.projectId === 'prj_typo')).toBe(false);
+  });
 });
 
 describe('supervisor + claude-sim: what a writer may run (print mode cannot prompt)', () => {

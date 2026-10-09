@@ -174,7 +174,9 @@ export interface LedgerService {
   sessionProgress(sessionId: string): Progress | null;
   projectProgress(projectId: string): Progress | null;
   getThread(threadId: string): ThreadInfo | null;
-  /** Create a project/thread if missing (used by the supervisor at launch). */
+  /** Does the project exist? A launch for an unknown project is refused, not turned into a project. */
+  hasProject(projectId: string): boolean;
+  /** Create the thread (and, for callers that did not check `hasProject`, the project) if missing. */
   ensureThread(input: { projectId: string; threadId?: string | null; title?: string }, actor: Actor): ThreadInfo;
   /** Single active writer per thread (§5). Returns false if another live writer holds it. */
   acquireWriter(threadId: string, sessionId: string, actor: Actor): boolean;
@@ -344,6 +346,13 @@ export interface GitCommit {
   date: string;
   subject: string;
 }
+export interface GitAsyncResult {
+  code: number;
+  stdout: string;
+  stderr: string;
+  /** git was killed at `timeoutMs` (code 124, no stdout): the answer is unknown, not "no". */
+  timedOut: boolean;
+}
 export interface GitService {
   isRepo(dir: string): boolean;
   revParse(dir: string, ref: string): string | null;
@@ -357,6 +366,23 @@ export interface GitService {
   isAncestor(dir: string, ancestor: string, descendant: string): boolean;
   log(dir: string, range: string, limit?: number): GitCommit[];
   run(dir: string, args: string[], opts?: { env?: Record<string, string>; timeoutMs?: number }): { code: number; stdout: string; stderr: string };
+  /**
+   * `run` for code on aocd's single thread (every method above blocks it): same allowlisted environment, a timeout
+   * that kills git and what it started, and a result that says so. Never rejects.
+   */
+  runAsync(
+    dir: string,
+    args: string[],
+    opts?: { env?: Record<string, string>; timeoutMs?: number },
+  ): Promise<GitAsyncResult>;
+  /**
+   * `workingTreeFingerprint` for aocd's thread, with the same hash. `fingerprint` is null when git cannot describe
+   * the tree (not a repository, or one it will not read) and `timedOut` when it did not answer in time.
+   */
+  workingTreeFingerprintAsync(
+    dir: string,
+    opts?: { timeoutMs?: number },
+  ): Promise<{ fingerprint: string | null; timedOut: boolean }>;
 }
 
 // ── LLM (packages/llm) ─────────────────────────────────────────────────────

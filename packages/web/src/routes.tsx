@@ -1,6 +1,7 @@
 import { lazy, Suspense, type ComponentType, type LazyExoticComponent } from 'react';
-import { Navigate, Outlet, Route, Routes } from 'react-router-dom';
+import { Navigate, Outlet, Route, Routes, useParams } from 'react-router-dom';
 import { OPERATOR_ROLES, ROLE_LANDING, RequireRole, useAuth, type Role } from './api/auth';
+import { decisionHref } from './lib/links';
 import { OperatorLayout, PageLoading } from './shell/OperatorLayout';
 import { PortalLayout } from './shell/PortalLayout';
 
@@ -44,6 +45,12 @@ function page(Component: LazyExoticComponent<ComponentType>) {
 function RoleLanding() {
   const { user } = useAuth();
   return <Navigate to={ROLE_LANDING[user?.role ?? 'builder']} replace />;
+}
+
+/** `/decisions/:id` is the link the daemon puts in notifications and webhooks; the inbox selects a card with `?focus=`. */
+function DecisionRedirect() {
+  const { id = '' } = useParams();
+  return <Navigate to={decisionHref(id)} replace />;
 }
 
 /** Pages outside any layout get their own Suspense boundary. */
@@ -95,6 +102,7 @@ export function AppRoutes() {
         <Route path="projects" element={page(ProjectsPage)} />
         <Route path="projects/:id" element={page(ProjectPage)} />
         <Route path="decisions" element={page(DecisionsPage)} />
+        <Route path="decisions/:id" element={<DecisionRedirect />} />
         <Route path="changes" element={page(ChangesPage)} />
         <Route path="changes/:id" element={page(ChangePage)} />
         <Route path="rollbacks" element={page(RollbacksPage)} />

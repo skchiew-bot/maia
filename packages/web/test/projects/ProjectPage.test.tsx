@@ -114,7 +114,7 @@ describe('Project page: master timeline', { timeout: 30_000 }, () => {
 
     const decisions = section('Open decisions');
     expect(within(decisions).getByText('Merge the sentiment overlay to main?')).toBeInTheDocument();
-    expect(within(decisions).getByRole('link', { name: /Decide/ })).toHaveAttribute('href', '/decisions');
+    expect(within(decisions).getByRole('link', { name: /Decide/ })).toHaveAttribute('href', '/decisions?focus=dec_1');
 
     const threads = section('Threads and rollover lineage');
     expect(await within(threads).findByText(/rolled over/)).toBeInTheDocument();
