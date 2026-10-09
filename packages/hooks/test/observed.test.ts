@@ -190,6 +190,7 @@ describe('observed mode: transcript usage', () => {
     expect(Object.keys(usage!.body).sort()).toEqual(['batches', 'idempotencyKey', 'sessionId']);
     expect(usage!.body.sessionId).toBe(CLAUDE_SESSION);
     expect(usage!.body.idempotencyKey).toMatch(/^[0-9a-f]{64}$/);
+    // contextTokens is the session's latest main-chain message (msg_C), the same for every batch of one read.
     expect(usage!.body.batches).toEqual([
       {
         model: 'claude-opus-5-5',
@@ -201,7 +202,7 @@ describe('observed mode: transcript usage', () => {
         messageIds: ['msg_A', 'msg_B'],
         firstAt: '2026-10-09T01:00:01.000Z',
         lastAt: '2026-10-09T01:00:03.000Z',
-        contextTokens: 215,
+        contextTokens: 1,
       },
       {
         model: 'claude-haiku-5-5',

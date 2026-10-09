@@ -1,9 +1,16 @@
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { INGEST_PATHS, type HeartbeatRequest, type UsageRequest } from '@aoc/contracts';
-import { createClient, type AocClient } from '@aoc/client';
-import { detectThrottle, parseTranscriptLine, TranscriptTailer, UsageAggregator } from './transcript';
+import {
+  createClient,
+  listSubagentTranscripts,
+  parseTranscriptLine,
+  UsageAggregator,
+  type AocClient,
+  type UsageSnapshot,
+} from '@aoc/client';
+import { detectThrottle, TranscriptTailer } from './transcript';
 
 export interface SidecarOptions {
   sessionId: string;
@@ -24,7 +31,7 @@ export interface SidecarOptions {
 interface PersistedState {
   offset: number;
   subOffsets?: Record<string, number>;
-  counted: ReturnType<UsageAggregator['snapshot']>;
+  counted: UsageSnapshot;
   throttleActive: boolean;
 }
 
@@ -45,7 +52,7 @@ export class Sidecar {
   readonly client: AocClient;
   private readonly agg: UsageAggregator;
   private readonly tailer: TranscriptTailer;
-  /** Subagent transcripts live in separate files: <transcript without .jsonl>/subagents/agent-*.jsonl. */
+  /** Subagent transcripts live in separate files (by file name). */
   private readonly subTailers = new Map<string, TranscriptTailer>();
   private readonly subOffsets: Record<string, number>;
   private hbTimer: NodeJS.Timeout | null = null;
@@ -61,14 +68,14 @@ export class Sidecar {
   constructor(private readonly o: SidecarOptions) {
     mkdirSync(o.stateDir, { recursive: true, mode: 0o700 });
     this.stateFile = join(o.stateDir, `${o.sessionId.replace(/[^A-Za-z0-9_-]/g, '_')}.json`);
+    this.now = o.now ?? (() => new Date());
     const st = this.loadState();
-    this.agg = new UsageAggregator(st?.counted);
+    this.agg = new UsageAggregator({ counted: st?.counted, now: this.now });
     this.throttleActive = st?.throttleActive ?? false;
     this.client = o.client ?? createClient({ daemonUrl: o.daemonUrl, token: o.token, spoolDir: o.spoolDir ?? join(o.stateDir, 'spool'), timeoutMs: 4000 });
     this.tailer = new TranscriptTailer(o.transcriptPath, (l) => this.onLine(l), { offset: st?.offset ?? 0 });
     this.subOffsets = st?.subOffsets ?? {};
     this.isAlive = o.isAlive ?? pidAlive;
-    this.now = o.now ?? (() => new Date());
   }
 
   private loadState(): PersistedState | null {
@@ -81,8 +88,8 @@ export class Sidecar {
 
   private saveState(): void {
     const tmp = `${this.stateFile}.tmp`;
-    for (const [f, t] of this.subTailers) this.subOffsets[f] = t.committedOffset;
-    const st: PersistedState = { offset: this.tailer.committedOffset, subOffsets: this.subOffsets, counted: this.agg.snapshot(), throttleActive: this.throttleActive };
+    for (const [f, t] of this.subTailers) this.subOffsets[f] = t.offset;
+    const st: PersistedState = { offset: this.tailer.offset, subOffsets: this.subOffsets, counted: this.agg.snapshot(), throttleActive: this.throttleActive };
     writeFileSync(tmp, JSON.stringify(st), { mode: 0o600 });
     renameSync(tmp, this.stateFile);
   }
@@ -122,14 +129,11 @@ export class Sidecar {
 
   /** Discover and read subagent transcripts (their usage never appears in the main file). */
   pollSubagents(): void {
-    const dir = this.o.transcriptPath.replace(/\.jsonl$/, '') + '/subagents';
-    if (!existsSync(dir)) return;
-    for (const f of readdirSync(dir)) {
-      if (!f.endsWith('.jsonl')) continue;
-      let t = this.subTailers.get(f);
+    for (const sub of listSubagentTranscripts(this.o.transcriptPath)) {
+      let t = this.subTailers.get(sub.file);
       if (!t) {
-        t = new TranscriptTailer(`${dir}/${f}`, (l) => this.onLine(l), { offset: this.subOffsets[f] ?? 0 });
-        this.subTailers.set(f, t);
+        t = new TranscriptTailer(sub.path, (l) => this.onLine(l), { offset: this.subOffsets[sub.file] ?? 0 });
+        this.subTailers.set(sub.file, t);
       }
       t.poll();
     }

@@ -1,119 +1,13 @@
 /**
- * Claude Code transcript parsing shared by the sidecar (managed sessions) and the observed-session hook.
- * Assistant API responses are written as one JSONL line per content block, each repeating the same
- * `message.id` / `requestId` / `message.usage` — so usage is counted once per message id (as a delta
- * when a later line for the same id reports larger numbers).
+ * Transcript following and plan-limit detection for the sidecar. Line reading, usage aggregation (dedupe by
+ * message.id) and the subagent layout are shared with the observed-session hook through @aoc/client.
  */
-import { closeSync, existsSync, openSync, readSync, statSync, watch, type FSWatcher } from 'node:fs';
-import { RATE_LIMIT_429, THROTTLE_PATTERNS, THROTTLE_RESET, type TranscriptLine, type TranscriptUsage, type UsageBatch } from '@aoc/contracts';
+import { statSync, watch, type FSWatcher } from 'node:fs';
+import { readCompleteLines } from '@aoc/client';
+import { RATE_LIMIT_429, THROTTLE_PATTERNS, THROTTLE_RESET, type TranscriptLine } from '@aoc/contracts';
 
-export function parseTranscriptLine(line: string): TranscriptLine | null {
-  const t = line.trim();
-  if (!t) return null;
-  try {
-    const o = JSON.parse(t) as TranscriptLine;
-    return o && typeof o === 'object' ? o : null;
-  } catch {
-    return null;
-  }
-}
-
-interface Counted {
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheW5: number;
-  cacheW1: number;
-}
-
-function usageOf(u: TranscriptUsage): Counted {
-  const creation = u.cache_creation;
-  const total = u.cache_creation_input_tokens ?? 0;
-  const w1 = creation?.ephemeral_1h_input_tokens ?? 0;
-  const w5 = creation ? (creation.ephemeral_5m_input_tokens ?? Math.max(0, total - w1)) : total;
-  return { input: u.input_tokens ?? 0, output: u.output_tokens ?? 0, cacheRead: u.cache_read_input_tokens ?? 0, cacheW5: w5, cacheW1: w1 };
-}
-
-const ZERO: Counted = { input: 0, output: 0, cacheRead: 0, cacheW5: 0, cacheW1: 0 };
-
-export class UsageAggregator {
-  private readonly counted = new Map<string, Counted>();
-  private readonly pending = new Map<string, UsageBatch & { ids: Set<string> }>();
-  private lastContext = 0;
-  sidechainMessages = 0;
-
-  constructor(seen?: Record<string, Counted>) {
-    if (seen) for (const [k, v] of Object.entries(seen)) this.counted.set(k, v);
-  }
-
-  /** Returns true when the line contributed new usage. */
-  add(line: TranscriptLine): boolean {
-    if (line.type !== 'assistant' || !line.message?.usage) return false;
-    const id = line.message.id ?? line.requestId ?? line.uuid;
-    if (!id) return false;
-    const cur = usageOf(line.message.usage);
-    const prev = this.counted.get(id) ?? ZERO;
-    const delta: Counted = {
-      input: Math.max(0, cur.input - prev.input),
-      output: Math.max(0, cur.output - prev.output),
-      cacheRead: Math.max(0, cur.cacheRead - prev.cacheRead),
-      cacheW5: Math.max(0, cur.cacheW5 - prev.cacheW5),
-      cacheW1: Math.max(0, cur.cacheW1 - prev.cacheW1),
-    };
-    this.counted.set(id, {
-      input: Math.max(cur.input, prev.input),
-      output: Math.max(cur.output, prev.output),
-      cacheRead: Math.max(cur.cacheRead, prev.cacheRead),
-      cacheW5: Math.max(cur.cacheW5, prev.cacheW5),
-      cacheW1: Math.max(cur.cacheW1, prev.cacheW1),
-    });
-    if (!line.isSidechain) this.lastContext = cur.input + cur.cacheRead + cur.cacheW5 + cur.cacheW1;
-    if (delta.input + delta.output + delta.cacheRead + delta.cacheW5 + delta.cacheW1 === 0) return false;
-    if (line.isSidechain && !prev.input && !prev.output) this.sidechainMessages++;
-    const model = line.message.model ?? 'unknown';
-    const at = line.timestamp ?? new Date().toISOString();
-    let b = this.pending.get(model);
-    if (!b) {
-      b = { model, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWrite5mTokens: 0, cacheWrite1hTokens: 0, messageIds: [], ids: new Set(), firstAt: at, lastAt: at, contextTokens: 0 };
-      this.pending.set(model, b);
-    }
-    b.inputTokens += delta.input;
-    b.outputTokens += delta.output;
-    b.cacheReadTokens += delta.cacheRead;
-    b.cacheWrite5mTokens += delta.cacheW5;
-    b.cacheWrite1hTokens += delta.cacheW1;
-    b.ids.add(id);
-    if (at < b.firstAt) b.firstAt = at;
-    if (at > b.lastAt) b.lastAt = at;
-    return true;
-  }
-
-  get pendingMessages(): number {
-    let n = 0;
-    for (const b of this.pending.values()) n += b.ids.size;
-    return n;
-  }
-
-  /** Pending batches (one per model), cleared. contextTokens = size of the latest main-chain message. */
-  drain(): UsageBatch[] {
-    const out: UsageBatch[] = [];
-    for (const b of this.pending.values()) {
-      const { ids, ...rest } = b;
-      out.push({ ...rest, messageIds: [...ids], contextTokens: this.lastContext });
-    }
-    this.pending.clear();
-    return out;
-  }
-
-  /** Persistable snapshot of what has been counted (restart safety). */
-  snapshot(): Record<string, Counted> {
-    return Object.fromEntries(this.counted);
-  }
-}
-
-/** Incremental JSONL reader: byte offset, partial trailing lines, truncation/rotation, watch + poll. */
+/** Follows a JSONL transcript: complete lines only, truncation/rotation, fs.watch plus polling. */
 export class TranscriptTailer {
-  private buf = '';
   private watcher: FSWatcher | null = null;
   private timer: NodeJS.Timeout | null = null;
   private _offset: number;
@@ -127,6 +21,7 @@ export class TranscriptTailer {
     this._offset = opts.offset ?? 0;
   }
 
+  /** Byte offset after the last complete line read: safe to persist as a resume offset. */
   get offset(): number {
     return this._offset;
   }
@@ -139,42 +34,14 @@ export class TranscriptTailer {
     }
   }
 
-  /** Read any new bytes; returns bytes consumed. */
+  /** Reads new complete lines (a line still being written waits for the next poll); returns the bytes consumed. */
   poll(): number {
-    if (!existsSync(this.path)) return 0;
-    const st = statSync(this.path);
-    if (st.size < this._offset) {
-      this._offset = 0; // truncated or rotated
-      this.buf = '';
-    }
-    if (st.size === this._offset) return 0;
-    this.lastWriteAt = st.mtimeMs;
-    const fd = openSync(this.path, 'r');
-    let read = 0;
-    try {
-      const chunk = Buffer.alloc(Math.min(st.size - this._offset, 4 * 1024 * 1024));
-      while (this._offset < st.size) {
-        const n = readSync(fd, chunk, 0, Math.min(chunk.length, st.size - this._offset), this._offset);
-        if (n <= 0) break;
-        this._offset += n;
-        read += n;
-        this.buf += chunk.subarray(0, n).toString('utf8');
-        let nl: number;
-        while ((nl = this.buf.indexOf('\n')) >= 0) {
-          const line = this.buf.slice(0, nl);
-          this.buf = this.buf.slice(nl + 1);
-          if (line.trim()) this.onLine(line);
-        }
-      }
-    } finally {
-      closeSync(fd);
-    }
-    return read;
-  }
-
-  /** Bytes fully processed (excludes a buffered partial line) — safe to persist as a resume offset. */
-  get committedOffset(): number {
-    return this._offset - Buffer.byteLength(this.buf, 'utf8');
+    const before = this._offset;
+    const r = readCompleteLines(this.path, before, this.onLine);
+    if (!r) return 0;
+    if (r.restarted || r.size > before) this.lastWriteAt = r.mtimeMs;
+    this._offset = r.offset;
+    return r.restarted ? r.offset : r.offset - before;
   }
 
   start(pollMs = 1000): void {

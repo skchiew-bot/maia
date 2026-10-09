@@ -2,6 +2,7 @@
  * Ingest/API client shared by hooks, sidecar, MCP server and CLI.
  * - `post` with timeout + bounded retries; optional local spool on failure (observed sessions buffer
  *   locally if the backend is down, §2) and `flushSpool` to replay through /ingest/spool (idempotent).
+ * - Transcript parsing shared by the sidecar and the observed hook (./transcript).
  * - No dependencies beyond Node 22 globals (fetch, AbortController) and type-only contract imports, so the hook
  *   binary, which runs on Claude Code's hot path, stays small and starts fast.
  */
@@ -29,6 +30,7 @@ import {
 } from './spool';
 
 export * from './spool';
+export * from './transcript';
 
 const SPOOL_PATH = '/ingest/spool' as const satisfies (typeof INGEST_PATHS)['spool'];
 /** aocd validates at most this many items per replay. */
