@@ -1120,8 +1120,8 @@ Open items found while writing this document. Owners and details are in the
    Approver**, including a break-glass the Approver invokes. That is the CEO's decision (the fallback is off), so the
    remaining action is to appoint a second Approver, or to have Builders invoke break-glass.
 5. The `self-modification` guard is built and always protects AOC's audit state, but it protects the core code only
-   once `selfModification.aocRepoPaths` is set (the default is empty), and the default `protectedPaths` list omits
-   governance-relevant packages (see the [self-modification boundary](compliance/self-modification-boundary.md)).
+   once `selfModification.aocRepoPaths` is set (the default is empty). The default `protectedPaths` list now covers
+   all of Tier 1 (see the [self-modification boundary](compliance/self-modification-boundary.md)).
 6. Default anchoring (`anchorProvider: git` with no `anchorRemote`) is local only and does not mitigate R2 until a
    remote is configured, and it runs nightly only (gap G-40). Anchor-commit signing and TSA certificate checks
    are module options that the aocd configuration does not expose yet. Evidence packs compare anchors with the

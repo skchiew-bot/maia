@@ -172,7 +172,7 @@ tests; `packages/supervisor/test/isolated.test.ts`.
 | P-15 | Discovery-class build stages on Opus | §15 | CEO | Process |
 | P-16 | Credit policy: allocations, exemptions, top-up approvers | §10 | CEO / FinOps | Open |
 | P-17 | Decision webhook (R15): endpoint and on-call owner | R15 | CEO | Open |
-| P-18 | **Set `selfModification.aocRepoPaths`** (default `[]`, so the core of the AOC repo is not yet protected) and review `protectedPaths` in production config (O-10) | §13, R14 | CEO / lead | Open |
+| P-18 | **Set `selfModification.aocRepoPaths`** (default `[]`, so the core of the AOC repo is not yet protected) and review `protectedPaths` in production config (O-10; the default now covers all of Tier 1) | §13, R14 | CEO / lead | Open |
 | P-19 | **FX policy** (O-18): session 1700 or 1200, run time, tolerance, carried-forward alert after 3 weekdays (`docs/research/bnm-fx.md` §0) | §10, R13 | FinOps | Open (feeds G-36) |
 | P-20 | **Threat-model decisions**: O-14 (Claude credentials readable by every session; egress), O-19 (passkeys on every Approver gate, not only go-live / rollback / break-glass), O-20 (`synchronous = NORMAL` vs `FULL`), O-25 (observed sessions outside projects, PDPA) | §3, §6, §13 | CEO / architect | Open |
 | P-21 | **HTTPS `publicUrl` in production** (cookie `Secure` flag, WebAuthn origin) — O-22 | §6 | Ops | Open |
