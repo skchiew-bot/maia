@@ -110,6 +110,8 @@ export interface SupervisorModuleOptions {
   registryFile?: string;
   /** SIGINT → SIGKILL grace when a turn is interrupted (default 10 s). */
   interruptGraceMs?: number;
+  /** How long a turn's sidecar may keep reporting after claude exits before it is sent SIGTERM (default 5 s). */
+  sidecarGraceMs?: number;
   /** Retry delay for a usage limit whose reset time is unknown (default 30 min). */
   throttleFallbackMs?: number;
   /** Output items kept per session for GET /api/sessions/:id/output (default 500). */
@@ -145,6 +147,8 @@ type ContextInfo = { contextTokens: number; contextPct: number };
 const SYSTEM: Actor = { kind: 'system', id: 'supervisor' };
 const CLOSE_GRACE_MS = 2_000;
 const SIDECAR_GRACE_MS = 5_000;
+/** After SIGTERM a sidecar makes its final usage flush (one request, 4 s client timeout) and exits. */
+const SIDECAR_FLUSH_MS = 5_000;
 const MAX_BUFFERED_SESSIONS = 256;
 /** Turn outcomes that prove the model answered, so the conversation exists even when its transcript is not found. */
 const ANSWERED_OUTCOMES = new Set(['end_turn', 'decision', 'credit_cap', 'stop_requested', 'rollover']);
@@ -228,6 +232,10 @@ export class Supervisor implements SupervisorService {
   /** Sessions being rolled over right now: no turns for them, and they no longer count as their thread's writer. */
   private readonly rollingOver = new Set<string>();
   private readonly sidecars = new Set<ChildProcess>();
+  /** Running sidecars per session (a turn's sidecar can outlive its turn by the grace). */
+  private readonly sessionSidecars = new Map<string, Set<ChildProcess>>();
+  /** Ingest-token revocations waiting for an ended session's sidecars to finish (see revokeToken). */
+  private readonly pendingRevocations = new Map<string, () => void>();
   private readonly timers = new Set<NodeJS.Timeout>();
   private readonly warned = new Set<string>();
   private readonly sessionsRoot: string;
@@ -642,6 +650,8 @@ export class Supervisor implements SupervisorService {
 
   /** Daemon shutdown: interrupt running turns; the next start marks them Dead. Nothing is appended. */
   async shutdown(): Promise<void> {
+    // Ended sessions keep no valid token across a restart, even if their sidecars are still flushing.
+    for (const revoke of [...this.pendingRevocations.values()]) revoke();
     this.stopping = true;
     this.queue.length = 0;
     for (const t of this.timers) clearTimeout(t);
@@ -1332,10 +1342,9 @@ export class Supervisor implements SupervisorService {
     // Key copies exist only while a turn runs, so an idle or waiting session holds none.
     this.dropKeyCopies(live.sessionId);
     const sidecar = live.sidecar;
-    if (sidecar) this.later(() => sidecar.exitCode === null && sidecar.kill('SIGTERM'), SIDECAR_GRACE_MS);
+    if (sidecar) this.later(() => sidecar.exitCode === null && sidecar.kill('SIGTERM'), this.sidecarGraceMs());
     live.markClosed();
     if (this.stopping) return;
-    this.liveness()?.recordProcess(live.sessionId, false, null);
     try {
       this.finishTurn(live);
     } catch (err) {
@@ -1346,6 +1355,9 @@ export class Supervisor implements SupervisorService {
         // The store is unusable; the next start marks the session Dead.
       }
     }
+    // Only once the turn's outcome is recorded: a session that now waits, idles, is throttled or has ended was never
+    // Dead in between. A follow-up turn already holds the session and reports its own process when it spawns.
+    if (!this.busy(live.sessionId)) this.liveness()?.recordProcess(live.sessionId, false, null);
     this.pump();
   }
 
@@ -1910,10 +1922,28 @@ export class Supervisor implements SupervisorService {
     return token;
   }
 
+  /**
+   * A turn's sidecar sends the turn's last usage after claude has exited, which is after the session may have ended:
+   * the session's token stays valid until its sidecars are done (bounded by their grace and final flush), or that
+   * usage would be refused and never metered.
+   */
   private revokeToken(sessionId: string, actor: Actor): void {
     this.tokens.delete(sessionId);
     this.secrets.delete(sessionId);
-    this.ctx.services.maybe('identity')?.revokeIngestTokensFor(sessionId, actor);
+    let done = false;
+    const revoke = () => {
+      if (done) return;
+      done = true;
+      this.pendingRevocations.delete(sessionId);
+      this.ctx.services.maybe('identity')?.revokeIngestTokensFor(sessionId, actor);
+    };
+    if (!this.sessionSidecars.get(sessionId)?.size) return revoke();
+    this.pendingRevocations.set(sessionId, revoke);
+    this.later(revoke, this.sidecarGraceMs() + SIDECAR_FLUSH_MS);
+  }
+
+  private sidecarGraceMs(): number {
+    return this.opts.sidecarGraceMs ?? SIDECAR_GRACE_MS;
   }
 
   private startSidecar(live: LiveTurn, plan: SpawnPlan): void {
@@ -1943,10 +1973,22 @@ export class Supervisor implements SupervisorService {
     });
     try {
       const child = spawn(bin, args, { env, stdio: 'ignore' });
-      child.on('error', (err) =>
-        this.log.warn('sidecar failed', { sessionId: live.sessionId, err: err.message }),
-      );
-      child.on('exit', () => this.sidecars.delete(child));
+      const ofSession = this.sessionSidecars.get(live.sessionId) ?? new Set<ChildProcess>();
+      ofSession.add(child);
+      this.sessionSidecars.set(live.sessionId, ofSession);
+      // 'exit' may not follow a spawn 'error', so either one retires the sidecar.
+      const gone = () => {
+        this.sidecars.delete(child);
+        ofSession.delete(child);
+        if (ofSession.size) return;
+        if (this.sessionSidecars.get(live.sessionId) === ofSession) this.sessionSidecars.delete(live.sessionId);
+        this.pendingRevocations.get(live.sessionId)?.();
+      };
+      child.on('error', (err) => {
+        this.log.warn('sidecar failed', { sessionId: live.sessionId, err: err.message });
+        gone();
+      });
+      child.on('exit', gone);
       this.sidecars.add(child);
       live.sidecar = child;
     } catch (err) {

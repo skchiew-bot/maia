@@ -87,7 +87,11 @@
 .tkt-gate--failed .aoc-icon {
   color: var(--danger);
 }
-.tkt-gate--failed {
+.tkt-gate--rejected .aoc-icon {
+  color: var(--text-2);
+}
+.tkt-gate--failed,
+.tkt-gate--rejected {
   color: var(--text);
   font-weight: 600;
 }

@@ -216,7 +216,9 @@ export class StubCredits implements CreditService {
 
 export class StubLiveness implements LivenessService {
   readonly activity: string[] = [];
-  readonly processes: { sessionId: string; alive: boolean; pid: number | null }[] = [];
+  readonly processes: { sessionId: string; alive: boolean; pid: number | null; lifecycle?: string }[] = [];
+  /** Set by the harness: the session's lifecycle at the moment a process change is reported. */
+  lifecycleOf: (sessionId: string) => string | undefined = () => undefined;
   get() {
     return null;
   }
@@ -225,7 +227,7 @@ export class StubLiveness implements LivenessService {
     this.activity.push(sessionId);
   }
   recordProcess(sessionId: string, alive: boolean, pid: number | null): void {
-    this.processes.push({ sessionId, alive, pid });
+    this.processes.push({ sessionId, alive, pid, lifecycle: this.lifecycleOf(sessionId) });
   }
 }
 
@@ -272,7 +274,7 @@ export interface HarnessOptions {
   log?: Logger;
   /** Process types added to the stub registry. */
   types?: ProcessType[];
-  /** aocd environment entries added to (or, with undefined, removed from) the default one. */
+  /** aocd environment entries added to (or, with undefined, removed from) the default one (e.g. FAKE_SIDECAR_LINGER=1). */
   env?: Record<string, string | undefined>;
   /** Keep the event store on disk (its directory is `t.dataDir`). */
   onDisk?: boolean;
@@ -330,7 +332,7 @@ export async function createHarness(o: HarnessOptions = {}) {
         mcpCommand: ['node', '/opt/aoc/mcp-server.js'],
         hookCommand: ['node', '/opt/aoc/aoc-hook.js'],
         sidecarCommand: [process.execPath, FAKE_SIDECAR, sidecarLog],
-        envAllowlist: [...defaultConfig().supervisor.envAllowlist, 'FAKE_CLAUDE_LOG'],
+        envAllowlist: [...defaultConfig().supervisor.envAllowlist, 'FAKE_CLAUDE_LOG', 'FAKE_SIDECAR_LINGER'],
         credentialProfilesFile: profilesFile,
         maxConcurrentSessions: 4,
         autoContinueLimit: 0,
@@ -342,6 +344,7 @@ export async function createHarness(o: HarnessOptions = {}) {
     onDisk: o.onDisk,
   });
   const sup = t.rt.services.get('supervisor') as Supervisor;
+  liveness.lifecycleOf = (sessionId) => sup.session(sessionId)?.lifecycle;
   const owner = t.user('builder', 'Owner');
   const ownerActor: Actor = { kind: 'human', id: owner.user.id };
 
@@ -402,6 +405,10 @@ export async function createHarness(o: HarnessOptions = {}) {
         `${sessionId} → ${lifecycle} (now ${h.lifecycle(sessionId)})`,
         timeoutMs,
       );
+    },
+    /** Revocation waits for the session's sidecars to finish their final flush. */
+    async waitRevoked(token: string): Promise<void> {
+      await h.waitFor(() => t.identity!.verifyIngestToken(token) === null, 'the ingest token to be revoked');
     },
     gate() {
       const path = join(root, `gate-${Math.random().toString(36).slice(2)}`);

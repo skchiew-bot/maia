@@ -334,10 +334,8 @@ export default function TicketPage() {
 
   const t = ticket.data;
   const done = TERMINAL.has(t.stage);
-  const promotionProblem =
-    t.stage === 'go_live_gate' && (promotion?.status === 'failed' || promotion?.status === 'refused');
-  const baseGates = gatesOf(t);
-  const gates = promotionProblem ? { ...baseGates, goLive: 'failed' as const } : baseGates;
+  const gates = gatesOf(t, promotion);
+  const promotionProblem = gates.goLive === 'failed' || gates.goLive === 'rejected';
   const round = latestRound(t.diagnoses, budget);
   const diag = diagnosisOf(round);
   const use = budgetUse(t, budget);
@@ -411,12 +409,14 @@ export default function TicketPage() {
         <Widget span={7} title="Next step" subtitle={STAGE_LABEL[t.stage]}>
           <div className="tkt-next">
             <p className="tkt-next__hint">
-              {promotionProblem
+              {gates.goLive === 'failed'
                 ? 'Go-live was approved, but promoting the change to main did not complete.'
-                : STAGE_HINT[t.stage]}
+                : gates.goLive === 'rejected'
+                  ? 'The Approver rejected go-live: nothing reached main. Close the ticket or send it back through triage.'
+                  : STAGE_HINT[t.stage]}
             </p>
             <GateTrail gates={gates} />
-            {promotion && promotionProblem && (
+            {promotion && gates.goLive === 'failed' && (
               <InlineAlert tone="danger" title={`Go-live promotion ${promotion.status}`}>
                 Promotion {shortId(promotion.promotionId)} {promotion.status} (
                 {(promotion.reason ?? 'no reason').replace(/_/g, ' ')}) at{' '}

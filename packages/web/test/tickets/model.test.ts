@@ -67,6 +67,16 @@ describe('gates', () => {
       'waiting',
     );
   });
+
+  it('reads a failed, refused or rejected promotion at the go-live gate from its outcome', () => {
+    const atGate = ticket({ ticketId: 't', stage: 'go_live_gate', openDecisionIds: [] });
+    expect(gatesOf(atGate, { status: 'failed' }).goLive).toBe('failed');
+    expect(gatesOf(atGate, { status: 'refused' }).goLive).toBe('failed');
+    expect(gatesOf(atGate, { status: 'rejected' }).goLive).toBe('rejected');
+    expect(gatesOf(atGate, { status: 'requested' }).goLive).toBe('waiting');
+    // A completed ticket stays passed whatever an older promotion recorded.
+    expect(gatesOf(ticket({ ticketId: 't', stage: 'completed' }), { status: 'failed' }).goLive).toBe('passed');
+  });
 });
 
 describe('diagnosis and budget', () => {

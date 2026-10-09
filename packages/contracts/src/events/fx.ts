@@ -5,6 +5,14 @@ import { defineEvent, meta, payload, zId, zNonNeg } from './define';
 const day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const llmExtractor = z.enum(['haiku', 'sonnet']);
 
+/**
+ * BNM sessions (MYT) that publish a Kuala Lumpur interbank middle rate. 1130 is deliberately absent: it is the best
+ * counter rate of selected commercial banks and has no middle rate.
+ */
+export const FX_SESSIONS = ['0900', '1200', '1700'] as const;
+/** The session a rate belongs to. Absent on records made before sessions were stamped. */
+const session = z.enum(FX_SESSIONS).optional();
+
 /** One LLM extraction attempt (Haiku first, Sonnet once on failed self-validation). Problems are machine codes. */
 const extractionAttempt = z.object({
   model: llmExtractor,
@@ -37,6 +45,8 @@ export const FX_EVENTS = [
         'discrepancy_pending',
         'manual_override',
       ]),
+      /** BNM session of the rate (interbank middle rate, RM per 1 USD); a carried-forward rate keeps its source's. */
+      session,
     }),
     payload: payload({
       sourceUrl: z.string().optional(),
@@ -46,6 +56,7 @@ export const FX_EVENTS = [
       /** The extractor's own evidence snippet (model output). */
       evidence: z.string().optional(),
       publishedDate: z.string().optional(),
+      /** Session text as the extractor read it on the page (the stamped session is `meta.session`). */
       session: z.string().optional(),
       /** BNM Open API figure used for reconciliation, when available. */
       official: z.number().optional(),
@@ -68,6 +79,8 @@ export const FX_EVENTS = [
       scrapedDate: day.optional(),
       officialDate: day.optional(),
       extractor: llmExtractor.optional(),
+      /** Session both figures are for. */
+      session,
     }),
     payload: payload({
       detail: z.string().optional(),
@@ -92,7 +105,9 @@ export const FX_EVENTS = [
   defineEvent({
     type: 'fx.carry_forward_alert',
     owner: 'fx',
-    description: 'N consecutive carried-forward days → manual check requested.',
+    description:
+      'N consecutive weekdays without a live rate (holidays count, weekends do not) → manual check requested.',
+    /** consecutiveDays counts weekdays; since is the first of them. */
     meta: meta({ consecutiveDays: z.number().int().min(1), since: day, date: day.optional() }),
     payload: null,
   }),

@@ -1,6 +1,6 @@
 {
   "name": "protected-push",
-  "description": "Finishes a task, then tries `git push origin main` (never executed for real). If PreToolUse denies it, raises request_decision (test=main) and ends its turn; on resume \"option b\" opens a PR, anything else leaves the push to the supervisor.",
+  "description": "Finishes a task, then tries `git push origin main` (never executed for real). If PreToolUse denies it, raises request_decision (test=main) and ends its turn; on resume option b (\"option b\", or the supervisor's answer line \"answered: Open a pull request\") opens a PR, anything else leaves the push to the supervisor.",
   "steps": [
     { "kind": "think", "ms": 1000, "outputTokens": 260 },
     { "kind": "text", "text": "Declaring the plan." },
@@ -59,7 +59,7 @@
     },
     { "kind": "text", "text": "Decision {{decision.decision_id}} raised; ending my turn until it is answered." },
     { "kind": "endTurn" },
-    { "kind": "branch", "onResumeTextIncludes": ["option b"], "goto": "pr" },
+    { "kind": "branch", "onResumeTextIncludes": ["option b", "answered: Open a pull request"], "goto": "pr" },
     { "kind": "text", "text": "Understood: the supervisor pushes the release." },
     {
       "kind": "mcp",
