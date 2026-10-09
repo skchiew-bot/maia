@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { accessSync, constants, statSync } from 'node:fs';
 import { basename, delimiter, join } from 'node:path';
 import type { AocConfig } from '@aoc/contracts';
+import { childEnv } from '@aoc/kernel';
 
 /** Allowed media, identified by MAGIC BYTES (never by extension or declared type alone). */
 export type MediaKind = 'image' | 'video' | 'document';
@@ -85,13 +86,20 @@ export const builtinScanner: Scanner = {
 /** ClamAV clients, in order of preference: clamdscan streams to a running clamd, clamscan loads the signatures itself. */
 export const CLAMAV_BINARIES = ['clamdscan', 'clamscan'] as const;
 
-/** ClamAV through `binary` (a path found by findOnPath), reading the upload from stdin. */
+/**
+ * ClamAV through `binary` (a path found by findOnPath), reading the upload from stdin. The client handles untrusted
+ * bytes, so it gets the kernel's child allowlist, never aocd's whole environment (G-46, O-13).
+ */
 export function clamavScanner(binary: string): Scanner {
   const bin = basename(binary);
   return {
     name: bin,
     scan(buf) {
-      const r = spawnSync(binary, bin === 'clamdscan' ? ['--stream', '--no-summary', '-'] : ['--no-summary', '-'], { input: buf, timeout: 120_000 });
+      const r = spawnSync(binary, bin === 'clamdscan' ? ['--stream', '--no-summary', '-'] : ['--no-summary', '-'], {
+        input: buf,
+        timeout: 120_000,
+        env: childEnv(),
+      });
       if (r.error) return { verdict: 'unscanned', scanner: bin, detail: String(r.error).slice(0, 200) };
       if (r.status === 0) return { verdict: 'clean', scanner: bin };
       if (r.status === 1) return { verdict: 'infected', scanner: bin, detail: String(r.stdout).slice(0, 200) };

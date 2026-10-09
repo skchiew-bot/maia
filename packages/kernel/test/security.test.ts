@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
-import { createTestRuntime, EventStore, EventValidationError, FakeClock, MAX_BODY_BYTES, silentLogger, type AocModule } from '../src';
+import { INTAKE_ENVELOPE_BYTES, intakeRequestBytes, intakeTotalBytes } from '@aoc/contracts';
+import { bodyLimitFor, createTestRuntime, EventStore, EventValidationError, FakeClock, MAX_BODY_BYTES, silentLogger, type AocModule } from '../src';
 
 const mk = (dataDir = ':memory:', key = randomBytes(32)) =>
   new EventStore({ dataDir, clock: new FakeClock(), log: silentLogger, masterKey: key });
@@ -136,7 +137,7 @@ describe('request bodies are capped before any route reads them', () => {
     const mod: AocModule = {
       name: 'echo',
       routes(app) {
-        for (const path of ['/ingest/echo', '/api/echo', '/portal/api/echo']) {
+        for (const path of ['/ingest/echo', '/ingest/git/echo.git/git-receive-pack', '/api/echo', '/portal/api/echo']) {
           app.post(path, async (c) => {
             const bytes = (await c.req.text()).length;
             reads++; // counts bodies a route actually received
@@ -159,6 +160,17 @@ describe('request bodies are capped before any route reads them', () => {
     expect(ingest.status).toBe(413);
     expect(reads()).toBe(0);
     expect((await t.app.request('/api/echo', { method: 'POST', body: 'small' })).status).toBe(200);
+    await t.close();
+  });
+
+  it('gives a git push to the supervisor gateway room for a pack, and still a cap of its own (R-02)', async () => {
+    const { t, reads } = await setup();
+    const push = '/ingest/git/echo.git/git-receive-pack';
+    const declare = (n: number) => ({ method: 'POST', body: 'x', headers: { ...t.ingestHeaders('observer'), 'content-length': String(n) } });
+    expect((await t.app.request('/ingest/echo', declare(MAX_BODY_BYTES.ingest + 1))).status).toBe(413);
+    expect((await t.app.request(push, declare(MAX_BODY_BYTES.ingest + 1))).status).toBe(200);
+    expect((await t.app.request(push, declare(MAX_BODY_BYTES.push + 1))).status).toBe(413);
+    expect(reads()).toBe(1);
     await t.close();
   });
 
@@ -194,11 +206,21 @@ describe('request bodies are capped before any route reads them', () => {
     await t.close();
   });
 
-  it('caps the intake portal at the configured attachment limits', async () => {
+  it('caps the intake portal at the intake total allowance plus the form envelope, the number the portal is told', async () => {
     const { t, reads } = await setup();
-    const over = await t.app.request('/portal/api/echo', { method: 'POST', body: 'x'.repeat(2 * 4096 + MAX_BODY_BYTES.formOverhead + 1) });
-    expect(over.status).toBe(413);
+    // 2 attachments, an image cap of 1 KiB and a video cap of 4 KiB: the total is one video, not 2 x the largest file.
+    const total = intakeTotalBytes(t.config.intake);
+    expect(total).toBe(4096);
+    const cap = total + INTAKE_ENVELOPE_BYTES;
+    expect(intakeRequestBytes(t.config.intake)).toBe(cap);
+    expect(bodyLimitFor('/portal/api/echo', t.config)).toBe(cap);
+
+    const declared = (bytes: number) => ({ method: 'POST', body: 'x', headers: { 'content-length': String(bytes) } });
+    expect((await t.app.request('/portal/api/echo', declared(cap + 1))).status).toBe(413);
     expect(reads()).toBe(0);
+    expect((await t.app.request('/portal/api/echo', declared(cap))).status).toBe(200);
+    const over = await t.app.request('/portal/api/echo', { method: 'POST', body: 'x'.repeat(cap + 1) });
+    expect(over.status).toBe(413);
     expect((await t.app.request('/portal/api/echo', { method: 'POST', body: 'x'.repeat(4096) })).status).toBe(200);
     await t.close();
   });

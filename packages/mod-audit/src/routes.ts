@@ -43,11 +43,14 @@ const EventsQuery = z.object({
 
 const EraseBody = z
   .object({
+    // A body scope is an id (ses_…, tkt_…, user:usr_…, a module label, a project id), never a path segment: the body
+    // store maps odd ids to hashes (F-04), and the API refuses them anyway.
     scopeId: z
       .string()
       .min(1)
       .max(64)
-      .regex(/^[A-Za-z0-9_.:#@-]+$/),
+      .regex(/^[A-Za-z0-9][A-Za-z0-9_.:#@-]*$/, 'a scope id starts with a letter or a digit')
+      .refine((s) => !s.includes('..') && !s.endsWith('.'), 'a scope id is an id, not a path'),
     reason: z.enum(['pdpa_request', 'secret_leak', 'retention', 'other']),
     decisionId: zId.nullish(),
   })
@@ -191,9 +194,10 @@ export function registerAuditRoutes(app: App, ctx: ModuleContext, svc: () => Aud
     return c.json(out);
   });
 
-  // Same audience as an on-demand anchor; the destination, key and copy command come from config only.
+  // A full copy of the audit state is the Approver's call (audit.backup), not part of verify/anchor rights; the
+  // destination, key and copy command come from config only.
   app.post('/api/audit/backup', async (c) => {
-    const auth = requirePermission(c, 'audit.verify');
+    const auth = requirePermission(c, 'audit.backup');
     const r = await svc().backupNow({ kind: 'human', id: auth.user.id }, 'api', { manual: true });
     if (r.ok) {
       const out: BackupRunDTO = { ok: true, backup: r.backup, copyError: r.copyError };

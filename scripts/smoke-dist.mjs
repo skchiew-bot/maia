@@ -68,7 +68,7 @@ for (const hook of ['pre-push', 'prepare-commit-msg']) {
   }
   check(`dist/git/${hook} ships next to the bundles`, executable);
 }
-for (const file of ['process-types.json', 'rate-card.json']) {
+for (const file of ['process-types.json', 'rate-card.json', 'iso42001-mapping.json']) {
   let readable = true;
   try {
     accessSync(join(dist, 'config', file), constants.R_OK);
@@ -106,7 +106,7 @@ check(
 const sidecar = run([bin('aoc-sidecar')]);
 check(
   'aoc-sidecar prints its usage',
-  sidecar.code === 2 && sidecar.stderr.includes('usage: aoc-sidecar'),
+  sidecar.code === 2 && sidecar.stderr.includes('aoc-sidecar --session'),
   show(sidecar),
 );
 const mcp = run([bin('aoc-mcp')]);
@@ -165,6 +165,11 @@ check(
   JSON.stringify(health.body),
 );
 check('aocd resolved its helper bundles', !/supervisor\.(hook|mcp|sidecar)Command/.test(err), err);
+check(
+  'aocd loads the ISO 42001 mapping packaged next to it, and says so',
+  out.includes(`  mapping  ${join(dist, 'config', 'iso42001-mapping.json')} (version `),
+  out,
+);
 daemon.kill('SIGTERM');
 check('aocd stops cleanly on SIGTERM', (await exited) === 0, `stderr: ${err}`);
 check('aocd loads node:sqlite without the experimental warning', !err.includes('ExperimentalWarning'), err);

@@ -9,7 +9,8 @@ import {
   writeFileSync,
   type Stats,
 } from 'node:fs';
-import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 
 /** AES-256-GCM sealed box: 12-byte nonce, 16-byte tag, AAD binds the ciphertext to its context. */
 export interface Sealed {
@@ -47,27 +48,80 @@ export interface MasterKeyPolicy {
    * is refused (child processes inherit the environment) and nothing is ever generated.
    */
   production?: boolean;
-  /** The data directory a production KEK must live outside of (':memory:' skips that check). */
+  /**
+   * The data directory. A production KEK must live outside it (':memory:' skips that check); a development KEK is
+   * generated only while it holds no data (default: the key file's directory, where `<dataDir>/master.key` lives).
+   */
   dataDir?: string;
 }
 
+/** Where a loaded KEK came from: the environment, an existing file, or a freshly generated file. */
+export type MasterKeySource = 'env' | 'file' | 'generated';
+
 /**
  * Load the KEK (key-encryption key). Development order: AOC_MASTER_KEY env → file → generate one into `file`
- * (0600, missing parent directories 0700). Production: see MasterKeyPolicy and docs/runbooks/key-custody.md.
+ * (0600, missing parent directories 0700), but only for a data directory that holds no data yet: a new KEK cannot
+ * unwrap the data keys already in bodies.db, so generating one beside existing data (a restore, a lost or mistyped
+ * key path) would orphan every encrypted body. Production: see MasterKeyPolicy and docs/runbooks/key-custody.md.
  */
 export function loadOrCreateMasterKey(
   file: string,
   env: Record<string, string | undefined> = process.env,
   policy: MasterKeyPolicy = {},
-): { key: Buffer; created: boolean } {
-  if (policy.production) return { key: loadProductionKey(file, env, policy.dataDir), created: false };
-  if (env.AOC_MASTER_KEY) return { key: parseKey(env.AOC_MASTER_KEY), created: false };
-  if (existsSync(file)) return { key: parseKey(readFileSync(file, 'utf8')), created: false };
+): { key: Buffer; created: boolean; source: MasterKeySource } {
+  if (policy.production)
+    return { key: loadProductionKey(file, env, policy.dataDir), created: false, source: 'file' };
+  if (env.AOC_MASTER_KEY) return { key: parseKey(env.AOC_MASTER_KEY), created: false, source: 'env' };
+  if (existsSync(file)) return { key: parseKey(readFileSync(file, 'utf8')), created: false, source: 'file' };
+  refuseToOrphanData(file, policy.dataDir ?? dirname(file));
   mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
   const key = randomBytes(32);
   writeFileSync(file, key.toString('hex') + '\n', { mode: 0o600 });
   chmodSync(file, 0o600);
-  return { key, created: true };
+  return { key, created: true, source: 'generated' };
+}
+
+function refuseToOrphanData(file: string, dataDir: string): void {
+  if (dataDir === ':memory:') return;
+  const held = dataSealedUnderTheKek(dataDir);
+  if (!held.length) return;
+  throw new Error(
+    `refusing to generate a new KEK: ${dataDir} already holds data (${held.join(', ')}) and there is no KEK at ${file}. ` +
+      'A new key cannot unwrap the data keys that exist, so every encrypted body would be lost for good. ' +
+      `Restore the original KEK to ${file} (or point keys.masterKeyFile at it); to start over on purpose, move ${dataDir} aside ` +
+      '(docs/runbooks/key-custody.md §8)',
+  );
+}
+
+/**
+ * What the databases in `dataDir` hold that only the KEK they were sealed under can read: events (their bodies were
+ * sealed under it) and wrapped data keys. A database that cannot be read counts as data — this check fails closed.
+ */
+function dataSealedUnderTheKek(dataDir: string): string[] {
+  const held: string[] = [];
+  for (const [database, table, what] of [
+    ['aoc.db', 'events', 'events'],
+    ['bodies.db', 'body_keys', 'wrapped data keys'],
+  ] as const) {
+    const path = join(dataDir, database);
+    if (!existsSync(path)) continue;
+    try {
+      if (tableHasRows(path, table)) held.push(`${database} holds ${what}`);
+    } catch (err) {
+      held.push(`${database} cannot be read: ${(err as Error).message}`);
+    }
+  }
+  return held;
+}
+
+function tableHasRows(databaseFile: string, table: string): boolean {
+  const db = new DatabaseSync(databaseFile, { readOnly: true });
+  try {
+    if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(table)) return false;
+    return db.prepare(`SELECT 1 FROM ${table} LIMIT 1`).get() !== undefined;
+  } finally {
+    db.close();
+  }
 }
 
 function loadProductionKey(file: string, env: Record<string, string | undefined>, dataDir?: string): Buffer {

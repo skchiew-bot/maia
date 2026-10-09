@@ -139,7 +139,7 @@ unprivileged OS user (O-1).
 | --- | --- | --- | --- | --- |
 | S | A stolen bearer token or session cookie is used to approve a gate | Token hashes only; cookie TTL 12 h; `token.revoked`; WebAuthn passkey bound to the decision, the option, the user and a hash of the card, for go-live, rollback and break-glass; the signed assertion is kept (`passkey.asserted`) | Built | Other Approver gates are attribution-only in v1 (O-19) |
 | S | Cross-site request forgery against a logged-in Approver (the console uses the `aoc_session` cookie) | `SameSite=Strict` and `HttpOnly` cookies, `Secure` when `publicUrl` is HTTPS; cookie-authenticated writes must come from AOC's own origin | Built | Production must use an HTTPS `publicUrl` (O-22) |
-| T | Malformed or oversized input | zod validation on every route (`readJson` → 422); strict meta schemas reject unknown keys; body caps checked before authentication or parsing (4 MiB for the API, 16 MiB for ingest, 64 MiB for a spool flush, the attachment allowance plus 1 MiB for the portal; 413 above them) | Built | — |
+| T | Malformed or oversized input | zod validation on every route (`readJson` → 422); strict meta schemas reject unknown keys; body caps checked before authentication or parsing (4 MiB for the API, 16 MiB for ingest, 64 MiB for a spool flush, the intake total allowance plus 1 MiB for the portal, one maximum-size video; 413 above them) | Built | — |
 | R | "I didn't approve that" | Every event carries the actor; passkey resolutions record `passkeyVerified`; the chain is anchored | Built | v1 bearer tokens prove which token, not who (§6) |
 | I | Over-broad reads | A permission check per route (`requirePermission`); Requesters see only their own tickets (404 otherwise); internal notifications are never sent to Requesters | Built | Builders see everything internal by design (a transparent team console, §6) |
 | I | aocd exposed beyond localhost | The default bind is `127.0.0.1:7420`. Any wider exposure goes through a TLS reverse proxy with a host allowlist; `publicUrl` and the WebAuthn origin must match | Ops | — |
@@ -197,6 +197,7 @@ unprivileged OS user (O-1).
 | | Threat | Control | Status | Residual |
 | --- | --- | --- | --- | --- |
 | E | A credential profile reaches the wrong session | The profile comes from the process type only; the registry schema forbids credentials on read-only types, and the supervisor drops them for read-only sessions anyway | Built | — |
+| E | **A builder extracts the credential its session holds** (asks the model to print it encoded, reads `/proc/<pid>/environ`, copies a key file) and pushes from their own machine (R-02, [wave 2](review-wave2.md)) | A push credential is never in a session: a profile's `env` and `files` stay with aocd. A session pushes with `git push aoc …` through the supervisor's gateway, which accepts it only during a turn, checks every ref against the profile's `push.refs`, refuses `main`, `release/*`, tags and deletions, and forwards it upstream with the credential itself ([runbook §4, item 11](../runbooks/credential-isolation.md)). A session holds only the profile's read-only `session` part | Built | The gateway authenticates with the session's ingest token, which the model can read (T-3, R-01): it can push what `push.refs` allows, during a turn, and nothing more. Credentials that are not git (a deploy API, a cloud CLI) have no proxy yet. With `isolation: "none"` sessions can read the profiles file |
 | I | aocd secrets leak into sessions | `envAllowlist` copies only named variables, and never an `AOC_*` variable of aocd's own | Built | The default allowlist includes the Claude credentials (O-14) and `HOME`, so a session shares the service user's home directory: its SSH keys, git and `gh` credentials and Claude login state (O-1) |
 | E | **The agent runs code as the supervisor or aocd** through git hooks or config in its workspace, or through acceptance tests the supervisor executes | Never run privileged git or tests in an agent-writable tree ([T-2](#t-2-code-execution-through-git-configuration-in-agent-workspaces)) | Required (O-2) | `runIsolated` (built) runs as the aocd user, in the repository the sessions work in |
 | T | Invalid generated settings disable every hook silently | The generated settings are validated against a schema before launch; no `SessionStart` within N seconds → launch failure | Built / Required (O-15) | Until the `SessionStart` check exists, a Claude Code version that rejects settings AOC considers valid runs without hooks, unnoticed |
@@ -239,7 +240,7 @@ unprivileged OS user (O-1).
 | I | Raw media served inline and executed by the browser | `content-disposition: attachment`, `nosniff`, `no-store` | Built | — |
 | I | Requesters learn internal state (gate names, approver identity, queue depth, timelines) | `PublicTicket` DTO with abstracted status; no SSE for Requesters | Built | — |
 | I | Builders browse raw media without need | Media only while one of their own active sessions works on that ticket; every access logged (`intake.media_accessed`) | Built | — |
-| D | Upload flooding | At most 6 files, 10 MB per image, 200 MB per video; the request body is capped at that allowance plus 1 MiB, and the Requester is authenticated before the form is read; scan required; per-requester rate limits | Built / Required (O-16) | One request can still carry about 1.2 GB, and the form is parsed in memory: stream uploads to disk or lower the caps (O-16) |
+| D | Upload flooding | At most 6 files, 10 MB per image, 200 MB per video; the request body is capped at one maximum-size video plus 1 MiB (the total the portal is told, from one function shared by the kernel, aocd and `GET /portal/api/limits`), and the Requester is authenticated before the form is read; scan required; per-requester rate limits | Built / Required (O-16) | One request can still carry about 200 MiB, and the form is parsed in memory: stream uploads to disk or lower the caps (O-16) |
 | E | CSRF on cookie sessions | See §3.1 | Built | — |
 
 ### 3.11 CLI and developer machines
@@ -255,7 +256,7 @@ unprivileged OS user (O-1).
 
 | | Threat | Control | Status | Residual |
 | --- | --- | --- | --- | --- |
-| E | A feature or UAT deploy key pushes to `main` | Rulesets restrict updates of `main` and `release/*` to the supervisor machine user; a push drill proves it | Ops | GitHub admins can change rulesets: watch the audit log |
+| E | A feature or UAT deploy key pushes to `main` | Rulesets restrict updates of `main` and `release/*` to the supervisor machine user; the key is held by aocd alone and the push gateway refuses `main` and `release/*` before the key is used (R-02); a push drill proves both | Ops / Built | GitHub admins can change rulesets: watch the audit log |
 | T | Force-push or tag deletion rewrites pinned history | Block force-pushes and deletions on `main` and `release/*`; protect the `aoc/*` pin tags | Ops | — |
 | I | Agents read the credential profiles file | The file is owned by the service user, mode 0600, and agents run as a different OS user. The self-modification guard denies tool writes to it, not reads | Ops / Required (O-1) | Void while agents and aocd share a user, which they do today: the supervisor spawns `claude` as the aocd user |
 | E | An agent pushes a branch whose name matches a protected pattern | Rulesets on patterns; creation of `release/*` restricted to the machine user | Ops | — |
@@ -376,6 +377,10 @@ state that holds.
   - Give the sidecar its own token, outside the `claude` environment (O-3, Built): sidecar reports refuse the
     session token.
   - Give sessions a home directory of their own, holding no credentials (O-1).
+  - Keep every credential that can push out of the environment: a session pushes through the supervisor's gateway
+    with its own ingest token, which can do no more than the profile's `push.refs` allow, and only during a turn
+    (Built, R-02). What the model can print is then the token, the Claude credentials and the profile's read-only
+    `session` values.
   - Restrict network egress from build sessions and review how Claude credentials reach sessions (O-14).
 - **Residual:** an agent can still lie about **itself** through its own hook and MCP events and through the
   transcript it writes; its liveness and usage now reach aocd only from the sidecar and are reconciled against the
@@ -626,8 +631,9 @@ A backup taken before an erasure still contains the destroyed DEKs. If the backu
     [key custody](../runbooks/key-custody.md)).
   - Keep backup retention within the erasure promise ("erased from backups within N days") (O-12).
   - Never run production with the generated dev KEK.
-  - Do not pass the KEK through `AOC_MASTER_KEY` in production: aocd's child processes (git, scanners) inherit
-    its environment (O-13).
+  - Do not pass the KEK through `AOC_MASTER_KEY` in production (refused there). The helpers aocd starts itself
+    (git, the anchor git, `openssl`, the claude CLI, the ClamAV client) get an allowlisted environment, so the
+    variable does not reach them either (O-13).
 - **Also:** `aoc.db` is not ciphertext-only. Its read models hold decrypted copies of text (ticket descriptions,
   session titles). Encrypt `aoc.db` backups at rest, and close the live-database gap in O-24.
 - **Residual:** an erasure completes only when the last older backup expires. Say so in the PDPA erasure
@@ -760,10 +766,10 @@ the [gap list](../compliance/gaps.md), which tracks owners and acceptance tests.
 | O-10 | Self-modification boundary (the guard and external log are built): set `aocRepoPaths` in production; review `protectedPaths` (the default now covers all of Tier 1); put the external log off-host; CODEOWNERS with required human review; complete the human review of the AI-built core before go-live | **Decision (CEO)** + change | CEO, lead, `mod-audit` | T-21, R14, gaps G-41, P-06, P-07, P-18 |
 | O-11 | Configure an off-host anchor remote that forbids force-pushes and deletions, owned by another account; anchor hourly and after high-value events (today nightly and on demand); use a qualified TSA; let `aocd`'s config pass the TSA CA file and the anchor signing key to `mod-audit` (today only code can) | Ops + change | Platform architect, `mod-audit`, `daemon` | T-13, R2, gaps G-40, G-42, P-04 |
 | O-12 | Set backup retention within the PDPA erasure promise, and state "erased from backups within N days" in erasure responses | **Decision (CEO, DPO)** | CEO | T-18, R6, gap P-03 |
-| O-13 | Production KEK from a file (for example a systemd credential), never `AOC_MASTER_KEY`; strip secrets from the environment of aocd's child processes (the git wrapper passes all of `process.env` today) | Change + Ops | `kernel`, Ops | T-18, R6, gap G-46 |
+| O-13 | Production KEK from a file (for example a systemd credential), never `AOC_MASTER_KEY` (refused in production, done). **Done:** every helper aocd starts itself gets an allowlisted environment (kernel git, the anchor git and `openssl`, the claude CLI adapter, the ClamAV client); the backup copy command is the deliberate exception (aocd's environment minus `AOC_*`, `ANTHROPIC_*`, `CLAUDE_CODE_OAUTH*`, because it carries the operator's own transfer credentials) | Ops | Ops | T-18, R6, gap G-46 |
 | O-14 | Claude credentials reach every session through `envAllowlist` and are readable by the model. Restrict egress, prefer per-host login state over environment tokens where possible, and evaluate Claude Code's tool sandboxing on the deployed version | **Decision** + change | CEO, `supervisor` | T-3, gap P-20 |
 | O-15 | Launch fail-closed checks. **Partly done:** generated settings are validated and a turn aborts unless `aoc` is `connected`. Remaining: fail a launch with no `SessionStart` within N seconds | Change | `supervisor`, `hooks` | T-20, gap G-47 |
-| O-16 | Rate limits: per-session decision-card creation, ingest, uploads per Requester, SSE connections per user. Also stream portal uploads to disk instead of parsing up to about 1.2 GB in memory. Body caps are done | Change | `mod-sessions`, `mod-decisions`, `mod-intake`, `daemon` | T-17, §3, gap G-47 |
+| O-16 | Rate limits: per-session decision-card creation, ingest, uploads per Requester, SSE connections per user. Also stream portal uploads to disk instead of parsing up to about 200 MiB in memory. Body caps are done | Change | `mod-sessions`, `mod-decisions`, `mod-intake`, `daemon` | T-17, §3, gap G-47 |
 | O-17 | Lesson and playbook hygiene: provenance on the card, text length caps, highlighted invisible characters, no auto-proposal from untrusted-input sessions | Change | `mod-learning`, `mod-registry` | T-15, gap G-47 |
 | O-18 | FX session: confirm the 1700 end-of-day middle rate (the default: page scrape cross-checked with the API, from 18:00 MYT) or mandate the 1200 noon rate (from 13:00, API figure only, no page cross-check). The research defaults are built: explicit `?session=`, 4-dp comparison, 1.25 % soft flag, alert after 3 weekdays without a live rate | Decision (CEO, FinOps) | CEO; `mod-fx` | R13, gaps G-36, P-19 |
 | O-19 | Extend passkeys beyond go-live, rollback and break-glass to every Approver gate (fix plan, main/production/data change requests, protected operations, lesson binding, top-ups) | **Decision (CEO)** | CEO, `mod-identity` | T-8, gap P-20 |

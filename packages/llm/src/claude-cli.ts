@@ -9,6 +9,7 @@ import {
   type LlmService,
   type ModelTier,
 } from '@aoc/contracts';
+import { childEnv } from '@aoc/kernel';
 import { LlmOutputInvalidError, LlmUnavailableError } from './errors';
 import { assertMatchesSchema, parseJsonText } from './output';
 
@@ -35,7 +36,7 @@ export interface ClaudeCliLlmOptions {
   timeoutMs?: number;
   /** Working directory (default: the OS temp dir, so no project CLAUDE.md / settings are picked up). */
   cwd?: string;
-  /** Extra environment on top of process.env (the CLI needs HOME for the Max-plan login). */
+  /** Extra environment on top of the allowlisted part of process.env (see CLAUDE_CLI_ENV). */
   env?: NodeJS.ProcessEnv;
   spawn?: SpawnFn;
   modelIds?: Partial<Record<ModelTier, string>>;
@@ -61,6 +62,29 @@ const MAX_STDOUT_BYTES = 8 * 1024 * 1024;
 const MAX_STDERR_BYTES = 64 * 1024;
 
 const defaultSpawn: SpawnFn = (command, args, options) => nodeSpawn(command, [...args], options);
+
+/**
+ * What the CLI takes from aocd's environment beyond the kernel's child allowlist (PATH, HOME for the Max-plan login,
+ * locale, proxy and CA settings): its Claude login and the CA bundle behind a TLS-inspecting proxy. The same
+ * variables as the default of `supervisor.envAllowlist`. Everything else of aocd's environment — AOC_* secrets,
+ * deploy and cloud credentials — stays out (G-46, O-13).
+ */
+export const CLAUDE_CLI_ENV = [
+  'CLAUDE_CONFIG_DIR',
+  'ANTHROPIC_API_KEY',
+  'ANTHROPIC_AUTH_TOKEN',
+  'CLAUDE_CODE_OAUTH_TOKEN',
+  'NODE_EXTRA_CA_CERTS',
+] as const;
+
+function claudeCliEnv(explicit: NodeJS.ProcessEnv = {}): Record<string, string> {
+  const extra: Record<string, string> = {};
+  for (const k of CLAUDE_CLI_ENV) if (process.env[k]) extra[k] = process.env[k]!;
+  for (const [k, v] of Object.entries(explicit)) if (typeof v === 'string') extra[k] = v;
+  // Marks AOC's own helper calls so the observed hooks they inherit stand down (not a session).
+  extra[AOC_ENV.internalLlm] = '1';
+  return childEnv(process.env, extra);
+}
 
 /**
  * Structured JSON via the Claude Code CLI in print mode (uses the machine's Claude login, e.g. a Max plan — no API key).
@@ -152,8 +176,7 @@ export class ClaudeCliLlm implements LlmService {
       try {
         child = spawn(bin, args, {
           cwd: this.opts.cwd ?? tmpdir(),
-          // Marks AOC's own helper calls so the observed hooks they inherit stand down (not a session).
-          env: { ...process.env, ...this.opts.env, [AOC_ENV.internalLlm]: '1' },
+          env: claudeCliEnv(this.opts.env),
           stdio: [stdin === null ? 'ignore' : 'pipe', 'pipe', 'pipe'],
         });
       } catch (err) {

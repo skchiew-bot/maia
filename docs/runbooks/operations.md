@@ -15,14 +15,18 @@
 | Data | `.aoc/data/`: `aoc.db` (chain and read models), `bodies.db` (encrypted bodies), `blobs/`, and `master.key` (dev only) | `/var/lib/aoc/data`, on a disk with monitoring; the KEK elsewhere ([key custody](key-custody.md)) |
 | Config | `AocConfigSchema.parse({})` gives a complete, safe local default (`packages/contracts/src/config.ts`) | See the example below |
 | Sessions | Up to `supervisor.maxConcurrentSessions` (8) `claude -p` children, plus one sidecar each | With `supervisor.isolation: "user"` (required in production) each turn runs as `supervisor.sessionUser` (read-only types as `readOnlySessionUser`) with its own `HOME`, `CLAUDE_CONFIG_DIR` and `TMPDIR` under `supervisor.sessionHomesDir`; aocd runs as root and refuses to start if a session user can read its data, KEK or credential profiles ([credential isolation §4](credential-isolation.md#4-the-supervisor-host), gap G-01). The sidecars stay with aocd. With isolation off (development) sessions run as aocd's user and share its `HOME`, so they can read whatever that user can: keep that home free of anything a session must not have |
-| Request limits | Body caps, checked before authentication or parsing: 4 MiB for the API, 16 MiB for `/ingest/*`, 64 MiB for a spool flush, and for the portal the attachment allowance plus 1 MiB (6 × 200 MB + 1 MiB with the defaults); 413 above them. A request to `/ingest/*` without a valid token gets 401 before its body is read | Set the reverse proxy's body limit to at least the portal allowance, or lower `intake.maxVideoBytes` and `intake.maxAttachments`; a proxy default of 1 MB breaks uploads |
+| Request limits | Body caps, checked before authentication or parsing: 4 MiB for the API, 16 MiB for `/ingest/*`, 64 MiB for a spool flush, and for the portal the intake total allowance plus 1 MiB (one maximum-size video: 200 MiB + 1 MiB with the defaults, the total `GET /portal/api/limits` publishes; more attachments never raise it); 413 above them. A request to `/ingest/*` without a valid token gets 401 before its body is read | Set the reverse proxy's body limit to at least the portal allowance, or lower `intake.maxVideoBytes`; a proxy default of 1 MB breaks uploads |
 | Time zone | `Asia/Kuala_Lumpur`. Daily jobs, rollups and FX days use local dates | Keep it unless the business moves |
 
 **How aocd finds its configuration:** `--config <file>`, else `$AOC_CONFIG`, else `./aoc.config.json`, else the
 built-in defaults. Then the environment overrides `AOC_PORT`, `AOC_HOST`, `AOC_DATA_DIR` and `AOC_PUBLIC_URL`.
 Relative paths resolve against the config file's directory, or against the working directory when there is no
 file. Unknown keys are reported as warnings and ignored, so read the startup log after every config change. In
-production, use absolute paths. A minimal production configuration (`/etc/aoc/aoc.config.json`):
+production, use absolute paths. The registry, the rate card and the ISO 42001 mapping (`config/*.json`) fall back to
+the copies packaged with aocd (`dist/config` next to `dist/bin`, or the checkout's `config/`) when they are not next
+to the config file; the startup banner shows the mapping in use (`mapping  <file> (version …)`) or says that the
+built-in default is, which is not a governed mapping. A minimal production configuration
+(`/etc/aoc/aoc.config.json`):
 
 ```json
 {
@@ -31,6 +35,7 @@ production, use absolute paths. A minimal production configuration (`/etc/aoc/ao
   "publicUrl": "https://aoc.example.internal",
   "keys": { "masterKeyFile": "/run/credentials/aocd.service/aoc-kek" },
   "registryFile": "/opt/aoc/config/process-types.json",
+  "compliance": { "mappingFile": "/opt/aoc/config/iso42001-mapping.json" },
   "supervisor": {
     "workspacesDir": "/var/lib/aoc/workspaces",
     "credentialProfilesFile": "/etc/aoc/credential-profiles.json",
@@ -103,10 +108,11 @@ Look in the log for `registry.changed` or `config.changed` events. They are expe
    boundary** on running sessions (`session.stop_requested`).
 2. Wait until no session is in `running`. Sessions that are **waiting** (on a decision, a top-up or a throttle)
    have no process. They survive restarts and resume later by themselves.
-3. `systemctl stop aocd`. On SIGTERM aocd stops the scheduler, drains queued reactions, stops modules in reverse
-   order and closes the databases. The supervisor interrupts any turn still running (SIGINT, then SIGKILL after
-   2 s) and stops the sidecars, without appending anything. At the next start those sessions are marked failed
-   and show Dead.
+3. `systemctl stop aocd`. On SIGTERM aocd stops the scheduler (no job starts from then on), drains queued reactions,
+   stops modules in reverse order (a running anchor or backup is aborted), waits up to 10 s for a job that is still
+   running so that its run is recorded, and closes the databases. Reactions to events a finishing job appends are
+   replayed at the next start. The supervisor interrupts any turn still running (SIGINT, then SIGKILL after 2 s) and
+   stops the sidecars, without appending anything. At the next start those sessions are marked failed and show Dead.
 
 An **unplanned** stop (crash or kill) loses no committed events. Running turns lose their daemon, so their next
 hook fails closed and they stop. At the next start the supervisor marks them failed, interrupting any that are

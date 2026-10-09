@@ -91,7 +91,7 @@ function kekAdvice(config: AocConfig, env: Record<string, string | undefined>, k
   }
   const file = config.keys.masterKeyFile;
   if (!file)
-    return `keys.masterKeyFile is not set: aocd would generate a NEW KEK in the data dir and fail to decrypt the restored bodies. Put the escrowed KEK outside the data dir and set keys.masterKeyFile before starting aocd`;
+    return `keys.masterKeyFile is not set: aocd would look for the KEK in the data dir and refuse to start without one ("refusing to generate a new KEK", since the restored data needs the original). Put the escrowed KEK outside the data dir and set keys.masterKeyFile before starting aocd`;
   if (!existsSync(file)) return `keys.masterKeyFile (${file}) does not exist yet: put the escrowed KEK there before starting aocd`;
   try {
     if (keyFingerprint(parseKey(readFileSync(file, 'utf8')), 'kek') === want) return null;

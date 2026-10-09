@@ -244,8 +244,13 @@ export interface LaunchRequest {
   /** Change record the session works under: exported as AOC_CHANGE_ID in that session's env only. */
   changeId?: string | null;
   parentSessionId?: string | null;
-  /** For rollover: brief injected as the opening context. */
+  /** For rollover: brief injected as the opening context (fenced untrusted data in the first turn, never the system prompt). */
   brief?: string | null;
+  /**
+   * Same key from the same actor → the same session, and no second process. Reactors derive it from the event they
+   * react to, so an at-least-once redelivery never launches twice. Internal callers only (not the HTTP launch body).
+   */
+  idempotencyKey?: string | null;
 }
 export interface SupervisorService {
   launch(req: LaunchRequest, actor: Actor): Promise<{ sessionId: string }>;

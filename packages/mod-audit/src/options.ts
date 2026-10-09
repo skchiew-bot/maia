@@ -22,7 +22,7 @@ export interface AuditModuleOptions {
   tsaMaxSkewMs?: number;
   /** Where .json/.tsq/.tsr files of RFC 3161 anchors live (default `<dataDir>/anchors`). */
   tsrDir?: string;
-  /** Governed ISO 42001 mapping file (default `config/iso42001-mapping.json`, hashed only if present). */
+  /** Governed ISO 42001 mapping file (default `compliance.mappingFile` of the config, hashed only if present). */
   mappingFile?: string;
   /** Extra attempts of the nightly anchor before it is recorded as failed (default 2). */
   anchorRetries?: number;

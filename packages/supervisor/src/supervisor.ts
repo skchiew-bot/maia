@@ -16,11 +16,12 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { z } from 'zod';
 import {
   AOC_ENV,
   AOC_MCP_SERVER_NAME,
+  INGEST_GIT_PREFIX,
   MODEL_CONTEXT_TOKENS,
   MODEL_ID_BY_TIER,
   SIDECAR_READY_LINE,
@@ -42,7 +43,7 @@ import {
   type StoredEvent,
   type SupervisorService,
 } from '@aoc/contracts';
-import { HttpError, type Logger, type ModuleContext, type NewEvent } from '@aoc/kernel';
+import { HttpError, sha256hex, type Logger, type ModuleContext, type NewEvent } from '@aoc/kernel';
 import {
   ensureDir,
   materializeKeyFiles,
@@ -67,6 +68,7 @@ import {
   buildHookSettings,
   buildMcpConfig,
   buildSessionEnv,
+  gatewayGitEnv,
   keyFileSecrets,
   readCredentialProfile,
   readCredentialProfileSpec,
@@ -77,9 +79,12 @@ import {
   toolPolicy,
   userSettingsProblems,
   workspaceSettingsProblems,
+  GATEWAY_REMOTE,
   type CredentialProfile,
+  type ProfileCredentials,
 } from './launch-config';
 import { killProcessGroup, processMatches, runCommand, signalProcess, signalTree } from './process-utils';
+import { PushGateway, expandPattern, type PushPrincipal, type PushRecord } from './push-gateway';
 import { handOver, isolatedRunEnv, secretValues } from './sandbox';
 import { SupervisorView, TERMINAL_LIFECYCLES, type SupervisedSession } from './projection';
 import {
@@ -93,6 +98,7 @@ import {
   decisionAnswersText,
   nudgeText,
   rolloverPrompt,
+  withHandoffBrief,
 } from './prompts';
 import { previousCheckOf, reconcileTurnUsage, sidecarTotals } from './reconcile';
 import { RegistryAccess } from './registry-access';
@@ -109,6 +115,13 @@ import {
 export interface SupervisorModuleOptions {
   /** Per-session directories (default `<dataDir>/sessions`; a temp dir when the store is in memory). */
   sessionsDir?: string;
+  /** Service-owned repositories behind the push gateway (default `<dataDir>/git`; a temp dir when in memory). */
+  gatewayDir?: string;
+  /** Pushes one session may make per window, and the window (defaults: 30 per 10 minutes). */
+  pushesPerWindow?: number;
+  pushWindowMs?: number;
+  /** Largest pack one push may carry (default MAX_PUSH_BYTES, 256 MiB). */
+  maxPackBytes?: number;
   /** Registry file used when mod-registry is not loaded (default `config.registryFile`). */
   registryFile?: string;
   /** SIGINT → SIGKILL grace when a turn is interrupted (default 10 s). */
@@ -140,9 +153,19 @@ export const LaunchRequestSchema = z.object({
   changeId: zIdent.nullish(),
   parentSessionId: zIdent.nullish(),
   brief: z.string().max(200_000).nullish(),
+  idempotencyKey: z
+    .string()
+    .min(1)
+    .max(256)
+    .regex(/^[\x21-\x7e]+$/, 'a printable machine label')
+    .nullish(),
 });
-/** The HTTP launch body: briefs and lineage only come from the supervisor's own rollover. */
-export const LaunchBodySchema = LaunchRequestSchema.omit({ brief: true, parentSessionId: true }).strict();
+/** The HTTP launch body: briefs, lineage and idempotency keys only come from the supervisor and reactors. */
+export const LaunchBodySchema = LaunchRequestSchema.omit({
+  brief: true,
+  parentSessionId: true,
+  idempotencyKey: true,
+}).strict();
 
 type TurnReason = MetaOf<'session.turn_started'>['reason'];
 type TurnOutcome = MetaOf<'session.turn_ended'>['outcome'];
@@ -259,6 +282,10 @@ export class Supervisor implements SupervisorService {
   private readonly ownsSessionsRoot: boolean;
   /** Session users and their directories (supervisor.isolation 'user'); null = sessions run as aocd (development). */
   private readonly isolation: SessionIsolation | null;
+  /** The push gateway (R-02): sessions push to a service-owned repository, the supervisor forwards upstream. */
+  readonly gateway: PushGateway;
+  private readonly gatewayRoot: string;
+  private readonly ownsGatewayRoot: boolean;
   private stopping = false;
 
   constructor(
@@ -278,11 +305,35 @@ export class Supervisor implements SupervisorService {
       : this.ownsSessionsRoot
         ? mkdtempSync(join(tmpdir(), 'aoc-sessions-'))
         : resolve(ctx.dataDir, 'sessions');
+    // The same directory mod-change's service-owned clone uses (G-04): one `origin` per project serves both.
+    this.ownsGatewayRoot = !opts.gatewayDir && ctx.dataDir === ':memory:';
+    this.gatewayRoot = opts.gatewayDir
+      ? resolve(opts.gatewayDir)
+      : this.ownsGatewayRoot
+        ? mkdtempSync(join(tmpdir(), 'aoc-git-'))
+        : resolve(ctx.dataDir, 'git');
+    this.gateway = new PushGateway(
+      {
+        principal: (sessionId, repoName) => this.pushPrincipal(sessionId, repoName),
+        forward: (input) => this.forwardPush(input),
+        record: (r) => this.recordPush(r),
+        env: () => this.sourceEnv(),
+        now: () => ctx.clock.now(),
+        log: this.log,
+      },
+      {
+        root: this.gatewayRoot,
+        pushesPerWindow: opts.pushesPerWindow,
+        windowMs: opts.pushWindowMs,
+        maxPackBytes: opts.maxPackBytes,
+      },
+    );
     if (isolation) {
       try {
         this.checkIsolation(isolation);
       } catch (err) {
         if (this.ownsSessionsRoot) rmSync(this.sessionsRoot, { recursive: true, force: true });
+        if (this.ownsGatewayRoot) rmSync(this.gatewayRoot, { recursive: true, force: true });
         throw err;
       }
     }
@@ -304,6 +355,7 @@ export class Supervisor implements SupervisorService {
       ...(kek ? [resolve(kek)] : []),
       ...(profiles ? [profiles, ...profileKeyFiles(profiles)] : []),
       this.sessionsRoot,
+      this.gatewayRoot,
     ];
     prepareHomesRoot(iso);
     const workspaces = resolve(sup.workspacesDir);
@@ -719,6 +771,7 @@ export class Supervisor implements SupervisorService {
     await settleWithin(lives, 1_000);
     for (const sc of this.sidecars) sc.kill('SIGTERM');
     if (this.ownsSessionsRoot) rmSync(this.sessionsRoot, { recursive: true, force: true });
+    if (this.ownsGatewayRoot) rmSync(this.gatewayRoot, { recursive: true, force: true });
   }
 
   // ── launch ────────────────────────────────────────────────────────────────
@@ -735,7 +788,17 @@ export class Supervisor implements SupervisorService {
       throw new HttpError(422, 'invalid', 'Invalid launch request', details);
     }
     const r = parsed.data;
-    checkText(r.prompt);
+    // A redelivered launch (reactor replay, retry) gets the session the key already started: never a second process.
+    // The chained key is bound to the actor, so one caller can never pre-claim another's.
+    const launchKey = r.idempotencyKey
+      ? `launch:${sha256hex([actor.kind, actor.id, r.idempotencyKey].join('\n'))}`
+      : undefined;
+    const prior = launchKey ? this.ctx.store.findByIdempotencyKey(launchKey) : null;
+    if (prior?.type === 'session.launch_requested')
+      return { sessionId: String(prior.meta.sessionId), started: Promise.resolve() };
+    // The first turn carries a rollover brief as fenced data (R-10); it is the launch prompt replayed on recovery.
+    const prompt = r.brief ? withHandoffBrief(r.prompt, r.brief, r.parentSessionId ?? null) : r.prompt;
+    checkText(prompt);
     this.assertConfigured();
     if (!this.ctx.services.maybe('identity')) {
       throw new HttpError(
@@ -812,9 +875,10 @@ export class Supervisor implements SupervisorService {
             ownerId,
             changeId: r.changeId ?? null,
           },
-          payload: { prompt: r.prompt, cwd },
+          payload: { prompt, cwd },
           source: 'supervisor',
           causationId: o.causationId,
+          idempotencyKey: launchKey,
         }),
         ev({
           type: 'session.lifecycle_changed',
@@ -837,7 +901,7 @@ export class Supervisor implements SupervisorService {
       const s = this.mustGet(sessionId);
       this.claudeIds.set(sessionId, randomUUID());
       this.tokenFor(sessionId, actor);
-      this.writeSystemPrompt(s, type, r.brief ?? null, actor);
+      this.writeSystemPrompt(s, type, actor);
       const boundary = this.ctx.services.maybe('credits')?.checkBoundary(sessionId, null, actor);
       if (boundary && !boundary.continue && boundary.reason === 'credit_cap') {
         this.setLifecycle(sessionId, 'blocked', 'credit_cap', actor);
@@ -847,7 +911,7 @@ export class Supervisor implements SupervisorService {
       const started = this.requestTurn({
         sessionId,
         reason,
-        text: r.prompt,
+        text: prompt,
         actor,
         causationId: o.causationId,
         priority: o.priority,
@@ -878,7 +942,10 @@ export class Supervisor implements SupervisorService {
     if (requested) {
       if (!isAbsolute(requested) || !isDirectory(requested))
         throw new HttpError(422, 'invalid_cwd', 'cwd must be an existing absolute directory');
-      return resolve(requested);
+      // The session keeps the physical path: a symlink swapped in along it later cannot move the session.
+      const physical = realpathSync(requested);
+      if (!this.withinProject(physical, projectId)) throw cwdOutsideProject(422, projectId);
+      return physical;
     }
     const repo = this.ledger()?.projectRepoPath(projectId);
     if (repo) {
@@ -902,19 +969,35 @@ export class Supervisor implements SupervisorService {
     return dir;
   }
 
+  /**
+   * Where a session of the project may work (R-09): the project's repository, or the project's own directory
+   * under the workspaces dir — compared physically, so a symlink inside either cannot lead out of it.
+   */
+  private withinProject(cwd: string, projectId: string): boolean {
+    const roots = [this.ledger()?.projectRepoPath(projectId), resolve(this.ctx.config.supervisor.workspacesDir, projectId)]
+      .filter((r): r is string => !!r && isDirectory(r))
+      .map((r) => realpathSync(r));
+    const physical = realpathOr(cwd);
+    return roots.some((root) => isWithin(physical, root));
+  }
+
   /** The appended system prompt is fixed at launch (Claude Code snapshots it per conversation) and reused on resume. */
-  private writeSystemPrompt(
-    s: SupervisedSession,
-    type: ProcessType,
-    brief: string | null,
-    actor: Actor | null,
-  ): string {
+  private writeSystemPrompt(s: SupervisedSession, type: ProcessType, actor: Actor | null): string {
     const learning = this.ctx.services.maybe('learning');
     let lessons: LessonInfo[] = [];
     try {
       lessons = (learning?.lessonsForScope({ processType: type.id }) ?? []).slice(0, MAX_LESSONS);
     } catch (err) {
       this.log.warn('lessons unavailable', { sessionId: s.sessionId, err: String(err) });
+    }
+    let gitPush: { remote: string; refs: string[] } | null = null;
+    if (!s.readOnly && type.credentialProfile) {
+      try {
+        const profile = this.credentialsFor(type.credentialProfile);
+        if (profile?.push) gitPush = { remote: GATEWAY_REMOTE, refs: this.pushableRefs(s, profile) };
+      } catch (err) {
+        this.log.warn('credential profile unavailable for the system prompt', { sessionId: s.sessionId, err: String(err) });
+      }
     }
     const text = buildSystemPrompt({
       sessionId: s.sessionId,
@@ -925,7 +1008,7 @@ export class Supervisor implements SupervisorService {
       type,
       lessons,
       playbook: this.registry.activePlaybook(type.id),
-      brief: brief ? { fromSessionId: s.parentSessionId, text: brief } : null,
+      gitPush,
     });
     writePrivate(join(this.ensureSessionDir(s.sessionId), 'system-prompt.md'), text);
     if (actor && learning && lessons.length) {
@@ -1142,6 +1225,8 @@ export class Supervisor implements SupervisorService {
       );
     const sup = this.ctx.config.supervisor;
     const cwd = s.cwd ?? this.resolveCwd(null, s.projectId);
+    // Checked again on every turn: the agent can replace its directory with a link between turns.
+    if (!this.withinProject(cwd, s.projectId)) throw cwdOutsideProject(409, s.projectId);
     const overrides = workspaceSettingsProblems(cwd);
     if (overrides.length)
       throw new HttpError(
@@ -1179,10 +1264,12 @@ export class Supervisor implements SupervisorService {
         { problems: own },
       );
     try {
-      const keyPaths = profile ? (dirs && user ? this.keyCopies(dirs, user, profile) : profile.files) : {};
-      const credentials = profile ? resolveFileRefs(profile.env, keyPaths) : null;
       // The model can print anything in its env or its key files (and the sidecar's env, while they share an OS
-      // user), and every builder can read a session's output.
+      // user), and every builder can read a session's output. So the session gets the profile's `session` part
+      // only: the credential itself never enters it (R-02). Its pushes go through the gateway (remote `aoc`),
+      // which forwards them upstream with that credential.
+      const keyPaths = profile ? (dirs && user ? this.keyCopies(dirs, user, profile.session) : profile.session.files) : {};
+      const credentials = profile ? resolveFileRefs(profile.session.env, keyPaths) : null;
       const sidecarToken = this.sidecarTokens.get(s.sessionId);
       this.secrets.set(
         s.sessionId,
@@ -1190,15 +1277,16 @@ export class Supervisor implements SupervisorService {
           token,
           ...(sidecarToken ? [sidecarToken] : []),
           ...Object.values(credentials ?? {}),
-          ...keyFileSecrets(profile?.files ?? {}),
+          ...this.profileSecrets(profile),
         ]),
       );
+      const gateway = profile?.push ? gatewayGitEnv(this.gatewayUrl(s.projectId), token) : {};
       const env = buildSessionEnv({
         source: this.sourceEnv(),
         allowlist: sup.envAllowlist,
         credentials,
         readOnly: s.readOnly,
-        aoc,
+        aoc: { ...aoc, ...gateway },
         timezone: this.ctx.config.timezone,
         isolated:
           dirs && user
@@ -1222,7 +1310,7 @@ export class Supervisor implements SupervisorService {
       const promptPath = join(dir, 'system-prompt.md');
       const systemPrompt = existsSync(promptPath)
         ? readFileSync(promptPath, 'utf8')
-        : this.writeSystemPrompt(s, type, null, null);
+        : this.writeSystemPrompt(s, type, null);
       const claudeSessionId = s.claudeSessionId ?? this.claudeIds.get(s.sessionId) ?? randomUUID();
       this.claudeIds.set(s.sessionId, claudeSessionId);
       // Claude Code names the transcript after its process cwd, which is the physical path (symlinks resolved).
@@ -1267,10 +1355,10 @@ export class Supervisor implements SupervisorService {
     }
   }
 
-  /** Private copies of the profile's key files for this turn only (removed when it ends, G-01). */
-  private keyCopies(dirs: SessionDirs, user: OsUser, profile: CredentialProfile): Record<string, string> {
+  /** Private copies of the session's key files for this turn only (removed when it ends, G-01). */
+  private keyCopies(dirs: SessionDirs, user: OsUser, creds: ProfileCredentials): Record<string, string> {
     try {
-      return materializeKeyFiles(dirs, user, profile.files);
+      return materializeKeyFiles(dirs, user, creds.files);
     } catch (err) {
       throw new HttpError(500, 'credential_profile_unavailable', (err as Error).message);
     }
@@ -1827,6 +1915,7 @@ export class Supervisor implements SupervisorService {
             ticketId: s.ticketId,
             parentSessionId: s.sessionId,
             brief: brief.text,
+            idempotencyKey: `rollover:${startedEvent.id}`,
           },
           SYSTEM,
           { reason: 'rollover', causationId: startedEvent.id, priority: true },
@@ -2055,6 +2144,104 @@ export class Supervisor implements SupervisorService {
     } catch (err) {
       throw new HttpError(500, 'credential_profile_unavailable', (err as Error).message);
     }
+  }
+
+  /** Every secret a profile holds or hands out (raw and as stream-json strings), for output redaction. */
+  private profileSecrets(profile: CredentialProfile | null): string[] {
+    if (!profile) return [];
+    return [
+      ...Object.values(resolveFileRefs(profile.env, profile.files)),
+      ...keyFileSecrets(profile.files),
+      ...Object.values(resolveFileRefs(profile.session.env, profile.session.files)),
+      ...keyFileSecrets(profile.session.files),
+    ];
+  }
+
+  // ── push gateway (R-02) ───────────────────────────────────────────────────
+
+  /** `<publicUrl>/ingest/git/<project>.git`: what remote `aoc` points at in a session's environment. */
+  private gatewayUrl(projectId: string): string {
+    return `${this.ctx.config.publicUrl.replace(/\/+$/, '')}${INGEST_GIT_PREFIX}${this.gateway.repoName(projectId)}`;
+  }
+
+  /** The branches a session may push, with its own ids filled in (shown to it in its system prompt). */
+  private pushableRefs(s: SupervisedSession, profile: CredentialProfile | null): string[] {
+    const vars = { sessionId: s.sessionId, projectId: s.projectId, threadId: s.threadId, ticketId: s.ticketId };
+    return (profile?.push?.refs ?? []).map((p) => expandPattern(p, vars)).filter((r): r is string => r !== null);
+  }
+
+  /** Who a gateway request is, now: a credentialed session, in a running turn, on its own project's repository. */
+  private pushPrincipal(sessionId: string, repoName: string): PushPrincipal {
+    const s = this.view.get(sessionId);
+    if (!s || TERMINAL_LIFECYCLES.includes(s.lifecycle))
+      return { ok: false, status: 403, reason: 'aoc: not an active managed session' };
+    if (s.readOnly) return { ok: false, status: 403, reason: 'aoc: read-only sessions cannot push' };
+    // A token alone is not enough: pushes are accepted while one of the session's turns is running.
+    const live = this.running.get(sessionId);
+    if (!live?.started || live.exit)
+      return { ok: false, status: 403, reason: 'aoc: pushes are accepted only while a turn of the session is running' };
+    if (repoName !== this.gateway.repoName(s.projectId))
+      return { ok: false, status: 404, reason: "aoc: not this session's repository" };
+    const profileName = this.registry.getType(s.processType)?.credentialProfile ?? null;
+    if (!profileName) return { ok: false, status: 403, reason: 'aoc: this process type holds no credential profile' };
+    let profile: CredentialProfile | null;
+    try {
+      profile = this.credentialsFor(profileName);
+    } catch (err) {
+      this.log.error('push gateway: credential profile unavailable', { profile: profileName, err: String(err) });
+      return { ok: false, status: 503, reason: 'aoc: the credential profile is unavailable (see the aocd log)' };
+    }
+    if (!profile) return { ok: false, status: 503, reason: 'aoc: no credential profiles are configured' };
+    return {
+      ok: true,
+      vars: { sessionId, projectId: s.projectId, threadId: s.threadId, ticketId: s.ticketId },
+      actor: { kind: 'agent', id: sessionId },
+      profileName,
+      patterns: profile.push?.refs ?? null,
+    };
+  }
+
+  /** The upstream push of a gateway request: run by aocd with the profile's credential, which no session ever holds. */
+  private async forwardPush(input: {
+    repo: string;
+    command: string[];
+    env: Record<string, string>;
+    profileName: string;
+    timeoutMs: number;
+  }): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+    const r = await this.runIsolated({
+      cwd: input.repo,
+      command: input.command,
+      credentialProfile: input.profileName,
+      timeoutMs: input.timeoutMs,
+      env: input.env,
+    });
+    // Whatever git or the remote echoed, no credential value leaves aocd.
+    const secrets = secretsToRedact(this.profileSecrets(this.credentialsFor(input.profileName)));
+    return { exitCode: r.exitCode, stdout: redactSecrets(r.stdout, secrets), stderr: redactSecrets(r.stderr, secrets) };
+  }
+
+  private recordPush(r: PushRecord): void {
+    const s = this.view.get(r.vars.sessionId);
+    if (!s) return;
+    const count = (result: 'forwarded' | 'refused' | 'failed') => r.results.filter((x) => x.result === result).length;
+    this.ctx.store.append(
+      ev({
+        type: 'session.git_pushed',
+        actor: { kind: 'agent', id: r.vars.sessionId },
+        scope: scopeOf(s),
+        meta: {
+          sessionId: s.sessionId,
+          credentialProfile: label(r.profileName),
+          refs: r.results.length,
+          forwarded: count('forwarded'),
+          refused: count('refused'),
+          failed: count('failed'),
+        },
+        payload: { results: r.results },
+        source: 'supervisor',
+      }),
+    );
   }
 
   private tokenFor(sessionId: string, actor: Actor): string {
@@ -2374,6 +2561,19 @@ function realpathOr(p: string): string {
   } catch {
     return p;
   }
+}
+
+function isWithin(inner: string, outer: string): boolean {
+  const rel = relative(outer, inner);
+  return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
+}
+
+function cwdOutsideProject(status: 409 | 422, projectId: string): HttpError {
+  return new HttpError(
+    status,
+    'cwd_outside_project',
+    `A session of project ${projectId} works in the project's repository or its directory under supervisor.workspacesDir`,
+  );
 }
 
 function isDirectory(p: string): boolean {
