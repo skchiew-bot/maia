@@ -192,6 +192,7 @@ export const REFUSAL_TEXT: Record<PromotionRefusalReason, string> = {
   gate_missing: 'no approved gate',
   tests_failed: 'acceptance tests failed',
   not_fast_forward: 'not a fast-forward of the default branch',
+  self_modification: 'touches the AOC governance core from a managed session (refused and logged outside AOC)',
 };
 
 export interface PromotionOutcome {

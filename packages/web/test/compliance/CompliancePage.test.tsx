@@ -81,6 +81,7 @@ function detail(): EvidencePackDetailDTO {
       },
       verification: {
         ok: true,
+        status: 'verified',
         chainOk: true,
         anchorsChecked: 1,
         anchorsMatched: 1,

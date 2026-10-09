@@ -88,7 +88,7 @@ export function makeTowerSnapshot(now: number = FIXTURE_NOW): TowerSnapshot {
       ago: 47 * MIN,
       costOfDelay: { score: 94, basis: 'Rollback gate · 47m · INC-0093 open, about 38 duplicate claims an hour' },
       action: {
-        kind: 'resolve_decision',
+        kind: 'resolve_decision', recommendedOptionId: null,
         label: 'Approve with passkey',
         href: focus(FIXTURE_IDS.rollback),
         decisionId: FIXTURE_IDS.rollback,
@@ -105,7 +105,7 @@ export function makeTowerSnapshot(now: number = FIXTURE_NOW): TowerSnapshot {
       ago: 65 * MIN,
       costOfDelay: { score: 81, basis: 'Go-live gate · 1h 05m · holds a UAT-signed fix for ticket #1171 (Sev 2)' },
       action: {
-        kind: 'resolve_decision',
+        kind: 'resolve_decision', recommendedOptionId: null,
         label: 'Approve with passkey',
         href: focus(FIXTURE_IDS.goLive),
         decisionId: FIXTURE_IDS.goLive,
@@ -121,7 +121,7 @@ export function makeTowerSnapshot(now: number = FIXTURE_NOW): TowerSnapshot {
       project: PROJECTS.claims,
       ago: 3 * HOUR + 30 * MIN,
       costOfDelay: { score: 66, basis: 'Break-glass follow-up · 3h 30m overdue · open audit finding until filed' },
-      action: { kind: 'open', label: 'Open record', href: '/changes/chg_0219' },
+      action: { kind: 'open', recommendedOptionId: null, label: 'Open record', href: '/changes/chg_0219' },
       chips: ['break-glass'],
     }),
     item({
@@ -133,7 +133,7 @@ export function makeTowerSnapshot(now: number = FIXTURE_NOW): TowerSnapshot {
       ago: 21 * MIN,
       costOfDelay: { score: 58, basis: 'Dead session · 21m · the INC-0093 rollback drill needs this runbook' },
       action: {
-        kind: 'restart',
+        kind: 'restart', recommendedOptionId: null,
         label: 'Restart',
         href: `/sessions/${FIXTURE_IDS.deadSession}`,
         sessionId: FIXTURE_IDS.deadSession,
@@ -148,7 +148,7 @@ export function makeTowerSnapshot(now: number = FIXTURE_NOW): TowerSnapshot {
       project: PROJECTS.claims,
       ago: 3 * DAY + 2 * HOUR,
       costOfDelay: { score: 52, basis: 'Ticket in UAT · 3d 2h · past the 2-day Sev 2 SLA, requester has not tested' },
-      action: { kind: 'open', label: 'Open ticket', href: '/tickets/tkt_1162' },
+      action: { kind: 'open', recommendedOptionId: null, label: 'Open ticket', href: '/tickets/tkt_1162' },
       chips: ['Sev 2'],
     }),
     item({
@@ -160,7 +160,7 @@ export function makeTowerSnapshot(now: number = FIXTURE_NOW): TowerSnapshot {
       ago: 34 * MIN,
       costOfDelay: { score: 47, basis: 'Agent decision · 34m · the duplicate-claims fix waits on a main-branch merge' },
       action: {
-        kind: 'resolve_decision',
+        kind: 'resolve_decision', recommendedOptionId: null,
         label: 'Approve',
         href: focus(FIXTURE_IDS.mainMerge),
         decisionId: FIXTURE_IDS.mainMerge,
@@ -176,7 +176,7 @@ export function makeTowerSnapshot(now: number = FIXTURE_NOW): TowerSnapshot {
       ago: 3 * HOUR,
       costOfDelay: { score: 43, basis: 'Credit cap · 3h · the CSAT overlay session stops at its next task boundary' },
       action: {
-        kind: 'resolve_decision',
+        kind: 'resolve_decision', recommendedOptionId: null,
         label: 'Approve top-up',
         href: focus(FIXTURE_IDS.topup),
         decisionId: FIXTURE_IDS.topup,
@@ -192,7 +192,7 @@ export function makeTowerSnapshot(now: number = FIXTURE_NOW): TowerSnapshot {
       ago: 11 * MIN,
       costOfDelay: { score: 34, basis: 'Stalled · 11m · process alive but silent at 64% context' },
       action: {
-        kind: 'nudge',
+        kind: 'nudge', recommendedOptionId: null,
         label: 'Nudge…',
         href: `/sessions/${FIXTURE_IDS.stalledSession}`,
         sessionId: FIXTURE_IDS.stalledSession,
@@ -208,7 +208,7 @@ export function makeTowerSnapshot(now: number = FIXTURE_NOW): TowerSnapshot {
       ago: 22 * MIN,
       costOfDelay: { score: 22, basis: 'Plan limit · idle 22m · resets 15:17; 47m lost to throttling today' },
       action: {
-        kind: 'open',
+        kind: 'open', recommendedOptionId: null,
         label: 'Open',
         href: `/sessions/${FIXTURE_IDS.throttledSession}`,
         sessionId: FIXTURE_IDS.throttledSession,
@@ -223,7 +223,7 @@ export function makeTowerSnapshot(now: number = FIXTURE_NOW): TowerSnapshot {
       project: null,
       ago: 4 * HOUR + 37 * MIN,
       costOfDelay: { score: 16, basis: 'FX discrepancy · 4h 37m · 8 Oct RM rollups stay provisional until reviewed' },
-      action: { kind: 'open', label: 'Review', href: focus(FIXTURE_IDS.fxReview), decisionId: FIXTURE_IDS.fxReview },
+      action: { kind: 'open', recommendedOptionId: null, label: 'Review', href: focus(FIXTURE_IDS.fxReview), decisionId: FIXTURE_IDS.fxReview },
       chips: ['re-fetched once'],
     }),
     item({
@@ -234,7 +234,7 @@ export function makeTowerSnapshot(now: number = FIXTURE_NOW): TowerSnapshot {
       project: PROJECTS.cx,
       ago: 6 * MIN,
       costOfDelay: { score: 14, basis: 'PII decision · 6m · nric-masking discovery run paused' },
-      action: { kind: 'resolve_decision', label: 'Approve', href: focus(FIXTURE_IDS.nric), decisionId: FIXTURE_IDS.nric },
+      action: { kind: 'resolve_decision', recommendedOptionId: null, label: 'Approve', href: focus(FIXTURE_IDS.nric), decisionId: FIXTURE_IDS.nric },
       chips: ['test data'],
     }),
     item({
@@ -245,7 +245,7 @@ export function makeTowerSnapshot(now: number = FIXTURE_NOW): TowerSnapshot {
       project: null,
       ago: 26 * HOUR,
       costOfDelay: { score: 8, basis: 'Lesson binding · 1d 2h · about 14 min saved per config-loader run' },
-      action: { kind: 'resolve_decision', label: 'Approve', href: focus(FIXTURE_IDS.lesson), decisionId: FIXTURE_IDS.lesson },
+      action: { kind: 'resolve_decision', recommendedOptionId: null, label: 'Approve', href: focus(FIXTURE_IDS.lesson), decisionId: FIXTURE_IDS.lesson },
       chips: ['policy'],
     }),
   ];
@@ -288,6 +288,7 @@ export function makeTowerSnapshot(now: number = FIXTURE_NOW): TowerSnapshot {
       needsYou: attention.length,
       oldestNeedsYouSince: at(3 * DAY + 2 * HOUR),
       tasksVerifiedToday: 21,
+      openPastSla: 3,
       tasksVerifiedBaseline: 17.8,
       gateLatencyP50Ms: 31 * MIN,
       gateLatencyP90Ms: HOUR + 58 * MIN,
@@ -329,6 +330,7 @@ export function makeTowerSnapshot(now: number = FIXTURE_NOW): TowerSnapshot {
       byLiveness: { waiting_on_you: 2, throttled: 1, dead: 1, stalled: 1, thinking: 1, working: 2, ended_today: 5 },
       trend,
       stallRatePct: 12.5,
+      stallRateAvg7dPct: 9.8,
       throttleLostMsToday: 47 * MIN,
       rolloverPressure: 2,
     },

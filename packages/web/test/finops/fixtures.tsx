@@ -351,7 +351,7 @@ export const RUNS: RegistryRunDTO[] = [
 export function day(over: Partial<MeteringDayDTO> & Pick<MeteringDayDTO, 'date'>): MeteringDayDTO {
   return {
     status: 'closed',
-    fx: { rate: 4.2291, status: 'live', sourceDate: over.date },
+    fx: { rate: 4.2291, status: 'live', sourceDate: over.date, session: null },
     rateCardVersion: 1,
     throttleIdleMs: 0,
     throttleHits: 0,
@@ -379,9 +379,9 @@ export function day(over: Partial<MeteringDayDTO> & Pick<MeteringDayDTO, 'date'>
 export const DAYS: MeteringDayDTO[] = [
   day({ date: '2026-09-30', rateCardVersion: 0, notionalUsd: 0, notionalRm: 0, subscriptionUsd: 0, unpriced: true, unpricedTokens: 21_400_000, unpricedModels: ['claude-opus-5-5'] }),
   day({ date: '2026-10-01' }),
-  day({ date: '2026-10-02', notionalUsd: 13.23512, notionalRm: 56.152643, fx: { rate: 4.2427, status: 'live', sourceDate: '2026-10-02' } }),
-  day({ date: '2026-10-03', notionalUsd: 0, notionalRm: 0, fx: { rate: 4.2427, status: 'inherited', sourceDate: '2026-10-02' } }),
-  day({ date: '2026-10-09', status: 'open', closedAt: null, notionalUsd: 8.466081, notionalRm: 35.806445, throttleIdleMs: 7_020_000, throttleHits: 1, fx: { rate: 4.2294, status: 'live', sourceDate: '2026-10-09' } }),
+  day({ date: '2026-10-02', notionalUsd: 13.23512, notionalRm: 56.152643, fx: { rate: 4.2427, status: 'live', sourceDate: '2026-10-02', session: null } }),
+  day({ date: '2026-10-03', notionalUsd: 0, notionalRm: 0, fx: { rate: 4.2427, status: 'inherited', sourceDate: '2026-10-02', session: null } }),
+  day({ date: '2026-10-09', status: 'open', closedAt: null, notionalUsd: 8.466081, notionalRm: 35.806445, throttleIdleMs: 7_020_000, throttleHits: 1, fx: { rate: 4.2294, status: 'live', sourceDate: '2026-10-09', session: null } }),
 ];
 
 const sum = (k: keyof MeteringDayDTO) => DAYS.reduce((a, d) => a + (d[k] as number), 0);
@@ -445,6 +445,7 @@ export const RATE_CARD = {
 
 export function fxRate(over: Partial<FxRateDTO> & Pick<FxRateDTO, 'date' | 'rate'>): FxRateDTO {
   return {
+    bnmSession: '1700',
     pair: 'USD/MYR',
     status: 'live',
     sourceDate: over.date,
@@ -478,8 +479,10 @@ export const FX_STATUS: FxStatusDTO = {
   today: '2026-10-09',
   enabled: true,
   runAtLocalTime: '18:00',
+  session: '1700',
+  retryAtLocalTimes: ['18:30', '21:00'],
   todayRecord: FX_RATES[2]!,
-  current: { rate: 4.2294, status: 'live', sourceDate: '2026-10-09' },
+  current: { rate: 4.2294, status: 'live', sourceDate: '2026-10-09', session: null },
   lastLive: { date: '2026-10-09', rate: 4.2294 },
   carryForward: { days: 0, since: null, alertAfterDays: 3, alerted: false },
   openDiscrepancy: null,
