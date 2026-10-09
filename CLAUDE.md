@@ -62,3 +62,26 @@ packages/demo        demo seeder + `live` launcher (real sessions on claude-sim;
 - No idle animation. A mark moves only when an event moved it. `prefers-reduced-motion` → instant changes.
 - Dark + light from one token set (`packages/web/src/design/tokens.css`) following the OS; no manual toggle in v1.
 - Compact, high-density, keyboard accessible, WCAG AA, works at 360px wide.
+
+## Lessons from past mistakes (binding; add one whenever a mistake is found)
+Each rule names the mistake it prevents. `node scripts/check-docs.mjs` (also in `scripts/check.sh`) enforces 1–3.
+1. **Gap list drifted from the code** (17 gaps closed in code were still "open", so work was re-planned). Name the gap
+   at the start of every commit subject that works on it (`G-nn: …`). The commit that closes a gap moves its row to a
+   Resolved table in `docs/compliance/gaps.md`, with the commit and the proving tests, and updates `traceability.md`.
+   A commit that only narrows a gap cites its short hash in the open row. Agents who may not edit those files list
+   the change in their final report; the lead applies it at merge.
+2. **Docs cited tests that had been renamed.** Cite tests as `` `path` › "exact title" `` copied from the source,
+   never from memory; rename a test → fix its citations in the same commit.
+3. **Duplicate rows from scripted table edits.** After a scripted edit of a markdown table, re-read the table.
+4. **Unverified claims written into docs.** Write only what you read in the code or saw a test prove. If unsure,
+   leave it out or mark it "not verified".
+5. **Subagent output committed as finished.** Review every line a subagent wrote (`git diff`) before committing;
+   look for text describing a state that has since changed.
+6. **Before starting a gap, check it is still open**: `git log --oneline | grep G-nn`, then read the code and run its
+   tests. The tracking docs can be stale.
+7. **Building on unobserved external behaviour** (e.g. what the real `claude` CLI does). Probe it first
+   (`docs/research/probes/`); claude-sim only models what was observed.
+8. **`claude` CLI flags such as `--allowedTools` take several values** and swallow a trailing prompt: put the
+   prompt right after `-p`.
+9. **A new reactor or job that appends events changes other tests' counts.** Run every suite that loads the
+   module (daemon, e2e included); tests that drive the mechanism by hand switch the new behaviour off explicitly.

@@ -15,6 +15,7 @@
     "typecheck": "pnpm -r --workspace-concurrency=3 typecheck",
     "build": "node scripts/build.mjs",
     "smoke": "node scripts/smoke-dist.mjs",
+    "check:docs": "node scripts/check-docs.mjs",
     "dev": "tsx packages/daemon/src/main.ts",
     "format": "prettier --write \"packages/*/src/**/*.{ts,tsx}\" \"packages/*/test/**/*.{ts,tsx}\"",
     "format:check": "prettier --check \"packages/*/src/**/*.{ts,tsx}\" \"packages/*/test/**/*.{ts,tsx}\""

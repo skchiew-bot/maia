@@ -28,6 +28,9 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+        with:
+          # scripts/check-docs.mjs reads every commit subject to find gaps closed in code but still listed open.
+          fetch-depth: 0
       # Reads the pnpm version from "packageManager" in package.json.
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
