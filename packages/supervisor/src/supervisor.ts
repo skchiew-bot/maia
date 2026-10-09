@@ -55,7 +55,7 @@ import {
   toolPolicy,
   workspaceSettingsProblems,
 } from './launch-config';
-import { processMatches, runCommand, signalProcess, signalTree } from './process-utils';
+import { killProcessGroup, processMatches, runCommand, signalProcess, signalTree } from './process-utils';
 import { SupervisorView, TERMINAL_LIFECYCLES, type SupervisedSession } from './projection';
 import {
   CONTINUE_TEXT,
@@ -1126,6 +1126,9 @@ export class Supervisor implements SupervisorService {
     if (live.settled) return;
     live.settled = true;
     if (live.killTimer) clearTimeout(live.killTimer);
+    // claude has exited. Anything the turn backgrounded (`cmd &`, nohup) still holds the session env, credentials
+    // included, and would act outside any hook: it ends with the turn.
+    if (live.pid !== null) killProcessGroup(live.pid);
     if (live.stdoutRest) this.onStdoutLine(live, live.stdoutRest);
     if (live.stderrRest) this.onStderrLine(live, live.stderrRest);
     live.stdoutRest = live.stderrRest = '';

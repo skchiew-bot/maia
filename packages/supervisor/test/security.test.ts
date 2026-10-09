@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -53,6 +53,29 @@ describe('managed turns never start with workspace settings that subvert AOC (§
     writeFileSync(join(cwd, '.claude', 'settings.local.json'), JSON.stringify({ disableAllHooks: true }));
     await expect(h.sup.nudge(id, 'carry on', h.ownerActor)).rejects.toMatchObject({ code: 'workspace_settings_override' });
     expect(h.callsFor(id)).toHaveLength(1);
+  });
+});
+
+describe('a turn leaves nothing running behind it', () => {
+  it("ends the turn's background processes with the turn (they hold the session env and act outside any hook)", async () => {
+    const hh = (h = await createHarness());
+    const pidfile = join(hh.root, 'background.pid');
+    const id = await hh.launch(`[[fake:background|pidfile=${pidfile}]] start the dev server`);
+    await hh.waitLifecycle(id, 'idle');
+    const pid = Number(readFileSync(pidfile, 'utf8'));
+    const alive = () => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    try {
+      await hh.waitFor(() => !alive(), 'the background process to be gone', 3000);
+    } finally {
+      if (alive()) process.kill(pid, 'SIGKILL');
+    }
   });
 });
 
