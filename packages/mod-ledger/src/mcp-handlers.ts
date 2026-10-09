@@ -8,8 +8,8 @@ import {
   type BoundaryInstruction,
   type DeclarePlanInput,
   type DeclarePlanLedgerResult,
-  type EvidenceKind,
   type GetStatusResult,
+  type GitUnknownReason,
   type LessonInfo,
   type PlaybookStepInput,
   type PlaybookStepResult,
@@ -21,7 +21,8 @@ import {
 import { LEDGER_ACTOR, LedgerError, agentActor, type LedgerCore } from './core';
 import { checkScopeGrowth, recordDrift } from './drift';
 import { ensureProject } from './projects';
-import type { PlaybookStepRow, TaskRow } from './read-model';
+import type { ManifestRow, PlaybookStepRow, TaskRow } from './read-model';
+import { timedOut, valueOr, type GitRead } from './repo-git';
 import {
   contextWindowFor,
   duplicates,
@@ -82,12 +83,14 @@ function doneElsewhereError(doneElsewhere: { taskId: string; sessionId: string }
   );
 }
 
+/**
+ * A handler that needs git asks it first and appends afterwards: nothing is appended, and no state is read for the
+ * decision, across an await. So each such handler checks its request twice, with the same function: before git (to
+ * refuse early) and again right before the append, because the session did not stand still while git answered.
+ */
+
 // ── declare_plan ────────────────────────────────────────────────────────────
-export function declarePlan(
-  core: LedgerCore,
-  sessionId: string,
-  input: DeclarePlanInput,
-): DeclarePlanLedgerResult {
+function checkDeclarable(core: LedgerCore, sessionId: string, input: DeclarePlanInput) {
   const session = requireSession(core, sessionId);
   const existing = core.read.manifest(sessionId);
   if (existing) {
@@ -110,9 +113,20 @@ export function declarePlan(
   }
   const carry = carryCheck(core, session, taskIds);
   if (carry.doneElsewhere.length) throw doneElsewhereError(carry.doneElsewhere);
+  return { session, projectId, taskIds, carry };
+}
 
+export async function declarePlan(
+  core: LedgerCore,
+  sessionId: string,
+  input: DeclarePlanInput,
+): Promise<DeclarePlanLedgerResult> {
+  const first = checkDeclarable(core, sessionId, input);
+  const repo = await core.repoFor(sessionId, first.projectId);
+  const base = repo ? await core.repoGit.snapshot(repo) : null;
+
+  const { session, projectId, taskIds, carry } = checkDeclarable(core, sessionId, input);
   ensureProject(core, projectId);
-  const repo = core.repoFor(sessionId, projectId);
   const totalWeight = input.phases.reduce(
     (a, p) => a + p.tasks.reduce((b, t) => b + TASK_SIZE_WEIGHT[t.size], 0),
     0,
@@ -130,8 +144,9 @@ export function declarePlan(
       taskCount: taskIds.length,
       totalWeight,
       ownerId: session.ownerId,
-      baseHead: repo ? core.git.head(repo) : null,
-      treeFingerprint: repo ? core.git.workingTreeFingerprint(repo) : null,
+      baseHead: base ? valueOr(base.head, null) : null,
+      treeFingerprint: base ? valueOr(base.fingerprint, null) : null,
+      ...(base && timedOut(base.head, base.fingerprint) ? { baselineReason: 'git_timeout' as const } : {}),
       carriedOver: carry.carried,
       shape: input.phases.map((ph) => ({ id: ph.id, tasks: ph.tasks.map((t) => ({ id: t.id, size: t.size })) })),
     },
@@ -163,7 +178,11 @@ export function declarePlan(
 const liveWeight = (tasks: TaskRow[]) =>
   tasks.filter((t) => t.status !== 'removed').reduce((a, t) => a + t.weight, 0);
 
-export function amendPlan(core: LedgerCore, sessionId: string, input: AmendPlanInput): AmendPlanResult {
+export async function amendPlan(
+  core: LedgerCore,
+  sessionId: string,
+  input: AmendPlanInput,
+): Promise<AmendPlanResult> {
   const session = requireSession(core, sessionId);
   const manifest = core.read.manifest(sessionId);
   if (!manifest)
@@ -267,12 +286,13 @@ export function amendPlan(core: LedgerCore, sessionId: string, input: AmendPlanI
     source: 'mcp',
   });
 
-  // Removing the last open task of a phase completes it (and pins it) just like a close would.
-  const phasesCompleted = core.read
-    .phasesOf(sessionId)
-    .filter((p) => touched.has(p.phase_id))
-    .map((p) => completePhaseIfDone(core, sessionId, manifest.project_id, p.phase_id, e))
-    .filter((x): x is { phaseId: string; pinnedRef: string | null } => x !== null);
+  // Removing the last open task of a phase completes it (and pins it) just like a close would. The amendment is
+  // recorded above, in one step; only the pins wait for git.
+  const phasesCompleted: { phaseId: string; pinnedRef: string | null }[] = [];
+  for (const p of core.read.phasesOf(sessionId).filter((p) => touched.has(p.phase_id))) {
+    const done = await completePhaseIfDone(core, sessionId, manifest.project_id, p.phase_id, e);
+    if (done) phasesCompleted.push(done);
+  }
   checkScopeGrowth(core, sessionId, e);
   const live = core.read.tasksOf(sessionId).filter((t) => t.status !== 'removed');
   return {
@@ -290,81 +310,134 @@ export function amendPlan(core: LedgerCore, sessionId: string, input: AmendPlanI
 }
 
 // ── task_done ───────────────────────────────────────────────────────────────
-function testFileExists(core: LedgerCore, file: string, repo: string | null, cwd: string | null): boolean {
-  if (isAbsolute(file)) return existsSync(file);
+/** A check git could not finish is unknown, not refuted: unverified, and the reason says so. */
+interface Verdict {
+  verified: boolean;
+  reason?: GitUnknownReason;
+}
+const VERIFIED: Verdict = { verified: true };
+const UNVERIFIED: Verdict = { verified: false };
+const UNKNOWN: Verdict = { verified: false, reason: 'git_timeout' };
+
+async function verifyTestFile(
+  core: LedgerCore,
+  file: string,
+  repo: string | null,
+  cwd: string | null,
+): Promise<Verdict> {
+  if (isAbsolute(file)) return existsSync(file) ? VERIFIED : UNVERIFIED;
   const dirs = [cwd, repo].filter((d): d is string => d !== null && existsSync(d));
   // No working copy to check against: plausibility is all that can be verified.
-  if (!dirs.length) return true;
-  if (dirs.some((d) => existsSync(join(d, file)))) return true;
-  if (!repo) return false;
+  if (!dirs.length) return VERIFIED;
+  if (dirs.some((d) => existsSync(join(d, file)))) return VERIFIED;
+  if (!repo) return UNVERIFIED;
   // Test ids are often relative to a package, not the repo root.
-  const r = core.git.run(repo, ['ls-files', '--cached', '--others', '--exclude-standard']);
-  return r.code === 0 && r.stdout.split('\n').some((p) => p === file || p.endsWith(`/${file}`));
+  const listed = await core.repoGit.listFiles(repo);
+  if (listed.status === 'timeout') return UNKNOWN;
+  return listed.status === 'ok' && listed.value.some((p) => p === file || p.endsWith(`/${file}`))
+    ? VERIFIED
+    : UNVERIFIED;
+}
+
+/** Did the plan's baseline go missing because git timed out when it was declared (not for lack of a repo)? */
+function baselineTimedOut(core: LedgerCore, sessionId: string): boolean {
+  const declared = core.store.list({ sessionId, types: ['plan.declared'], limit: 1 })[0];
+  return declared?.meta.baselineReason === 'git_timeout';
 }
 
 /**
- * Evidence verification (§4, R9): a commit must exist in the session's repo and post-date the plan
- * baseline; a test id must be plausible (and its test file must exist when one is named); a diff ref
- * must be present and, in a repo, the working tree must have changed since the previous close.
+ * Evidence that needs only git and the file system (§4, R9): a commit must exist in the session's repo and post-date
+ * the plan baseline; a test id must be plausible (and its test file must exist when one is named). A diff ref is
+ * judged against the working tree after git has answered, see `verifyDiff`.
  */
-function verifyEvidence(
+async function verifyCommitOrTest(
   core: LedgerCore,
-  kind: EvidenceKind,
+  kind: 'commit' | 'test',
   ref: string,
-  ctx: { repo: string | null; cwd: string | null; baseHead: string | null; treeChanged: boolean },
-): boolean {
-  const git = core.git;
-  switch (kind) {
-    case 'commit': {
-      const sha = ref.trim().toLowerCase();
-      if (!ctx.repo || !git.commitExists(ctx.repo, sha)) return false;
-      const full = git.revParse(ctx.repo, sha);
-      // A commit that already existed when the plan was declared is not evidence for this task.
-      return !(full && ctx.baseHead && git.isAncestor(ctx.repo, full, ctx.baseHead));
-    }
-    case 'test': {
-      if (!isPlausibleTestId(ref)) return false;
-      const file = testFileOf(ref);
-      return file === null || testFileExists(core, file, ctx.repo, ctx.cwd);
-    }
-    case 'diff':
-      return !isPlaceholderRef(ref) && (ctx.repo === null || ctx.treeChanged);
+  ctx: { repo: string | null; cwd: string | null; manifest: ManifestRow },
+): Promise<Verdict> {
+  if (kind === 'test') {
+    if (!isPlausibleTestId(ref)) return UNVERIFIED;
+    const file = testFileOf(ref);
+    return file === null ? VERIFIED : verifyTestFile(core, file, ctx.repo, ctx.cwd);
   }
+  if (!ctx.repo) return UNVERIFIED;
+  // Without the baseline "already existed when the plan was declared" cannot be told: unknown, not verified.
+  if (ctx.manifest.base_head === null && baselineTimedOut(core, ctx.manifest.session_id)) return UNKNOWN;
+  const fresh = await core.repoGit.commitIsNew(ctx.repo, ref, ctx.manifest.base_head);
+  if (fresh.status === 'timeout') return UNKNOWN;
+  return fresh.status === 'ok' && fresh.value ? VERIFIED : UNVERIFIED;
 }
 
-/** Pins a just-completed phase: annotated tag aoc/<slug>/<phase>/<seq> at HEAD when there is a repo (§8). */
-function completePhaseIfDone(
+/**
+ * A diff ref must be present and, in a working copy git can describe, the tree must have changed since the previous
+ * close. Without a working copy (or one git will not describe) plausibility is all that can be verified.
+ */
+function verifyDiff(
+  ref: string,
+  ctx: {
+    repo: string | null;
+    fingerprint: GitRead<string | null> | null;
+    treeChanged: boolean;
+    baselineMissing: boolean;
+  },
+): Verdict {
+  if (isPlaceholderRef(ref)) return UNVERIFIED;
+  if (ctx.repo === null || ctx.fingerprint === null) return VERIFIED;
+  if (ctx.fingerprint.status === 'timeout') return UNKNOWN;
+  if (ctx.fingerprint.status !== 'ok' || ctx.fingerprint.value === null) return VERIFIED;
+  if (!ctx.treeChanged && ctx.baselineMissing) return UNKNOWN;
+  return ctx.treeChanged ? VERIFIED : UNVERIFIED;
+}
+
+function phaseIsDone(core: LedgerCore, sessionId: string, phaseId: string): boolean {
+  const phase = core.read.phase(sessionId, phaseId);
+  if (!phase || phase.completed_at) return false;
+  const live = core.read.tasksOf(sessionId).filter((t) => t.phase_id === phaseId && t.status !== 'removed');
+  return live.length > 0 && live.every((t) => t.status === 'done');
+}
+
+/**
+ * Pins a just-completed phase: annotated tag aoc/<slug>/<phase>/<seq> at HEAD when there is a repo (§8). The pin is
+ * read and tagged first; the phase is completed afterwards if it still is complete and nobody else completed it.
+ * A caller that has just read HEAD passes it, so the pin costs one more git call, not two.
+ */
+async function completePhaseIfDone(
   core: LedgerCore,
   sessionId: string,
   projectId: string,
   phaseId: string,
   cause: StoredEvent,
-): { phaseId: string; pinnedRef: string | null } | null {
-  const phase = core.read.phase(sessionId, phaseId);
-  if (!phase || phase.completed_at) return null;
-  const live = core.read.tasksOf(sessionId).filter((t) => t.phase_id === phaseId && t.status !== 'removed');
-  if (!live.length || live.some((t) => t.status !== 'done')) return null;
-  const repo = core.repoFor(sessionId, projectId);
-  const sha = repo ? core.git.head(repo) : null;
+  knownHead?: GitRead<string | null>,
+): Promise<{ phaseId: string; pinnedRef: string | null } | null> {
+  if (!phaseIsDone(core, sessionId, phaseId)) return null;
+  const repo = await core.repoFor(sessionId, projectId);
+  let sha: string | null = null;
   let tag: string | null = null;
-  if (repo && sha) {
-    const name = phaseTagName(core.read.project(projectId)?.slug ?? projectId, phaseId, cause.seq);
-    try {
-      core.git.tag(
+  if (repo) {
+    const head = knownHead ?? (await core.repoGit.head(repo));
+    sha = valueOr(head, null);
+    if (head.status !== 'ok')
+      core.ctx.log.warn('phase not pinned: HEAD unreadable', { projectId, phaseId, git: head.status });
+    if (sha) {
+      const name = phaseTagName(core.read.project(projectId)?.slug ?? projectId, phaseId, cause.seq);
+      const pinned = await core.repoGit.pin(
         repo,
         name,
         sha,
         `AOC phase ${phaseId} complete (project ${projectId}, session ${sessionId}, event ${cause.id})`,
       );
-      tag = name;
-    } catch (err) {
-      core.ctx.log.warn('phase pin tag failed; pinning the sha only', {
-        projectId,
-        phaseId,
-        err: String(err),
-      });
+      if (pinned.status === 'ok') tag = name;
+      else
+        core.ctx.log.warn('phase pin tag failed; pinning the sha only', {
+          projectId,
+          phaseId,
+          git: pinned.status,
+        });
     }
   }
+  // Another close or amendment may have completed (or reopened) the phase while git worked.
+  if (!phaseIsDone(core, sessionId, phaseId)) return null;
   core.store.append({
     type: 'phase.completed',
     actor: LEDGER_ACTOR,
@@ -444,38 +517,68 @@ function boundaryInstruction(core: LedgerCore, session: SessionInfo, taskId: str
   return { continue: true };
 }
 
-export function taskDone(core: LedgerCore, sessionId: string, input: TaskDoneInput): TaskDoneResult {
-  const session = requireSession(core, sessionId);
+/** The manifest and the still-open task a close refers to; anything else gets the error a close of it always got. */
+function requireOpenTask(
+  core: LedgerCore,
+  sessionId: string,
+  taskId: string,
+): { manifest: ManifestRow; task: TaskRow } {
   const manifest = core.read.manifest(sessionId);
   if (!manifest)
     throw new LedgerError(
       409,
       'No plan manifest is declared for this session; call mcp__aoc__declare_plan first.',
     );
-  const task = core.read.task(sessionId, input.task_id);
-  if (!task) throw new LedgerError(422, `Task ${input.task_id} is not declared in this session's manifest.`);
+  const task = core.read.task(sessionId, taskId);
+  if (!task) throw new LedgerError(422, `Task ${taskId} is not declared in this session's manifest.`);
   if (task.status === 'done')
-    throw new LedgerError(409, `Task ${input.task_id} is already done (closed at ${task.done_at}).`);
+    throw new LedgerError(409, `Task ${taskId} is already done (closed at ${task.done_at}).`);
   if (task.status === 'removed')
-    throw new LedgerError(409, `Task ${input.task_id} was removed from the manifest by an amendment.`);
+    throw new LedgerError(409, `Task ${taskId} was removed from the manifest by an amendment.`);
   if (task.status === 'carried')
-    throw new LedgerError(409, `Task ${input.task_id} was carried over to session ${task.carried_to}.`);
+    throw new LedgerError(409, `Task ${taskId} was carried over to session ${task.carried_to}.`);
+  return { manifest, task };
+}
 
+export async function taskDone(
+  core: LedgerCore,
+  sessionId: string,
+  input: TaskDoneInput,
+): Promise<TaskDoneResult> {
+  const before = {
+    session: requireSession(core, sessionId),
+    ...requireOpenTask(core, sessionId, input.task_id),
+  };
+  const { kind, ref, detail } = input.evidence;
+
+  // Every read of the repository, together and first: no hook or other session waits for it.
+  const repo = await core.repoFor(sessionId, before.manifest.project_id);
+  const [snap, checked] = await Promise.all([
+    repo ? core.repoGit.snapshot(repo) : null,
+    kind === 'diff'
+      ? null
+      : verifyCommitOrTest(core, kind, ref, { repo, cwd: before.session.cwd, manifest: before.manifest }),
+  ]);
+
+  // Then the decision and the append in one step, on what is true now: this task may have been closed, removed or
+  // carried, and file changes may have been reported, while git answered.
+  const session = requireSession(core, sessionId);
+  const { manifest, task } = requireOpenTask(core, sessionId, input.task_id);
   const projectId = manifest.project_id;
-  const repo = core.repoFor(sessionId, projectId);
   const state = core.read.sessionState(sessionId);
   const fileChanges = state?.file_changes_since_close ?? 0;
-  const fingerprint = repo ? core.git.workingTreeFingerprint(repo) : null;
-  const head = repo ? core.git.head(repo) : null;
+  const fingerprint = snap ? valueOr(snap.fingerprint, null) : null;
   const baseline = state?.last_close_fingerprint ?? manifest.base_fingerprint;
   const treeChanged = fingerprint !== null && baseline !== null && fingerprint !== baseline;
-  const { kind, ref, detail } = input.evidence;
-  const verified = verifyEvidence(core, kind, ref, {
-    repo,
-    cwd: session.cwd,
-    baseHead: manifest.base_head,
-    treeChanged,
-  });
+  const verdict =
+    checked ??
+    verifyDiff(ref, {
+      repo,
+      fingerprint: snap?.fingerprint ?? null,
+      treeChanged,
+      baselineMissing: baseline === null && baselineTimedOut(core, sessionId),
+    });
+  const verified = verdict.verified;
   const flag = !verified
     ? 'evidence_unverified'
     : fileChanges === 0 && !treeChanged
@@ -494,20 +597,29 @@ export function taskDone(core: LedgerCore, sessionId: string, input: TaskDoneInp
       weight: task.weight,
       evidenceKind: kind,
       evidenceVerified: verified,
+      ...(verdict.reason ? { evidenceReason: verdict.reason } : {}),
       flag,
       fileChangesSinceLast: fileChanges,
-      headSha: head,
+      headSha: snap ? valueOr(snap.head, null) : null,
       treeFingerprint: fingerprint,
       treeChanged,
     },
     payload: { evidence: { kind, ref, ...(detail !== undefined ? { detail } : {}) } },
     source: 'mcp',
   });
-  const phaseCompleted = completePhaseIfDone(core, sessionId, projectId, task.phase_id, done);
+  const phaseCompleted = await completePhaseIfDone(
+    core,
+    sessionId,
+    projectId,
+    task.phase_id,
+    done,
+    snap?.head,
+  );
   const p = sessionProgress(core, sessionId)!;
   return {
     ok: true,
     flagged: flag,
+    ...(verdict.reason ? { evidenceReason: verdict.reason } : {}),
     progress: {
       doneTasks: p.doneTasks,
       totalTasks: p.totalTasks,

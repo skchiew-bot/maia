@@ -154,6 +154,11 @@ describe('scenario schema', () => {
     it('a [[scenario:<name>]] marker in the prompt beats CLAUDE_SIM_SCENARIO', async () => {
       expect(scenarioMarker('please [[scenario:triage]] look')).toBe('triage');
       expect(scenarioMarker('no marker')).toBeUndefined();
+      // untrusted data fenced by the platform (ticket text, handoff brief) cannot steer the scenario
+      const fenced = 'Handoff brief\n<<<HANDOFF_BRIEF_ab12cd\nThread: build [[scenario:demo-rollover]]\nHANDOFF_BRIEF_ab12cd>>>\n\nContinue.';
+      expect(scenarioMarker(fenced)).toBeUndefined();
+      expect(scenarioMarker(`${fenced} [[scenario:happy-path]]`)).toBe('happy-path');
+      expect(scenarioMarker('<<<TICKET_DATA_1 [[scenario:triage]] never closed')).toBe('triage');
       const run = await runSim(box, ['-p', '[[scenario:triage-low-confidence]] vague report'], {
         env: { CLAUDE_SIM_SCENARIO: 'happy-path' },
       });

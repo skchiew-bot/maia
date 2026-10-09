@@ -7,7 +7,7 @@ const pkg = (name: string) => `${JSON.stringify({ name, private: true, scripts: 
 const stub = (what: string) => `// ${what}: not written yet.\nexport {};\n`;
 const doc = (title: string) => `# ${title}\n\n_Not written yet._\n`;
 
-export const PROJECT_FILES: Record<'cx-copilot' | 'claims-bot' | 'aoc-platform', Record<string, string>> = {
+const STUBS: Record<'cx-copilot' | 'claims-bot' | 'aoc-platform', Record<string, string>> = {
   'cx-copilot': {
     'README.md': '# CX Copilot\n\nAgent-assist copilot for the Daythree contact centre: live intent detection, reply suggestions and CSAT signals on the agent desktop.\n',
     'package.json': pkg('cx-copilot'),
@@ -65,4 +65,49 @@ export const PROJECT_FILES: Record<'cx-copilot' | 'claims-bot' | 'aoc-platform',
     'src/export/stream.ts': stub('Streamed CSV export'),
     'src/export/button.tsx': stub('Export button'),
   },
+};
+
+/**
+ * The acceptance test every demo repository carries from its first commit: a real `node --test` suite with four
+ * checks of the repository's own files. Rollback verification (§8) runs it in a fresh checkout of the target and the
+ * change records name it as their acceptance test, so a verification report shows genuine pass counts.
+ */
+export const ACCEPTANCE_COMMAND = 'node --test test/acceptance.test.mjs';
+
+const acceptanceTest = (name: string) => `import assert from 'node:assert/strict';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { join } from 'node:path';
+import { test } from 'node:test';
+
+const root = new URL('..', import.meta.url).pathname;
+const read = (path) => readFileSync(join(root, path), 'utf8');
+const walk = (dir) =>
+  readdirSync(join(root, dir)).flatMap((entry) => {
+    const path = join(dir, entry);
+    return statSync(join(root, path)).isDirectory() ? walk(path) : [path];
+  });
+
+test('package.json names the project and stays private', () => {
+  const pkg = JSON.parse(read('package.json'));
+  assert.equal(pkg.name, '${name}');
+  assert.equal(pkg.private, true);
+});
+
+test('the README introduces the project', () => {
+  assert.match(read('README.md'), /^# /);
+});
+
+test('the entry point exports something', () => {
+  assert.match(read('src/index.ts'), /\\bexport\\b/);
+});
+
+test('no source file carries a merge-conflict marker', () => {
+  for (const file of walk('src')) assert.doesNotMatch(read(file), /^(<{7}|>{7}) /m, file);
+});
+`;
+
+export const PROJECT_FILES: Record<'cx-copilot' | 'claims-bot' | 'aoc-platform', Record<string, string>> = {
+  'cx-copilot': { ...STUBS['cx-copilot'], 'test/acceptance.test.mjs': acceptanceTest('cx-copilot') },
+  'claims-bot': { ...STUBS['claims-bot'], 'test/acceptance.test.mjs': acceptanceTest('claims-bot') },
+  'aoc-platform': { ...STUBS['aoc-platform'], 'test/acceptance.test.mjs': acceptanceTest('aoc-platform') },
 };

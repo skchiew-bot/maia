@@ -195,6 +195,31 @@ describe('Audit', { timeout: 30_000 }, () => {
     expect(within(drawer).getByRole('region', { name: 'Chain' })).toBeInTheDocument();
   });
 
+  it('filters the explorer to one session from the Session page link (?sessionId=) and clears it with the field', async () => {
+    const session = 'ses_01M4FAFKJ0HS6W702V2VZ0N2MV';
+    const calls = installApi(routes());
+    const user = userEvent.setup({ delay: null });
+    renderPage(<AuditPage />, { path: `/audit?sessionId=${session}&range=all`, route: '/audit' });
+    await screen.findByRole('table', { name: 'Audit events, newest first' });
+
+    const field = screen.getByRole('textbox', { name: 'Session or ticket id' });
+    expect(field).toHaveValue(session);
+    expect(
+      calls.some((c) => c.path === '/api/audit/events' && c.query.get('sessionId') === session),
+    ).toBe(true);
+    // The link asks for the whole log, so a session older than the 7-day default is not silently cut off.
+    expect(screen.getByRole('radio', { name: 'All' })).toBeChecked();
+
+    await user.clear(field);
+    await waitFor(() => expect(location()).toBe('/audit?range=all'), { timeout: 3000 });
+    await waitFor(() =>
+      expect(
+        calls.filter((c) => c.path === '/api/audit/events' && !c.query.has('type') && !c.query.has('sessionId'))
+          .length,
+      ).toBeGreaterThan(0),
+    );
+  });
+
   it('lets only an Approver crypto-shred, and only against a resolved decision', async () => {
     const calls = installApi(
       routes({

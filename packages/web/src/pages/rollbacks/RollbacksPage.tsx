@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link, useLocation, useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import type { BreakglassDTO, PromotionDTO, RollbackDTO } from '@aoc/contracts';
 import { useAuth } from '../../api/auth';
 import type { StreamMessage } from '../../api/stream';
@@ -16,6 +16,7 @@ import {
 } from '../../components';
 import { useNow } from '../../lib/clock';
 import { formatAge, formatInteger, toEpoch } from '../../lib/format';
+import { useSectionScroll } from '../../lib/sectionScroll';
 import { PeopleProvider } from '../audit/people';
 import { can } from '../audit/permissions';
 import { LoadFailed, Skeleton } from '../audit/Skeleton';
@@ -49,7 +50,6 @@ function RollbacksView() {
   const { user } = useAuth();
   const now = useNow();
   const projects = useProjects();
-  const location = useLocation();
   const [params, setParams] = useSearchParams();
   const rollbacks = useResource<{ items: RollbackDTO[] }>('/api/rollbacks', {
     query: { limit: 200 },
@@ -84,11 +84,7 @@ function RollbacksView() {
     setParams(next, { replace: true });
   }, [target, canRequest, params, projectFilter, setParams]);
 
-  const bgLoaded = breakglass.data !== undefined;
-  useEffect(() => {
-    if (location.hash === '#breakglass' && bgLoaded)
-      document.getElementById('breakglass')?.scrollIntoView({ block: 'start' });
-  }, [location.hash, bgLoaded]);
+  useSectionScroll(breakglass);
 
   const inProject = useCallback(
     <T extends { projectId: string }>(items: readonly T[] | undefined) =>
@@ -331,7 +327,7 @@ function RollbacksView() {
           info="No orphan commits reach main (§14): each promotion traces every commit through an approved change record or fix plan, a UAT sign-off and a gate, or it is refused. Break-glass is the sole exception and says so. Select a promotion to see each commit's trace."
         >
           {promotions.data ? (
-            <PromotionsTable promotions={pr} projectName={projects.nameOf} />
+            <PromotionsTable promotions={pr} projectName={projects.nameOf} focusId={params.get('promotionId') ?? undefined} />
           ) : promotions.error ? (
             <LoadFailed what="promotions" error={promotions.error} onRetry={promotions.reload} />
           ) : (

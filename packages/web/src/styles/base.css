@@ -153,9 +153,27 @@ table {
   color: var(--accent-hover);
 }
 
-.is-busy {
-  opacity: 0.55;
-  transition: opacity var(--dur);
+/*
+ * Busy: content being refreshed stays fully legible (dimming it took text below AA). The state is a hairline along the
+ * element's top edge, with aria-busy on the element for assistive tech. It appears and clears with the refetch, so
+ * nothing animates at rest. The containers that take `.is-busy` (.aoc-dt, .aoc-resource, .aoc-widget__body) are
+ * positioned, so the line sits on them.
+ */
+.is-busy::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 2;
+  height: 2px;
+  background: var(--accent);
+  pointer-events: none;
+}
+
+@media (forced-colors: active) {
+  .is-busy::before {
+    forced-color-adjust: none;
+    background: Highlight;
+  }
 }
 
 /* Semantic tones. --tone-ink mixes toward primary text so tinted labels clear AA in both themes. */

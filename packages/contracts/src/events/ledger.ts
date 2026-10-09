@@ -16,6 +16,13 @@ const amendShape = z.object({
   resize: z.array(z.object({ taskId: zId, size: z.enum(TASK_SIZES) })).optional(),
 });
 
+/**
+ * Why a git-backed check could not be completed (as opposed to completed with a "no"): the answer is unknown, so
+ * the evidence is recorded unverified with the reason, never as verified.
+ */
+export const GIT_UNKNOWN_REASONS = ['git_timeout'] as const;
+export type GitUnknownReason = (typeof GIT_UNKNOWN_REASONS)[number];
+
 export const LEDGER_EVENTS = [
   defineEvent({
     type: 'project.created',
@@ -75,6 +82,8 @@ export const LEDGER_EVENTS = [
       /** HEAD and working-tree fingerprint at declaration: baseline for evidence and file-change checks. */
       baseHead: zSha.nullable().optional(),
       treeFingerprint: zHash.nullable().optional(),
+      /** Set when the baseline above is missing because git did not answer in time (not because there is no repository). */
+      baselineReason: z.enum(GIT_UNKNOWN_REASONS).optional(),
       /** Open tasks of a predecessor writer session in the same thread taken over by re-declaring their ids (rollover). */
       carriedOver: z.number().int().min(0).optional(),
       shape: planShape.optional(),
@@ -117,6 +126,8 @@ export const LEDGER_EVENTS = [
       weight: zNonNeg,
       evidenceKind: z.enum(EVIDENCE_KINDS),
       evidenceVerified: z.boolean(),
+      /** Set when `evidenceVerified` is false because git did not answer in time: unknown, not refuted. */
+      evidenceReason: z.enum(GIT_UNKNOWN_REASONS).optional(),
       flag: z.enum(['no_file_change', 'evidence_unverified']).nullable(),
       fileChangesSinceLast: z.number().int().min(0),
       /** Working-tree state at close (baseline for the next close's file-change check). */

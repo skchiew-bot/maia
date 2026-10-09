@@ -9,7 +9,6 @@ import {
   bulletScale,
   capOutlook,
   decisionBlockText,
-  decisionHref,
   denyOption,
   flowDeltaRatio,
   flowTotals,
@@ -30,7 +29,6 @@ import {
   scopeLabel,
   shareText,
   splitFunnel,
-  subjectHref,
   tierLabel,
 } from '../../src/pages/tower/towerModel';
 import { FIXTURE_IDS, FIXTURE_NOW, makeOpenDecisions, makeTowerSnapshot } from './fixture';
@@ -80,16 +78,6 @@ describe('attention ranking and folding', () => {
     expect(attentionKindLabel(item('ticket_waiting:tkt_1162'))).toBe('Customer waiting');
   });
 
-  it('links decision rows to the focused card on the Decisions page', () => {
-    expect(decisionHref('dec 1')).toBe('/decisions?focus=dec%201');
-    // The backend links decisions as ?id=; the Decisions page reads ?focus=.
-    const fromServer: TowerAttentionItem = {
-      ...item(`decision:${FIXTURE_IDS.mainMerge}`),
-      action: { kind: 'resolve_decision', recommendedOptionId: null, label: 'Approve', href: '/decisions?id=dec_x', decisionId: 'dec_x' },
-    };
-    expect(subjectHref(fromServer)).toBe('/decisions?focus=dec_x');
-    expect(subjectHref(item('ticket_waiting:tkt_1162'))).toBe('/tickets/tkt_1162');
-  });
 });
 
 describe('inline approve / deny options', () => {

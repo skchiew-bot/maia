@@ -117,6 +117,7 @@
   min-height: 24px;
 }
 .aoc-widget__body {
+  position: relative; /* the busy hairline sits on its top edge */
   flex: 1;
   min-width: 0;
   padding: var(--sp-3) var(--sp-4) var(--sp-4);
@@ -620,6 +621,10 @@
 }
 .aoc-stack--6 {
   gap: var(--sp-6);
+}
+/* Positioned so the busy hairline (base.css `.is-busy::before`) sits on its top edge. */
+.aoc-resource {
+  position: relative;
 }
 .aoc-resource > .aoc-alert {
   margin-bottom: var(--sp-3);

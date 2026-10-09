@@ -26,11 +26,13 @@ import { Widget, WidgetGrid } from '../../components/Widget';
 import { useClock, useNow } from '../../lib/clock';
 import { cx } from '../../lib/dom';
 import { formatAge, formatDateTime, formatInteger, formatTokens } from '../../lib/format';
+import { decisionHref } from '../../lib/links';
+import { can } from '../audit/permissions';
 import { usePasskeys, useDecisionActions } from '../decisions/actions';
 import { RecommendationBox } from '../decisions/DecisionDetail';
 import { useDirectory, type Directory } from '../decisions/directory';
 import { isDecisionEvent } from '../decisions/inbox';
-import { KIND_LABEL, agingOf, methodLabel, outcomeLabel, requesterOf, shortId } from '../decisions/model';
+import { KIND_LABEL, agingOf, assuranceLabel, outcomeLabel, requesterOf, shortId } from '../decisions/model';
 import { AgingBadge, KindLine } from '../decisions/parts';
 import { ResolvePanel } from '../decisions/ResolvePanel';
 import '../decisions/decisions.css';
@@ -71,7 +73,7 @@ function StageSpans({ spans, now }: { spans: readonly StageSpan[]; now: number }
     .map((s) => `${STAGE_LABEL[s.stage]} ${formatAge(s.end - s.start)}${s.current ? ' so far' : ''}`)
     .join(', ');
   return (
-    <figure
+    <div
       className="tkt-spans"
       aria-label={`Time by stage: ${summary}. Lead time ${formatAge(total)}.`}
       role="img"
@@ -102,10 +104,10 @@ function StageSpans({ spans, now }: { spans: readonly StageSpan[]; now: number }
           </li>
         ))}
       </ol>
-      <figcaption className="aoc-sr-only">
+      <span className="aoc-sr-only">
         Lead time {formatAge(total)} as of {formatDateTime(now)}
-      </figcaption>
-    </figure>
+      </span>
+    </div>
   );
 }
 
@@ -129,7 +131,7 @@ function OpenDecision({
         <KindLine card={card}>
           <AgingBadge aging={agingOf(card, now)} />
         </KindLine>
-        <Link to={`/decisions?focus=${encodeURIComponent(card.id)}`} className="tkt-links__sub">
+        <Link to={decisionHref(card.id)} className="tkt-links__sub">
           Open in Decisions
         </Link>
       </div>
@@ -165,6 +167,9 @@ function CloseDialog({
   onClosed: () => void;
 }) {
   const toast = useToast();
+  const { user } = useAuth();
+  // "Withdrawn" speaks for the requester: the daemon records it only for an Approver (ticket.close_any).
+  const resolutions = CLOSE_RESOLUTIONS.filter((r) => r !== 'withdrawn' || can(user, 'ticket.close_any'));
   const cancelRef = useRef<HTMLButtonElement>(null);
   const [resolution, setResolution] = useState<CloseResolution>('duplicate');
   const [note, setNote] = useState('');
@@ -223,7 +228,7 @@ function CloseDialog({
           label="Resolution"
           value={resolution}
           onChange={(e) => setResolution(e.target.value as CloseResolution)}
-          options={CLOSE_RESOLUTIONS.map((r) => ({ value: r, label: RESOLUTION_LABEL[r]! }))}
+          options={resolutions.map((r) => ({ value: r, label: RESOLUTION_LABEL[r]! }))}
         />
         <TextArea
           label="Note (optional)"
@@ -683,11 +688,11 @@ export default function TicketPage() {
             {[...openCards, ...closedCards].map((d) => (
               <li key={d.id}>
                 <Icon name="decisions" size={12} />
-                <Link to={`/decisions?focus=${encodeURIComponent(d.id)}`}>{KIND_LABEL[d.kind]}</Link>
+                <Link to={decisionHref(d.id)}>{KIND_LABEL[d.kind]}</Link>
                 <span className="tkt-links__sub">
                   {d.status === 'open'
                     ? `open · waiting ${formatAge(now - Date.parse(d.createdAt))}`
-                    : `${outcomeLabel(d)}${d.resolution ? ` · ${requesterOf(d.resolution.resolvedBy, directory).name} · ${methodLabel(d.resolution)}` : ''}`}
+                    : `${outcomeLabel(d)}${d.resolution ? ` · ${requesterOf(d.resolution.resolvedBy, directory).name} · ${assuranceLabel(d.resolution)}` : ''}`}
                 </span>
               </li>
             ))}

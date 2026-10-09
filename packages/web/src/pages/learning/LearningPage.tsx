@@ -7,7 +7,7 @@ import type {
   RecurrenceTrendDTO,
   RootCauseClassDTO,
 } from '@aoc/contracts';
-import { useAuth, useResource, type StreamMessage } from '../../api';
+import { combine, useAuth, useResource, type StreamMessage } from '../../api';
 import { FunnelBar, RecurrenceTrend } from '../../charts';
 import {
   Button,
@@ -29,13 +29,13 @@ import {
   useNow,
   type DataTableColumn,
 } from '../../components';
+import { useSectionScroll } from '../../lib/sectionScroll';
 import { AssignRootCauseDialog } from './AssignRootCauseDialog';
 import { DimensionBars } from './DimensionBars';
 import { LifecycleSteps } from './LifecycleSteps';
 import { ModelDimensionList } from './ModelDimension';
 import { OccurrencesPanel } from './OccurrencesPanel';
 import { OffenceDrawer } from './OffenceDrawer';
-import { combine, useSectionScroll } from './resources';
 import { TransitionDialog } from './TransitionDialog';
 import {
   DIMENSION_META,

@@ -17,6 +17,7 @@ export type GovernancePermission = Extract<
   | 'evidence.generate'
   | 'mapping.stamp'
   | 'gate.approve'
+  | 'ticket.close_any'
 >;
 
 const OPERATOR: ReadonlySet<GovernancePermission> = new Set([
@@ -28,7 +29,11 @@ const OPERATOR: ReadonlySet<GovernancePermission> = new Set([
   'audit.verify',
   'evidence.generate',
 ]);
-const APPROVER_ONLY: ReadonlySet<GovernancePermission> = new Set(['audit.erase', 'gate.approve']);
+const APPROVER_ONLY: ReadonlySet<GovernancePermission> = new Set([
+  'audit.erase',
+  'gate.approve',
+  'ticket.close_any',
+]);
 
 export function can(user: AuthUser | null | undefined, perm: GovernancePermission): boolean {
   if (!user || user.role === 'requester') return false;
