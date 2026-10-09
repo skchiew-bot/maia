@@ -12,17 +12,31 @@ import {
   type SpoolFlushResponse,
   type SpoolItem,
 } from '@aoc/contracts';
-import { HttpError, readJson, requireIngest, type App, type Ctx, type ModuleContext } from '@aoc/kernel';
+import { HttpError, readJson, requireIngest, sha256hex, type App, type Ctx, type ModuleContext } from '@aoc/kernel';
 import { z } from 'zod';
 import type { SessionsEngine } from './engine';
+
+/** Chained as the event's sourceTs: a timestamp, never free text. */
+const zSentAt = z.string().min(10).max(40).refine((s) => !Number.isNaN(Date.parse(s)), 'must be an ISO-8601 timestamp');
 
 const HookIngestSchema = z.object({
   mode: z.enum(['managed', 'observed']),
   aocSessionId: z.string().max(64).nullable(),
   hook: z.object({ session_id: z.string().min(1).max(128), hook_event_name: z.string(), cwd: z.string().default('') }).passthrough(),
-  sentAt: z.string(),
+  sentAt: zSentAt,
   idempotencyKey: z.string().min(8).max(200),
 });
+
+/**
+ * Client idempotency keys never reach the chain verbatim: each is bound to the session it claims (so a token cannot
+ * pre-claim or swallow another session's events with a colliding key) and hashed (so no client text is chained).
+ */
+function hookKey(req: HookIngestRequest, suffix: string): string {
+  return `hook:${sha256hex([req.mode, req.aocSessionId ?? '', req.hook.session_id, req.idempotencyKey].join('\n'))}:${suffix}`;
+}
+function usageKey(sessionId: string, clientKey: string, batch: number): string {
+  return `usage:${sha256hex([sessionId, clientKey].join('\n'))}:${batch}`;
+}
 const HeartbeatSchema = z.object({
   sessionId: z.string(),
   pid: z.number().int().nullable(),
@@ -157,7 +171,7 @@ export class HookDispatcher {
       payload: { cwd: req.hook.cwd, transcriptPath: req.hook.transcript_path ?? '' },
       source: 'hook',
       sourceTs: req.sentAt,
-      idempotencyKey: `${req.idempotencyKey}:observed`,
+      idempotencyKey: hookKey(req, 'observed'),
     });
     this.d.engine.refresh(sessionId);
     return this.d.engine.get(sessionId)!;
@@ -169,11 +183,11 @@ export class HookDispatcher {
     const s = resolved;
     const h = req.hook as HookInput;
     const now = this.ctx.clock.now();
-    const key = req.idempotencyKey;
+    const key = (suffix: string) => hookKey(req, suffix);
     const scope = { sessionId: s.sessionId, projectId: s.projectId ?? undefined };
     switch (h.hook_event_name) {
       case 'SessionStart':
-        if (s.mode === 'observed' && (s.lifecycle === 'ended' || s.lifecycle === 'idle')) this.setLifecycle(s, 'running', 'session_start', `${key}:lc`);
+        if (s.mode === 'observed' && (s.lifecycle === 'ended' || s.lifecycle === 'idle')) this.setLifecycle(s, 'running', 'session_start', key('lc'));
         this.d.engine.recordActivity(s.sessionId, 'stream', now);
         return { exitCode: 0 };
       case 'UserPromptSubmit':
@@ -185,9 +199,9 @@ export class HookDispatcher {
           payload: { text: summarize(h.prompt, 4000) },
           source: 'hook',
           sourceTs: req.sentAt,
-          idempotencyKey: `${key}:prompt`,
+          idempotencyKey: key('prompt'),
         });
-        if (s.mode === 'observed') this.setLifecycle(s, 'running', 'prompt', `${key}:lc`);
+        if (s.mode === 'observed') this.setLifecycle(s, 'running', 'prompt', key('lc'));
         this.d.engine.recordActivity(s.sessionId, 'stream', now);
         return { exitCode: 0 };
       case 'PreToolUse':
@@ -209,7 +223,7 @@ export class HookDispatcher {
           payload: { inputSummary: summarize(input), outputSummary: summarize(h.tool_response), filePaths: filePathsOf(input) },
           source: 'hook',
           sourceTs: req.sentAt,
-          idempotencyKey: `${key}:tool`,
+          idempotencyKey: key('tool'),
         });
         this.d.engine.toolFinished(s.sessionId, now);
         return { exitCode: 0 };
@@ -225,7 +239,7 @@ export class HookDispatcher {
           payload: { inputSummary: summarize(input), outputSummary: summarize(f.error ?? 'tool failed'), filePaths: filePathsOf(input) },
           source: 'hook',
           sourceTs: req.sentAt,
-          idempotencyKey: `${key}:tool`,
+          idempotencyKey: key('tool'),
         });
         this.d.engine.toolFinished(s.sessionId, now);
         return { exitCode: 0 };
@@ -241,16 +255,16 @@ export class HookDispatcher {
             meta: { sessionId: s.sessionId, resetAt: null, source: 'exit' },
             payload: { message: summarize(f.last_assistant_message ?? f.error, 500) },
             source: 'hook',
-            idempotencyKey: `${key}:throttle`,
+            idempotencyKey: key('throttle'),
           });
-          if (s.mode === 'observed') this.setLifecycle(s, 'throttled', 'plan_limit', `${key}:lc`);
+          if (s.mode === 'observed') this.setLifecycle(s, 'throttled', 'plan_limit', key('lc'));
         }
         this.d.engine.recordActivity(s.sessionId, 'stream', now);
         return { exitCode: 0 };
       }
       case 'Stop':
       case 'SubagentStop':
-        if (s.mode === 'observed' && h.hook_event_name === 'Stop') this.setLifecycle(s, 'idle', 'turn_ended', `${key}:lc`);
+        if (s.mode === 'observed' && h.hook_event_name === 'Stop') this.setLifecycle(s, 'idle', 'turn_ended', key('lc'));
         this.d.engine.recordActivity(s.sessionId, 'stream', now);
         return { exitCode: 0 };
       case 'SessionEnd':
@@ -261,7 +275,7 @@ export class HookDispatcher {
             scope,
             meta: { sessionId: s.sessionId, outcome: 'completed' },
             source: 'hook',
-            idempotencyKey: `${key}:end`,
+            idempotencyKey: key('end'),
           });
           this.d.engine.refresh(s.sessionId);
           this.d.engine.forget(s.sessionId);
@@ -304,7 +318,7 @@ export class HookDispatcher {
       payload: { reason: r.reason, inputSummary: summarize(h.tool_input) },
       source: 'hook',
       sourceTs: req.sentAt,
-      idempotencyKey: `${req.idempotencyKey}:denied`,
+      idempotencyKey: hookKey(req, 'denied'),
     });
     if (r.blockReason) {
       this.ctx.store.append({
@@ -313,7 +327,7 @@ export class HookDispatcher {
         scope,
         meta: { sessionId: s.sessionId, reason: r.blockReason },
         source: 'hook',
-        idempotencyKey: `${req.idempotencyKey}:blocked`,
+        idempotencyKey: hookKey(req, 'blocked'),
       });
     }
     this.d.engine.refresh(s.sessionId);
@@ -367,7 +381,7 @@ export function registerIngestRoutes(app: App, d: IngestDeps): void {
           continue;
         }
         const req = parsed.data as unknown as HookIngestRequest;
-        if (ctx.store.findByIdempotencyKey(`${req.idempotencyKey}:tool`) || ctx.store.findByIdempotencyKey(`${req.idempotencyKey}:prompt`)) {
+        if (ctx.store.findByIdempotencyKey(hookKey(req, 'tool')) || ctx.store.findByIdempotencyKey(hookKey(req, 'prompt'))) {
           res.duplicates++;
           continue;
         }
@@ -431,7 +445,7 @@ export function registerIngestRoutes(app: App, d: IngestDeps): void {
         },
         payload: { messageIds: batch.messageIds },
         source: row.mode === 'observed' ? 'hook' : 'sidecar',
-        idempotencyKey: `${b.idempotencyKey}:${i}`,
+        idempotencyKey: usageKey(sessionId, b.idempotencyKey, i),
       });
       recorded++;
     });

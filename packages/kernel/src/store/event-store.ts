@@ -210,7 +210,7 @@ export class EventStore {
             continue;
           }
         }
-        const problems = validateEvent(input.type, input.meta, input.payload ?? null);
+        const problems = [...validateEvent(input.type, input.meta, input.payload ?? null), ...headerProblems(input as NewEventInput)];
         if (problems.length) throw new EventValidationError(input.type, problems);
         const e = this.write(input as NewEventInput, writtenBodies);
         out.push(e);
@@ -548,6 +548,26 @@ export class EventStore {
     this.db.close();
     this.bodies.close();
   }
+}
+
+const MAX_IDEMPOTENCY_KEY = 512;
+const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
+
+/**
+ * sourceTs and idempotencyKey are chained in clear (and exported in evidence packs) like meta, but the catalog
+ * does not cover them: bound them here so no writer can chain free text or bulk data that can never be erased.
+ */
+function headerProblems(input: NewEventInput): string[] {
+  const problems: string[] = [];
+  const ts = input.sourceTs;
+  if (ts !== undefined && ts !== null && !(typeof ts === 'string' && ts.length >= 10 && ts.length <= 40 && !Number.isNaN(Date.parse(ts)))) {
+    problems.push('sourceTs: must be an ISO-8601 timestamp');
+  }
+  const key = input.idempotencyKey;
+  if (key !== undefined && key !== null && !(typeof key === 'string' && key.length >= 1 && key.length <= MAX_IDEMPOTENCY_KEY && !CONTROL_CHARS.test(key))) {
+    problems.push(`idempotencyKey: must be 1–${MAX_IDEMPOTENCY_KEY} characters without control characters`);
+  }
+  return problems;
 }
 
 function cleanScope(s: Scope): Scope {
