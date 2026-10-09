@@ -1,0 +1,90 @@
+{
+  "version": "2026.10.1",
+  "types": [
+    {
+      "id": "discovery",
+      "name": "Discovery build",
+      "description": "Novel work with no approved playbook. Always Opus; credits never downgrade it.",
+      "class": "discovery",
+      "model": "opus",
+      "credentialProfile": "git-feature",
+      "permissionMode": "acceptEdits"
+    },
+    {
+      "id": "feature-build",
+      "name": "Feature build",
+      "description": "Feature work. Opus until a playbook is approved, then Sonnet (the distillation payoff).",
+      "class": "execution",
+      "model": "opus",
+      "executionModel": "sonnet",
+      "credentialProfile": "git-feature",
+      "permissionMode": "acceptEdits"
+    },
+    {
+      "id": "bug-triage",
+      "name": "Bug triage (read-only)",
+      "description": "Read-only diagnosis of an intake ticket. No credentials, no file changes, diagnosis budget enforced.",
+      "class": "triage",
+      "model": "opus",
+      "readOnly": true,
+      "credentialProfile": null,
+      "permissionMode": "dontAsk",
+      "tools": {
+        "allow": ["Read", "Glob", "Grep", "LS", "Bash(git log:*)", "Bash(git show:*)", "Bash(git diff:*)", "Bash(ls:*)"],
+        "deny": ["Edit", "Write", "MultiEdit", "NotebookEdit", "WebFetch"]
+      },
+      "diagnosisBudget": { "tokens": 400000, "minutes": 30 }
+    },
+    {
+      "id": "bug-fix",
+      "name": "Bug fix",
+      "description": "Implements an approved fix plan and pushes to a UAT branch.",
+      "class": "execution",
+      "model": "opus",
+      "executionModel": "sonnet",
+      "credentialProfile": "uat-deploy",
+      "permissionMode": "acceptEdits"
+    },
+    {
+      "id": "migration",
+      "name": "Data / schema migration",
+      "description": "Risky: never rolls over mid-operation; data-touching steps bounce to the Approver.",
+      "class": "discovery",
+      "model": "opus",
+      "credentialProfile": "git-feature",
+      "permissionMode": "acceptEdits",
+      "risky": true,
+      "rolloverContextPct": 85
+    },
+    {
+      "id": "test-repair",
+      "name": "Test repair",
+      "description": "Fix failing tests following the test-repair playbook.",
+      "class": "execution",
+      "model": "sonnet",
+      "executionModel": "haiku",
+      "credentialProfile": "git-feature",
+      "permissionMode": "acceptEdits"
+    },
+    {
+      "id": "docs",
+      "name": "Documentation",
+      "description": "Documentation updates.",
+      "class": "execution",
+      "model": "sonnet",
+      "executionModel": "haiku",
+      "credentialProfile": "git-feature",
+      "permissionMode": "acceptEdits"
+    },
+    {
+      "id": "rollback-verify",
+      "name": "Rollback verification",
+      "description": "Checks out a pinned tag on a new branch and runs that state's acceptance tests before anything touches main.",
+      "class": "maintenance",
+      "model": "sonnet",
+      "credentialProfile": null,
+      "requiresPlan": false,
+      "permissionMode": "acceptEdits"
+    }
+  ]
+}

@@ -1,0 +1,57 @@
+import type { DatabaseSync } from 'node:sqlite';
+import type { Hono } from 'hono';
+import type { AocConfig, AuthContext, IngestPrincipal, JsonValue, Notification, PreToolGuard, StoredEvent } from '@aoc/contracts';
+import type { Clock } from '../clock';
+import type { Logger } from '../logger';
+import type { EventStore, Projector } from '../store/event-store';
+import type { ServiceRegistry } from './services';
+
+export interface ModuleContext {
+  config: AocConfig;
+  store: EventStore;
+  db: DatabaseSync;
+  clock: Clock;
+  log: Logger;
+  services: ServiceRegistry;
+  dataDir: string;
+  notify(n: Notification): void;
+}
+
+export interface Reactor {
+  name: string;
+  handles: readonly string[];
+  /** At-least-once delivery after commit (cursor-tracked) — MUST be idempotent (check store.findByCausation). */
+  react(e: StoredEvent, payload: JsonValue | null, ctx: ModuleContext): void | Promise<void>;
+}
+
+export type JobSchedule = { everyMs: number } | { dailyAt: string };
+export interface Job {
+  name: string;
+  schedule: JobSchedule;
+  run(ctx: ModuleContext): void | Promise<void>;
+}
+
+export type AppEnv = {
+  Variables: {
+    auth: AuthContext | null;
+    ingest: IngestPrincipal | null;
+    requestId: string;
+  };
+};
+export type App = Hono<AppEnv>;
+
+/**
+ * A domain module. Lifecycle: projectors registered → init (provide services) → routes mounted →
+ * start (all services available) → jobs scheduled. Export a factory `createXModule(opts)`.
+ */
+export interface AocModule {
+  name: string;
+  projectors?: Projector[];
+  reactors?: Reactor[];
+  guards?: PreToolGuard[];
+  jobs?: Job[];
+  init?(ctx: ModuleContext): void | Promise<void>;
+  routes?(app: App, ctx: ModuleContext): void;
+  start?(ctx: ModuleContext): void | Promise<void>;
+  stop?(): void | Promise<void>;
+}

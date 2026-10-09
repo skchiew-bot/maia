@@ -1,0 +1,157 @@
+/** Change control, rollback, break-glass and promotion events (owner: mod-change, §8, §14 provenance). */
+import { z } from 'zod';
+import { CHANGE_SCOPES } from '../domain';
+import { defineEvent, meta, payload, zId, zIso, zLabel } from './define';
+
+const sha = z.string().max(64);
+const fields = z.enum(['impact', 'mitigation', 'rollbackPlan', 'acceptanceTest']);
+
+export const CHANGE_EVENTS = [
+  defineEvent({
+    type: 'change.drafted',
+    owner: 'change',
+    description: 'Change request drafted (AI drafts, the developer must edit or affirm each field, §14).',
+    meta: meta({ changeId: zId, projectId: zId, scope: z.enum(CHANGE_SCOPES), draftedBy: z.enum(['ai', 'human']), sessionId: zId.nullable(), breakglassId: zId.nullable() }),
+    payload: payload({
+      title: z.string(),
+      impact: z.string(),
+      mitigation: z.string(),
+      rollbackPlan: z.string(),
+      rollbackRef: z.string(),
+      acceptanceTest: z.string(),
+    }),
+  }),
+  defineEvent({
+    type: 'change.field_affirmed',
+    owner: 'change',
+    description: 'Developer edited or affirmed a drafted field; blind affirm-without-edit is tracked.',
+    meta: meta({ changeId: zId, field: fields, edited: z.boolean(), editRatio: z.number().min(0).max(1), dwellMs: z.number().min(0) }),
+    payload: payload({ value: z.string() }),
+  }),
+  defineEvent({
+    type: 'change.submitted',
+    owner: 'change',
+    description: 'Change request submitted with all four fields; routed by scope.',
+    meta: meta({ changeId: zId, scope: z.enum(CHANGE_SCOPES), selfApprovable: z.boolean(), decisionId: zId.nullable(), rollbackSha: sha.nullable() }),
+    payload: null,
+  }),
+  defineEvent({
+    type: 'change.approved',
+    owner: 'change',
+    description: 'Change request approved (self-approved only for reversible off-main work).',
+    meta: meta({ changeId: zId, decisionId: zId.nullable(), approverId: z.string().max(64), selfApproved: z.boolean() }),
+    payload: null,
+  }),
+  defineEvent({
+    type: 'change.rejected',
+    owner: 'change',
+    description: 'Change request rejected.',
+    meta: meta({ changeId: zId, decisionId: zId.nullable(), approverId: z.string().max(64) }),
+    payload: payload({ comment: z.string().optional() }),
+  }),
+  defineEvent({
+    type: 'change.started',
+    owner: 'change',
+    description: 'Approved change work started in a managed session.',
+    meta: meta({ changeId: zId, sessionId: zId }),
+    payload: null,
+  }),
+  defineEvent({
+    type: 'change.completed',
+    owner: 'change',
+    description: 'Change completed; pins an immutable tag/SHA.',
+    meta: meta({ changeId: zId, pinnedSha: sha.nullable(), pinnedTag: z.string().max(200).nullable() }),
+    payload: null,
+  }),
+  defineEvent({
+    type: 'rollback.requested',
+    owner: 'change',
+    description: 'Rollback requested to a pinned tag/SHA (itself a human-required, audited decision).',
+    meta: meta({ rollbackId: zId, projectId: zId, targetRef: z.string().max(200), targetSha: sha, changeId: zId.nullable() }),
+    payload: payload({ reason: z.string() }),
+  }),
+  defineEvent({
+    type: 'rollback.verification_started',
+    owner: 'change',
+    description: 'Supervisor checked out the target on a new branch and is running that state’s acceptance tests.',
+    meta: meta({ rollbackId: zId, branch: z.string().max(200) }),
+    payload: null,
+  }),
+  defineEvent({
+    type: 'rollback.verified',
+    owner: 'change',
+    description: 'Verification finished; clean=true only when acceptance tests pass.',
+    meta: meta({ rollbackId: zId, branch: z.string().max(200), testsPassed: z.number().int().min(0), testsFailed: z.number().int().min(0), clean: z.boolean(), decisionId: zId.nullable() }),
+    payload: payload({ report: z.string() }),
+  }),
+  defineEvent({
+    type: 'rollback.approved',
+    owner: 'change',
+    description: 'Approver approved the verified rollback (passkey).',
+    meta: meta({ rollbackId: zId, decisionId: zId, approverId: z.string().max(64), passkeyVerified: z.boolean() }),
+    payload: null,
+  }),
+  defineEvent({
+    type: 'rollback.rejected',
+    owner: 'change',
+    description: 'Rollback rejected.',
+    meta: meta({ rollbackId: zId, decisionId: zId.nullable(), approverId: z.string().max(64) }),
+    payload: payload({ comment: z.string().optional() }),
+  }),
+  defineEvent({
+    type: 'rollback.executed',
+    owner: 'change',
+    description: 'Main moved to the verified rollback state.',
+    meta: meta({ rollbackId: zId, mainShaBefore: sha, mainShaAfter: sha }),
+    payload: null,
+  }),
+  defineEvent({
+    type: 'breakglass.invoked',
+    owner: 'change',
+    description: 'Emergency promotion requested while production is down — the most heavily audited event (§8).',
+    meta: meta({ breakglassId: zId, projectId: zId, invokedBy: z.string().max(64), ref: z.string().max(200), sha, decisionId: zId }),
+    payload: payload({ justification: z.string() }),
+  }),
+  defineEvent({
+    type: 'breakglass.approved',
+    owner: 'change',
+    description: 'Approver approved the emergency promotion (passkey). Post-incident change record auto-raised, due in 24h.',
+    meta: meta({ breakglassId: zId, decisionId: zId, approverId: z.string().max(64), passkeyVerified: z.boolean(), postIncidentChangeId: zId, dueAt: zIso }),
+    payload: null,
+  }),
+  defineEvent({
+    type: 'breakglass.post_incident_overdue',
+    owner: 'change',
+    description: 'Mandatory post-incident change record not completed within 24h.',
+    meta: meta({ breakglassId: zId, changeId: zId, dueAt: zIso }),
+    payload: null,
+  }),
+  defineEvent({
+    type: 'promotion.requested',
+    owner: 'change',
+    description: 'Promotion to main requested; provenance must trace every commit to an approved change, UAT sign-off and gate.',
+    meta: meta({ promotionId: zId, projectId: zId, fromRef: z.string().max(200), fromSha: sha, targetBranch: z.string().max(200), ticketId: zId.nullable(), changeId: zId.nullable() }),
+    payload: null,
+  }),
+  defineEvent({
+    type: 'promotion.refused',
+    owner: 'change',
+    description: 'Promotion refused (provenance guarantee, §14).',
+    meta: meta({ promotionId: zId, reason: z.enum(['provenance_gap', 'uat_missing', 'gate_missing', 'tests_failed', 'not_fast_forward']), orphanShas: z.array(sha) }),
+    payload: null,
+  }),
+  defineEvent({
+    type: 'promotion.completed',
+    owner: 'change',
+    description: 'Main moved forward through the gate (or break-glass, the sole exception).',
+    meta: meta({ promotionId: zId, mainShaBefore: sha, mainShaAfter: sha, breakglass: z.boolean(), decisionId: zId.nullable() }),
+    payload: null,
+  }),
+  defineEvent({
+    type: 'git.ref_pinned',
+    owner: 'change',
+    description: 'Immutable tag created for a phase completion / change record.',
+    meta: meta({ projectId: zId, tag: z.string().max(200), sha, reason: zLabel }),
+    payload: null,
+  }),
+] as const;

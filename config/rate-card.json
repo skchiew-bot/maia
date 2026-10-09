@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "effectiveFrom": "2026-10-01",
+  "currency": "USD",
+  "note": "Notional API-equivalent list prices per million tokens, seeded from Anthropic first-party list prices (Oct 2026). On a Max plan there is no per-token bill: this supports the Enterprise-migration decision only. Adjustable; changes apply forward only and never restate closed days.",
+  "rates": [
+    { "model": "claude-fable-5-1", "inputPerMTok": 10, "outputPerMTok": 50, "cacheReadPerMTok": 0.25, "cacheWrite5mPerMTok": 12.5, "cacheWrite1hPerMTok": 20 },
+    { "model": "claude-opus-5-5", "inputPerMTok": 4, "outputPerMTok": 20, "cacheReadPerMTok": 0.2, "cacheWrite5mPerMTok": 5, "cacheWrite1hPerMTok": 8 },
+    { "model": "claude-opus-5", "inputPerMTok": 5, "outputPerMTok": 25, "cacheReadPerMTok": 0.5, "cacheWrite5mPerMTok": 6.25, "cacheWrite1hPerMTok": 10 },
+    { "model": "claude-sonnet-5-5", "inputPerMTok": 2, "outputPerMTok": 10, "cacheReadPerMTok": 0.2, "cacheWrite5mPerMTok": 2.5, "cacheWrite1hPerMTok": 4 },
+    { "model": "claude-sonnet-5", "inputPerMTok": 2, "outputPerMTok": 10, "cacheReadPerMTok": 0.2, "cacheWrite5mPerMTok": 2.5, "cacheWrite1hPerMTok": 4 },
+    { "model": "claude-haiku-5-5", "inputPerMTok": 0.1, "outputPerMTok": 0.5, "cacheReadPerMTok": 0.01, "cacheWrite5mPerMTok": 0.125, "cacheWrite1hPerMTok": 0.2 },
+    { "model": "claude-haiku-4-5", "inputPerMTok": 1, "outputPerMTok": 5, "cacheReadPerMTok": 0.1, "cacheWrite5mPerMTok": 1.25, "cacheWrite1hPerMTok": 2 }
+  ],
+  "tierFallback": { "fable": "claude-fable-5-1", "opus": "claude-opus-5-5", "sonnet": "claude-sonnet-5-5", "haiku": "claude-haiku-5-5" },
+  "subscription": { "plan": "max", "seats": 5, "monthlyUsdPerSeat": 200 }
+}

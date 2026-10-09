@@ -1,2 +1,18 @@
-// @aoc/kernel — Kernel: hash-chained event store, encrypted body store, module host, git, test kit
-export {};
+export * from './canonical';
+export * from './clock';
+export * from './time';
+export * from './logger';
+export * from './crypto';
+export * from './git';
+export * from './store/body-store';
+export * from './store/event-store';
+export * from './host/services';
+export * from './host/module';
+export * from './host/http';
+export * from './host/policy';
+export * from './host/broadcast';
+export * from './host/runtime';
+export * from './testing/dev-identity';
+export * from './testing/fake-llm';
+export * from './testing/runtime';
+export * from './testing/stubs';

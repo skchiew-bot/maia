@@ -12,3 +12,6 @@ coverage/
 !.env.example
 .DS_Store
 *.tsbuildinfo
+
+# agent worktrees
+.claude/worktrees/
