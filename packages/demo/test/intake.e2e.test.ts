@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { demoLayout, type DemoTokens } from '../src/layout';
-import { DEMO_SRC, REPO, call, childEnv, claudeTripwire, daemonChildEnv, eventsAfter, freePort, stopChild, tsxImport, waitFor } from './helpers';
+import { REPO, call, childEnv, claudeTripwire, daemonChildEnv, eventsAfter, freePort, seedDemo, stopChild, tsxImport, waitFor } from './helpers';
 
 const dir = mkdtempSync(join(tmpdir(), 'aoc-demo-intake-'));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -20,12 +20,8 @@ describe('intake on a seeded demo', () => {
   it("builds the approved fix onto uat/<ticket>, reaches UAT and, after the requester's sign-off, the go-live gate", async () => {
     const layout = demoLayout(join(dir, 'demo'));
     const trip = claudeTripwire(dir);
-    const seeded = spawnSync(process.execPath, ['--import', tsxImport(), join(DEMO_SRC, 'seed.ts'), '--data-dir', layout.root], {
-      cwd: join(REPO, 'packages/demo'),
-      env: childEnv(trip.binDir, {}),
-      encoding: 'utf8',
-    });
-    expect(seeded.status, seeded.stderr).toBe(0);
+    const seeded = await seedDemo(layout, childEnv(trip.binDir, {}));
+    expect(seeded.code, seeded.output).toBe(0);
     const tokens = JSON.parse(readFileSync(layout.tokens, 'utf8')) as DemoTokens;
     const ticketId = tokens.tickets.find((t) => t.key === 'receipts')!.ticketId;
     const repo = join(layout.repos, 'claims-bot');
@@ -43,7 +39,7 @@ describe('intake on a seeded demo', () => {
     const ticketEvent = (type: string) => eventsAfter(layout.aocData, tokens.head.seq).find((e) => e.type === type && e.meta.ticketId === ticketId) ?? null;
     let stopped: { code: number | null; signal: NodeJS.Signals | null } | null = null;
     try {
-      await waitFor('aocd to listen', () => (aocd.exitCode !== null ? Promise.reject(new Error(`aocd exited:\n${log}`)) : log.includes('aocd listening')), 60_000, 250);
+      await waitFor('aocd to listen', () => (aocd.exitCode !== null ? Promise.reject(new Error(`aocd exited:\n${log}`)) : log.includes('aocd listening')), 180_000, 250);
 
       // The seeded triage left the fix plan with the Approver: approve it.
       const ceo = tokens.tokens.ceo.token;
@@ -52,8 +48,8 @@ describe('intake on a seeded demo', () => {
       const approved = await call(base, 'POST', `/api/decisions/${open.data.decisions[0]!.id}/resolve`, ceo, { optionId: 'approve' });
       expect(approved.status, JSON.stringify(approved.data)).toBe(200);
 
-      const build = await waitFor('ticket.build_started', () => ticketEvent('ticket.build_started'), 60_000);
-      const uat = await waitFor('ticket.uat_ready', () => ticketEvent('ticket.uat_ready'), 240_000);
+      const build = await waitFor('ticket.build_started', () => ticketEvent('ticket.build_started'), 120_000);
+      const uat = await waitFor('ticket.uat_ready', () => ticketEvent('ticket.uat_ready'), 360_000);
       // The build committed the fix on uat/<ticket>, traced to its session, and left the shared checkout on main.
       expect(uat.meta).toMatchObject({ uatRef: `uat/${ticketId}`, uatSha: git(repo, 'rev-parse', `uat/${ticketId}`) });
       const message = git(repo, 'log', '-1', '--format=%B', `uat/${ticketId}`);
@@ -64,7 +60,7 @@ describe('intake on a seeded demo', () => {
       // The requester tests on UAT and signs off on the portal.
       const signoff = await call(base, 'POST', `/portal/api/tickets/${ticketId}/uat`, tokens.tokens.daniel.token, { verdict: 'pass' });
       expect(signoff.status, JSON.stringify(signoff.data)).toBe(200);
-      const golive = await waitFor('ticket.golive_requested', () => ticketEvent('ticket.golive_requested'), 60_000);
+      const golive = await waitFor('ticket.golive_requested', () => ticketEvent('ticket.golive_requested'), 120_000);
       expect(golive.meta.decisionId).not.toBe('none');
       const events = eventsAfter(layout.aocData, tokens.head.seq);
       expect(events.some((e) => e.type === 'promotion.requested' && e.meta.ticketId === ticketId)).toBe(true);
@@ -72,9 +68,9 @@ describe('intake on a seeded demo', () => {
       expect(events.filter((e) => e.type === 'selfmod.blocked')).toEqual([]);
       expect(events.some((e) => e.type === 'task.done' && e.meta.sessionId === build.meta.sessionId && e.meta.evidenceKind === 'commit' && e.meta.evidenceVerified === true)).toBe(true);
     } finally {
-      stopped = await stopChild(aocd, 'SIGTERM', 30_000);
+      stopped = await stopChild(aocd, 'SIGTERM', 60_000);
     }
     expect(stopped, log).toEqual({ code: 0, signal: null });
     expect(existsSync(trip.invoked)).toBe(false);
-  }, 420_000);
+  }, 900_000);
 });

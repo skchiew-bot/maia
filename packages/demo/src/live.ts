@@ -123,7 +123,7 @@ function exited(child: ChildProcess, ms: number): Promise<boolean> {
 }
 
 async function waitHealthy(base: string, daemon: ChildProcess, logFile: string): Promise<void> {
-  const deadline = Date.now() + 90_000;
+  const deadline = Date.now() + 180_000;
   while (Date.now() < deadline) {
     if (!alive(daemon)) throw new Error(`aocd exited during startup; see ${logFile}`);
     try {
@@ -134,7 +134,7 @@ async function waitHealthy(base: string, daemon: ChildProcess, logFile: string):
     }
     await new Promise((r) => setTimeout(r, 300));
   }
-  throw new Error(`aocd did not become healthy within 90 s; see ${logFile}`);
+  throw new Error(`aocd did not become healthy within 3 minutes; see ${logFile}`);
 }
 
 // ── the API ───────────────────────────────────────────────────────────────────

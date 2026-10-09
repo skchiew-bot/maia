@@ -30,7 +30,7 @@ describe('pnpm --filter @aoc/demo live', () => {
     let seededHead = 0;
     let stopped: { code: number | null; signal: NodeJS.Signals | null } | null = null;
     try {
-      await waitFor('the launcher banner', () => (live.exitCode !== null ? Promise.reject(new Error(`launcher exited:\n${out}`)) : out.includes('Ctrl-C stops')), 120_000, 500);
+      await waitFor('the launcher banner', () => (live.exitCode !== null ? Promise.reject(new Error(`launcher exited:\n${out}`)) : out.includes('Ctrl-C stops')), 300_000, 500);
       expect(out).toContain(`http://localhost:${port}/`);
       const tokens = JSON.parse(readFileSync(layout.tokens, 'utf8')) as DemoTokens;
       expect(out).toContain(tokens.tokens.ceo.token);
@@ -42,7 +42,7 @@ describe('pnpm --filter @aoc/demo live', () => {
           const types = new Set(eventsAfter(layout.aocData, seededHead).map((e) => e.type));
           return wanted.every((t) => types.has(t)) ? types : null;
         },
-        150_000,
+        240_000,
       );
       expect([...seen]).toEqual(expect.arrayContaining(wanted));
     } finally {
@@ -71,5 +71,5 @@ describe('pnpm --filter @aoc/demo live', () => {
     for (const e of events) if (e.type === 'session.lifecycle_changed') last.set(String(e.meta.sessionId), String(e.meta.to));
     expect([...last.values()].filter((l) => l === 'running' || l === 'launching')).toEqual([]);
     expect(out).not.toMatch(/killing it/);
-  }, 420_000);
+  }, 720_000);
 });

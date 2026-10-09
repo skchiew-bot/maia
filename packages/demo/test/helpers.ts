@@ -1,4 +1,4 @@
-import type { ChildProcess } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { createServer } from 'node:net';
@@ -65,6 +65,10 @@ export async function call<T>(base: string, method: string, path: string, token:
   return { status: r.status, data: (text ? JSON.parse(text) : null) as T };
 }
 
+/**
+ * Polls until `probe` yields a value. The e2e budgets are upper bounds for a loaded host, where every session runs
+ * several node processes (claude-sim, hooks, MCP server, sidecar); an idle machine needs a fraction of them.
+ */
 export async function waitFor<T>(what: string, probe: () => Promise<T | null> | T | null, timeoutMs: number, everyMs = 1000): Promise<T> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
@@ -100,6 +104,25 @@ export function launchedArgv(aocData: string, afterSeq: number): string[][] {
   } finally {
     store.close();
   }
+}
+
+/**
+ * Seeds a demo directory in a child process. Asynchronous on purpose: a spawnSync would block the test worker for the
+ * whole seed, and vitest's worker RPC times out on a busy machine.
+ */
+export function seedDemo(layout: DemoLayout, env: NodeJS.ProcessEnv): Promise<{ code: number | null; output: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ['--import', tsxImport(), join(DEMO_SRC, 'seed.ts'), '--data-dir', layout.root], {
+      cwd: join(REPO, 'packages/demo'),
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let output = '';
+    child.stdout!.on('data', (d: Buffer) => (output += d.toString()));
+    child.stderr!.on('data', (d: Buffer) => (output += d.toString()));
+    child.once('error', reject);
+    child.once('close', (code) => resolve({ code, output }));
+  });
 }
 
 /** Signals the child we spawned (its own PID) and waits for it to exit. */
