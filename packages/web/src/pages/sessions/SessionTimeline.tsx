@@ -327,6 +327,13 @@ export function SessionTimeline({ model, upcoming, className }: SessionTimelineP
           </span>
         )}
         .
+        {model.lateMarks.length > 0 && (
+          <span className="session-tl__late">
+            {' '}
+            Recorded after the session ended:{' '}
+            {model.lateMarks.map((m) => `${MARK_WORD[m.kind].toLowerCase()} (${m.label}) ${formatShortDate(m.at)} ${formatClock(m.at)}`).join(', ')}.
+          </span>
+        )}
       </p>
       <ChartTable
         caption="Session timeline marks"
@@ -335,6 +342,7 @@ export function SessionTimeline({ model, upcoming, className }: SessionTimelineP
           ...model.phases.map((p) => [clock(p.start), 'Phase', `${p.code} ${p.name}`, `${formatAge(p.end - p.start)}${p.active ? ', in progress' : ''}`]),
           ...model.decisions.map((d) => [clock(d.at), 'Decision', d.title, d.closedAt === null ? `waiting ${formatAge(end - d.at)}` : `${d.outcome ?? 'answered'} after ${formatAge(d.closedAt - d.at)}`]),
           ...model.marks.map((m) => [clock(m.at), MARK_WORD[m.kind], m.label, m.detail ?? '']),
+          ...model.lateMarks.map((m) => [`${formatShortDate(m.at)} ${formatClock(m.at)}`, MARK_WORD[m.kind], m.label, `after the session ended${m.detail ? `, ${m.detail}` : ''}`]),
           ...model.throttles.map((t) => [clock(t.start), 'Throttled', formatAge(t.end - t.start), t.open ? 'still throttled' : `until ${clock(t.end)}`]),
         ].sort((a, b) => String(a[0]).localeCompare(String(b[0])))}
       />

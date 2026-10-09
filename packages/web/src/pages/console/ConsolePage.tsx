@@ -314,7 +314,7 @@ function ConsoleKpis({ snapshot, active, dead, openDecisions, fx, now }: Console
         value={k.throttled}
         unit={k.throttled === 1 ? 'session' : 'sessions'}
         href="/metering"
-        footnote={`${formatAge(k.throttleIdleMsToday)} idle today from plan limits`}
+        footnote={k.throttleIdleMsToday > 0 ? `${formatAge(k.throttleIdleMsToday)} idle today from plan limits` : 'no plan-limit idle today'}
       />
       <KpiTile
         label="Tasks done today"

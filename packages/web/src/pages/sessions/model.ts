@@ -1,6 +1,7 @@
 import type {
   AmendmentDTO,
   DecisionCardView,
+  EventHeader,
   ManifestPhaseDTO,
   ManifestTaskDTO,
   MeteringSummaryRow,
@@ -9,6 +10,7 @@ import type {
   SessionTimeline,
 } from '@aoc/contracts';
 import type { PhaseProgress } from '../../charts/types';
+import { isEnded } from './sessionText';
 
 /**
  * Session view model (pure). Turns the ledger timeline, the activity read model and the decision cards into
@@ -74,6 +76,8 @@ export interface HeroModel {
   minutes: { at: number; count: number }[];
   decisions: HeroDecision[];
   marks: HeroMark[];
+  /** Marks recorded after an ended session closed (later analysis, e.g. an overrun check): listed, not drawn. */
+  lateMarks: HeroMark[];
   throttles: HeroThrottle[];
   stats: HeroStats;
 }
@@ -104,6 +108,7 @@ export function buildHero(
   const ended = timeline.endAt !== null;
   const end = Math.max(start + 60_000, parse(timeline.endAt) ?? parse(timeline.now) ?? start + 60_000);
   const clamp = (t: number) => Math.min(end, Math.max(start, t));
+  const place = (t: number, late: boolean) => (late ? t : clamp(t));
 
   // Phase bands, in plan order; an open band ends where the next one starts (or at the right edge).
   const order = new Map(timeline.manifest.map((p) => [p.phaseId, p.order]));
@@ -161,35 +166,39 @@ export function buildHero(
     .sort((a, b) => a.at - b.at);
 
   const marks: HeroMark[] = [];
+  const lateMarks: HeroMark[] = [];
   const rollbacks = new Map<string, HeroMark>();
   for (const [i, m] of timeline.marks.entries()) {
     const at = parse(m.at);
     if (at === null) continue;
     const id = `${m.kind}-${m.refId ?? i}-${i}`;
+    // An ended session's window is closed: a mark recorded later keeps its real time in the list instead.
+    const late = ended && at > end + 60_000;
+    const target = late ? lateMarks : marks;
     switch (m.kind) {
       case 'drift':
-        marks.push({ id, kind: 'drift', at: clamp(at), label: driftWord(m.label), detail: m.severity ? `${m.severity} severity` : undefined });
+        target.push({ id, kind: 'drift', at: place(at, late), label: driftWord(m.label), detail: m.severity ? `${m.severity} severity` : undefined });
         break;
       case 'enhancement':
-        marks.push({ id, kind: 'enhancement', at: clamp(at), label: m.label });
+        target.push({ id, kind: 'enhancement', at: place(at, late), label: m.label });
         break;
       case 'amendment':
-        marks.push({ id, kind: 'amendment', at: clamp(at), label: `Manifest amended (${m.label})` });
+        target.push({ id, kind: 'amendment', at: place(at, late), label: `Manifest amended (${m.label})` });
         break;
       case 'phase_complete':
-        marks.push({ id, kind: 'phase', at: clamp(at), label: `Phase complete: ${m.label}` });
+        target.push({ id, kind: 'phase', at: place(at, late), label: `Phase complete: ${m.label}` });
         break;
       case 'task_done':
-        if (m.severity) marks.push({ id, kind: 'flag', at: clamp(at), label: `Flagged close: ${m.label.replace(' · ', ', ').replace(/_/g, ' ')}` });
+        if (m.severity) target.push({ id, kind: 'flag', at: place(at, late), label: `Flagged close: ${m.label.replace(' · ', ', ').replace(/_/g, ' ')}` });
         break;
       case 'rollback': {
         const key = m.refId ?? id;
         const existing = rollbacks.get(key);
         if (existing) existing.detail = `${existing.detail} → ${m.label}`;
         else {
-          const mark: HeroMark = { id, kind: 'rollback', at: clamp(at), label: 'Rollback', detail: m.label };
+          const mark: HeroMark = { id, kind: 'rollback', at: place(at, late), label: 'Rollback', detail: m.label };
           rollbacks.set(key, mark);
-          marks.push(mark);
+          target.push(mark);
         }
         break;
       }
@@ -217,6 +226,7 @@ export function buildHero(
     minutes,
     decisions: heroDecisions,
     marks,
+    lateMarks,
     throttles,
     stats: {
       elapsedMs: end - start,
@@ -227,7 +237,7 @@ export function buildHero(
       openDecisions: heroDecisions.filter((d) => d.closedAt === null).length,
       decisionWaitMs: heroDecisions.reduce((n, d) => n + ((d.closedAt ?? end) - d.at), 0),
       drift: marks.filter((m) => m.kind === 'drift').length,
-      rollbacks: rollbacks.size,
+      rollbacks: [...rollbacks.values()].filter((m) => marks.includes(m)).length,
       throttledMs: throttles.reduce((n, t) => n + (t.end - t.start), 0),
     },
   };
@@ -312,4 +322,14 @@ export function costByTokenType(
   if (priced <= 0 || totalUsd <= 0) return null;
   const scale = totalUsd / priced;
   return (Object.keys(parts) as TokenType[]).map((type) => ({ type, usd: parts[type] * scale }));
+}
+
+/** The latest stop request, unless the session has ended since (events arrive newest first). */
+export function pendingStop(
+  events: readonly Pick<EventHeader, 'type' | 'ts' | 'meta'>[] | undefined,
+  session: { lifecycle: Parameters<typeof isEnded>[0]['lifecycle'] },
+): { at: string; immediate: boolean } | null {
+  if (!events || isEnded(session)) return null;
+  const stop = events.find((e) => e.type === 'session.stop_requested');
+  return stop ? { at: stop.ts, immediate: stop.meta.immediate === true } : null;
 }

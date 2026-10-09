@@ -29,7 +29,7 @@ export function ContextMeter({
   className,
 }: ContextMeterProps) {
   if (pct === null) {
-    return <span className={cx('session-ctx__none', className)}>No usage reported yet</span>;
+    return <span className={cx('session-ctx__none', className)}>no usage yet</span>;
   }
   const ratio = Math.max(0, Math.min(1, pct / 100));
   const due = pct >= rolloverPct;

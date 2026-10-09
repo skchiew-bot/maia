@@ -1,0 +1,120 @@
+/* Decision cards (Console rail and the Session page): age, kind, test chip, recommendation, action. */
+.console-dlist {
+  list-style: none;
+}
+.console-dcard {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--sp-3) var(--sp-4);
+  border-bottom: 1px solid var(--border);
+  scroll-margin-top: calc(var(--topbar-h) + var(--sp-3));
+}
+.console-dcard__top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  font-size: var(--fs-xs);
+}
+.console-dcard__age {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text);
+  font-weight: 700;
+}
+.console-dcard__age.is-overdue {
+  color: var(--danger);
+}
+.console-dcard__overdue {
+  font-weight: 600;
+}
+.console-dcard__kind {
+  color: var(--text-2);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.console-testchip {
+  padding: 0 5px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  line-height: 18px;
+  white-space: nowrap;
+}
+.console-testchip__k {
+  color: var(--text-3);
+  font-weight: 400;
+}
+.console-testchip--policy {
+  border-style: dashed;
+  color: var(--text-2);
+}
+.console-dcard__pk {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  color: var(--text);
+  font-weight: 600;
+}
+.console-dcard__q {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.console-dcard__src {
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+}
+.console-dcard__src a {
+  color: inherit;
+}
+.console-rec {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+}
+.console-rec__by {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: color-mix(in srgb, var(--accent) 75%, var(--text));
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+.console-rec__what {
+  color: var(--text);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+.console-rec__why {
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+}
+.console-dcard__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.console-dcard__blocked {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+}
+.console-dcard__review {
+  margin-left: auto;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}

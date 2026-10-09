@@ -9,6 +9,7 @@ import { Icon } from '../../components/Icon';
 import { RelativeTime } from '../../components/RelativeTime';
 import { useToast } from '../../components/Toast';
 import { Glyph } from '../sessions/glyphs';
+import './decisionCard.css';
 
 /** Decision kinds in words (mirrors the contracts' DECISION_KIND_LABEL; contracts are imported as types only). */
 export const DECISION_KIND_WORD: Record<DecisionKind, string> = {
@@ -104,15 +105,15 @@ export function DecisionRail({ decisions, sessions, onResolved, limit = 8 }: Dec
   );
 }
 
-function DecisionCard({
-  decision: d,
-  session,
-  onResolved,
-}: {
+export interface DecisionCardProps {
   decision: DecisionCardView;
+  /** The session it came from, for the source line (omitted on that session's own page). */
   session: SessionSummary | undefined;
   onResolved: () => void;
-}) {
+}
+
+/** One open decision: age, kind, test, the recommendation, and the one action the viewer may take. */
+export function DecisionCard({ decision: d, session, onResolved }: DecisionCardProps) {
   const toast = useToast();
   const titleId = useId();
   const [busy, setBusy] = useState(false);
