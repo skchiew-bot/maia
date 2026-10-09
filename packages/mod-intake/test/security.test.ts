@@ -1,5 +1,14 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { newId, type Actor, type InternalTicket, type LaunchRequest, type PublicTicket, type SupervisorService } from '@aoc/contracts';
+import {
+  newId,
+  type Actor,
+  type InternalTicket,
+  type LaunchRequest,
+  type PublicTicket,
+  type SessionDirectory,
+  type SessionInfo,
+  type SupervisorService,
+} from '@aoc/contracts';
 import { createTestRuntime, type TestRuntime } from '@aoc/kernel';
 import { builtinScanner, createIntakeModule } from '../src';
 
@@ -7,11 +16,17 @@ let t: TestRuntime;
 afterEach(async () => t?.close());
 
 async function setup() {
-  const launches: (LaunchRequest & { sessionId: string })[] = [];
+  const launches: (LaunchRequest & { sessionId: string; actor: Actor })[] = [];
+  const sessions: Partial<SessionDirectory> = {
+    get(sessionId: string) {
+      const l = launches.find((x) => x.sessionId === sessionId);
+      return l ? ({ sessionId, ownerId: l.actor.kind === 'human' ? l.actor.id : null, lifecycle: 'running' } as SessionInfo) : null;
+    },
+  };
   const supervisor: Partial<SupervisorService> = {
     async launch(req: LaunchRequest, actor: Actor) {
       const sessionId = newId('session');
-      launches.push({ ...req, sessionId });
+      launches.push({ ...req, sessionId, actor });
       const readOnly = req.processType === 'bug-triage';
       t.rt.store.append({
         type: 'session.launch_requested',
@@ -27,11 +42,11 @@ async function setup() {
   };
   t = await createTestRuntime({
     modules: [createIntakeModule({ scanner: builtinScanner })],
-    services: { supervisor: supervisor as SupervisorService },
+    services: { supervisor: supervisor as SupervisorService, sessions: sessions as SessionDirectory },
     config: { intake: { triageAgents: 1 } },
   });
   t.rt.store.append({ type: 'project.created', actor: { kind: 'system', id: 'test' }, scope: { projectId: 'prj_1' }, meta: { projectId: 'prj_1', slug: 'claims' }, payload: { name: 'Claims' }, source: 'system' });
-  return launches;
+  return { launches, supervisor: supervisor as SupervisorService };
 }
 
 async function submit(headers: Record<string, string>, fields: Record<string, string>) {
@@ -43,7 +58,7 @@ async function submit(headers: Record<string, string>, fields: Record<string, st
 
 describe('untrusted requester text in agent prompts', () => {
   it('frames UAT feedback for the (write-capable) build session with an unforgeable delimiter', async () => {
-    const launches = await setup();
+    const { launches } = await setup();
     const requester = t.user('requester', 'Nur');
     const approver = t.user('approver');
     const { ticketId } = await submit(requester.headers, { title: 'Claim form crashes', description: 'The page goes blank after upload', severity: 'high' });
@@ -80,7 +95,7 @@ describe('untrusted requester text in agent prompts', () => {
 
 describe('PDPA erasure of a ticket (§13)', () => {
   it('also scrubs the triage diagnoses derived from it, exactly as a rebuild would', async () => {
-    const launches = await setup();
+    const { launches } = await setup();
     const requester = t.user('requester', 'Nur');
     const approver = t.user('approver');
     const { ticketId } = await submit(requester.headers, { title: 'Claim rejected', description: 'My claim for Nur Aisyah (NRIC 850101-14-5555) was rejected', severity: 'high' });
@@ -98,5 +113,38 @@ describe('PDPA erasure of a ticket (§13)', () => {
     t.rt.store.rebuildProjections(['intake']);
     const rebuilt = await t.json<InternalTicket>('GET', `/api/tickets/${ticketId}`, { headers: approver.headers });
     expect(live.diagnoses).toEqual(rebuilt.diagnoses);
+  });
+});
+
+describe('closing a ticket (R-11)', () => {
+  const close = (headers: Record<string, string>, ticketId: string, resolution: string) =>
+    t.request('POST', `/api/tickets/${ticketId}/close`, { headers, body: { resolution } });
+
+  it('is for the owner of the linked work or an Approver, and only an Approver records a withdrawal', async () => {
+    const { supervisor } = await setup();
+    const requester = t.user('requester', 'Nur');
+    const bystander = t.user('builder', 'Bystander');
+    const worker = t.user('builder', 'Worker');
+    const approver = t.user('approver');
+    const a = await submit(requester.headers, { title: 'Claim form crashes', description: 'The page goes blank after upload', severity: 'high' });
+    const b = await submit(requester.headers, { title: 'Export is slow', description: 'The CSV export takes minutes', severity: 'low' });
+    await t.drain();
+    // The worker's own session on ticket A is the linked work they own.
+    await supervisor.launch({ processType: 'feature-build', projectId: 'prj_1', prompt: 'Look into A', ticketId: a.ticketId }, { kind: 'human', id: worker.user.id });
+    await t.drain();
+
+    expect((await close(bystander.headers, a.ticketId, 'wont_fix')).status).toBe(403);
+    expect((await close(requester.headers, a.ticketId, 'wont_fix')).status).toBe(403);
+    expect((await close(worker.headers, b.ticketId, 'duplicate')).status).toBe(403);
+    expect((await close(worker.headers, a.ticketId, 'withdrawn')).status).toBe(403);
+    expect(t.rt.store.list({ types: ['ticket.closed'] })).toHaveLength(0);
+
+    expect((await close(worker.headers, a.ticketId, 'duplicate')).status).toBe(200);
+    expect((await close(approver.headers, b.ticketId, 'withdrawn')).status).toBe(200);
+    const closed = t.rt.store.list({ types: ['ticket.closed'] });
+    expect(closed.map((e) => [e.meta.ticketId, e.meta.resolution, e.actor.id])).toEqual([
+      [a.ticketId, 'duplicate', worker.user.id],
+      [b.ticketId, 'withdrawn', approver.user.id],
+    ]);
   });
 });
