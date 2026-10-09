@@ -24,7 +24,7 @@ Threat-model items are cited as O-n (`docs/security/threat-model.md` §6).
 | G-34 | Stall threshold | CEO decision 2026-10-09: 10 min (`a2a4e96`) | `packages/contracts/test/contracts.test.ts`, `packages/mod-sessions/test/sessions.test.ts` |
 | G-35 | Sole-Approver fallback always on | CEO decision 2026-10-09: off by default (`a2a4e96`) | `packages/mod-decisions/test/engine.test.ts` › "is off by default: the only Approver cannot resolve their own requests" |
 | G-39 | Erasure left decrypted read-model text in `aoc.db` free pages and the WAL; FTS5 kept erased terms in live index segments | kernel `63331da` (`secure_delete` on `aoc.db`, `wal_checkpoint(TRUNCATE)` after `eraseScope`), mod-registry `503b8df` (FTS5 `optimize` when an erasure removes knowledge documents) | `packages/kernel/test/security.test.ts` › "scrubbed projection text is gone from aoc.db and its WAL, not just from the table"; `packages/mod-registry/test/security.test.ts` › "leaves no trace of an erased document in the FTS index pages on disk" (raw `aoc.db` / `-wal` bytes) |
-| G-04 / G-07 | Supervisor launch, `runIsolated`, self-modification guard | supervisor, mod-audit | **Narrowed**, not closed — what remains is below. (G-01 was narrowed with them and is now closed: next row.) |
+| G-04 / G-07 | Supervisor launch, `runIsolated`, self-modification guard | supervisor, mod-audit | **Narrowed**, not closed — what remains is below. (G-01 was narrowed with them and is now closed: next row. G-04 is now enforced in code: its entry under P0.) |
 | G-01 | Sessions ran as the aocd OS user | session isolation (supervisor, contracts config, daemon) | `packages/supervisor/test/isolation.test.ts` (end-to-end part needs root; it creates two OS users): › "runs a build turn, its hooks and its MCP server as the session user, who can read none of aocd’s secrets" (claude-sim Bash tries the profiles file, the KEK, `aoc.db`, the data dir, aocd's `~/.ssh` key and the original key file → all `Permission denied`; `HOME` is the session's, not aocd's), › "a read-only session cannot open a profile key file, a build session’s key copy or its environment", › "startup self-check › refuses to start while a session user can read the data dir, and starts once it is private" (and the KEK / profiles / key-file and runner variants), › "runs supervisor commands without credentials (acceptance tests) as the session user, never as root"; `packages/daemon/test/production.test.ts` › "refuses to run managed sessions as the aocd OS user". Residuals below. |
 | G-46 | KEK from `AOC_MASTER_KEY`; git children inherited all of `process.env` | kernel `crypto.ts`, `git.ts`, `child-env.ts` | `packages/kernel/test/secrets.test.ts` › "a git child (and whatever git starts) sees no AOC_*, ANTHROPIC_* or tokens", › "production › refuses a KEK from AOC_MASTER_KEY, even when the file is fine" (and never generated, mode 0400/0600 only, not inside `dataDir`, owner check); `packages/daemon/test/production.test.ts` › "refuses a KEK from AOC_MASTER_KEY even beside a valid key file, without echoing it". Residuals below. |
 
@@ -51,9 +51,9 @@ sidecar stays with aocd. Development keeps `isolation: "none"` as the default, w
 - **Credentialed sessions share one OS user**: a build session can read a concurrent build session's key copy and
   `/proc/<pid>/environ` (a `git-feature` session can reach a `bug-fix` session's `uat-deploy` key while it runs).
   Per-session uids or containers (`supervisor.runner`) close this.
-- **With aocd as root, privileged git fails closed in agent-owned repositories** until G-04: root's git refuses them
-  (dubious ownership), so promotion pushes, pin tags, rollback checkouts and the ledger's commit-evidence check do
-  not work there. Never work around it with `safe.directory`.
+- **With aocd as root, root's git refuses agent-owned repositories** (dubious ownership). G-04 handles it: AOC's own
+  git runs there as the repository's owner, and promotions, pin tags, rollback checkouts and the ledger's
+  commit-evidence check work. Never work around it with `safe.directory`; run your own git as the session user.
 - The ingest token is still in the session's environment (G-44 / O-3).
 - A non-root aocd with a `sudo` runner is not supported: the sidecar cannot read the 0600 transcript and aocd cannot
   SIGKILL another user's process.
@@ -61,38 +61,60 @@ sidecar stays with aocd. Development keeps `isolation: "none"` as the default, w
   sessions or aocd). `~/.claude/settings.json` gets the workspace-settings rules before every turn (no
   `disableAllHooks`, no `env`); other Claude Code state there (for example `.claude.json`) is not checked.
 
-### G-04 Privileged git never in agent-writable trees (threat model O-2)
+### G-04 Privileged git never in agent-writable trees (threat model O-2) — enforced in code; residuals
 Rows: S3-b, S8-g, S14.2-a, R1. **Status: enforced in code** (G-04 agent; `packages/mod-change`,
-`packages/supervisor`, `packages/kernel/src/git.ts`). The promotion credential may hold a real key **once G-01 is
-in place too** (`docs/runbooks/credential-isolation.md` §4.5): until sessions run as their own OS user, any session
-can still read the key file and write AOC's data directory.
+`packages/supervisor`, `packages/kernel/src/git.ts`), on top of G-01. **The promotion credential can hold a real key**
+once session isolation is on (`supervisor.sessionUser` with its startup self-check; production requires both): the key
+file is root's `0600`, only the push process receives the profile, and sessions run as their own OS user, so they can
+neither read the key nor write the clone. With `isolation: "none"` (the development default) any session can do both,
+so no real credential belongs in the profile there. Operator setup: `docs/runbooks/credential-isolation.md` §4 item 9
+(the clone's `origin` is the protected remote).
 **Now enforced:** promotion, rollback, break-glass, pin tags and rollback verification run in a service-owned bare
 clone per project (`<dataDir>/git/<project>.git`; refused when it would overlap the project repository). Commits
 enter it by id only (`git fetch --no-tags -- <repo> <sha>`, `protocol.allow=never` + `protocol.file.allow=user`,
 `transfer.fsckObjects`); `protocol.file.allow=never`, as first proposed here, would refuse that fetch. Every git
 command there runs with hooks off, no fsmonitor, signing or verification program, every transport denied unless
-needed, no system or global config and a scrubbed environment; no `safe.directory`. Provenance and the
-fast-forward checks run in the clone against where AOC last moved the branch, and again at execution. The push
-target is AOC's configuration (the clone's `origin`, or `promotionRemote`), never the project's `.git/config`;
-remotes there with none configured → `promotion_remote_unconfigured`. The `prod-promote` profile reaches one
-process: `git push --no-verify` from the clone, a compare-and-swap of a verified fast-forward
-(`--force-with-lease=<branch>:<base>`; `default_branch_moved` when the remote moved outside AOC). Rollback
-verification checks out of the clone into a fresh standalone checkout and runs the acceptance tests through
-`runIsolated` sandboxed: as the session user when configured, never with a credential. The kernel git service adds
-the same safety settings to every git process it starts (mod-ledger's evidence checks and pin tags included).
+needed, no system or global config and a scrubbed environment. **No `safe.directory`, ever:** with G-01 the project
+repositories belong to the session user and root's git refuses them (dubious ownership), so the fetch's serving side
+(`upload-pack`) and every other kernel git command in a project repository (existence, refs, log, the recorded-heads
+walk, fingerprints, commit evidence, ledger phase pins) run as the repository's owner (supplementary groups dropped,
+no home, no system or global config); root never parses agent-written config. Provenance (G-25's recorded session
+heads, unchanged) and the fast-forward checks run in the clone against where AOC last moved the branch, and again at
+execution; governance-core changes (G-41) are read from the clone too. The push target is AOC's configuration (the
+clone's `origin`, or mod-change's `promotionRemote` option when embedded), never the project's `.git/config`; remotes
+there with none configured → `promotion_remote_unconfigured`, already when the promotion or rollback is requested. The
+`prod-promote` profile reaches one process: `git push --no-verify` from the clone, a compare-and-swap of a verified
+fast-forward (`--force-with-lease=<branch>:<base>`; `default_branch_moved` when the remote moved outside AOC).
+Rollback verification checks out of the clone into a fresh standalone checkout, hands it to the session user, and
+runs the acceptance tests through `runIsolated` sandboxed: as the session user, never with a credential, with nothing
+of aocd's environment. The project's own branch follows a push (and moves for a project without a remote) as the
+session user, with hooks, fsmonitor and filter drivers off.
 **Tests:** `packages/mod-change/test/privileged-git.test.ts` › "ignores a planted pre-push hook, core.hooksPath,
 aliases and core.sshCommand (and more): promotion and rollback to a remote still succeed", › "ignores the same
 planted config when the project has no remote…", › "keeps the service clone outside the project repository, and
 refuses a clones directory inside it", › "never pushes where the project repository points…", › "moves the remote
 only from the base it verified…", › "traces against the branch as AOC moved it…", › "G-04 end to end, with the
-real supervisor" (the remote sees the credential on AOC's push only; an acceptance test that writes outside its
-checkout fails as the session user; skipped with the reason when aocd is not root or there is no `nobody` user);
-`packages/supervisor/test/isolated.test.ts`; `packages/kernel/test/git.test.ts`.
-**Still open:** the session user itself (G-01; the sandbox reads `supervisor.sessionUser` once G-01 adds it to the
-schema, else runs as aocd without credentials, warned); `SupervisorService.runIsolated` needs the `sandbox` field
-in the contract (used through a local type today); acceptance commands still run through `sh -c`; pin tags stay in
-the clone (not pushed, so ruleset C is unused); request-time `rev-parse` / `log` and mod-ledger's evidence checks
-still read agent repositories as aocd (hardened flags, not yet as the session user).
+real supervisor" (the project repository belongs to the session user as under G-01; the remote sees the credential on
+AOC's push only; an acceptance test that writes outside its checkout fails as the session user; the project's branch
+follows the rollback, written by its owner; skipped with the reason when aocd is not root or there is no `nobody`
+user); `packages/kernel/test/git.test.ts` › "runs git there as its owner: no dubious-ownership refusal…", › "fetches
+from it into a repository of aocd's through an upload-pack run as the owner…" (same skip rule) and the planted-config
+tests; `packages/supervisor/test/isolated.test.ts`.
+**Still open:**
+- `SupervisorService.runIsolated` needs the `sandbox` field in the contract (`services.ts`, lead-owned; used through a
+  local type today), and `promotionRemote` / `promoteCredentialProfile` need a config section (the daemon passes
+  mod-change no options, so the clone's `origin` and the `prod-promote` default are the only operator interface).
+- Nothing fetches the protected remote: the clone learns a branch from AOC's own pushes and, for the first promotion,
+  from the project repository's view. The push lease turns a wrong guess into `default_branch_moved`, never into an
+  unchecked push.
+- Acceptance commands still run through `sh -c`, inside the sandbox (as the session user; as aocd, without
+  credentials, when isolation is off: development only, warned).
+- Pin tags stay in the clone (not pushed), so ruleset C is unused.
+- A candidate that fails git's object checks is refused; accepting known old damage means setting
+  `fetch.fsck.<msg-id>=warn` in that project's clone.
+- A local-path remote runs its hooks inside the push, with the credential (tests and same-host mirrors only; it must
+  belong to root).
+- With `isolation: "none"` the kernel git service runs as aocd, with hardened flags but not as another user.
 
 ## P1 — software
 
@@ -138,12 +160,12 @@ still read agent repositories as aocd (hardened flags, not yet as the session us
 | P-05 | **Compliance-lead review of the ISO/IEC 42001 mapping** (`docs/compliance/iso42001-annex-a.md` is input), then the stamp via `POST /api/compliance/mapping/stamp` by a named person holding the `complianceLead` flag. Until then every pack says "Provisional — do not cite" | §13, §14, R3 | Compliance lead | Open |
 | P-06 | **Human review of the AI-built governance core** (`docs/compliance/self-modification-boundary.md` §5 checklist: kernel, contracts, mod-audit, mod-credits, mod-decisions, mod-identity, hooks, config, plus the supervisor and change-control paths it lists); CODEOWNERS with required human review | §13, R14 | CEO / Governance | Open |
 | P-07 | **Ship the external self-modification log off-host** as it is written (central log, append-only bucket or anchor repo) and name its reviewer | §13, R14 | CEO / Governance | Open |
-| P-08 | **Per-stage CEO sign-off** (§15). Stage 1 is functionally complete; sign-off should wait for G-04 and for the P-13 host setup that G-01 (closed in software) depends on | §15, R5 | CEO | Open |
+| P-08 | **Per-stage CEO sign-off** (§15). Stage 1 is functionally complete; sign-off should wait for the P-13 host setup that G-01 and G-04 (both closed in software) depend on | §15, R5 | CEO | Open |
 | P-09 | Approve the static mock | §12, §15 | CEO | **Done 2026-10-09** (recorded in `mocks/README.md`) |
 | P-10 | **Enablement gates** (O-21): keep the intake portal and Builder surfaces off in production until the identity stage is signed off — the portal API was merged before identity | §6, §15, R5 | CEO | Open |
 | P-11 | **Separation of duties with one Approver** (O-8): the fallback is now off (CEO, 2026-10-09), so the only Approver's own requests have no eligible resolver — appoint a deputy Approver with a passkey | §6 | CEO | Decision made; deputy Approver open |
 | P-12 | **Malware scanning in production**: provision ClamAV on the portal host | §7, R4 | CEO / CX lead | Open |
-| P-13 | **Credential profiles file and OS users**: least-privilege `git-feature`, `uat-deploy`, `promotion` profiles, key files declared under `files` (`{{file:<name>}}`); aocd run as root (reduced capability set) with two session users, `aoc-agent` and `aoc-reader`, each with its own group; `"mode": "production"`; file ownership per `docs/runbooks/credential-isolation.md` §4; no process type may name `promotion` | §3, R1 | Platform Architect | Open (G-01 software done; host setup outstanding) |
+| P-13 | **Credential profiles file and OS users**: least-privilege `git-feature`, `uat-deploy`, `prod-promote` profiles, key files declared under `files` (`{{file:<name>}}`); aocd run as root (reduced capability set) with two session users, `aoc-agent` and `aoc-reader`, each with its own group; `"mode": "production"`; file ownership per `docs/runbooks/credential-isolation.md` §4; no process type may name `prod-promote`; each project's service clone given its protected remote (`git --git-dir=<dataDir>/git/<project>.git remote add origin …`, §4 item 9) | §3, R1 | Platform Architect | Open (G-01 and G-04 software done; host setup outstanding) |
 | P-14 | **Observed-session coverage**: observed hooks with each developer's own observer token, quarterly `aoc doctor` checklist (`docs/runbooks/credential-isolation.md` §5) | §2, R1 | CEO / DevEx | Open |
 | P-15 | Discovery-class build stages on Opus | §15 | CEO | Process |
 | P-16 | Credit policy: allocations, exemptions, top-up approvers | §10 | CEO / FinOps | Open |
