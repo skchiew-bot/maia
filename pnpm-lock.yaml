@@ -206,6 +206,9 @@ importers:
       '@aoc/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@aoc/kernel':
+        specifier: workspace:*
+        version: link:../kernel
       zod:
         specifier: 3.25.76
         version: 3.25.76
