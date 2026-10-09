@@ -28,7 +28,13 @@ import {
   type SupervisorService,
   type User,
 } from '@aoc/contracts';
-import { GIT_SAFETY_ARGS, GIT_SERVICE_ENV, HttpError, type ModuleContext } from '@aoc/kernel';
+import {
+  GIT_SAFETY_ARGS,
+  GIT_SERVICE_ENV,
+  HttpError,
+  filterDriverOverrides,
+  type ModuleContext,
+} from '@aoc/kernel';
 import {
   acceptanceCommandOf,
   isClean,
@@ -375,15 +381,19 @@ export class ChangeEngine implements ChangeService {
     return this.ctx.services.get('supervisor').runIsolated(input);
   }
 
-  /** git in the project repository — the agents' workspace — as the session user, never with a credential. */
-  private sandboxedGit(): GitRunner {
+  /**
+   * git in the project repository — the agents' workspace — as the session user, never with a credential, and with
+   * every filter driver the repository defines switched off (a checkout would run its smudge command).
+   */
+  private sandboxedGit(repo: string): GitRunner {
+    const noFilters = filterDriverOverrides(repo);
     return async (cwd, args, env = {}) => {
       const r = await this.isolated({
         cwd,
         command: ['git', ...GIT_SAFETY_ARGS, ...args],
         credentialProfile: null,
         timeoutMs: this.o.gitTimeoutMs,
-        env: { ...GIT_SERVICE_ENV, ...env },
+        env: { ...GIT_SERVICE_ENV, ...noFilters, ...env },
         sandbox: {},
       });
       return { code: r.exitCode, stdout: r.stdout, stderr: r.stderr };
@@ -468,10 +478,10 @@ export class ChangeEngine implements ChangeService {
     restore?: CommitSpec;
   }): Promise<PublishResult> {
     if (i.target.kind === 'local')
-      return updateProjectBranch(this.sandboxedGit(), i.repo, i.branch, i.base.sha, i.next, i.restore);
+      return updateProjectBranch(this.sandboxedGit(i.repo), i.repo, i.branch, i.base.sha, i.next, i.restore);
     const pushed = await this.pushToRemote(i.clone, i.target.url, i.branch, i.base, i.next);
     if (!pushed.ok) return pushed;
-    const local = await updateProjectBranch(this.sandboxedGit(), i.repo, i.branch, null, i.next, i.restore).catch(
+    const local = await updateProjectBranch(this.sandboxedGit(i.repo), i.repo, i.branch, null, i.next, i.restore).catch(
       (err): PublishResult => ({ ok: false, failed: 'local_update_failed', detail: errText(err) }),
     );
     return local.ok

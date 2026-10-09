@@ -6,6 +6,7 @@ import type { ChangeScope, LearningService, LedgerService, SupervisorService, Us
 import {
   createTestRuntime,
   initRepo,
+  type AocModule,
   type BroadcastMessage,
   type TestRuntime,
   type TestUser,
@@ -31,7 +32,7 @@ const GIT_ENV = { GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_
 export class FakeSupervisor implements SupervisorService {
   readonly calls: IsolatedCall[] = [];
   readonly profiles: Record<string, Record<string, string>> = {
-    'prod-promote': { AOC_TEST_CREDENTIALS: 'prod-promote' },
+    'prod-promote': { TEST_PROMOTION_TOKEN: 'prod-promote' },
   };
 
   runIsolated(input: IsolatedCall): Promise<{ exitCode: number; stdout: string; stderr: string }> {
@@ -219,6 +220,9 @@ export async function harness(
     supervisor?: boolean;
     ledger?: Partial<LedgerService>;
     learning?: Partial<LearningService>;
+    /** More modules, e.g. the real supervisor (with `supervisor: false`). */
+    modules?: AocModule[];
+    config?: Record<string, unknown>;
   } = {},
 ): Promise<Harness> {
   const sup = new FakeSupervisor();
@@ -227,7 +231,11 @@ export async function harness(
   if (opts.supervisor !== false) services.supervisor = sup;
   if (opts.ledger) services.ledger = opts.ledger;
   if (opts.learning) services.learning = opts.learning;
-  const t = await createTestRuntime({ modules: [mod], services });
+  const t = await createTestRuntime({
+    modules: [mod, ...(opts.modules ?? [])],
+    services,
+    ...(opts.config ? { config: opts.config } : {}),
+  });
   const notifications: Harness['notifications'] = [];
   t.rt.broadcaster.subscribe({
     role: 'approver',

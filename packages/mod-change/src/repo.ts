@@ -115,10 +115,11 @@ export async function listWorktrees(git: GitRunner, repo: string): Promise<Workt
 
 /**
  * Moves `branch` of the project repository itself to `next`. `git` runs as the session user (the repository is the
- * agents' workspace), with the kernel's safety settings. `from` is the value the branch must still hold (a local
- * target: a compare-and-swap); null accepts any value `next` fast-forwards (the courtesy update after a push). A
- * rollback's restore commit is first made again here from its spec and must come out with the same id. A worktree
- * that has the branch checked out is fast-forwarded in place, with its work tree pinned to that path.
+ * agents' workspace), with the kernel's safety settings and the repository's filter drivers switched off. `from` is
+ * the value the branch must still hold (a local target: a compare-and-swap); null accepts any value `next`
+ * fast-forwards (the courtesy update after a push). A rollback's restore commit is first made again here from its
+ * spec and must come out with the same id. A worktree of this repository that has the branch checked out is
+ * fast-forwarded in place, with its work tree pinned to that path.
  */
 export async function updateProjectBranch(
   git: GitRunner,
@@ -148,6 +149,15 @@ export async function updateProjectBranch(
     return { ok: false, refused: 'not_fast_forward', detail: `${next} does not contain ${branch} at ${current}` };
   const holder = (await listWorktrees(git, repo)).find((w) => w.branch === ref);
   if (holder) {
+    // Worktree metadata is agent-writable: only a worktree of this very repository is touched.
+    const own = await git(repo, ['rev-parse', '--path-format=absolute', '--git-common-dir']);
+    const theirs = await git(holder.path, ['rev-parse', '--path-format=absolute', '--git-common-dir']);
+    if (own.code !== 0 || theirs.code !== 0 || own.stdout.trim() !== theirs.stdout.trim())
+      return {
+        ok: false,
+        failed: 'local_update_failed',
+        detail: `the worktree at ${holder.path}, which has ${branch} checked out, does not belong to this repository`,
+      };
     const pinned = ['--work-tree', holder.path];
     const status = await git(holder.path, [...pinned, 'status', '--porcelain']);
     if (status.code !== 0 || status.stdout.trim())
