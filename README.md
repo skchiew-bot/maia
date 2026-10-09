@@ -148,6 +148,11 @@ Tests are deterministic. They use temporary directories, random ports, a fake cl
 with no network and no real `claude`. The kernel test kit (`createTestRuntime`) spins up a full in-memory runtime
 for module tests.
 
+The one exception is opt-in and never part of `pnpm test`: `AOC_REAL_CLI=1 pnpm --filter @aoc/e2e real-cli` drives the
+real `claude` CLI through the whole platform on Haiku (a few cents per scenario; `real-cli:full` runs every scenario).
+What it verified, and the captures the other tests replay, are in the
+[research note](docs/research/claude-code-integration.md#13-verified-against-the-real-cli-on-2026-10-09).
+
 ## Documentation
 
 | Document | What it covers |

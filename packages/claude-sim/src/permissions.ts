@@ -229,11 +229,31 @@ function tokenize(part: string): string[] {
   return out;
 }
 
+/** `git branch` lists unless a flag or a bare name asks it to create, move, copy or delete (`git branch -D main`). */
+const GIT_BRANCH_LISTING = /^(-a|-r|-v|-vv|-l|--all|--remotes|--verbose|--list|--show-current|--contains|--no-contains|--merged|--no-merged|--points-at|--sort|--format|--column|--no-column|--abbrev|--no-abbrev|--color|--no-color)(=.*)?$/;
+const GIT_BRANCH_FILTERS = new Set(['--contains', '--no-contains', '--merged', '--no-merged', '--points-at', '--sort', '--format']);
+
+function gitReadOnly(sub: string, args: string[]): boolean {
+  // `--output=<file>` makes diff, log and show write a file.
+  if (args.some((t) => t === '--output' || t.startsWith('--output='))) return false;
+  if (sub !== 'branch') return true;
+  const listing = args.some((t) => t === '-l' || t === '--list' || GIT_BRANCH_FILTERS.has(t.split('=')[0]!));
+  for (let i = 0; i < args.length; i++) {
+    const t = args[i]!;
+    if (t.startsWith('-')) {
+      if (!GIT_BRANCH_LISTING.test(t)) return false;
+      // The value of a filter flag is not a branch name.
+      if (GIT_BRANCH_FILTERS.has(t) && !t.includes('=')) i++;
+    } else if (!listing) return false;
+  }
+  return true;
+}
+
 function isReadOnlyCommand(tokens: string[]): boolean {
   const [cmd, sub] = tokens;
   if (!cmd) return false;
   if (tokens.length === 2 && (sub === '--version' || sub === '-v') && VERSION_QUERY.has(cmd)) return true;
-  if (cmd === 'git') return sub !== undefined && READ_ONLY_GIT.has(sub);
+  if (cmd === 'git') return sub !== undefined && READ_ONLY_GIT.has(sub) && gitReadOnly(sub, tokens.slice(2));
   if (cmd === 'find') return !tokens.some((t) => /^-(delete|exec|execdir|ok|okdir|fprint0?|fls|fprintf)$/.test(t));
   return READ_ONLY_COMMANDS.has(cmd);
 }

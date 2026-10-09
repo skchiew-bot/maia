@@ -131,6 +131,10 @@ describe('permission rules', () => {
     'git diff',
     'git log --oneline',
     'git branch',
+    'git branch -a',
+    'git branch --show-current',
+    'git branch --contains abc123',
+    'git branch --list feature/*',
     'node --version',
     'python3 --version',
     'touch a.txt',
@@ -152,6 +156,13 @@ describe('permission rules', () => {
     'curl --version',
     'make --version',
     'bash -c "echo hi"',
+    // `git branch` is read-only only when it lists; the lead's demo tests caught the mirror allowing these.
+    'git branch -D main',
+    'git branch -d feature',
+    'git branch -m old new',
+    'git branch feature',
+    'git branch --set-upstream-to=origin/main',
+    'git log --output=out.txt',
   ];
 
   it('Bash under acceptEdits: read-only and plain file commands run, everything else needs approval (real-CLI matrix)', () => {
