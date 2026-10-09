@@ -1,8 +1,8 @@
 import { statSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { HOOK_EVENTS, type Actor } from '@aoc/contracts';
 import { createLogger, HttpError } from '@aoc/kernel';
-import { MANAGED_HOOK_EVENTS } from '../src/claude-facts';
 import { createHarness, FAKE_SIDECAR, REPO_REGISTRY, SECRETS, type Harness } from './harness';
 
 let h: Harness | null = null;
@@ -33,6 +33,8 @@ describe('launch', () => {
       model: 'claude-opus-5-5',
       readOnly: false,
       credentialProfile: 'git-feature',
+      ownerId: h.owner.user.id,
+      changeId: null,
     });
     const launched = h.events('session.launched', id)[0]!;
     const uuid = String(launched.meta.claudeSessionId);
@@ -89,7 +91,7 @@ describe('launch', () => {
       kind: 'session',
       sessionId: id,
     });
-    for (const leaked of ['DEPLOY_KEY', 'AOC_MASTER_KEY', 'DEPLOY_TOKEN'])
+    for (const leaked of ['DEPLOY_KEY', 'AOC_MASTER_KEY', 'DEPLOY_TOKEN', 'AOC_CHANGE_ID', 'AOC_TICKET_ID'])
       expect(env[leaked], leaked).toBeUndefined();
     expect(JSON.stringify(env)).not.toContain(SECRETS.aocdDeployKey);
     expect(JSON.stringify(env)).not.toContain(SECRETS.aocdMasterKey);
@@ -110,7 +112,7 @@ describe('launch', () => {
     });
     expect(statSync(join(dir, 'mcp.json')).mode & 0o777).toBe(0o600);
     const settings = JSON.parse(h.file(id, 'settings.json'));
-    expect(Object.keys(settings.hooks).sort()).toEqual([...MANAGED_HOOK_EVENTS].sort());
+    expect(Object.keys(settings.hooks).sort()).toEqual([...HOOK_EVENTS].sort());
     expect(settings.hooks.PreToolUse[0]).toEqual({
       matcher: '',
       hooks: [{ type: 'command', command: 'node /opt/aoc/aoc-hook.js PreToolUse', timeout: 30 }],
@@ -192,6 +194,63 @@ describe('launch', () => {
     });
     expect(h.ledger.writerCalls).toEqual([]);
     expect(h.file(a, 'system-prompt.md')).toContain('READ-ONLY');
+  });
+
+  it("exports the change and ticket a session works under to that session's env only, on every turn", async () => {
+    h = await createHarness();
+    const id = await h.launch('Fix the export', { changeId: 'chg_7', ticketId: 'tkt_9' });
+    const other = await h.launch('Unrelated work', { threadId: 'thr_other' });
+    await h.waitLifecycle(id, 'idle');
+    await h.waitLifecycle(other, 'idle');
+    expect(h.events('session.launch_requested', id)[0]!.meta).toMatchObject({
+      changeId: 'chg_7',
+      ticketId: 'tkt_9',
+      ownerId: h.owner.user.id,
+    });
+    expect(h.callsFor(id)[0]!.env).toMatchObject({ AOC_CHANGE_ID: 'chg_7', AOC_TICKET_ID: 'tkt_9' });
+    expect(JSON.parse(h.file(id, 'mcp.json')).mcpServers.aoc.env).toMatchObject({ AOC_CHANGE_ID: 'chg_7' });
+    expect(h.callsFor(other)[0]!.env.AOC_CHANGE_ID).toBeUndefined();
+    expect(h.callsFor(other)[0]!.env.AOC_TICKET_ID).toBeUndefined();
+    // Later turns are planned from the projection, so they keep it.
+    await h.sup.resume(id, 'Also cover CSV', 'operator_prompt', h.ownerActor);
+    await h.waitFor(() => h!.callsFor(id).length >= 2, 'the operator turn');
+    expect(h.callsFor(id)[1]!.env).toMatchObject({ AOC_CHANGE_ID: 'chg_7', AOC_TICKET_ID: 'tkt_9' });
+  });
+
+  it('projects the recorded owner; launches logged before ownerId existed keep the old inference', async () => {
+    h = await createHarness();
+    const supervisor = { kind: 'system', id: 'supervisor' } as const;
+    const requested = (sessionId: string, actor: Actor, meta: Record<string, unknown>) =>
+      h!.t.rt.store.append({
+        type: 'session.launch_requested',
+        actor,
+        scope: { sessionId, projectId: 'prj_demo', threadId: `thr_${sessionId}` },
+        meta: {
+          sessionId,
+          projectId: 'prj_demo',
+          threadId: `thr_${sessionId}`,
+          processType: 'feature-build',
+          model: 'claude-opus-5-5',
+          readOnly: false,
+          credentialProfile: null,
+          ticketId: null,
+          parentSessionId: null,
+          phaseId: null,
+          ...meta,
+        },
+        payload: { prompt: 'p', cwd: '/tmp' },
+        source: 'supervisor',
+      });
+    requested('ses_old_a', h.ownerActor, {}); // legacy: the launching human
+    requested('ses_old_b', supervisor, { parentSessionId: 'ses_old_a' }); // legacy: the parent's owner
+    requested('ses_new_c', supervisor, { parentSessionId: 'ses_old_a', ownerId: null }); // recorded: nobody
+    requested('ses_new_d', h.ownerActor, { ownerId: 'usr_other', changeId: 'chg_1' }); // recorded wins over the actor
+    const owners = () =>
+      ['ses_old_a', 'ses_old_b', 'ses_new_c', 'ses_new_d'].map((id) => h!.sup.session(id)?.ownerId);
+    expect(owners()).toEqual([h.owner.user.id, h.owner.user.id, null, 'usr_other']);
+    expect(h.sup.session('ses_new_d')?.changeId).toBe('chg_1');
+    h.t.rt.store.rebuildProjections(['supervisor']);
+    expect(owners()).toEqual([h.owner.user.id, h.owner.user.id, null, 'usr_other']);
   });
 
   it('rejects an unknown process type with 422 (a requester cannot pick its own type or model)', async () => {

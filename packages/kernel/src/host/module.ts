@@ -40,6 +40,13 @@ export type AppEnv = {
 };
 export type App = Hono<AppEnv>;
 
+/** A module's entry in GET /api/health: machine labels, enums, numbers and booleans only — never paths or secrets. */
+export interface ModuleHealth {
+  /** false marks aocd degraded. */
+  ok: boolean;
+  detail: Record<string, JsonValue>;
+}
+
 /**
  * A domain module. Lifecycle: projectors registered → init (provide services) → routes mounted →
  * start (all services available) → jobs scheduled. Export a factory `createXModule(opts)`.
@@ -54,4 +61,6 @@ export interface AocModule {
   routes?(app: App, ctx: ModuleContext): void;
   start?(ctx: ModuleContext): void | Promise<void>;
   stop?(): void | Promise<void>;
+  /** Status of something the module depends on outside the log (e.g. the intake malware scanner), after init. */
+  health?(): ModuleHealth;
 }

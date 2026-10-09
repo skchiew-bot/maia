@@ -43,15 +43,12 @@ export {
   type HookSettings,
 } from './settings';
 export {
-  aggregateUsage,
   cursorFile,
   loadCursor,
   readObservedUsage,
   readTranscriptUsage,
   saveCursor,
-  transcriptUsageReader,
   type ObservedUsageRead,
   type TranscriptCursor,
   type UsageReadResult,
-  type UsageReader,
 } from './usage';

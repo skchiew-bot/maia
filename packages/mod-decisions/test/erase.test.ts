@@ -117,4 +117,37 @@ describe('crypto-shred (§13)', () => {
     shred(hx, 'tkt_42');
     expect(engine.get(card.id)?.question).toBe(ERASED);
   });
+
+  it('keeps a card’s text in the body scope its requester names, resolution comment included', async () => {
+    const hx = (h = await harness());
+    const { t, engine, approver, builderA } = hx;
+    const card = engine.request(
+      decisionInput({
+        kind: 'change_request',
+        changeScope: 'main',
+        requesterId: builderA.user.id,
+        sessionId: 'ses_fix',
+        subjectType: 'change',
+        subjectId: 'chg_7',
+        question: 'Ship the fix for Jane’s export bug?',
+        bodyScope: 'tkt_43',
+      }),
+      human(builderA),
+    );
+    await engine.resolve(card.id, { optionId: 'approve', comment: 'Tell Jane it is fixed' }, approver.user);
+    const bodies = t.rt.store
+      .list({ types: ['decision.requested', 'decision.resolved'] })
+      .map((e) => e.bodyScope);
+    expect(bodies).toEqual(['tkt_43', 'tkt_43']);
+    shred(hx, 'ses_fix');
+    expect(engine.get(card.id)?.question).toContain('Jane');
+    shred(hx, 'tkt_43');
+    expect(engine.get(card.id)).toMatchObject({ question: ERASED, resolution: { comment: ERASED } });
+    expect(() =>
+      engine.request(
+        decisionInput({ kind: 'fix_plan', requesterId: builderA.user.id, bodyScope: 'not a scope' }),
+        human(builderA),
+      ),
+    ).toThrow(/Invalid decision request/);
+  });
 });

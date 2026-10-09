@@ -178,8 +178,12 @@ export function decide(
     subjectId?: string;
     requesterId?: string;
     title?: string;
+    /** Recommended option id (default 'approve'); null for a card without a recommendation. */
+    recommend?: string | null;
+    dueAt?: string | null;
   } = {},
 ): void {
+  const recommend = o.recommend === undefined ? 'approve' : o.recommend;
   h.emit(
     {
       type: 'decision.requested',
@@ -196,11 +200,11 @@ export function decide(
         sessionId: o.sessionId ?? null,
         projectId: o.projectId === undefined ? 'prj_a' : o.projectId,
         optionIds: ['approve', 'reject'],
-        recommendedOptionId: null,
+        recommendedOptionId: recommend,
         requesterId: o.requesterId ?? 'usr_requester',
         excludedApproverIds: [],
         eligibleUserIds: null,
-        dueAt: null,
+        dueAt: o.dueAt ?? null,
       },
       payload: {
         title: o.title ?? `${kind} decision`,
@@ -209,6 +213,7 @@ export function decide(
           { id: 'approve', label: 'Approve' },
           { id: 'reject', label: 'Reject' },
         ],
+        ...(recommend ? { recommendation: { optionId: recommend, rationale: 'Low risk.' } } : {}),
       },
       source: 'api',
     },
@@ -467,6 +472,7 @@ export function meteringStub(fx: number | null = 4.2): {
 export const sys = SYS;
 export const minutes = (n: number) => n * MIN;
 export const hours = (n: number) => n * HOUR;
+export const days = (n: number) => n * DAY;
 
 // ── credits, change control, audit, registry ────────────────────────────────
 

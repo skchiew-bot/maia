@@ -4,7 +4,7 @@ import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { parseThrottle, parseTranscriptLine, Sidecar, sidecarOptionsFrom, TranscriptTailer, UsageAggregator } from '../src';
+import { detectThrottle, parseThrottle, Sidecar, sidecarOptionsFrom, TranscriptTailer } from '../src';
 
 const asst = (id: string, block: string, usage: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
   JSON.stringify({
@@ -19,27 +19,6 @@ const asst = (id: string, block: string, usage: Record<string, unknown>, extra: 
 
 const U = { input_tokens: 2, output_tokens: 100, cache_read_input_tokens: 1000, cache_creation_input_tokens: 300, cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 300 } };
 
-describe('UsageAggregator', () => {
-  it('counts each message once even though blocks repeat the usage', () => {
-    const a = new UsageAggregator();
-    for (const b of ['thinking', 'text', 'tool_use']) a.add(parseTranscriptLine(asst('msg_1', b, U))!);
-    a.add(parseTranscriptLine(asst('msg_2', 'text', { input_tokens: 1, output_tokens: 10, cache_read_input_tokens: 1300, cache_creation_input_tokens: 50 }))!);
-    a.add(parseTranscriptLine(asst('msg_3', 'text', { input_tokens: 5, output_tokens: 7 }, { isSidechain: true }))!);
-    const [b] = a.drain();
-    expect(b).toMatchObject({ model: 'claude-opus-5-5', inputTokens: 8, outputTokens: 117, cacheReadTokens: 2300, cacheWrite5mTokens: 50, cacheWrite1hTokens: 300 });
-    expect(b!.messageIds.sort()).toEqual(['msg_1', 'msg_2', 'msg_3']);
-    expect(b!.contextTokens).toBe(1 + 1300 + 50); // latest main-chain message, not the sidechain one
-    expect(a.drain()).toEqual([]);
-  });
-
-  it('adds only the delta when a later line for the same message reports more tokens', () => {
-    const a = new UsageAggregator();
-    a.add(parseTranscriptLine(asst('m', 'text', { input_tokens: 2, output_tokens: 5 }))!);
-    a.add(parseTranscriptLine(asst('m', 'tool_use', { input_tokens: 2, output_tokens: 50 }))!);
-    expect(a.drain()[0]).toMatchObject({ inputTokens: 2, outputTokens: 50 });
-  });
-});
-
 describe('TranscriptTailer', () => {
   it('handles partial lines and truncation', () => {
     const dir = mkdtempSync(join(tmpdir(), 'aoc-tail-'));
@@ -50,13 +29,21 @@ describe('TranscriptTailer', () => {
     writeFileSync(f, '{"a":1}\n{"b":');
     t.poll();
     expect(lines).toEqual(['{"a":1}']);
-    expect(t.committedOffset).toBe(8);
+    expect(t.offset).toBe(8); // the partial line is read again once complete
     appendFileSync(f, '2}\n');
     t.poll();
     expect(lines).toEqual(['{"a":1}', '{"b":2}']);
     writeFileSync(f, '{"c":3}\n'); // truncated + rewritten
     t.poll();
     expect(lines.at(-1)).toBe('{"c":3}');
+  });
+});
+
+describe('detectThrottle on long transcript text', () => {
+  it('stays linear (a repo hook can put arbitrary text in a system line)', () => {
+    const started = performance.now();
+    expect(detectThrottle({ type: 'system', content: '7'.repeat(100_000) } as never)).toBeNull();
+    expect(performance.now() - started).toBeLessThan(1500);
   });
 });
 
@@ -113,6 +100,8 @@ describe('Sidecar end to end', () => {
     expect(paths).toContain('/ingest/heartbeat');
     expect(paths).toContain('/ingest/throttle');
     expect(paths.at(-1)).toBe('/ingest/process');
+    // The exit names the watched pid, so a report that arrives after the next turn started cannot be mistaken for it.
+    expect(posts.at(-1)!.body).toMatchObject({ sessionId: 'ses_X', event: 'exited', pid: child.pid });
     const usage = posts.filter((p) => p.path === '/ingest/usage');
     const totalOut = usage.flatMap((p) => p.body.batches as { outputTokens: number }[]).reduce((n, b) => n + b.outputTokens, 0);
     expect(totalOut).toBe(111); // msg_1 counted once + the subagent transcript

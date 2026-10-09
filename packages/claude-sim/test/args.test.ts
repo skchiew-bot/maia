@@ -55,6 +55,52 @@ describe('parseArgs', () => {
     });
   });
 
+  it('parses the argv exactly as the supervisor lays it out (variadics, --tools, then --model <id> -- <prompt>)', () => {
+    // packages/supervisor buildClaudeArgs: a single-value flag after the variadic ones, `--` before the prompt.
+    const options = parseArgs([
+      '-p',
+      '--output-format',
+      'stream-json',
+      '--verbose',
+      '--include-partial-messages',
+      '--mcp-config',
+      '/s/mcp.json',
+      '--strict-mcp-config',
+      '--settings',
+      '/s/settings.json',
+      '--permission-mode',
+      'dontAsk',
+      '--append-system-prompt',
+      '# AOC operating rules\n1. Declare your plan first.',
+      '--tools',
+      'Read,Glob,Grep',
+      '--allowedTools',
+      'mcp__aoc',
+      '--disallowedTools',
+      'Edit',
+      'Write',
+      'Bash',
+      '--resume',
+      '11111111-2222-4333-8444-555555555555',
+      '--model',
+      'claude-opus-5-5',
+      '--',
+      '- a prompt that starts with a dash',
+    ]);
+    expect(options).toMatchObject({
+      print: true,
+      mcpConfig: ['/s/mcp.json'],
+      settings: '/s/settings.json',
+      permissionMode: 'dontAsk',
+      tools: ['Read,Glob,Grep'],
+      allowedTools: ['mcp__aoc'],
+      disallowedTools: ['Edit', 'Write', 'Bash'],
+      resume: '11111111-2222-4333-8444-555555555555',
+      model: 'claude-opus-5-5',
+      prompt: '- a prompt that starts with a dash',
+    });
+  });
+
   it('lets variadic options swallow following positionals, like commander', () => {
     expect(parseArgs(['-p', '--allowedTools', 'Edit', 'my prompt'])).toMatchObject({
       allowedTools: ['Edit', 'my prompt'],

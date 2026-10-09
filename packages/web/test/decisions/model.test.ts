@@ -21,7 +21,8 @@ const people = (names: Record<string, string>, activeApprovers: number | null = 
 
 describe('decision aging against the CEO-approved SLAs', () => {
   it('reads within, due soon and over for an agent decision (1h SLA)', () => {
-    const at = (ageMin: number) => agingOf(card({ id: 'd', createdAt: new Date(NOW - ageMin * MIN).toISOString() }), NOW);
+    const at = (ageMin: number) =>
+      agingOf(card({ id: 'd', createdAt: new Date(NOW - ageMin * MIN).toISOString() }), NOW);
     expect(at(20).state).toBe('within');
     expect(agingPhrase(at(20))).toBe('Due in 40m');
     expect(at(50).state).toBe('due_soon');
@@ -31,7 +32,11 @@ describe('decision aging against the CEO-approved SLAs', () => {
 
   it('uses an explicit due time over the kind SLA', () => {
     const a = agingOf(
-      card({ id: 'd', createdAt: new Date(NOW - 10 * MIN).toISOString(), dueAt: new Date(NOW - MIN).toISOString() }),
+      card({
+        id: 'd',
+        createdAt: new Date(NOW - 10 * MIN).toISOString(),
+        dueAt: new Date(NOW - MIN).toISOString(),
+      }),
       NOW,
     );
     expect(a.state).toBe('over');
@@ -78,7 +83,12 @@ describe('who may resolve, in words', () => {
   });
 
   it('names the eligible people for routed cards', () => {
-    const why = explainBlock(card({ id: 'd', eligibleUserIds: ['usr_dan'] }), 'not_eligible', AISYAH, people({ usr_dan: 'Daniel Lim' }))!;
+    const why = explainBlock(
+      card({ id: 'd', eligibleUserIds: ['usr_dan'] }),
+      'not_eligible',
+      AISYAH,
+      people({ usr_dan: 'Daniel Lim' }),
+    )!;
     expect(why.body).toBe('It is routed to Daniel Lim.');
   });
 
@@ -119,16 +129,28 @@ describe('time to decide per kind', () => {
       { ...base, status: 'withdrawn', ageMs: 5 * HOUR },
     ]);
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ kind: 'agent_decision', total: 3, p50Ms: 30 * MIN, p90Ms: 2 * HOUR, breaches: 1 });
+    expect(rows[0]).toMatchObject({
+      kind: 'agent_decision',
+      total: 3,
+      p50Ms: 30 * MIN,
+      p90Ms: 2 * HOUR,
+      breaches: 1,
+    });
   });
 });
 
 describe('URL filters', () => {
   it('round-trips tab, kinds, aging, passkey, scope and focus', () => {
-    const f = parseFilters(new URLSearchParams('tab=resolved&kind=go_live,rollback,bogus&aging=over&passkey=1&scope=mine&focus=dec_1'));
+    const f = parseFilters(
+      new URLSearchParams(
+        'tab=resolved&kind=go_live,rollback,bogus&aging=over&passkey=1&scope=mine&focus=dec_1',
+      ),
+    );
     expect(f.tab).toBe('resolved');
     expect([...f.kinds]).toEqual(['go_live', 'rollback']);
-    expect(filtersToParams(f).toString()).toBe('tab=resolved&kind=go_live%2Crollback&aging=over&passkey=1&scope=mine&focus=dec_1');
+    expect(filtersToParams(f).toString()).toBe(
+      'tab=resolved&kind=go_live%2Crollback&aging=over&passkey=1&scope=mine&focus=dec_1',
+    );
   });
 
   it('narrows the queue', () => {

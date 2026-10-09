@@ -31,6 +31,9 @@ const decisionFor = (
   ...over,
 });
 
+const processesOf = (h: Harness, sessionId: string) =>
+  h.liveness.processes.filter((p) => p.sessionId === sessionId).map((p) => [p.alive, p.lifecycle]);
+
 describe('turn end: decisions (§2.3)', () => {
   it('waits on an open decision with no process alive, then resumes with the injected answer', async () => {
     h = await createHarness();
@@ -64,6 +67,14 @@ describe('turn end: decisions (§2.3)', () => {
     // idempotent: redelivering the reaction does not start another turn
     await h.sup.onDecisionSettled(h.events('decision.resolved')[0]!);
     expect(h.callsFor(id).length).toBe(2);
+    // each exit is reported only once the turn's outcome is recorded: liveness never sees a running session without
+    // a process, which it would chain as a transient Dead
+    expect(processesOf(h, id)).toEqual([
+      [true, 'running'],
+      [false, 'waiting_decision'],
+      [true, 'running'],
+      [false, 'idle'],
+    ]);
   });
 
   it('waits for every open decision, and resumes on a withdrawal too', async () => {
@@ -221,6 +232,13 @@ describe('turn end: crash, auto-continue, completion, credit cap', () => {
       to: 'idle',
       reason: 'turn_ended',
     });
+    // a follow-up turn already holds the session, so its predecessor's exit is not reported over it
+    expect(processesOf(h, id)).toEqual([
+      [true, 'running'],
+      [true, 'running'],
+      [true, 'running'],
+      [false, 'idle'],
+    ]);
 
     await h.sup.resume(id, 'Also add a logout button', 'operator_prompt', h.ownerActor);
     await h.waitFor(() => h!.callsFor(id).length === 6, 'operator turn and two more continues');
@@ -234,7 +252,7 @@ describe('turn end: crash, auto-continue, completion, credit cap', () => {
     await h.waitLifecycle(id, 'ended');
     expect(h.events('session.ended', id)[0]!.meta).toEqual({ sessionId: id, outcome: 'completed' });
     expect(h.ledger.writerCalls).toContain(`release ${id} ended`);
-    expect(h.t.identity!.verifyIngestToken(h.callsFor(id)[0]!.env.AOC_INGEST_TOKEN!)).toBeNull();
+    await h.waitRevoked(h.callsFor(id)[0]!.env.AOC_INGEST_TOKEN!);
     expect(h.callsFor(id).length).toBe(1);
   });
 
@@ -253,6 +271,21 @@ describe('turn end: crash, auto-continue, completion, credit cap', () => {
     expect(h.t.identity!.verifyIngestToken(sidecarToken)).toMatchObject({ kind: 'sidecar', sessionId: id });
     h.releaseSidecars();
     await h.waitFor(() => h!.t.identity!.verifyIngestToken(sidecarToken) === null, 'sidecar token revoked');
+  });
+
+  it("keeps an ended session's sidecar token valid until its sidecar has made the final usage flush", async () => {
+    h = await createHarness({ supervisor: { autoContinueLimit: 1 }, module: { sidecarGraceMs: 1_000 }, env: { FAKE_SIDECAR_LINGER: '1' } });
+    h.ledger.defaultPct = 100;
+    const id = await h.launch('Finish');
+    await h.waitLifecycle(id, 'ended');
+    // The session token is in the model's environment: it dies with the session (G-44).
+    expect(h.t.identity!.verifyIngestToken(h.callsFor(id)[0]!.env.AOC_INGEST_TOKEN!)).toBeNull();
+    const token = h.sidecarCalls()[0]!.env.AOC_INGEST_TOKEN!;
+    // The sidecar reports the last turn's usage only after claude has exited: refusing it would lose that usage.
+    expect(h.t.identity!.verifyIngestToken(token)).toMatchObject({ kind: 'sidecar', sessionId: id });
+    // This sidecar never announced it handles SIGTERM, so it gets it after the grace.
+    await h.waitFor(() => h!.sidecarCalls().some((c) => 'sigterm' in c), 'the sidecar to be sent SIGTERM after the grace');
+    await h.waitRevoked(token);
   });
 
   it('blocks when the credit cap is reached during a turn and resumes on a top-up', async () => {
@@ -354,7 +387,7 @@ describe('operator controls (§2.3: nudge = end turn, resume with operator text)
     expect(h.events('session.turn_ended', id)[0]!.meta.outcome).toBe('stop_requested');
     expect(h.events('session.ended', id)[0]!.meta.outcome).toBe('abandoned');
     expect(h.ledger.writerCalls).toContain(`release ${id} stopped`);
-    expect(h.t.identity!.verifyIngestToken(token)).toBeNull();
+    await h.waitRevoked(token);
     expect(h.callsFor(id).length).toBe(1);
     expect(h.sup.stopRequested(id)).toBe(false);
   });

@@ -22,3 +22,13 @@ if (hold >= 0) {
   });
   process.stdout.write('aoc-sidecar ready\n'); // SIDECAR_READY_LINE
 }
+
+// FAKE_SIDECAR_LINGER=1: like a real sidecar that never announces it is ready: up until SIGTERM, then record it (the
+// final flush) and exit.
+if (process.env.FAKE_SIDECAR_LINGER === '1') {
+  process.on('SIGTERM', () => {
+    appendFileSync(log, JSON.stringify({ sigterm: true, args }) + '\n');
+    process.exit(0);
+  });
+  setInterval(() => {}, 60_000);
+}

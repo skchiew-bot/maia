@@ -1,5 +1,8 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { accessSync, constants, statSync } from 'node:fs';
+import { basename, delimiter, join } from 'node:path';
+import type { AocConfig } from '@aoc/contracts';
 
 /** Allowed media, identified by MAGIC BYTES (never by extension or declared type alone). */
 export type MediaKind = 'image' | 'video' | 'document';
@@ -74,25 +77,98 @@ export const builtinScanner: Scanner = {
   },
 };
 
-/** ClamAV via clamdscan/clamscan when installed (stdin stream); "unscanned" when unavailable. */
-export const clamavScanner: Scanner = {
-  name: 'clamav',
-  scan(buf) {
-    for (const bin of ['clamdscan', 'clamscan']) {
-      const r = spawnSync(bin, bin === 'clamdscan' ? ['--stream', '--no-summary', '-'] : ['--no-summary', '-'], { input: buf, timeout: 120_000 });
-      if (r.error) continue;
+/** ClamAV clients, in order of preference: clamdscan streams to a running clamd, clamscan loads the signatures itself. */
+export const CLAMAV_BINARIES = ['clamdscan', 'clamscan'] as const;
+
+/** ClamAV through `binary` (a path found by findOnPath), reading the upload from stdin. */
+export function clamavScanner(binary: string): Scanner {
+  const bin = basename(binary);
+  return {
+    name: bin,
+    scan(buf) {
+      const r = spawnSync(binary, bin === 'clamdscan' ? ['--stream', '--no-summary', '-'] : ['--no-summary', '-'], { input: buf, timeout: 120_000 });
+      if (r.error) return { verdict: 'unscanned', scanner: bin, detail: String(r.error).slice(0, 200) };
       if (r.status === 0) return { verdict: 'clean', scanner: bin };
       if (r.status === 1) return { verdict: 'infected', scanner: bin, detail: String(r.stdout).slice(0, 200) };
       return { verdict: 'error', scanner: bin, detail: String(r.stderr).slice(0, 200) };
-    }
-    return { verdict: 'unscanned', scanner: 'clamav' };
-  },
-};
+    },
+  };
+}
 
 export const noScanner: Scanner = { name: 'none', scan: () => ({ verdict: 'unscanned', scanner: 'none' }) };
 
-export function scannerFor(kind: 'clamav' | 'builtin' | 'none'): Scanner {
-  return kind === 'clamav' ? clamavScanner : kind === 'none' ? noScanner : builtinScanner;
+/** Absolute path of an executable `name` on PATH, or null. */
+export function findOnPath(name: string, path = process.env.PATH ?? ''): string | null {
+  for (const dir of path.split(delimiter)) {
+    if (!dir) continue;
+    const candidate = join(dir, name);
+    try {
+      accessSync(candidate, constants.X_OK);
+      if (statSync(candidate).isFile()) return candidate;
+    } catch {
+      // not here
+    }
+  }
+  return null;
+}
+
+export type ScannerSetting = AocConfig['intake']['scanner'];
+
+/** What scans intake attachments right now, reported by /api/health (names and enums only, never paths). */
+export interface ScannerStatus {
+  configured: ScannerSetting | 'custom';
+  /** The scanner that runs: a ClamAV client, `builtin`, `none`, or a custom integration's name. */
+  active: string;
+  /** A real anti-virus engine scans uploads; the builtin scanner is a heuristic. */
+  avEngine: boolean;
+  /** `refused`: every intake carrying files is answered 503 until a usable scanner is present. */
+  attachments: 'accepted' | 'refused';
+  reason: 'clamav_missing' | 'no_av_engine' | 'scanning_disabled' | null;
+}
+
+export interface ResolvedScanner {
+  scanner: Scanner;
+  status: ScannerStatus;
+}
+
+export interface ResolveScannerOptions {
+  /** PATH lookup for the ClamAV clients (tests inject one). */
+  find?: (binary: string) => string | null;
+  /** Embedder-supplied scanner (custom AV integration, tests): an AV engine unless named `builtin` or `none`. */
+  custom?: Scanner;
+}
+
+/**
+ * Picks the scanner for `intake.scanner` (ClamAV preferred by `auto` when installed) and decides whether attachments
+ * are accepted: with `requireScan`, a missing engine refuses them, and in production mode the builtin heuristic does
+ * not count as a scan (§7, R4).
+ */
+export function resolveScanner(
+  intake: Pick<AocConfig['intake'], 'scanner' | 'requireScan'>,
+  mode: AocConfig['mode'],
+  opts: ResolveScannerOptions = {},
+): ResolvedScanner {
+  const heuristicOnly = mode === 'production' ? 'no_av_engine' : null;
+  const decide = (scanner: Scanner, configured: ScannerStatus['configured'], avEngine: boolean, refusal: ScannerStatus['reason']): ResolvedScanner => {
+    const refused = intake.requireScan && refusal !== null;
+    return { scanner, status: { configured, active: scanner.name, avEngine, attachments: refused ? 'refused' : 'accepted', reason: refused ? refusal : null } };
+  };
+  if (opts.custom) {
+    const { name } = opts.custom;
+    const refusal = name === 'none' ? 'scanning_disabled' : name === 'builtin' ? heuristicOnly : null;
+    return decide(opts.custom, 'custom', name !== 'none' && name !== 'builtin', refusal);
+  }
+  if (intake.scanner === 'auto' || intake.scanner === 'clamav') {
+    const find = opts.find ?? findOnPath;
+    const binary = CLAMAV_BINARIES.map((b) => find(b)).find((p): p is string => !!p);
+    if (binary) return decide(clamavScanner(binary), intake.scanner, true, null);
+    if (intake.scanner === 'clamav') {
+      const missing: Scanner = { name: 'clamav', scan: () => ({ verdict: 'unscanned', scanner: 'clamav', detail: 'ClamAV is not installed' }) };
+      return decide(missing, 'clamav', false, 'clamav_missing');
+    }
+  }
+  if (intake.scanner === 'none') return decide(noScanner, 'none', false, 'scanning_disabled');
+  return decide(builtinScanner, intake.scanner, false, heuristicOnly);
 }
 
 /** File names are untrusted: keep a safe display name only. */

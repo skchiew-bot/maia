@@ -1,6 +1,5 @@
 import { join } from 'node:path';
 import { Hono } from 'hono';
-import { bodyLimit } from 'hono/body-limit';
 import type { AocConfig, JsonValue, Notification, StoredEvent } from '@aoc/contracts';
 import type { Clock } from '../clock';
 import { loadOrCreateMasterKey } from '../crypto';
@@ -9,7 +8,7 @@ import type { Logger } from '../logger';
 import { EventStore } from '../store/event-store';
 import { localParts } from '../time';
 import { Broadcaster } from './broadcast';
-import { bodyLimitFor, errorResponse, HttpError, tokenFrom } from './http';
+import { bodyLimitFor, capRequestBody, errorResponse, HttpError, tokenFrom } from './http';
 import type { AocModule, AppEnv, Job, ModuleContext, Reactor } from './module';
 import { GuardPolicy } from './policy';
 import { ServiceRegistry } from './services';
@@ -157,16 +156,8 @@ export class AocRuntime {
 
   /** Mount auth middleware, module routes and the error handler on a Hono app. */
   mount(app: Hono<AppEnv> = new Hono<AppEnv>()): Hono<AppEnv> {
-    app.use('*', (c, next) => {
-      const maxSize = bodyLimitFor(c.req.path, this.opts.config);
-      return bodyLimit({
-        maxSize,
-        onError: () => {
-          throw new HttpError(413, 'payload_too_large', `Request body exceeds ${maxSize} bytes`);
-        },
-      })(c, next);
-    });
     app.use('*', async (c, next) => {
+      capRequestBody(c, bodyLimitFor(c.req.path, this.opts.config));
       c.set('requestId', c.req.header('x-request-id') ?? Math.random().toString(36).slice(2, 10));
       c.set('auth', null);
       c.set('ingest', null);

@@ -49,11 +49,13 @@ export function requireIngest(
   throw new HttpError(403, 'forbidden', 'Token kind not allowed here');
 }
 
-export async function readJson<T>(c: Ctx, schema: z.ZodType<T>): Promise<T> {
+/** Parsed body as the schema's output type (defaults and transforms applied, and typed so). */
+export async function readJson<S extends z.ZodTypeAny>(c: Ctx, schema: S): Promise<z.output<S>> {
   let body: unknown;
   try {
     body = await c.req.json();
-  } catch {
+  } catch (err) {
+    if (err instanceof HttpError) throw err; // e.g. the body cap tripped mid-read
     throw new HttpError(400, 'bad_json', 'Request body must be JSON');
   }
   const r = schema.safeParse(body);
@@ -61,7 +63,8 @@ export async function readJson<T>(c: Ctx, schema: z.ZodType<T>): Promise<T> {
   return r.data;
 }
 
-export function parseQuery<T>(c: Ctx, schema: z.ZodType<T>): T {
+/** Parsed query string as the schema's output type (defaults and transforms applied, and typed so). */
+export function parseQuery<S extends z.ZodTypeAny>(c: Ctx, schema: S): z.output<S> {
   const r = schema.safeParse(c.req.query());
   if (!r.success) throw new HttpError(422, 'invalid', 'Invalid query', r.error.issues.map((i) => ({ path: i.path.join('.'), message: i.message })));
   return r.data;
@@ -94,6 +97,33 @@ export function bodyLimitFor(path: string, config: AocConfig): number {
     return i.maxAttachments * Math.max(i.maxImageBytes, i.maxVideoBytes) + MAX_BODY_BYTES.formOverhead;
   }
   return MAX_BODY_BYTES.api;
+}
+
+/**
+ * Enforce a body cap without reading the body: a declared Content-Length is checked up front (Node never delivers
+ * more than it declares); a chunked body is counted while the route reads it. Nothing is buffered on behalf of a
+ * caller that auth or the route goes on to refuse.
+ */
+export function capRequestBody(c: Ctx, maxSize: number): void {
+  const raw = c.req.raw;
+  if (!raw.body) return;
+  const tooLarge = () => new HttpError(413, 'payload_too_large', `Request body exceeds ${maxSize} bytes`);
+  const declared = raw.headers.get('content-length');
+  if (declared !== null && /^\d+$/.test(declared) && !raw.headers.has('transfer-encoding')) {
+    if (Number(declared) > maxSize) throw tooLarge();
+    return;
+  }
+  let seen = 0;
+  const counted = raw.body.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        seen += chunk.byteLength;
+        if (seen > maxSize) controller.error(tooLarge());
+        else controller.enqueue(chunk);
+      },
+    }),
+  );
+  c.req.raw = new Request(raw, { body: counted, duplex: 'half' } as RequestInit);
 }
 
 /** Extract the bearer token from Authorization or the aoc_session cookie. */

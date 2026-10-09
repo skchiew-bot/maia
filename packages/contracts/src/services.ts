@@ -4,7 +4,8 @@
  */
 import type { DecisionCard, DecisionRequestInput, DecisionResolveInput } from './decisions';
 import type { ChangeScope, LivenessState, ModelTier, Role, SessionLifecycle, SessionMode } from './domain';
-import type { Actor, JsonValue } from './envelope';
+import type { AnchorDTO, AuditHealthDTO, BackupDTO, VerifyReportDTO } from './dto/audit';
+import type { Actor, EventSource, JsonValue } from './envelope';
 import type { BoundaryInstruction } from './mcp';
 import type { Progress } from './progress';
 import type { ProcessType } from './registry';
@@ -231,6 +232,8 @@ export interface LaunchRequest {
   prompt: string;
   cwd?: string | null;
   ticketId?: string | null;
+  /** Change record the session works under: exported as AOC_CHANGE_ID in that session's env only. */
+  changeId?: string | null;
   parentSessionId?: string | null;
   /** For rollover: brief injected as the opening context. */
   brief?: string | null;
@@ -304,6 +307,22 @@ export interface ChangeService {
   ): Promise<{ promotionId: string; decisionId: string | null; refused: string[] | null }>;
 }
 
+// ── audit (mod-audit) ──────────────────────────────────────────────────────
+export interface AuditService {
+  /**
+   * Verify-against-anchor (§13, R2): recompute the whole chain in chunks (the event loop keeps serving) and test it
+   * against every off-host anchor record and its proof. Serialised with anchoring. With `record`, the run is appended
+   * as chain.verified and a failure raises an `audit.integrity` notification; without it nothing is written.
+   */
+  verify(record?: { actor: Actor; source: EventSource }): Promise<VerifyReportDTO>;
+  /** Newest anchor recorded in the chain (null = never anchored). */
+  lastAnchor(): AnchorDTO | null;
+  /** Newest completed encrypted backup (null = never; G-21). */
+  lastBackup(): BackupDTO | null;
+  /** Integrity summary from the read models; never recomputes the chain, so it is cheap enough for dashboards. */
+  health(): AuditHealthDTO;
+}
+
 // ── git (kernel) ───────────────────────────────────────────────────────────
 export interface GitCommit {
   sha: string;
@@ -350,7 +369,11 @@ export interface LlmService {
 
 // ── notifications ──────────────────────────────────────────────────────────
 export interface Notification {
-  kind: 'decision.new' | 'decision.aging' | 'decision.escalated' | 'evidence.integrity' | 'session.attention' | 'fx.alert' | 'breakglass' | 'anchor.missed' | 'credit.topup' | 'info';
+  /**
+   * `audit.integrity`: Verify failed — the chain or an off-host anchor disagrees (Sev-1, docs/runbooks/anchoring.md §7).
+   * `backup.missed`: a backup step failed or the backup did not reach off-host storage (docs/runbooks/backup-restore.md).
+   */
+  kind: 'decision.new' | 'decision.aging' | 'decision.escalated' | 'evidence.integrity' | 'audit.integrity' | 'session.attention' | 'fx.alert' | 'breakglass' | 'anchor.missed' | 'backup.missed' | 'credit.topup' | 'info';
   title: string;
   /** Roles that should see it (requesters never see internal notifications). */
   audience: Role[];
@@ -361,6 +384,15 @@ export interface Notification {
 }
 export interface Notifier {
   notify(n: Notification): void;
+}
+
+// ── self-modification boundary (mod-audit) ─────────────────────────────────
+/** §13 / R14: what counts as AOC's own governance core, and the record of changes to it kept outside AOC. */
+export interface SelfModificationService {
+  /** The `files` (relative to `repoPath`) under selfModification.protectedPaths; null when `repoPath` is not an AOC repo. */
+  coreFiles(repoPath: string, files: string[]): string[] | null;
+  /** Append one line to the external self-modification log (outside AOC's database); false when the write failed. */
+  recordExternal(entry: Record<string, JsonValue>): boolean;
 }
 
 /** Name → interface map for the kernel service registry. */
@@ -378,8 +410,10 @@ export interface ServiceMap {
   registry: RegistryService;
   learning: LearningService;
   change: ChangeService;
+  audit: AuditService;
   git: GitService;
   llm: LlmService;
   notifier: Notifier;
+  selfmod: SelfModificationService;
 }
 export type ServiceName = keyof ServiceMap;

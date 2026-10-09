@@ -1,4 +1,5 @@
-import { mkdtempSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -46,9 +47,26 @@ describe('AocClient', () => {
       return [200, { accepted: 1, duplicates: 0, rejected: 0 }];
     });
     const up = createClient({ daemonUrl: url, spoolDir });
-    expect(await up.flushSpool()).toEqual({ sent: 1, failed: 0 });
+    expect(await up.flushSpool()).toEqual({ sent: 1, failed: 0, rejected: 0 });
     expect(up.spooledCount()).toBe(0);
     expect((seen[0] as { p: string }).p).toBe('/ingest/spool');
+  });
+
+  it('replays a spool file a crashed flusher had claimed, but never one a live flusher holds', async () => {
+    const spoolDir = mkdtempSync(join(tmpdir(), 'aoc-spool-'));
+    const dead = spawnSync(process.execPath, ['-e', '']).pid; // exited: its claim was abandoned mid-flush
+    const item = (n: number) => JSON.stringify({ path: '/ingest/hook', body: { n }, queuedAt: '2026-10-09T02:00:00.000Z' }) + '\n';
+    writeFileSync(join(spoolDir, `spool-1.jsonl.sending-${dead}`), item(1));
+    writeFileSync(join(spoolDir, `spool-2.jsonl.sending-${process.pid}`), item(2)); // in flight in this process
+    const seen: number[] = [];
+    const url = await serve((_p, b) => {
+      for (const it of (JSON.parse(b) as { items: { body: { n: number } }[] }).items) seen.push(it.body.n);
+      return [200, { accepted: 1, duplicates: 0, rejected: 0 }];
+    });
+    const c = createClient({ daemonUrl: url, spoolDir });
+    expect(await c.flushSpool()).toEqual({ sent: 1, failed: 0, rejected: 0 });
+    expect(seen).toEqual([1]);
+    expect(readdirSync(spoolDir)).toEqual([`spool-2.jsonl.sending-${process.pid}`]);
   });
 
   it('does not retry 4xx', async () => {

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createTestRuntime, type TestRuntime, type TestUser } from '@aoc/kernel';
-import { createSessionsModule, type SessionsEngine } from '../src';
+import { createSessionsModule, isReadOnlyBash, type SessionsEngine } from '../src';
 
 const CLAUDE_A = '11111111-1111-4111-8111-111111111111';
 let t: TestRuntime;
@@ -38,6 +38,16 @@ const hook = (sid: string | null, claudeId: string, event: string, extra: Record
   hook: { session_id: claudeId, transcript_path: '/tmp/t.jsonl', cwd: '/tmp/repo', hook_event_name: event, ...extra },
   sentAt: '2026-10-09T02:00:00.000Z',
   idempotencyKey: `key-${randomUUID()}`,
+});
+
+describe('read-only guard on agent-controlled commands', () => {
+  it('classifies a command built to backtrack in linear time (it runs on the daemon thread)', () => {
+    const started = performance.now();
+    expect(isReadOnlyBash('find -'.repeat(20_000))).toBe(false);
+    expect(performance.now() - started).toBeLessThan(1500);
+    expect(isReadOnlyBash('find . -name x -exec rm {} +')).toBe(false);
+    expect(isReadOnlyBash('rg -n TODO src')).toBe(true);
+  });
 });
 
 describe('ingest authentication comes before body parsing', () => {
@@ -204,6 +214,10 @@ describe('sidecar reports come only from the session’s own sidecar principal (
     });
     expect(t.rt.store.list({ types: ['tool.used', 'usage.recorded', 'throttle.hit'] })).toEqual([]);
     expect(engine().signalsOf('ses_A').processAlive).toBeNull();
+    // … which the sidecar's own flush replays
+    expect(await t.json('POST', '/ingest/spool', { headers: sidecar, body: { items: spooled } })).toMatchObject({ accepted: 3, rejected: 0 });
+    expect(t.rt.store.list({ types: ['usage.recorded', 'throttle.hit'] })).toHaveLength(2);
+    expect(engine().signalsOf('ses_A').processAlive).toBe(false);
     // the session token still relays the hook itself
     expect((await t.request('POST', '/ingest/hook', { headers: t.ingestHeaders('ses_A'), body: tool })).status).toBe(200);
     expect(t.rt.store.list({ types: ['tool.used'] })).toHaveLength(1);

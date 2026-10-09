@@ -90,7 +90,7 @@ export interface DecisionSummary {
 /** `POST /api/decisions/:id/resolve`. */
 export type DecisionResolveBody = DecisionResolveInput;
 
-/** `POST /api/decisions/:id/withdraw` — `reason` is a machine label (`expired` closes the card as expired). */
+/** `POST /api/decisions/:id/withdraw` — `reason` is a machine label (`expired` closes the card as expired: decision.expired, the note is dropped). */
 export interface DecisionWithdrawBody {
   reason?: string;
   note?: string;

@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { projectSlug } from '../src/index';
 import { makeSandbox, readTranscript, runSim, SESSION_A, type Sandbox } from './helpers';
 
 let box: Sandbox;
@@ -18,6 +19,12 @@ function writeScenario(name: string, steps: unknown[]): string {
 }
 
 describe('transcript format', () => {
+  it('names project dirs like Claude Code 2.1.295, including the hashed form past 200 characters', () => {
+    expect(projectSlug('/tmp/aoc-capture/work')).toBe('-tmp-aoc-capture-work');
+    const nested = '/home/dev/' + 'very-long-directory-name/'.repeat(9) + 'repo';
+    expect(projectSlug(nested)).toBe('-home-dev-' + 'very-long-directory-name-'.repeat(7) + 'very-long-direc-gy7dfj');
+  });
+
   it('writes Claude Code JSONL at <config>/projects/<cwd slug>/<session-id>.jsonl with the real envelope', async () => {
     const run = await runSim(box, ['-p', '--session-id', SESSION_A, '--model', 'opus', ...YOLO, 'build it']);
     expect(run.code).toBe(0);

@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
 import { silentLogger, type AocModule } from '@aoc/kernel';
+import { createIntakeModule } from '@aoc/mod-intake';
 import { CONTENT_SECURITY_POLICY, JSON_BODY_LIMIT } from '../src/http';
 import { createDefaultModules, MODULE_ORDER } from '../src/modules';
 import { createAocServer } from '../src/server';
@@ -54,6 +55,53 @@ describe('aocd HTTP surface', () => {
       projections: { degraded: 0 },
     });
     expect(body.headSeq).toBeGreaterThan(0);
+  });
+
+  it('GET /api/health reports a missing malware scanner: degraded for everyone, details for operators only (G-12)', async () => {
+    const t = await boot({
+      modules: [createIntakeModule({ findBinary: () => null })],
+      config: { intake: { scanner: 'clamav' } },
+    });
+    t.aoc.runtime.store.append({
+      type: 'project.created',
+      actor: { kind: 'system', id: 'test' },
+      scope: { projectId: 'prj_1' },
+      meta: { projectId: 'prj_1', slug: 'portal' },
+      payload: { name: 'Portal' },
+      source: 'system',
+    });
+    const form = new FormData();
+    form.set('title', 'Upload fails');
+    form.set('description', 'The page goes blank after the upload.');
+    form.append(
+      'files',
+      new File([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1])], 'a.png', {
+        type: 'image/png',
+      }),
+    );
+    const upload = await t.request('/portal/api/intakes', {
+      method: 'POST',
+      headers: t.user('requester').headers,
+      body: form,
+    });
+    expect(upload.status).toBe(503);
+
+    const health = async (headers: Record<string, string> = {}) =>
+      (await (await t.request('/api/health', { headers })).json()) as { status: string; checks: unknown };
+    expect(await health()).toMatchObject({ status: 'degraded', checks: { intake: { ok: false } } });
+    expect(await health(t.user('requester').headers)).toMatchObject({ checks: { intake: { ok: false } } });
+    expect((await health(t.user('requester').headers)).checks).toEqual({ intake: { ok: false } });
+    expect((await health(t.user('builder').headers)).checks).toEqual({
+      intake: {
+        ok: false,
+        mode: 'development',
+        scanner: 'clamav',
+        configured: 'clamav',
+        avEngine: false,
+        attachments: 'refused',
+        reason: 'clamav_missing',
+      },
+    });
   });
 
   it('puts the security headers on every response and never emits CORS headers', async () => {
@@ -128,9 +176,18 @@ describe('aocd HTTP surface', () => {
     });
     expect(announced.status).toBe(413);
 
+    // An anonymous ingest call is refused before its body is read at all …
+    const anonymous = await t.request('/ingest/hook', {
+      method: 'POST',
+      body: chunked(JSON_BODY_LIMIT + 10),
+      duplex: 'half',
+    } as RequestInit);
+    expect(anonymous.status).toBe(401);
+    // … and an authenticated one is cut off at the limit.
     const streamed = await t.request('/ingest/hook', {
       method: 'POST',
       body: chunked(JSON_BODY_LIMIT + 10),
+      headers: { authorization: `Bearer ${t.identity.issueObserverToken()}` },
       duplex: 'half',
     } as RequestInit);
     expect(streamed.status).toBe(413);

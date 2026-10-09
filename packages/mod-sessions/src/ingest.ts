@@ -67,7 +67,15 @@ const UsageSchema = z.object({
     .max(200),
 });
 const ThrottleSchema = z.object({ sessionId: z.string(), resetAt: z.string().nullable(), message: z.string().max(2000), source: z.enum(['stream', 'transcript', 'exit']) });
-const ProcessSchema = z.object({ sessionId: z.string(), event: z.literal('exited'), exitCode: z.number().int().nullable(), signal: z.string().nullable(), at: z.string() });
+/** `pid` (sent by the sidecar, not yet in ProcessEventRequest) lets a stale sidecar's report be told apart. */
+const ProcessSchema = z.object({
+  sessionId: z.string(),
+  event: z.literal('exited'),
+  exitCode: z.number().int().nullable(),
+  signal: z.string().nullable(),
+  at: z.string(),
+  pid: z.number().int().nullable().optional(),
+});
 const SpoolSchema = z.object({ items: z.array(z.object({ path: z.string(), body: z.unknown(), queuedAt: z.string() })).max(500) });
 
 const READ_ONLY_PREFIX = /^\s*(ls|cat|head|tail|wc|grep|rg|pwd|echo|which|file|stat|du|df|tree|git\s+(log|show|diff|status|blame|branch|rev-parse))\b/;
@@ -99,7 +107,8 @@ export function isReadOnlyBash(command: string): boolean {
   if (/[>|;&`$]|\b(rm|mv|cp|tee|sed\s+-i|chmod|chown|mkdir|touch|dd|truncate|git\s+(commit|push|checkout|reset|merge|rebase|apply|stash|tag))\b/.test(command)) {
     return false;
   }
-  if (/\bfind\b.*\s-(delete|exec|execdir|ok)\b/.test(command)) return false;
+  // Two independent tests rather than `find.*-exec`: that backtracks quadratically, on the daemon thread.
+  if (/\bfind\b/.test(command) && /\s-(delete|exec|execdir|ok)\b/.test(command)) return false;
   return READ_ONLY_PREFIX.test(command);
 }
 
@@ -348,8 +357,8 @@ export function registerIngestRoutes(app: App, d: IngestDeps): void {
    * The session a sidecar report (heartbeat, activity, usage, throttle, process exit) is about, as the principal may
    * address it. A managed session takes these only from its own sidecar principal: its session token sits in the
    * model's environment, so with it the model could forge its own liveness and metering (G-44). Observed sessions
-   * report with the observer token, which only knows the claude session id. A spooled report must be replayed through
-   * this rule too, item by item, under the principal that flushes the spool.
+   * report with the observer token, which only knows the claude session id. replay() applies the same rule to every
+   * spooled report, item by item, under the principal that flushes the spool.
    */
   const sessionOf = (p: IngestPrincipal, sessionId: string, opts: { allowObserver?: boolean } = {}): string => {
     if (p.kind === 'observer') {
@@ -372,64 +381,8 @@ export function registerIngestRoutes(app: App, d: IngestDeps): void {
     return hooks.dispatch(body, p);
   };
 
-  app.post(INGEST_PATHS.hook, async (c) => {
-    const body = (await readJson(c, HookIngestSchema)) as unknown as HookIngestRequest;
-    const p = requireIngest(c, { sessionId: body.mode === 'managed' ? body.aocSessionId : null, allowObserver: body.mode === 'observed' });
-    return c.json(handleHook(body, p));
-  });
-
-  app.post(INGEST_PATHS.spool, async (c) => {
-    const body = await readJson(c, SpoolSchema);
-    // Hooks, observed hooks and sidecars all spool; each item is held to its live route's principal rules.
-    const p = requireIngest(c, { allowObserver: true, allowSidecar: true });
-    const res: SpoolFlushResponse = { accepted: 0, duplicates: 0, rejected: 0 };
-    for (const item of body.items as SpoolItem[]) {
-      try {
-        if (item.path !== INGEST_PATHS.hook) {
-          res.rejected++;
-          continue;
-        }
-        const parsed = HookIngestSchema.safeParse(item.body);
-        if (!parsed.success) {
-          res.rejected++;
-          continue;
-        }
-        const req = parsed.data as unknown as HookIngestRequest;
-        if (ctx.store.findByIdempotencyKey(hookKey(req, 'tool')) || ctx.store.findByIdempotencyKey(hookKey(req, 'prompt'))) {
-          res.duplicates++;
-          continue;
-        }
-        if (p.kind === 'session' && (req.mode !== 'managed' || req.aocSessionId !== p.sessionId)) {
-          res.rejected++;
-          continue;
-        }
-        handleHook(req, p);
-        res.accepted++;
-      } catch {
-        res.rejected++;
-      }
-    }
-    return c.json(res);
-  });
-
-  app.post(INGEST_PATHS.heartbeat, async (c) => {
-    const b = await readJson(c, HeartbeatSchema);
-    const sessionId = sessionFor(c, b.sessionId);
-    engine.heartbeat(sessionId, ctx.clock.now(), b.alive, b.pid);
-    if (b.lastTranscriptWriteAt) engine.recordActivity(sessionId, 'transcript', Math.min(ctx.clock.now(), Date.parse(b.lastTranscriptWriteAt)));
-    return c.json({ ok: true });
-  });
-
-  app.post(INGEST_PATHS.activity, async (c) => {
-    const b = await readJson(c, ActivitySchema);
-    const sessionId = sessionFor(c, b.sessionId);
-    engine.recordActivity(sessionId, b.kind, ctx.clock.now());
-    return c.json({ ok: true });
-  });
-
-  app.post(INGEST_PATHS.usage, async (c) => {
-    const b = await readJson(c, UsageSchema);
-    const sessionId = sessionFor(c, b.sessionId, { allowObserver: true });
+  /** Usage batches not seen before (by message id); returns how many batches were recorded / skipped. */
+  const recordUsage = (b: z.infer<typeof UsageSchema>, sessionId: string): { recorded: number; skipped: number } => {
     const row = engine.row(sessionId)!;
     const seen = ctx.db.prepare('SELECT 1 FROM sess_seen_messages WHERE session_id = ? AND message_id = ?');
     let recorded = 0;
@@ -463,14 +416,14 @@ export function registerIngestRoutes(app: App, d: IngestDeps): void {
       });
       recorded++;
     });
-    return c.json({ ok: true, recorded, skipped });
-  });
+    return { recorded, skipped };
+  };
 
-  app.post(INGEST_PATHS.throttle, async (c) => {
-    const b = await readJson(c, ThrottleSchema);
-    const sessionId = sessionFor(c, b.sessionId, { allowObserver: true });
+  /** Opens a throttle episode unless one is already open; returns whether it did. */
+  const recordThrottle = (b: z.infer<typeof ThrottleSchema>, sessionId: string): boolean => {
     const row = engine.row(sessionId)!;
-    if (!row.throttle_started_at) {
+    const fresh = !row.throttle_started_at;
+    if (fresh) {
       ctx.store.append({
         type: 'throttle.hit',
         actor: { kind: 'agent', id: sessionId },
@@ -490,13 +443,95 @@ export function registerIngestRoutes(app: App, d: IngestDeps): void {
       }
     }
     engine.refresh(sessionId);
+    return fresh;
+  };
+
+  /**
+   * One spooled request, replayed under the flusher's principal. Clients spool hook events (hooks), observed usage
+   * (observed hooks) and usage / throttle / process exits (sidecar): each goes through its live route's handler.
+   */
+  const replay = (item: SpoolItem, p: IngestPrincipal): 'accepted' | 'duplicate' => {
+    switch (item.path) {
+      case INGEST_PATHS.hook: {
+        const req = HookIngestSchema.parse(item.body) as unknown as HookIngestRequest;
+        if (ctx.store.findByIdempotencyKey(hookKey(req, 'tool')) || ctx.store.findByIdempotencyKey(hookKey(req, 'prompt'))) {
+          return 'duplicate';
+        }
+        if (p.kind === 'session' && (req.mode !== 'managed' || req.aocSessionId !== p.sessionId)) {
+          throw new HttpError(403, 'forbidden', 'Token not valid for this session');
+        }
+        handleHook(req, p);
+        return 'accepted';
+      }
+      case INGEST_PATHS.usage: {
+        const b = UsageSchema.parse(item.body);
+        return recordUsage(b, sessionOf(p, b.sessionId, { allowObserver: true })).recorded > 0 ? 'accepted' : 'duplicate';
+      }
+      case INGEST_PATHS.throttle: {
+        const b = ThrottleSchema.parse(item.body);
+        return recordThrottle(b, sessionOf(p, b.sessionId, { allowObserver: true })) ? 'accepted' : 'duplicate';
+      }
+      case INGEST_PATHS.process: {
+        const b = ProcessSchema.parse(item.body);
+        engine.processExited(sessionOf(p, b.sessionId), b.pid ?? null);
+        return 'accepted';
+      }
+      default:
+        throw new HttpError(422, 'invalid', 'This request cannot be replayed from a spool');
+    }
+  };
+
+  app.post(INGEST_PATHS.hook, async (c) => {
+    const body = (await readJson(c, HookIngestSchema)) as unknown as HookIngestRequest;
+    const p = requireIngest(c, { sessionId: body.mode === 'managed' ? body.aocSessionId : null, allowObserver: body.mode === 'observed' });
+    return c.json(handleHook(body, p));
+  });
+
+  app.post(INGEST_PATHS.spool, async (c) => {
+    const body = await readJson(c, SpoolSchema);
+    // Hooks, observed hooks and sidecars all spool; replay() holds each item to its live route's principal rules.
+    const p = requireIngest(c, { allowObserver: true, allowSidecar: true });
+    const res: SpoolFlushResponse = { accepted: 0, duplicates: 0, rejected: 0 };
+    for (const item of body.items as SpoolItem[]) {
+      try {
+        if (replay(item, p) === 'duplicate') res.duplicates++;
+        else res.accepted++;
+      } catch {
+        res.rejected++;
+      }
+    }
+    return c.json(res);
+  });
+
+  app.post(INGEST_PATHS.heartbeat, async (c) => {
+    const b = await readJson(c, HeartbeatSchema);
+    const sessionId = sessionFor(c, b.sessionId);
+    engine.heartbeat(sessionId, ctx.clock.now(), b.alive, b.pid);
+    if (b.lastTranscriptWriteAt) engine.recordActivity(sessionId, 'transcript', Math.min(ctx.clock.now(), Date.parse(b.lastTranscriptWriteAt)));
+    return c.json({ ok: true });
+  });
+
+  app.post(INGEST_PATHS.activity, async (c) => {
+    const b = await readJson(c, ActivitySchema);
+    const sessionId = sessionFor(c, b.sessionId);
+    engine.recordActivity(sessionId, b.kind, ctx.clock.now());
+    return c.json({ ok: true });
+  });
+
+  app.post(INGEST_PATHS.usage, async (c) => {
+    const b = await readJson(c, UsageSchema);
+    return c.json({ ok: true, ...recordUsage(b, sessionFor(c, b.sessionId, { allowObserver: true })) });
+  });
+
+  app.post(INGEST_PATHS.throttle, async (c) => {
+    const b = await readJson(c, ThrottleSchema);
+    recordThrottle(b, sessionFor(c, b.sessionId, { allowObserver: true }));
     return c.json({ ok: true });
   });
 
   app.post(INGEST_PATHS.process, async (c) => {
     const b = await readJson(c, ProcessSchema);
-    const sessionId = sessionFor(c, b.sessionId);
-    engine.recordProcess(sessionId, false, null);
+    engine.processExited(sessionFor(c, b.sessionId), b.pid ?? null);
     return c.json({ ok: true });
   });
 }

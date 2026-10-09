@@ -26,6 +26,7 @@ production, use absolute paths. A minimal production configuration (`/etc/aoc/ao
 
 ```json
 {
+  "mode": "production",
   "dataDir": "/var/lib/aoc/data",
   "publicUrl": "https://aoc.example.internal",
   "keys": { "masterKeyFile": "/run/credentials/aocd.service/aoc-kek" },
@@ -120,11 +121,12 @@ Daily, or continuously from monitoring:
 | Service up | `systemctl is-active aocd`; an HTTP request to the console | Active; 200 |
 | Integrity | Control Tower integrity panel (`chainOk`, `lastVerifiedAt`, `anchorAgeMs`, `unanchoredEvents`) | `chainOk` true; anchor age within cadence ([anchoring](anchoring.md#5-daily-checks)) |
 | Projections | `projection_health` (below); Tower `projection_degraded` | No rows with status `degraded` |
+| Malware scanner | `GET /api/health` with a builder or approver token: `checks.intake` (anonymous callers see `ok` only); `aoc doctor` | `ok` true, `avEngine` true (ClamAV). In `mode: production` without an engine, attachments are refused (503) |
 | Reactors | `reactor_failures` in the last 24 h; Tower `reactorFailures24h` | None, or each one explained |
 | Jobs | `job_runs.last_status` | `ok` for every job |
 | Decisions | The oldest open card; gate latency p90 (Tower) | Within the agreed SLA (R15) |
 | Disk | Free space on the data volume; size of `aoc.db-wal` | More than 20 % free; the WAL is checkpointed regularly |
-| Backups | The nightly backup exists off-host and is not shrinking | See [key custody](key-custody.md#4-backups-off-host-nightly) |
+| Backups | `aoc backup list`; `/api/audit/health` warnings `backup_*` | The nightly backup exists off-host and is not shrinking ([backup and restore §4](backup-restore.md#4-daily-checks)) |
 
 Read-only SQL checks (WAL mode allows a reader alongside aocd):
 
@@ -160,7 +162,7 @@ projector that is new on an existing log, whose fingerprint changed, or that is 
 
 1. Plan a maintenance window and stop running sessions first (§2): while the rebuild runs, hooks cannot get an
    answer and fail closed.
-2. Take a backup ([key custody](key-custody.md#4-backups-off-host-nightly)).
+2. Take a backup: `aoc anchor`, then `aoc backup now` ([backup and restore](backup-restore.md)).
 3. **Make sure the right KEK is configured.** A rebuild reads every body; with a wrong KEK it fails and rolls
    back. Never let aocd start with a generated key
    ([key custody §3](key-custody.md#3-store-the-kek-options-weakest-to-strongest)).
@@ -225,8 +227,9 @@ A dead-lettered reaction means something that should have happened did not.
 
 ## 6. Backups
 
-The full procedure (what, the order, encryption, retention, keys kept apart) is in
-[key custody §4](key-custody.md#4-backups-off-host-nightly), and the restore drill is in
+aocd backs itself up daily once `audit.backupKeyFile` is set (`aoc backup now` / `aoc backup list`; restore with
+`aocd restore`): see the [backup and restore runbook](backup-restore.md). Key custody and the manual procedure are in
+[key custody §4](key-custody.md#4-backups-off-host-nightly) and the drill in
 [key custody §7](key-custody.md#7-restore-drill-quarterly). The rules that matter most:
 
 - **Never copy `aoc.db` alone while aocd runs.** Use `sqlite3 … ".backup …"` or `VACUUM INTO`. Copy `aoc.db`
@@ -239,8 +242,9 @@ The full procedure (what, the order, encryption, retention, keys kept apart) is 
 
 Jobs are defined by modules: interval jobs (`everyMs`) and daily jobs (`dailyAt`, local time). Each module
 declares its own: for example `intake.diagnosis-budget` and `decisions.aging` (every 60 s), the ledger's overrun
-check, the FX fetch, the metering day close and lesson retirement. `SELECT name FROM job_runs` lists the jobs that
-have run.
+check, the FX fetch (`fx.daily` at 18:00 MYT, then `fx.retry@18:30` and `fx.retry@21:00` while BNM's 1700 rate is
+unpublished; architecture §11), the metering day close and lesson retirement. `SELECT name FROM job_runs` lists the
+jobs that have run.
 
 **Anchoring now:** the nightly `audit.anchor` job runs at `audit.anchorAtLocalTime` (02:00 by default).
 `aoc anchor` anchors the current chain head immediately. Use it after a missed anchor, before a backup, or
@@ -248,7 +252,8 @@ after a high-value event ([anchoring](anchoring.md)).
 
 **Any other job:** the kernel can run a job immediately (`AocRuntime.runJob(name)`), but **no admin command
 exposes it yet** (threat model O-26). Until one does, a missed daily job runs at its next scheduled time; for FX, a
-missed day is carried forward and stamped as such, which is the designed behaviour. Every run updates `job_runs`.
+missed day is carried forward and stamped as such, which is the designed behaviour, and an Approver can re-run the
+day's FX attempt with `POST /api/fx/run`. Every run updates `job_runs`.
 Jobs must be idempotent: a daily job forced by hand runs again even if it already ran today.
 
 ## 8. Upgrades

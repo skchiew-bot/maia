@@ -49,6 +49,17 @@ describe('managed mode: the daemon decides, the hook relays', () => {
     expect(Number.isNaN(Date.parse(req!.body.sentAt))).toBe(false);
   });
 
+  it('relays as usual when AOC_INTERNAL_LLM is set (it only silences observed hooks)', async () => {
+    daemon = await startFakeDaemon(() => ({ status: 200, json: { exitCode: 2, stderr: 'no' } }));
+    const run = await runHookBinary(
+      'PreToolUse',
+      preToolUse(),
+      managedEnv(tmp(), daemon.url, { AOC_INTERNAL_LLM: '1' }),
+    );
+    expect(run).toMatchObject({ code: 2, stderr: 'no' });
+    expect(daemon.requests.map((r) => r.body.mode)).toEqual(['managed']);
+  });
+
   it('relays decisions the contract types do not know yet (permissionDecision "defer") verbatim', async () => {
     const defer = {
       hookSpecificOutput: {
@@ -90,7 +101,7 @@ describe('managed mode: the daemon decides, the hook relays', () => {
     expect(run.code).toBe(2);
     expect(run.stderr).toContain(FAIL_CLOSED);
     expect(run.stdout).toBe('');
-    expect(readSpool(join(home, '.aoc', 'spool', 'managed'))).toEqual([]);
+    expect(readSpool(join(home, '.aoc', 'spool', 'managed', AOC_SESSION))).toEqual([]);
   });
 
   it('fails closed on PreToolUse on a 5xx', async () => {
@@ -131,11 +142,11 @@ describe('managed mode: the daemon decides, the hook relays', () => {
     });
   });
 
-  it('replays the spool (default ~/.aoc/spool/managed) after the next successful non-PreToolUse call', async () => {
+  it('replays the spool (default ~/.aoc/spool/managed/<session>) after the next successful non-PreToolUse call', async () => {
     const home = tmp();
     const down = await runHookBinary('PostToolUse', postToolUse(), managedEnv(home, await deadUrl()));
     expect(down.code).toBe(0);
-    const spoolDir = join(home, '.aoc', 'spool', 'managed');
+    const spoolDir = join(home, '.aoc', 'spool', 'managed', AOC_SESSION);
     expect(readSpool(spoolDir)).toHaveLength(1);
 
     daemon = await startFakeDaemon((r) =>
@@ -155,6 +166,28 @@ describe('managed mode: the daemon decides, the hook relays', () => {
     expect(readSpool(spoolDir)).toEqual([]);
   });
 
+  it('keeps each session in its own default spool: a replay never carries another session’s events', async () => {
+    // A replay is authorised by one session's token; the daemon rejects any other session's items and the
+    // client then drops them, so two managed sessions under one HOME must not share a spool.
+    const home = tmp();
+    const other = 'ses_01JOTHER000000000000000000';
+    const dead = await deadUrl();
+    await runHookBinary('PostToolUse', postToolUse('toolu_A'), managedEnv(home, dead));
+    await runHookBinary('PostToolUse', postToolUse('toolu_B'), managedEnv(home, dead, { AOC_SESSION_ID: other }));
+    expect(readSpool(join(home, '.aoc', 'spool', 'managed', AOC_SESSION))).toHaveLength(1);
+    expect(readSpool(join(home, '.aoc', 'spool', 'managed', other))).toHaveLength(1);
+
+    daemon = await startFakeDaemon((r) =>
+      r.path === '/ingest/spool'
+        ? { status: 200, json: { accepted: r.body.items.length, duplicates: 0, rejected: 0 } }
+        : { status: 200, json: { exitCode: 0 } },
+    );
+    await runHookBinary('Stop', stop('/tmp/none.jsonl'), managedEnv(home, daemon.url));
+    const replayed = daemon.requests.filter((r) => r.path === '/ingest/spool').flatMap((r) => r.body.items);
+    expect(replayed.map((i: { body: { aocSessionId: string } }) => i.body.aocSessionId)).toEqual([AOC_SESSION]);
+    expect(readSpool(join(home, '.aoc', 'spool', 'managed', other))).toHaveLength(1);
+  });
+
   it('fails closed when the daemon rejects the call; other events warn without spooling', async () => {
     daemon = await startFakeDaemon(() => ({ status: 401, json: { error: { message: 'bad ingest token' } } }));
     const home = tmp();
@@ -170,7 +203,7 @@ describe('managed mode: the daemon decides, the hook relays', () => {
     expect(JSON.parse(post.stdout).systemMessage).toMatch(
       /rejected the PostToolUse hook \(HTTP 401\).*not recorded/,
     );
-    expect(readSpool(join(home, '.aoc', 'spool', 'managed'))).toEqual([]);
+    expect(readSpool(join(home, '.aoc', 'spool', 'managed', AOC_SESSION))).toEqual([]);
   });
 
   it('fails closed on a response it cannot interpret', async () => {

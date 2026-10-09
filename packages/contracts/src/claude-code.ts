@@ -4,14 +4,30 @@
  */
 // Browser-safe: no node: imports in contracts (the web bundle imports this package).
 
-/** ~/.claude/projects/<slug>/<sessionId>.jsonl — slug = cwd with every non-alphanumeric char replaced by '-'. */
+const MAX_PROJECT_SLUG = 200;
+
+/**
+ * ~/.claude/projects/<slug>/<sessionId>.jsonl — slug = cwd with every non-alphanumeric char replaced by '-'; a slug
+ * over 200 chars is cut to 200 and suffixed with `-` + base-36 |Java String.hashCode(cwd)| (2.1.295, research C11).
+ * Recomputing is only for when Claude Code has not said where it writes: prefer hook stdin's `transcript_path`.
+ */
 export function projectSlug(cwd: string): string {
-  return cwd.replace(/[^A-Za-z0-9]/g, '-');
+  const slug = cwd.replace(/[^A-Za-z0-9]/g, '-');
+  if (slug.length <= MAX_PROJECT_SLUG) return slug;
+  return `${slug.slice(0, MAX_PROJECT_SLUG)}-${Math.abs(javaStringHash(cwd)).toString(36)}`;
+}
+
+/** Java's String.hashCode over UTF-16 code units, as a signed 32-bit int. */
+function javaStringHash(s: string): number {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+  return h;
 }
 /** Resolve the Claude Code config dir: $CLAUDE_CONFIG_DIR, else $HOME/.claude. */
 export function claudeConfigDir(env: Record<string, string | undefined>, homeDir: string): string {
   return env.CLAUDE_CONFIG_DIR || `${env.HOME || homeDir}/.claude`;
 }
+/** Where Claude Code writes a session's transcript (subagents: `<transcript minus .jsonl>/subagents/agent-<id>.jsonl`). */
 export function transcriptPathFor(cwd: string, claudeSessionId: string, configDir: string): string {
   return `${configDir.replace(/\/+$/, '')}/projects/${projectSlug(cwd)}/${claudeSessionId}.jsonl`;
 }

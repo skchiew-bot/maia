@@ -102,14 +102,15 @@ describe('acceptance commands and test counts', () => {
 });
 
 describe('provenance trailers', () => {
+  const RECORDED = 'a'.repeat(40);
   const look: ProvenanceLookups = {
-    changeApproved: (id) => id === 'chg_ok',
-    sessionChange: (s) => (s === 'ses_change' ? 'chg_ok' : null),
+    sessionChanges: (s) => (s === 'ses_change' ? ['chg_ok'] : s === 'ses_other' ? ['chg_other'] : []),
     sessionTicket: (s) =>
       s === 'ses_ticket' || s === 'ses_ticket_unapproved' ? (s === 'ses_ticket' ? 'tkt_ok' : 'tkt_no') : null,
     ticketFixPlanApproved: (t) => t === 'tkt_ok',
+    sessionRecorded: (_s, sha) => sha === RECORDED,
   };
-  const commit = (message: string) => ({ sha: 'a'.repeat(40), subject: message.split('\n')[0]!, message });
+  const commit = (message: string, sha = RECORDED) => ({ sha, subject: message.split('\n')[0]!, message });
 
   it('parses AOC-Session / AOC-Change trailers', () => {
     expect(parseTrailers('feat: x\n\nAOC-Session: ses_1\nAOC-Change: chg_2\naoc-session: ses_1\n')).toEqual({
@@ -122,8 +123,10 @@ describe('provenance trailers', () => {
     });
   });
 
-  it('traces through an approved change, a linked session or an approved fix plan; everything else is an orphan', () => {
-    expect(classifyCommit(commit('a\n\nAOC-Change: chg_ok'), 'prj', look)).toMatchObject({
+  it('traces through a session the platform linked to an approved change or fix plan; everything else is an orphan', () => {
+    expect(
+      classifyCommit(commit('a\n\nAOC-Session: ses_change\nAOC-Change: chg_ok'), 'prj', look),
+    ).toMatchObject({
       traced: true,
       via: 'change',
     });
@@ -140,13 +143,42 @@ describe('provenance trailers', () => {
       traced: false,
       ticketIds: ['tkt_no'],
     });
-    expect(classifyCommit(commit('a\n\nAOC-Change: chg_draft'), 'prj', look)).toMatchObject({
+    expect(
+      classifyCommit(commit('a\n\nAOC-Session: ses_change\nAOC-Change: chg_draft'), 'prj', look),
+    ).toMatchObject({
       traced: false,
-      reason: expect.stringContaining('chg_draft'),
+      reason: 'session ses_change is not linked to approved change chg_draft',
     });
     expect(classifyCommit(commit('hotfix'), 'prj', look)).toMatchObject({
       traced: false,
       reason: 'no AOC-Session / AOC-Change trailer',
     });
+  });
+
+  it('never trusts a trailer the platform cannot corroborate (G-25)', () => {
+    // A valid trailer for an approved change, but nothing links the commit's author to it.
+    expect(classifyCommit(commit('a\n\nAOC-Change: chg_ok'), 'prj', look)).toMatchObject({
+      traced: false,
+      via: null,
+      reason: expect.stringContaining('AOC-Change trailer alone is self-asserted'),
+    });
+    // A session working another approved change borrows chg_ok's trailer.
+    expect(
+      classifyCommit(commit('a\n\nAOC-Session: ses_other\nAOC-Change: chg_ok'), 'prj', look),
+    ).toMatchObject({
+      traced: false,
+      reason: 'session ses_other is not linked to approved change chg_ok',
+    });
+    // The right session, but the commit was never in any HEAD the ledger recorded for it.
+    expect(classifyCommit(commit('a\n\nAOC-Session: ses_change', 'b'.repeat(40)), 'prj', look)).toMatchObject(
+      {
+        traced: false,
+        reason: expect.stringContaining('session ses_change never recorded a HEAD containing this commit'),
+      },
+    );
+    // Any one named session that satisfies both conditions traces the commit (amended commits name several).
+    expect(
+      classifyCommit(commit('a\n\nAOC-Session: ses_unknown\nAOC-Session: ses_ticket'), 'prj', look),
+    ).toMatchObject({ traced: true, via: 'session_ticket', ticketIds: ['tkt_ok'] });
   });
 });

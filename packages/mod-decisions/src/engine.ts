@@ -10,6 +10,7 @@ import {
   newId,
   requiredRoleFor,
   requiresPasskey,
+  resolutionAssurance,
   roleSatisfies,
   type Actor,
   type DecisionBlockReason,
@@ -79,6 +80,7 @@ const RequestSchema = z
       .refine((s) => !Number.isNaN(Date.parse(s)), 'must be an ISO-8601 timestamp')
       .nullish(),
     requiredRole: z.enum(ROLES).optional(),
+    bodyScope: zRef.regex(ID_RE, 'bodyScope must be a scope id').optional(),
   })
   .superRefine((v, ctx) => {
     const ids = v.options.map((o) => o.id);
@@ -117,9 +119,11 @@ function scopeOf(c: DecisionCard): Scope {
 
 /**
  * Cards about a ticket keep their text in the ticket's body scope, so a PDPA erasure of the ticket also
- * shreds decision text quoting it. Everything else uses the store default (session → project → global).
+ * shreds decision text quoting it; a caller can name the scope instead (e.g. the ticket behind a change request).
+ * Everything else uses the store default (session → project → global).
  */
-const bodyScopeFor = (c: DecisionCard) => (isTicketSubject(c) ? c.subjectId : undefined);
+const bodyScopeFor = (c: DecisionCard, requested: string | undefined) =>
+  requested ?? (isTicketSubject(c) ? c.subjectId : undefined);
 
 const closeKey = (id: string) => `decision:${id}:closed`;
 
@@ -271,7 +275,7 @@ export class DecisionEngine implements DecisionService {
       },
       source: opts.source ?? (actor.kind === 'system' ? 'system' : 'api'),
       causationId: opts.causationId,
-      bodyScope: bodyScopeFor(card),
+      bodyScope: bodyScopeFor(card, i.bodyScope),
     });
     return this.get(id) ?? card;
   }
@@ -427,13 +431,17 @@ export class DecisionEngine implements DecisionService {
     });
   }
 
-  /** `reason` goes to the chain as a machine label; free text is kept as an encrypted note instead. */
+  /**
+   * `reason` goes to the chain as a machine label; free text is kept as an encrypted note instead. The label
+   * `expired` closes the card as expired (decision.expired, no note).
+   */
   withdraw(id: string, reason: string, actor: Actor, note?: string | null): DecisionCard {
     const rec = this.require(id);
     if (rec.card.status !== 'open')
       throw new DecisionError(409, 'not_open', `cannot withdraw: not_open (${rec.card.status})`);
     const trimmed = reason.trim();
     const label = isLabel(trimmed) ? trimmed : 'other';
+    if (label === 'expired') return this.expire(id, actor);
     const noteText = normalizeComment(note) ?? (label === trimmed ? null : normalizeComment(trimmed));
     this.claimClose(id);
     this.ctx.store.append({
@@ -446,7 +454,24 @@ export class DecisionEngine implements DecisionService {
       idempotencyKey: closeKey(id),
       bodyScope: rec.bodyScope ?? undefined,
     });
-    return this.get(id) ?? { ...rec.card, status: label === 'expired' ? 'expired' : 'withdrawn' };
+    return this.get(id) ?? { ...rec.card, status: 'withdrawn' };
+  }
+
+  /** Close an open card unanswered (its deadline passed): decision.expired with the card's age. */
+  expire(id: string, actor: Actor): DecisionCard {
+    const rec = this.require(id);
+    if (rec.card.status !== 'open')
+      throw new DecisionError(409, 'not_open', `cannot expire: not_open (${rec.card.status})`);
+    this.claimClose(id);
+    this.ctx.store.append({
+      type: 'decision.expired',
+      actor,
+      scope: scopeOf(rec.card),
+      meta: { decisionId: id, ageMs: Math.max(0, this.ctx.clock.now() - Date.parse(rec.card.createdAt)) },
+      source: actor.kind === 'system' ? 'system' : 'api',
+      idempotencyKey: closeKey(id),
+    });
+    return this.get(id) ?? { ...rec.card, status: 'expired' };
   }
 
   /** Raise an open Builder-level card to the Approver. The requester stays excluded (§6). */
@@ -560,6 +585,7 @@ export class DecisionEngine implements DecisionService {
       resolvedAt: this.ctx.clock.iso(),
       method: r.method,
       passkeyVerified: r.passkeyVerified,
+      assurance: resolutionAssurance(r),
       selfApproved: r.selfApproved,
       comment: r.comment,
     };

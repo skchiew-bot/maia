@@ -13,7 +13,6 @@ import {
 } from '@aoc/kernel';
 import type { FxEngine } from './engine';
 import { toDiscrepancyDTO, toRateDTO, type FxReadModel } from './read-model';
-import { carryForwardStreak } from './rules';
 import { rateOn } from './service';
 
 const day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD');
@@ -41,20 +40,22 @@ export function mountFxRoutes(app: App, ctx: ModuleContext, engine: FxEngine, mo
     const today = engine.today();
     const todayRecord = model.record(today);
     const lastLive = model.lastLive();
-    const streak = carryForwardStreak(model.recordsDescFrom(today));
+    const streak = model.carryForwardStreak(today);
     const open = model.openDiscrepancies();
     const decisions = ctx.services.maybe('decisions');
     const status: FxStatusDTO = {
       today,
       enabled: cfg.enabled,
+      session: cfg.session,
       runAtLocalTime: cfg.runAtLocalTime,
+      retryAtLocalTimes: cfg.retryAtLocalTimes,
       todayRecord: todayRecord ? toRateDTO(todayRecord, model.isClosed(today)) : null,
       current: rateOn(model, today),
       lastLive: lastLive ? { date: lastLive.date, rate: lastLive.rate } : null,
       carryForward: {
         days: streak.days,
         since: streak.since,
-        alertAfterDays: cfg.carryForwardAlertDays,
+        alertAfterDays: cfg.carryForwardAlertWeekdays,
         alerted: streak.since ? model.hasAlert(streak.since) : false,
       },
       openDiscrepancy: open[0]

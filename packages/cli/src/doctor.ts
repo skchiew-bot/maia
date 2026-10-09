@@ -51,11 +51,22 @@ export interface DoctorFs {
   mode(path: string): number | null;
 }
 
+/** `checks.intake` of GET /api/health; the details are shown to builders and approvers only. */
+export interface IntakeScannerHealth {
+  ok: boolean;
+  scanner?: string;
+  avEngine?: boolean;
+  attachments?: 'accepted' | 'refused';
+  reason?: string | null;
+}
+
 export interface DaemonProbe {
   reachable: boolean;
   status: number | null;
   user: { id: string; name: string; role: string } | null;
   error: string | null;
+  /** Absent when the daemon runs no intake module (or /api/health did not answer). */
+  intakeScanner?: IntakeScannerHealth | null;
 }
 
 export interface DoctorInput {
@@ -240,6 +251,33 @@ function daemonChecks(i: DoctorInput, p: DaemonProbe): DoctorCheck[] {
   return [daemon, auth];
 }
 
+/** The portal's malware scan (§7, R4): only an anti-virus engine is a pass; the builtin scanner is a heuristic. */
+function intakeScannerCheck(p: DaemonProbe): DoctorCheck[] {
+  const s = p.intakeScanner;
+  if (!p.reachable || !s) return [];
+  const label = 'Intake malware scanner';
+  if (s.attachments === 'refused')
+    return [
+      check(
+        'intake-scanner',
+        label,
+        'warn',
+        `attachments refused (${s.reason ?? 'no usable scanner'}) — install ClamAV on the portal host`,
+      ),
+    ];
+  if (s.scanner === undefined)
+    return [check('intake-scanner', label, s.ok ? 'pass' : 'warn', s.ok ? 'healthy' : 'degraded')];
+  if (s.avEngine) return [check('intake-scanner', label, 'pass', `${s.scanner} scans every attachment`)];
+  return [
+    check(
+      'intake-scanner',
+      label,
+      'warn',
+      `${s.scanner} only, not anti-virus — install ClamAV before production`,
+    ),
+  ];
+}
+
 function configPermsCheck(i: DoctorInput): DoctorCheck {
   const label = 'Client config private';
   const mode = i.fs.mode(i.configPath);
@@ -389,6 +427,7 @@ export async function runDoctor(
   const probe = await i.probe();
   const checks = [
     ...daemonChecks(i, probe),
+    ...intakeScannerCheck(probe),
     configPermsCheck(i),
     observedHooksCheck(i),
     envSecretsCheck(i),

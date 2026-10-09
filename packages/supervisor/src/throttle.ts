@@ -3,8 +3,8 @@
  * 1. stream-json `rate_limit_event` with status `rejected`, 2. a `throttle.hit` ingested from hooks/sidecar
  * (StopFailure `rate_limit`), 3. `result.api_error_status === 429`, 4. limit text from Claude Code itself.
  */
+import { RATE_LIMIT_429, THROTTLE_PATTERNS, THROTTLE_RESET } from '@aoc/contracts';
 import { addDays, localParts } from '@aoc/kernel';
-import { RATE_LIMIT_429, THROTTLE_RESET, THROTTLE_TEXT_PATTERNS } from './claude-facts';
 
 export interface ThrottleSignal {
   rank: 1 | 2 | 3 | 4;
@@ -16,9 +16,14 @@ export interface ThrottleSignal {
 const LEGACY_EPOCH = /usage limit reached\|(\d{9,13})/i;
 const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
 
+/** Limit notices are short; the patterns backtrack quadratically on long runs (e.g. of digits) — on the daemon thread. */
+const MAX_NOTICE_CHARS = 2000;
+const head = (text: string) => (text.length > MAX_NOTICE_CHARS ? text.slice(0, MAX_NOTICE_CHARS) : text);
+
 /** CLI-generated text (error results, synthetic/API-error messages, stderr) that announces a usage limit. */
-export function isLimitNotice(text: string): boolean {
-  return THROTTLE_TEXT_PATTERNS.some((p) => p.test(text)) || RATE_LIMIT_429.test(text);
+export function isLimitNotice(full: string): boolean {
+  const text = head(full);
+  return THROTTLE_PATTERNS.some((p) => p.test(text)) || RATE_LIMIT_429.test(text);
 }
 
 /**
@@ -42,7 +47,8 @@ export function strongestSignal(signals: ThrottleSignal[]): ThrottleSignal | nul
  * (America/Los_Angeles)", "Oct 14, 3pm", "Nov 13", "15:00") resolve to their next occurrence in the named zone,
  * else in `defaultZone` (the supervisor sets TZ on sessions so Claude Code renders in that zone).
  */
-export function parseResetAt(text: string, nowMs: number, defaultZone: string): number | null {
+export function parseResetAt(full: string, nowMs: number, defaultZone: string): number | null {
+  const text = head(full);
   const legacy = LEGACY_EPOCH.exec(text);
   if (legacy) return epochToMs(Number(legacy[1]));
   const m = THROTTLE_RESET.exec(text);

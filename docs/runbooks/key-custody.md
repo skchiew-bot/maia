@@ -71,10 +71,14 @@ For option 1, use the file path instead.
 
 ## 4. Backups (off-host, nightly)
 
+**aocd does steps 1–3 itself** once `audit.backupKeyFile` is set: a daily, consistent, encrypted backup of `aoc.db`,
+`bodies.db`, `blobs/`, `anchors/` and the evidence packs (never the keys), recorded as `backup.completed` and restored
+with `aocd restore`. Setup, monitoring and the restore procedure are in the
+[backup and restore runbook](backup-restore.md). Step 4 still needs its own copy, and the manual steps stay valid
+for a copy taken by hand, for example with aocd stopped.
+
 Back up the data and the keys **separately**: different media, different custodians. A backup that contains both
 `bodies.db` and the KEK is a copy of all your personal data in clear, and it also defeats crypto-shred (§6).
-
-AOC has no backup or restore command yet (gap G-21): the steps below are a script you schedule yourself.
 
 **What to back up, in this order** (a body is written before its event commits, so this order guarantees every
 event in the copy has its body):
@@ -163,6 +167,9 @@ Approver-only.
    and anyone else who received it may still hold it.
 
 ## 7. Restore drill (quarterly)
+
+With aocd's own backups, follow [backup and restore §6](backup-restore.md#6-quarterly-restore-drill): `aocd restore`
+performs the checks of step 4 before it installs anything. For a backup set taken by hand:
 
 1. Take the newest backup set, the backup key, and the KEK from escrow (two-person rule).
 2. Restore onto an **isolated** host with no network path to GitHub or the production anchor remote. Read-only
