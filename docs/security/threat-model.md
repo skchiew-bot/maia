@@ -610,8 +610,9 @@ A backup taken before an erasure still contains the destroyed DEKs. If the backu
     [key custody](../runbooks/key-custody.md)).
   - Keep backup retention within the erasure promise ("erased from backups within N days") (O-12).
   - Never run production with the generated dev KEK.
-  - Do not pass the KEK through `AOC_MASTER_KEY` in production: aocd's child processes (git, scanners) inherit
-    its environment (O-13).
+  - Do not pass the KEK through `AOC_MASTER_KEY` in production (refused there). The helpers aocd starts itself
+    (git, the anchor git, `openssl`, the claude CLI, the ClamAV client) get an allowlisted environment, so the
+    variable does not reach them either (O-13).
 - **Also:** `aoc.db` is not ciphertext-only. Its read models hold decrypted copies of text (ticket descriptions,
   session titles). Encrypt `aoc.db` backups at rest, and close the live-database gap in O-24.
 - **Residual:** an erasure completes only when the last older backup expires. Say so in the PDPA erasure
@@ -744,7 +745,7 @@ the [gap list](../compliance/gaps.md), which tracks owners and acceptance tests.
 | O-10 | Self-modification boundary (the guard and external log are built): set `aocRepoPaths` in production; extend `protectedPaths`; put the external log off-host; CODEOWNERS with required human review; complete the human review of the AI-built core before go-live | **Decision (CEO)** + change | CEO, lead, `mod-audit` | T-21, R14, gaps G-41, P-06, P-07, P-18 |
 | O-11 | Configure an off-host anchor remote that forbids force-pushes and deletions, owned by another account; anchor hourly and after high-value events (today nightly and on demand); use a qualified TSA; let `aocd`'s config pass the TSA CA file and the anchor signing key to `mod-audit` (today only code can) | Ops + change | Platform architect, `mod-audit`, `daemon` | T-13, R2, gaps G-40, G-42, P-04 |
 | O-12 | Set backup retention within the PDPA erasure promise, and state "erased from backups within N days" in erasure responses | **Decision (CEO, DPO)** | CEO | T-18, R6, gap P-03 |
-| O-13 | Production KEK from a file (for example a systemd credential), never `AOC_MASTER_KEY`; strip secrets from the environment of aocd's child processes (the git wrapper passes all of `process.env` today) | Change + Ops | `kernel`, Ops | T-18, R6, gap G-46 |
+| O-13 | Production KEK from a file (for example a systemd credential), never `AOC_MASTER_KEY` (refused in production, done). **Done:** every helper aocd starts itself gets an allowlisted environment (kernel git, the anchor git and `openssl`, the claude CLI adapter, the ClamAV client); the backup copy command is the deliberate exception (aocd's environment minus `AOC_*`, `ANTHROPIC_*`, `CLAUDE_CODE_OAUTH*`, because it carries the operator's own transfer credentials) | Ops | Ops | T-18, R6, gap G-46 |
 | O-14 | Claude credentials reach every session through `envAllowlist` and are readable by the model. Restrict egress, prefer per-host login state over environment tokens where possible, and evaluate Claude Code's tool sandboxing on the deployed version | **Decision** + change | CEO, `supervisor` | T-3, gap P-20 |
 | O-15 | Launch fail-closed checks. **Partly done:** generated settings are validated and a turn aborts unless `aoc` is `connected`. Remaining: fail a launch with no `SessionStart` within N seconds | Change | `supervisor`, `hooks` | T-20, gap G-47 |
 | O-16 | Rate limits: per-session decision-card creation, ingest, uploads per Requester, SSE connections per user. Also stream portal uploads to disk instead of parsing up to about 1.2 GB in memory. Body caps are done | Change | `mod-sessions`, `mod-decisions`, `mod-intake`, `daemon` | T-17, §3, gap G-47 |

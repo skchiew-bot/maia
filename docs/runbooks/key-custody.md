@@ -65,10 +65,10 @@ manager's audit log), so that the record does not depend on the system the key p
 | **2. An OS secret store** | **Linux/systemd:** seal it with `systemd-creds encrypt --name=aoc-kek /etc/aoc/kek /etc/credstore.encrypted/aoc-kek` (bound to the TPM2 or host key), shred the plaintext, and add `LoadCredentialEncrypted=aoc-kek:/etc/credstore.encrypted/aoc-kek` to the unit. Set `keys.masterKeyFile` to `/run/credentials/aocd.service/aoc-kek` (`$CREDENTIALS_DIRECTORY/aoc-kek`) | The plaintext lives only in a non-swappable, service-private mount. Recommended default for Linux production hosts |
 | **3. KMS or HSM** | Keep only a KMS-wrapped copy of the KEK (AWS KMS, Google Cloud KMS, Azure Key Vault, or an HSM). An `ExecStartPre` step decrypts it into `/run/aoc/kek` (tmpfs, mode 0400, owned by the user aocd runs as). The host identity is the only principal allowed to decrypt | Every decrypt is logged by the KMS: an independent trail of key use. Keeping the KEK inside the HSM for every unwrap would need kernel support that does not exist |
 
-**Do not use `AOC_MASTER_KEY` in production** — `"mode": "production"` refuses it. Child processes inherit
-aocd's environment: the kernel's git wrapper now passes only an allowlist, but other helpers (the anchor git push,
-the claude CLI LLM adapter) still get the whole environment, so an environment-borne KEK can leak into them (threat
-model O-13, gap G-46). Keep it in a file.
+**Do not use `AOC_MASTER_KEY` in production** — `"mode": "production"` refuses it. The helpers aocd starts itself
+(the kernel's git, the anchor git and `openssl`, the claude CLI LLM adapter, the ClamAV client) get an allowlisted
+environment instead of aocd's own, so an environment-borne KEK does not reach them (threat model O-13, gap G-46). It
+would still sit in `/proc/<aocd pid>/environ`, in service-manager dumps and in shell history. Keep it in a file.
 
 Production mode already refuses to generate a key. An extra pre-start check in the unit (systemd drop-in) makes a
 missing credential fail before aocd starts:

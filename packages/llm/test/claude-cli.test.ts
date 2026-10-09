@@ -3,7 +3,14 @@ import { tmpdir } from 'node:os';
 import { PassThrough } from 'node:stream';
 import { describe, expect, it } from 'vitest';
 import type { LlmJsonRequest } from '@aoc/contracts';
-import { ClaudeCliLlm, LlmOutputInvalidError, LlmUnavailableError, type SpawnFn } from '../src';
+import { CHILD_ENV_ALLOWLIST } from '@aoc/kernel';
+import {
+  CLAUDE_CLI_ENV,
+  ClaudeCliLlm,
+  LlmOutputInvalidError,
+  LlmUnavailableError,
+  type SpawnFn,
+} from '../src';
 
 /** A scripted child process: no real `claude` is ever started in tests. */
 class FakeChild extends EventEmitter {
@@ -126,6 +133,65 @@ describe('ClaudeCliLlm', () => {
     expect(call.options.stdio).toEqual(['ignore', 'pipe', 'pipe']);
     expect(call.options.cwd).toBe(tmpdir());
     expect(call.options.env.AOC_INTERNAL_LLM).toBe('1');
+  });
+
+  it('starts the CLI with an allowlisted environment: its Claude login, never AOC_* or unrelated secrets (G-46)', async () => {
+    const login = {
+      CLAUDE_CONFIG_DIR: '/home/aoc/.claude',
+      ANTHROPIC_API_KEY: 'sk-ant-needed-by-the-cli',
+      ANTHROPIC_AUTH_TOKEN: 'auth-needed-by-the-cli',
+      CLAUDE_CODE_OAUTH_TOKEN: 'oauth-needed-by-the-cli',
+      NODE_EXTRA_CA_CERTS: '/etc/ssl/corp-ca.pem',
+    };
+    const unrelated = {
+      AOC_MASTER_KEY: 'kek-SECRET-1',
+      AOC_BOOTSTRAP_TOKEN: 'bootstrap-SECRET-2',
+      AOC_INGEST_TOKEN: 'ingest-SECRET-3',
+      GITHUB_TOKEN: 'ghp_SECRET-4',
+      GH_TOKEN: 'gh-SECRET-5',
+      AWS_SECRET_ACCESS_KEY: 'aws-SECRET-6',
+      NPM_TOKEN: 'npm-SECRET-7',
+      DEPLOY_KEY: 'deploy-SECRET-8',
+      GIT_SSH_COMMAND: 'ssh -i /etc/aoc/keys/promotion-SECRET-9',
+    };
+    const planted = { ...login, ...unrelated };
+    const saved = Object.fromEntries(Object.keys(planted).map((k) => [k, process.env[k]]));
+    Object.assign(process.env, planted);
+    let env: Record<string, string | undefined>;
+    try {
+      const { spawn, calls } = fakeSpawn((c) =>
+        c.finish(result({ structured_output: { usdMyr: 4.213, publishedDate: '2026-10-09' } })),
+      );
+      await new ClaudeCliLlm({
+        spawn,
+        env: { EXPLICIT_FROM_CALLER: 'yes', ANTHROPIC_API_KEY: 'override' },
+      }).completeJson(req);
+      env = calls[0]!.options.env;
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+
+    // Whatever else aocd's environment holds (this host's too), the child's is a subset of the allowlists.
+    const allowed = new Set<string>([
+      ...CHILD_ENV_ALLOWLIST,
+      ...CLAUDE_CLI_ENV,
+      'EXPLICIT_FROM_CALLER',
+      'AOC_INTERNAL_LLM',
+    ]);
+    expect(Object.keys(env).filter((k) => !allowed.has(k))).toEqual([]);
+    expect(Object.keys(env).filter((k) => k.startsWith('AOC_'))).toEqual(['AOC_INTERNAL_LLM']);
+    expect(JSON.stringify(env)).not.toContain('SECRET');
+    for (const k of Object.keys(unrelated)) expect(env, k).not.toHaveProperty(k);
+    expect(env).toMatchObject({
+      ...login,
+      ANTHROPIC_API_KEY: 'override', // an explicit value from the caller wins
+      EXPLICIT_FROM_CALLER: 'yes',
+      AOC_INTERNAL_LLM: '1',
+      PATH: process.env.PATH,
+    });
   });
 
   it('maps tiers to model ids and puts extraArgs first (claude-sim under node)', () => {

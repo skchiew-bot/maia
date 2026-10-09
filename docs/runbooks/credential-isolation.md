@@ -288,8 +288,13 @@ The host that runs aocd and the supervisor. Items 1–3 are enforced by aocd whe
    `config/` is a protected path, and every edit is audited (`registry.changed`).
 8. **Environment allowlist.** Review `supervisor.envAllowlist`. Everything not on it is dropped from session
    environments. Remove what you do not need. The Claude credentials on the default list are readable by the model
-   (threat model O-14). Helpers aocd starts itself (git) get a fixed allowlist of their own: never `AOC_*`, API keys
-   or tokens (gap G-46).
+   (threat model O-14). Helpers aocd starts itself get a fixed allowlist of their own, never `AOC_*`, API keys or
+   tokens (gap G-46): the kernel's git; the anchor git (plus `GNUPGHOME`, `GIT_SSH_COMMAND`, `GIT_SSH`,
+   `GIT_ASKPASS` and `SSH_AUTH_SOCK`) and `openssl`; the claude CLI of the LLM adapter (plus its Claude login:
+   `CLAUDE_CONFIG_DIR`, `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, `NODE_EXTRA_CA_CERTS`);
+   and the ClamAV client. The one deliberate exception is the backup copy command, which gets aocd's environment
+   minus `AOC_*`, `ANTHROPIC_*` and `CLAUDE_CODE_OAUTH*` because it carries the operator's own transfer credentials
+   ([backup and restore](backup-restore.md) §2).
 9. **Privileged git.** Promotion, tagging and rollback run from a **service-owned clone** that fetches candidate
    commits by SHA, never in an agent's workspace. An agent can plant git hooks and config there (threat model
    [T-2](../security/threat-model.md#t-2-code-execution-through-git-configuration-in-agent-workspaces)). At this

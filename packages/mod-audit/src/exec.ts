@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { childEnv } from '@aoc/kernel';
 
 export interface ExecResult {
   code: number;
@@ -17,7 +18,8 @@ const MAX_OUTPUT = 32 * 1024 * 1024;
 
 /**
  * Run a binary with an argument array (never a shell). Async so slow pushes / TSA round-trips never block
- * the sole-writer event loop. Never rejects: spawn errors surface as code 127.
+ * the sole-writer event loop. Never rejects: spawn errors surface as code 127. Without `opts.env` the child gets the
+ * kernel's allowlist (PATH, HOME, locale, proxy and CA settings), never aocd's own environment.
  */
 export function exec(cmd: string, args: string[], opts: ExecOptions = {}): Promise<ExecResult> {
   return new Promise((resolve) => {
@@ -30,7 +32,7 @@ export function exec(cmd: string, args: string[], opts: ExecOptions = {}): Promi
     };
     const child = spawn(cmd, args, {
       cwd: opts.cwd,
-      env: opts.env ?? process.env,
+      env: opts.env ?? childEnv(),
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     const out: Buffer[] = [];
