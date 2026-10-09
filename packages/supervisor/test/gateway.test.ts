@@ -334,10 +334,11 @@ echo "== explicit"; git -c "http.${other}.extraHeader=Authorization: Bearer $AOC
     git(w.root, [`--git-dir=${w.service}`, 'remote', 'remove', 'origin']);
     const none = await w.run(`${commit('feature/a')}\ngit push aoc HEAD:refs/heads/feature/a 2>&1`);
     expect(none.out.stdout).toMatch(/aoc: no upstream remote is configured for this project/);
-    git(w.root, [`--git-dir=${w.service}`, 'remote', 'add', 'origin', 'ext::sh -c "touch /tmp/pwned"']);
+    const planted = join(w.root, 'pwned');
+    git(w.root, [`--git-dir=${w.service}`, 'remote', 'add', 'origin', `ext::sh -c "touch ${planted}"`]);
     const ext = await w.run(`git push aoc HEAD:refs/heads/feature/a 2>&1`);
     expect(ext.out.stdout).toMatch(/aoc: the upstream remote is not an ssh, https or local-path URL/);
-    expect(existsSync('/tmp/pwned')).toBe(false);
+    expect(existsSync(planted)).toBe(false);
     expect(ref(w.service, 'refs/heads/feature/a')).toBeNull();
   }, 90_000);
 
