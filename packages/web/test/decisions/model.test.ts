@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
+import { RESOLUTION_ASSURANCES, RESOLUTION_ASSURANCE_LABEL } from '@aoc/contracts';
 import {
   agingOf,
   agingPhrase,
+  assuranceLabel,
+  assuranceOf,
   closedWithinSla,
+  expectedAssurance,
   explainBlock,
   latencyByKind,
-  methodLabel,
   outcomeLabel,
   requesterOf,
   sortByUrgency,
@@ -115,9 +118,26 @@ describe('who may resolve, in words', () => {
 describe('labels and links', () => {
   it('labels button resolutions as attribution and passkey resolutions as signed (§6)', () => {
     const [byButton, , byPasskey] = closedHistory();
-    expect(methodLabel(byButton!.resolution!)).toBe('Attribution (bearer token)');
-    expect(methodLabel(byPasskey!.resolution!)).toBe('Signed (passkey)');
+    expect(assuranceLabel(byButton!.resolution!)).toBe('Attribution (bearer token)');
+    expect(assuranceLabel(byPasskey!.resolution!)).toBe('Signed (passkey)');
     expect(outcomeLabel(byPasskey!)).toBe('Approve');
+  });
+
+  // The words are the contracts' (RESOLUTION_ASSURANCE_LABEL), never a page-local copy that could drift.
+  it('uses the contracts assurance labels for every assurance, derived the same way for cards without one', () => {
+    for (const a of RESOLUTION_ASSURANCES)
+      expect(assuranceLabel({ method: 'button', passkeyVerified: false, assurance: a })).toBe(
+        RESOLUTION_ASSURANCE_LABEL[a],
+      );
+    // Older cards and `decision.resolved` metadata carry the method only.
+    expect(assuranceOf({ method: 'passkey', passkeyVerified: true })).toBe('signature');
+    expect(assuranceOf({ method: 'policy', passkeyVerified: false })).toBe('policy');
+    expect(assuranceLabel({ method: 'policy', passkeyVerified: false })).toBe('Platform policy');
+    // A passkey the server did not verify is attribution, not a signature.
+    expect(assuranceOf({ method: 'passkey', passkeyVerified: false })).toBe('attribution');
+    // What an open card will be recorded as: go-live, rollback and break-glass are signed.
+    expect(expectedAssurance(card({ id: 'x', requiresPasskey: true }))).toBe('signature');
+    expect(expectedAssurance(card({ id: 'x' }))).toBe('attribution');
   });
 
   it('links each subject to the page that shows it', () => {

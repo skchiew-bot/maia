@@ -18,6 +18,8 @@ export interface SideNavProps {
   /** Called after a link is followed (closes the mobile drawer). */
   onNavigate?: () => void;
   id?: string;
+  /** Landmark name. Only one nav is on screen at a time in the app; a page that shows several names each. */
+  label?: string;
 }
 
 /** Consecutive items of the same group, in nav order. */
@@ -42,10 +44,11 @@ export function SideNav({
   inboxCount,
   onNavigate,
   id,
+  label = 'Primary',
 }: SideNavProps) {
   const labelPrefix = useId();
   return (
-    <nav id={id} className={cx('aoc-nav', collapsed && 'is-collapsed')} aria-label="Primary">
+    <nav id={id} className={cx('aoc-nav', collapsed && 'is-collapsed')} aria-label={label}>
       <div className="aoc-nav__list">
         {sections(items).map((section, si) => {
           const heading = NAV_GROUP_LABEL[section.group];

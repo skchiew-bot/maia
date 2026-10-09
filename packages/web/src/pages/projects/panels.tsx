@@ -31,6 +31,7 @@ import {
 } from '../../components';
 import { cx, useMediaQuery } from '../../lib/dom';
 import { formatClock, formatDateTime, formatInteger, formatShortDate } from '../../lib/format';
+import { decisionHref } from '../../lib/links';
 import { BurnUp } from './BurnUp';
 import { useThread } from './data';
 import { DriftGlyph, ScopeGlyph } from './glyphs';
@@ -605,7 +606,7 @@ export function DecisionsPanel({ decisions }: { decisions: readonly DecisionCard
               )}
             </p>
           </div>
-          <Link to="/decisions" className="prj-decision__open">
+          <Link to={decisionHref(d.id)} className="prj-decision__open">
             {d.viewer.canResolve ? 'Decide' : 'View'}
             <span className="aoc-sr-only">: {d.title}</span>
           </Link>

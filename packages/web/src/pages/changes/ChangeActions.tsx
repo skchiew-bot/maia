@@ -19,6 +19,7 @@ import {
 } from '../../components';
 import { cx } from '../../lib/dom';
 import { formatDuration } from '../../lib/format';
+import { decisionHref } from '../../lib/links';
 import { PersonName, usePeople } from '../audit/people';
 import { FIELD_META, FIELD_ORDER, SCOPE_META, blockedBySoleApprover, submitGate } from './model';
 
@@ -274,7 +275,7 @@ export function DecisionSummary({ decisionId }: { decisionId: string }) {
     refreshOn: (m) =>
       m.kind === 'aoc' && m.event.type.startsWith('decision.') && m.event.meta.decisionId === decisionId,
   });
-  const link = `/decisions?focus=${encodeURIComponent(decisionId)}`;
+  const link = decisionHref(decisionId);
   if (!d.data) {
     return (
       <p className="changes-decision">

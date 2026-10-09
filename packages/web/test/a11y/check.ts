@@ -367,7 +367,7 @@ async function keyboardWalk(page: Page, viewport: Variant): Promise<Keyboard> {
     const r = info.rect;
     const onScreen = r.x + r.width > 0 && r.y + r.height > 0 && r.x < viewport.width && r.y < viewport.height;
     if (!onScreen) k.offscreen.push(stop);
-    else if (!info.indicator && !(await focusChangesPixels(page, info.rect, viewport)))
+    else if (!info.nextField && !info.indicator && !(await focusChangesPixels(page, info.rect, viewport)))
       k.invisible.push(stop);
     if (info.isPrimary && !k.reached) {
       k.reached = true;
@@ -474,7 +474,8 @@ async function routeCheck(s: Shared, role: Role, path: string, expected: string)
     const net = track(page, role);
     await page.goto(s.base + path, { waitUntil: 'load', timeout: 30_000 });
     await settle(page, net);
-    const actual = new URL(page.url()).pathname;
+    const landed = new URL(page.url());
+    const actual = expected.includes('?') ? landed.pathname + landed.search : landed.pathname;
     return { role, path, expected, actual, ok: actual === expected };
   } finally {
     await ctx.close();
@@ -592,6 +593,8 @@ async function main(): Promise<number> {
       ['anonymous', '/tower', '/login'],
       ['anonymous', '/portal', '/portal/login'],
       ['requester', '/tower', '/portal'],
+      // The link notifications and webhooks carry lands in the inbox with the card selected (?focus=).
+      ['approver', '/decisions/dec_a11y', '/decisions?focus=dec_a11y'],
       ...(['approver', 'builder'] as const).map((r): [Role, string, string] => [r, '/', LANDING[r]!]),
     ];
     for (const [role, path, expected] of checks)

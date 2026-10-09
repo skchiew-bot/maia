@@ -7,7 +7,7 @@ import { AuthProvider, EventStreamProvider, type AuthUser } from '../../src/api'
 import { ClockProvider, ToastProvider, fixedClock } from '../../src/components';
 import DecisionsPage from '../../src/pages/decisions/DecisionsPage';
 import { FakeEventSource, FakeEventSourceCtor, jsonResponse, mockFetch } from '../helpers';
-import { CEO, NOW, closedHistory, openQueue, resolved, WEIJIE_ID } from './fixtures';
+import { CEO, HOUR, NOW, card, closedHistory, expired, openQueue, resolved, WEIJIE_ID } from './fixtures';
 
 function stubWide(wide: boolean) {
   window.matchMedia = vi.fn((query: string) => ({
@@ -132,6 +132,24 @@ describe('Decisions inbox', { timeout: 15_000 }, () => {
     expect(within(detail).queryByRole('button', { name: /with passkey/ })).toBeNull();
   });
 
+  it('says how a resolve will be recorded, in the contracts words for each kind of card', async () => {
+    installApi();
+    renderPage('/decisions?focus=dec_agent');
+    const detail = await screen.findByRole('complementary', { name: 'Selected decision' });
+    expect(
+      await within(detail).findByText(
+        'Recorded as: Attribution (bearer token) — records which token was used, not a signature (§6).',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('records a go-live, rollback or break-glass card as signed', async () => {
+    installApi();
+    renderPage('/decisions?focus=dec_bg');
+    const detail = await screen.findByRole('complementary', { name: 'Selected decision' });
+    expect(await within(detail).findByText('Recorded as: Signed (passkey).')).toBeInTheDocument();
+  });
+
   it('asks a user without a passkey to register one before signing a break-glass decision', async () => {
     vi.stubGlobal('PublicKeyCredential', function PublicKeyCredential() {});
     vi.stubGlobal('isSecureContext', true);
@@ -180,6 +198,31 @@ describe('Decisions inbox', { timeout: 15_000 }, () => {
     const table = screen.getByRole('table', { name: /Closed decisions/ });
     expect(within(table).getByText('Signed (passkey)')).toBeInTheDocument();
     expect(within(table).getAllByText('Attribution (bearer token)')).toHaveLength(2);
+  });
+
+  // `decision.expired` closes a card with no withdrawal record, so its history has to come from status and closedAt.
+  it('writes an expired card into its history as Expired, dated by when it closed', async () => {
+    const lapsed = expired(
+      card({ id: 'dec_lapsed', kind: 'fix_plan', title: 'Sign off the fix plan for tkt_1162', createdAt: new Date(NOW - 30 * HOUR).toISOString() }),
+      24 * HOUR,
+    );
+    installApi([], [...closedHistory(), lapsed]);
+    renderPage('/decisions?tab=resolved&focus=dec_lapsed');
+
+    const drawer = await screen.findByRole('dialog', { name: 'Sign off the fix plan for tkt_1162' });
+    expect(within(drawer).getByText('Expired')).toBeInTheDocument();
+    const history = within(drawer).getByRole('list', { name: 'Decision history' });
+    expect(within(history).getAllByRole('listitem')).toHaveLength(2);
+    const line = within(history).getByText('Expired unanswered').closest('li')!;
+    expect(line).toHaveTextContent('Nobody decided in 1d');
+    expect(line.querySelector('time')).toHaveAttribute('datetime', lapsed.closedAt!);
+
+    // The closed list agrees: outcome Expired, no one decided it, how is blank.
+    const row = within(screen.getByRole('table', { name: /Closed decisions/ }))
+      .getByText('Sign off the fix plan for tkt_1162')
+      .closest('tr')!;
+    expect(row).toHaveTextContent('Expired');
+    expect(row).not.toHaveTextContent('Withdrawn');
   });
 
   it('says what would fill an empty inbox', async () => {

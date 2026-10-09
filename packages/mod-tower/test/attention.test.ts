@@ -295,7 +295,7 @@ describe('attention queue: ranked by cost of delay', () => {
       expect(byId(s.attention, `decision:${id}`).action).toEqual({
         kind: 'resolve_decision',
         label: 'Approve with passkey',
-        href: `/decisions?id=${id}`,
+        href: `/decisions?focus=${id}`,
         decisionId: id,
         requiresPasskey: true,
         recommendedOptionId: 'approve',
@@ -313,7 +313,7 @@ describe('attention queue: ranked by cost of delay', () => {
     expect(byId(s.attention, 'decision:dec_go_open').action).toEqual({
       kind: 'resolve_decision',
       label: 'Review',
-      href: '/decisions?id=dec_go_open',
+      href: '/decisions?focus=dec_go_open',
       decisionId: 'dec_go_open',
       requiresPasskey: true,
       recommendedOptionId: null,
@@ -605,7 +605,7 @@ describe('attention queue: ranked by cost of delay', () => {
       action: {
         kind: 'resolve_decision',
         label: 'Approve top-up',
-        href: '/decisions?id=dec_top',
+        href: '/decisions?focus=dec_top',
         decisionId: 'dec_top',
         requiresPasskey: false,
         recommendedOptionId: 'approve',

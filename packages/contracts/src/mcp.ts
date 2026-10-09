@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { GitUnknownReason } from './events/ledger';
 
 /**
  * AOC MCP server — the agent's structured voice (§2). All inputs are schema-validated; no free-text parsing.
@@ -163,6 +164,8 @@ export interface DeclarePlanResult {
 export interface TaskDoneResult {
   ok: true;
   flagged: null | 'no_file_change' | 'evidence_unverified';
+  /** Why the evidence could not be checked, when it could not (a git call timed out): never "verified". */
+  evidenceReason?: GitUnknownReason;
   progress: { doneTasks: number; totalTasks: number; doneWeight: number; totalWeight: number; pct: number };
   phaseCompleted: null | { phaseId: string; pinnedRef: string | null };
   boundary: BoundaryInstruction;

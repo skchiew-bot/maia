@@ -2,7 +2,7 @@ import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactElement } from 'react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DataTable, type DataTableColumn } from '../src/components';
 
 interface Row {
@@ -182,5 +182,56 @@ describe('DataTable', () => {
     expect(screen.getByRole('table').closest('.aoc-dt')).toHaveAttribute('aria-busy', 'true');
     const active = screen.getAllByRole('row').find((r) => r.getAttribute('aria-current') === 'true');
     expect(active).toHaveTextContent('Alpha');
+  });
+});
+
+describe('DataTable scroll area', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  const TEXT_ONLY: DataTableColumn<Row>[] = [
+    { id: 'name', header: 'Name', primary: true, cell: (r) => r.name },
+    { id: 'note', header: 'Note', cell: () => 'n/a' },
+  ];
+
+  /** jsdom has no layout: say that the area holds more than it shows. */
+  function overflowing() {
+    vi.spyOn(Element.prototype, 'scrollHeight', 'get').mockReturnValue(900);
+    vi.spyOn(Element.prototype, 'clientHeight', 'get').mockReturnValue(300);
+  }
+
+  it('is a labelled region with a Tab stop when it overflows and nothing in it can take focus', () => {
+    overflowing();
+    withRouter(
+      <DataTable caption="Events" columns={TEXT_ONLY} rows={ROWS} rowKey={(r) => r.id} maxHeight={300} />,
+    );
+    const region = screen.getByRole('region', { name: 'Events' });
+    expect(region).toHaveAttribute('tabindex', '0');
+    expect(region).toContainElement(screen.getByRole('table', { name: 'Events' }));
+  });
+
+  it('adds no Tab stop when the rows fit', () => {
+    withRouter(
+      <DataTable caption="Events" columns={TEXT_ONLY} rows={ROWS} rowKey={(r) => r.id} maxHeight={300} />,
+    );
+    expect(screen.queryByRole('region')).toBeNull();
+  });
+
+  it('adds none when a sort button, link or row already takes focus', () => {
+    overflowing();
+    const { unmount } = withRouter(
+      <DataTable caption="Sortable" columns={COLUMNS} rows={ROWS} rowKey={(r) => r.id} maxHeight={300} />,
+    );
+    expect(screen.queryByRole('region')).toBeNull();
+    unmount();
+    withRouter(
+      <DataTable
+        caption="Linked"
+        columns={TEXT_ONLY}
+        rows={ROWS}
+        rowKey={(r) => r.id}
+        rowHref={(r) => `/x/${r.id}`}
+      />,
+    );
+    expect(screen.queryByRole('region')).toBeNull();
   });
 });

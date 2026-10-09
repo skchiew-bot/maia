@@ -553,7 +553,9 @@
 }
 .met-fxfacts {
   display: grid;
-  flex: 1;
+  /* A basis (not 0) so the facts drop under the rate when less than a column is left beside it, instead of
+     overflowing their box on a phone. */
+  flex: 1 1 200px;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: var(--sp-2) var(--sp-4);
   min-width: 0;
@@ -709,9 +711,216 @@
 }
 
 /* The dimension switch drops under the title on narrow cards instead of squeezing it. */
-.met-breakdown > .aoc-widget__header {
+.met-breakdown > .aoc-widget__header,
+.met-outcomes > .aoc-widget__header {
   flex-wrap: wrap;
 }
-.met-breakdown > .aoc-widget__header > .aoc-widget__titles {
+.met-breakdown > .aoc-widget__header > .aoc-widget__titles,
+.met-outcomes > .aoc-widget__header > .aoc-widget__titles {
   flex: 1 1 220px;
+}
+
+/*
+ * ---- cost per outcome ----
+ * Range marks per kind on one US$ scale: the median (tick), p50 to p90 (band) and lowest to highest (thin line).
+ * The marks are for the eye; every figure is printed beside them. Notional cost is series-1.
+ */
+.met-out {
+  margin: 0;
+}
+.met-out__notice {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: var(--sp-3);
+}
+.met-out__rows {
+  display: flex;
+  flex-direction: column;
+  list-style: none;
+}
+.met-out__row,
+.met-out__axis {
+  display: grid;
+  grid-template-columns: minmax(150px, 22%) minmax(0, 1fr) minmax(210px, 26%);
+  align-items: center;
+  gap: 4px var(--sp-4);
+}
+.met-out__row {
+  padding: var(--sp-3) 0;
+  border-top: 1px solid var(--border);
+}
+.met-out__row:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+.met-out__who {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  font-size: var(--fs-xs);
+}
+.met-out__name {
+  color: var(--text);
+  font-size: var(--fs-md);
+  font-weight: 600;
+}
+.met-out__n {
+  color: var(--text-2);
+}
+.met-out__plot {
+  position: relative;
+  height: 28px;
+}
+.met-out__plot::before {
+  position: absolute;
+  top: 13px;
+  right: 0;
+  left: 0;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--surface-3);
+  content: '';
+}
+.met-out__grid {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: var(--x);
+  width: 1px;
+  background: var(--grid);
+}
+.met-out__whisker {
+  position: absolute;
+  top: 13px;
+  left: var(--x0);
+  width: calc(var(--x1) - var(--x0));
+  height: 2px;
+  background: var(--text-3);
+}
+.met-out__band {
+  position: absolute;
+  top: 8px;
+  left: var(--x0);
+  width: max(6px, calc(var(--x1) - var(--x0)));
+  height: 12px;
+  border-radius: 3px;
+  background: var(--series-1);
+}
+.met-out__median {
+  position: absolute;
+  top: 4px;
+  left: var(--x);
+  width: 3px;
+  height: 20px;
+  margin-left: -1.5px;
+  border-radius: 2px;
+  background: var(--text);
+  box-shadow: 0 0 0 1.5px var(--surface);
+}
+.met-out__nums {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-size: var(--fs-sm);
+}
+.met-out__nums > div {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  gap: 8px;
+  align-items: baseline;
+}
+.met-out__nums dt {
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+}
+.met-out__nums b {
+  font-weight: 600;
+}
+.met-out__none {
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+}
+.met-out__ticks {
+  position: relative;
+  height: 16px;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+}
+.met-out__ticks > span {
+  position: absolute;
+  left: var(--x);
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+.met-out__ticks > span:first-child {
+  transform: none;
+}
+.met-out__ticks > span:last-child {
+  transform: translateX(-100%);
+}
+.met-sw--median {
+  width: 3px;
+  height: 12px;
+  border-radius: 2px;
+  background: var(--text);
+}
+.met-sw--p90 {
+  width: 16px;
+  height: 8px;
+  border-radius: 3px;
+  background: var(--series-1);
+}
+.met-sw--spread {
+  width: 16px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--text-3);
+}
+.met-out + .aoc-dt,
+.met-out + .aoc-resource {
+  margin-top: var(--sp-3);
+}
+.met-out__ref {
+  display: flex;
+  flex-direction: column;
+}
+.met-out__more {
+  display: flex;
+  justify-content: center;
+  margin-top: var(--sp-2);
+}
+.met-out__money {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+.met-out__money b {
+  font-weight: 600;
+}
+.met-out__money .met-flag {
+  margin-left: 6px;
+}
+.met-out__foot {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+}
+.met-out__foot .aoc-icon {
+  color: var(--warn);
+  vertical-align: -2px;
+}
+@container wgrid (max-width: 760px) {
+  .met-out__row,
+  .met-out__axis {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+  }
+  .met-out__axis > span {
+    display: none;
+  }
 }

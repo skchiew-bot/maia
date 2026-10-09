@@ -25,6 +25,9 @@ export class LedgerServiceImpl implements LedgerService {
     const t = this.core.read.thread(threadId);
     return t ? threadInfo(t) : null;
   }
+  hasProject(projectId: string): boolean {
+    return this.core.read.project(projectId) !== null;
+  }
   ensureThread(
     input: { projectId: string; threadId?: string | null; title?: string },
     actor: Actor,
