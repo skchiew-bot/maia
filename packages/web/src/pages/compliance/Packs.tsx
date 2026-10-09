@@ -1,6 +1,6 @@
-import { useMemo, useState, type FormEvent } from 'react';
-import type { EvidencePackDetailDTO, EvidencePackSummaryDTO } from '@aoc/contracts';
-import { apiPost } from '../../api/client';
+import { useCallback, useMemo, useRef, useState, type FormEvent } from 'react';
+import type { EvidencePackDetailDTO, EvidencePackJobDTO, EvidencePackSummaryDTO } from '@aoc/contracts';
+import { apiGet, apiPost } from '../../api/client';
 import { useResource } from '../../api/useResource';
 import {
   Badge,
@@ -23,23 +23,95 @@ import { ActorName } from '../audit/people';
 import { LoadFailed, Skeleton } from '../audit/Skeleton';
 import { shortId } from '../audit/ids';
 import { defaultRange, formatBytes, packVerdict, rangeDays } from './model';
+import {
+  POLL_MS,
+  RUN_WORD,
+  isPending,
+  jobPath,
+  refusalOf,
+  requestedRun,
+  retryText,
+  runOfAnswer,
+  runOfJob,
+  useFollowRun,
+  type PackRun,
+  type Refusal,
+} from './packRun';
 
 const MAX_DAYS = 366;
+
+/** Where one pack request stands: queued behind another build, building, ready to download, or failed. */
+function PackRunAlert({ run, onDismiss }: { run: PackRun; onDismiss?: () => void }) {
+  const range = `${run.from} to ${run.to}`;
+  if (run.status === 'failed')
+    return (
+      <InlineAlert
+        tone="danger"
+        title={`${RUN_WORD.failed}: no pack was generated`}
+        live
+        onDismiss={onDismiss}
+      >
+        {range}: {run.error ?? 'the build did not finish'}
+      </InlineAlert>
+    );
+  if (run.status === 'done' && run.pack) {
+    const verdict = packVerdict(run.pack);
+    return (
+      <InlineAlert
+        tone={verdict.ok ? 'ok' : 'warn'}
+        title={`${RUN_WORD.done}: ${range}`}
+        live
+        onDismiss={onDismiss}
+        action={
+          <a className="aoc-btn aoc-btn--secondary aoc-btn--sm" href={run.pack.downloadUrl} download>
+            <Icon name="arrow-down" size={14} />
+            <span className="aoc-btn__label">Download .zip</span>
+          </a>
+        }
+      >
+        {formatInteger(run.pack.eventCount)} events · {verdict.label}
+      </InlineAlert>
+    );
+  }
+  if (run.status === 'queued')
+    return (
+      <InlineAlert tone="info" title={`${RUN_WORD.queued}: ${range}`} live>
+        {run.position === 1
+          ? 'Builds next.'
+          : run.position
+            ? `Number ${formatInteger(run.position)} in line.`
+            : 'Waiting for its turn.'}{' '}
+        Packs are built one at a time.
+      </InlineAlert>
+    );
+  return (
+    <InlineAlert tone="info" title={`${RUN_WORD.running}: ${range}`} live>
+      Re-hashing the whole chain and checking the anchors, which takes a while on a long log. The pack is
+      listed below when it is ready, even if you leave this page.
+    </InlineAlert>
+  );
+}
 
 export function GeneratePackForm({
   now,
   onGenerated,
+  pollMs = POLL_MS,
 }: {
   now: number;
   onGenerated: (p: EvidencePackSummaryDTO) => void;
+  /** How often a queued or running pack is checked. */
+  pollMs?: number;
 }) {
   const toast = useToast();
   const initial = useMemo(() => defaultRange(now), [now]);
   const [from, setFrom] = useState(initial.from);
   const [to, setTo] = useState(initial.to);
-  const [busy, setBusy] = useState(false);
+  const [run, setRun] = useState<PackRun | null>(null);
+  const [refusal, setRefusal] = useState<Refusal | null>(null);
   const [error, setError] = useState<unknown>(undefined);
+  const announced = useRef(new Set<string>());
   const days = rangeDays(from, to);
+  const pending = isPending(run);
   const problem =
     !from || !to
       ? 'Choose both dates.'
@@ -49,23 +121,51 @@ export function GeneratePackForm({
           ? `A pack covers at most ${MAX_DAYS} days.`
           : null;
 
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
-    if (problem) return;
-    setBusy(true);
-    setError(undefined);
-    try {
-      const p = await apiPost<EvidencePackSummaryDTO>('/api/evidence/packs', { from, to });
+  const settle = useCallback(
+    (next: PackRun) => {
+      setRun(next);
+      const p = next.pack;
+      if (next.status !== 'done' || !p || announced.current.has(p.packId)) return;
+      announced.current.add(p.packId);
+      const verdict = packVerdict(p);
       toast.notify({
-        tone: packVerdict(p).ok ? 'ok' : 'warn',
+        tone: verdict.ok ? 'ok' : 'warn',
         title: `Evidence pack frozen: ${p.from} to ${p.to}`,
-        body: `${formatInteger(p.eventCount)} events · ${packVerdict(p).label}`,
+        body: `${formatInteger(p.eventCount)} events · ${verdict.label}`,
       });
       onGenerated(p);
+    },
+    [toast, onGenerated],
+  );
+  useFollowRun(run, settle, pollMs);
+
+  /** The pack this person already has pending is the one worth watching when a second request is refused. */
+  const follow = async (jobId: string) => {
+    try {
+      settle(runOfJob(await apiGet<EvidencePackJobDTO>(jobPath(jobId))));
+    } catch {
+      // The refusal already says why; the status of that pack is a courtesy.
+    }
+  };
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (problem || pending) return;
+    setError(undefined);
+    setRefusal(null);
+    setRun(requestedRun(from, to));
+    try {
+      const answer = runOfAnswer(await apiPost<unknown>('/api/evidence/packs', { from, to }));
+      if (!answer) throw new Error('The daemon answered with neither a pack nor a queued job.');
+      settle(answer);
     } catch (err) {
-      setError(err);
-    } finally {
-      setBusy(false);
+      setRun(null);
+      const refused = refusalOf(err);
+      if (!refused) setError(err);
+      else {
+        setRefusal(refused);
+        if (refused.jobId) void follow(refused.jobId);
+      }
     }
   };
 
@@ -93,15 +193,24 @@ export function GeneratePackForm({
           variant="primary"
           icon="compliance"
           disabled={!!problem}
-          loading={busy}
-          loadingText="Freezing…"
+          loading={pending}
+          loadingText={run?.status === 'queued' ? 'Queued…' : 'Building…'}
         >
           Generate frozen pack
         </Button>
         <span className="compliance-muted">
-          {problem ?? `${formatInteger(days)} ${days === 1 ? 'day' : 'days'}, in the console's time zone`}
+          {problem ??
+            (pending
+              ? 'Packs build one at a time: ask for the next once this one is ready.'
+              : `${formatInteger(days)} ${days === 1 ? 'day' : 'days'}, in the console's time zone`)}
         </span>
       </div>
+      {refusal && (
+        <InlineAlert tone="warn" title={refusal.message} live onDismiss={() => setRefusal(null)}>
+          {retryText(refusal)}
+        </InlineAlert>
+      )}
+      {run && <PackRunAlert run={run} onDismiss={pending ? undefined : () => setRun(null)} />}
       {error !== undefined && (
         <InlineAlert tone="danger" title="No pack was generated" live>
           {describeError(error)}
