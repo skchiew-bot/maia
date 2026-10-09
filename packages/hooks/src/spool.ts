@@ -8,7 +8,7 @@ export interface SpoolTarget {
 }
 
 /** Loaded lazily: @aoc/client imports the contracts barrel, a cost only the rare spool/flush paths should pay. */
-async function loadClient(t: SpoolTarget, fetchImpl?: typeof fetch): Promise<AocClient> {
+export async function loadClient(t: SpoolTarget, fetchImpl?: typeof fetch): Promise<AocClient> {
   const { createClient } = await import('@aoc/client');
   return createClient({
     daemonUrl: t.daemonUrl ?? '',
@@ -39,15 +39,20 @@ function hasSpooled(spoolDir: string): boolean {
 
 /**
  * Opportunistic replay after a successful call. All requests share one deadline so the hook still exits within
- * ~budgetMs; anything not delivered in time is re-spooled by the client for the next successful call.
+ * ~budgetMs; anything not delivered in time is re-spooled by the client for the next successful call. The deadline
+ * starts once the client is loaded: a cold import can take the whole budget, and the replay would then never run.
  */
-export async function flushSpoolBounded(t: SpoolTarget, budgetMs = 1000): Promise<void> {
+export async function flushSpoolBounded(t: SpoolTarget, budgetMs = 1000, load = loadClient): Promise<void> {
   if (!t.daemonUrl || !hasSpooled(t.spoolDir)) return;
-  const deadline = AbortSignal.timeout(budgetMs);
-  const fetchImpl: typeof fetch = (input, init) =>
-    fetch(input, { ...init, signal: init?.signal ? AbortSignal.any([init.signal, deadline]) : deadline });
+  let deadline: AbortSignal | null = null;
+  const fetchImpl: typeof fetch = (input, init) => {
+    deadline ??= AbortSignal.timeout(budgetMs);
+    return fetch(input, { ...init, signal: init?.signal ? AbortSignal.any([init.signal, deadline]) : deadline });
+  };
   try {
-    await (await loadClient(t, fetchImpl)).flushSpool();
+    const client = await load(t, fetchImpl);
+    deadline = AbortSignal.timeout(budgetMs);
+    await client.flushSpool();
   } catch {
     // best effort: the spool stays on disk
   }
