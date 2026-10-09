@@ -439,6 +439,10 @@ A nudge is a resume with operator text (same as §7.1). There is no special mech
    (UserPromptSubmit sees it) and the turn continues normally.
 3. To reject: resume the same way and have the hook return a JSON deny whose reason states the decision. The
    model reads it as the tool result.
+4. **Not yet observed:** a resume **with** a prompt (`claude -p --resume <uuid> "<answer>"`, how AOC resumes) after a
+   defer: whether the deferred call is re-run, dropped or an error. Gap G-48 waits on it. Run
+   [`probes/defer-resume-with-prompt.mjs`](probes/defer-resume-with-prompt.mjs) with a logged-in `claude` (two short
+   turns) and record its `summary.json` here.
 
 This turns a tool-boundary attempt (e.g. `git push origin main`) into a decision card without asking the model
 to cooperate. `request_decision` remains the path for decisions the model raises itself (tests 3–4 in the spec).
