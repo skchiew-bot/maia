@@ -78,8 +78,9 @@ export const TESTED_NOTE =
   'Thanks for testing. We are finishing up and will mark this request completed here.';
 
 /**
- * A request stays "ready for testing" on the server after the requester confirms the fix, until it is live.
- * With no test left to answer, it reads as being worked on, with a thank-you note.
+ * The server moves a request back to "being worked on" as soon as the requester's pass is recorded. Until it has,
+ * and for requests whose pass was recorded before it did, "ready for testing" with no test left to answer reads as
+ * being worked on, with a thank-you note.
  */
 export function viewOf(t: Pick<PublicTicket, 'status' | 'canSignOffUat'>): TicketView {
   if (t.status === 'ready_for_testing' && !t.canSignOffUat)

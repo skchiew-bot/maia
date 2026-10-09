@@ -151,6 +151,7 @@ const HANDLES = [
   'decision.withdrawn',
   'decision.expired',
   'session.launch_requested',
+  'session.head_recorded',
   'session.rollover_completed',
   'ticket.build_started',
   'ticket.uat_result',
@@ -359,6 +360,11 @@ function apply(db: DatabaseSync, e: StoredEvent, payload: JsonValue | null): voi
     case 'task.done': {
       const m = metaOf(e, 'task.done');
       addSessionHead(db, m.sessionId, m.projectId, m.headSha);
+      return;
+    }
+    case 'session.head_recorded': {
+      const m = metaOf(e, 'session.head_recorded');
+      addSessionHead(db, m.sessionId, m.projectId, m.sha);
       return;
     }
     case 'phase.completed': {
@@ -731,7 +737,10 @@ function apply(db: DatabaseSync, e: StoredEvent, payload: JsonValue | null): voi
 
 const HEX_SHA = /^[0-9a-f]{7,64}$/i;
 
-/** HEADs the ledger read from the session's repo (never agent-supplied): the provenance proof that a commit was its work. */
+/**
+ * HEADs the platform read from the session's repo (the ledger at a task close or phase pin, the supervisor at the end
+ * of a turn; never agent-supplied): the provenance proof that a commit was in its working history.
+ */
 function addSessionHead(
   db: DatabaseSync,
   sessionId: string,
@@ -1062,7 +1071,7 @@ export class ChangeReadModel {
       projectId,
     ).map((r) => r.change_id);
   }
-  /** Hex SHAs the ledger recorded as the session's HEAD (task.done, phase.completed). */
+  /** Hex SHAs the platform recorded as the session's HEAD (task.done, phase.completed, session.head_recorded). */
   sessionHeads(sessionId: string, projectId: string): string[] {
     return all<{ sha: string }>(
       this.db(),

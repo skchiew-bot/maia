@@ -126,7 +126,7 @@ flowchart TB
 | **Domain modules** | `packages/mod-*` | Each exports an `AocModule`: events, projectors, reactors, guards, routes, jobs and services. Modules depend only on the service interfaces in `contracts/services.ts`, never on each other's code. | Built, except `mod-tower`, which is Contracted |
 | **Control Tower** | `packages/mod-tower` | The Approver's landing view: an exception-first attention queue ranked by cost of delay, plus flow, fleet, spend, integrity and a portfolio-level anomaly radar (`TowerSnapshot` in [`dto/tower.ts`](../packages/contracts/src/dto/tower.ts)). Never ranks people (R11). | Contracted |
 | **Web** | `packages/web` | The operator console and the intake portal: React, infographic-first (§12, ADR-0011). One token set for light and dark. Built to the static mock [`mocks/aoc-mock.html`](../mocks/README.md), which the CEO approved on 2026-10-09 with its proposed defaults. | In progress (shell, pages and charts landed) |
-| **Demo seeder** | `packages/demo` | Deterministic demo history for walkthroughs and UI work. It writes `<dataDir>/aoc.config.json`, which runs managed sessions on `claude-sim` with the fake LLM extractor and the FX job off: demos never call the real `claude` CLI. | Built |
+| **Demo seeder** | `packages/demo` | Deterministic demo history for walkthroughs and UI work. It writes `<dataDir>/aoc.config.json`, which runs managed sessions on `claude-sim` with the fake LLM extractor and the FX job off: demos never call the real `claude` CLI. The fake extractor answers the error-learning passes with canned "nothing to report" replies, so a demo's log stays quiet; any other model call fails loudly. | Built |
 | **CLI** | `packages/cli` | `aoc`: `login`, `project create`, `run --type …`, `sessions`, `decisions` and `decide`, `hooks install-observed`, `doctor`, `audit verify` / `anchor` / `evidence`, `serve`. | Built |
 | **claude-sim** | `packages/claude-sim` | Deterministic fake `claude` CLI for end-to-end tests and demo data. Tests never call the real binary. | Built |
 | **LLM adapters** | `packages/llm` | Structured JSON extraction (Claude CLI, Anthropic SDK, fake) for FX scraping, triage reconciliation and change-record drafting. | Built |
@@ -219,7 +219,9 @@ The supervisor is a module inside aocd (`SupervisorService` in
 - **Startup recovery.** A session recorded as running whose process is gone gets a `crashed` turn and is marked
   failed (Dead, restartable). An orphaned process left by a previous daemon is interrupted. Queued launches start
   again, and a decision answered just before a crash is delivered. Waiting, throttled and blocked sessions stay as
-  they are. On shutdown, running turns are interrupted, and the next start marks them Dead.
+  they are. On shutdown, running turns are interrupted, and the next start marks them Dead. The supervisor does this in
+  its module's `quiesce` hook, which aocd runs before its HTTP server stops accepting, and then waits (up to 5 s) for
+  the sidecars to send their last reports through the API; nothing new starts in that window.
 - **Rollover** to a fresh session with a deterministic handoff brief, only at a clean task boundary (§14, ADR-0008).
 - **`runIsolated`** runs rollback verification and promotion commands with an allowlisted environment plus, for
   promotion, the promotion credential profile. It is never exposed to agents.

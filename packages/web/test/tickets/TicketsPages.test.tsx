@@ -20,7 +20,7 @@ const fixPlanCard = (): DecisionCardView =>
     id: 'dec_fix',
     kind: 'fix_plan',
     test: null,
-    title: `Fix plan for ${ID}: Agent desktop logs me out right after login`,
+    title: 'Agent desktop logs me out right after login — fix plan',
     question: 'Approve this fix plan? Nothing touches code until it clears this gate (§7).',
     options: [
       { id: 'approve', label: 'Approve fix plan' },

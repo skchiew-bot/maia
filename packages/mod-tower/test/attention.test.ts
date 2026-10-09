@@ -643,7 +643,7 @@ describe('attention queue: ranked by cost of delay', () => {
     h.t.decisions!.request(
       {
         kind: 'fix_plan',
-        title: `Fix plan for tkt_9: Login broken for jane.doe@example.com, call 0123456789 ${'and more '.repeat(20)}`,
+        title: `Login broken for jane.doe@example.com, call 0123456789 ${'and more '.repeat(20)}— fix plan`,
         question: 'Approve?',
         options: [{ id: 'approve', label: 'Approve' }],
         subjectType: 'ticket',
@@ -655,10 +655,8 @@ describe('attention queue: ranked by cost of delay', () => {
     );
     decide(h, 'dec_unknown_to_service', 'rollback');
     const s = await h.snap();
-    const fix = s.attention.find((a) => a.title.startsWith('Fix plan'))!;
-    expect(fix.title.startsWith('Fix plan for tkt_9: Login broken for [email], call [number] and more')).toBe(
-      true,
-    );
+    const fix = s.attention.find((a) => a.title.startsWith('Login broken'))!;
+    expect(fix.title.startsWith('Login broken for [email], call [number] and more')).toBe(true);
     expect(fix.title.length).toBeLessThanOrEqual(120);
     expect(byId(s.attention, 'decision:dec_unknown_to_service').title).toBe('Rollback gate');
   });
