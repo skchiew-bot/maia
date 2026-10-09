@@ -11,6 +11,7 @@ function enc(id: string): string {
 }
 
 export const API_PATHS = {
+  health: '/api/health',
   authMe: '/api/auth/me',
   console: '/api/console',
   sessions: '/api/sessions',

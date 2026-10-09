@@ -377,6 +377,15 @@ export interface Notifier {
   notify(n: Notification): void;
 }
 
+// ── self-modification boundary (mod-audit) ─────────────────────────────────
+/** §13 / R14: what counts as AOC's own governance core, and the record of changes to it kept outside AOC. */
+export interface SelfModificationService {
+  /** The `files` (relative to `repoPath`) under selfModification.protectedPaths; null when `repoPath` is not an AOC repo. */
+  coreFiles(repoPath: string, files: string[]): string[] | null;
+  /** Append one line to the external self-modification log (outside AOC's database); false when the write failed. */
+  recordExternal(entry: Record<string, JsonValue>): boolean;
+}
+
 /** Name → interface map for the kernel service registry. */
 export interface ServiceMap {
   identity: IdentityService;
@@ -396,5 +405,6 @@ export interface ServiceMap {
   git: GitService;
   llm: LlmService;
   notifier: Notifier;
+  selfmod: SelfModificationService;
 }
 export type ServiceName = keyof ServiceMap;

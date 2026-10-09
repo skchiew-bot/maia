@@ -116,6 +116,33 @@ describe('liveness engine (§4)', () => {
     expect(engine().row('ses_A')!.liveness).toBe('waiting_on_you');
     expect(livenessChanges('ses_A')).toEqual(['thinking', 'working', 'thinking', 'stalled', 'dead', 'waiting_on_you']);
   });
+
+  it('an expired card no longer keeps the session Waiting on you (G-33)', async () => {
+    await setup();
+    const owner = t.user('builder');
+    launch(owner);
+    const e = engine();
+    e.heartbeat('ses_A', t.clock.now(), true, 4242);
+    const card = t.decisions!.request(
+      { kind: 'agent_decision', test: 'ambiguity', title: 'Which?', question: 'Which parser?', options: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }], subjectType: 'session', subjectId: 'ses_A', sessionId: 'ses_A', requesterId: 'session:ses_A' },
+      { kind: 'agent', id: 'ses_A' },
+    );
+    e.refresh('ses_A');
+    expect(e.row('ses_A')!.liveness).toBe('waiting_on_you');
+    t.clock.advance(5000);
+    t.rt.store.append({
+      type: 'decision.expired',
+      actor: { kind: 'system', id: 'decisions' },
+      scope: { decisionId: card.id, sessionId: 'ses_A' },
+      meta: { decisionId: card.id, ageMs: 5000 },
+      source: 'system',
+    });
+    e.heartbeat('ses_A', t.clock.now(), true, 4242);
+    expect(e.openDecisionCount('ses_A')).toBe(0);
+    expect(e.row('ses_A')!.liveness).toBe('thinking');
+    t.rt.store.rebuildProjections(['sessions']);
+    expect(e.openDecisionCount('ses_A')).toBe(0);
+  });
 });
 
 describe('hook ingest', () => {

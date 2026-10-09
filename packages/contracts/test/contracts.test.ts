@@ -8,7 +8,9 @@ import {
   newId,
   requiredRoleFor,
   requiresPasskey,
+  resolutionAssurance,
   roleSatisfies,
+  RESOLUTION_ASSURANCE_LABEL,
   routeModel,
   ProcessTypeSchema,
   validateEvent,
@@ -82,6 +84,15 @@ describe('roles & decisions (§6)', () => {
     expect(hasPermission('builder', 'mapping.stamp', { complianceLead: true })).toBe(true);
     expect(hasPermission('approver', 'mapping.stamp')).toBe(false);
     expect(hasPermission('requester', 'mapping.stamp', { complianceLead: true })).toBe(false);
+  });
+
+  it('labels a bearer-token button as attribution and only a verified passkey as a signature (G-29)', () => {
+    const label = (method: 'button' | 'passkey' | 'policy', passkeyVerified: boolean) =>
+      RESOLUTION_ASSURANCE_LABEL[resolutionAssurance({ method, passkeyVerified })];
+    expect(label('button', false)).toBe('Attribution (bearer token)');
+    expect(label('passkey', true)).toBe('Signed (passkey)');
+    expect(label('passkey', false)).toBe('Attribution (bearer token)');
+    expect(label('policy', false)).toBe('Platform policy');
   });
 });
 
