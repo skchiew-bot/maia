@@ -35,7 +35,7 @@ function policyOf(id: string): PermissionPolicy {
 }
 
 const bash = (policy: PermissionPolicy, command: string) => decidePermission(policy, 'Bash', { command }).behavior;
-const WRITERS = ['bug-fix', 'feature-build'] as const;
+const WRITERS = ['bug-fix', 'feature-build', 'discovery', 'migration', 'test-repair', 'docs'] as const;
 
 describe.each(WRITERS)('%s: scoped git', (id) => {
   const policy = policyOf(id);
@@ -104,12 +104,6 @@ describe('everything else stays as it was', () => {
     }
     expect(decidePermission(policy, 'Write', { file_path: '/work/repo/src/a.ts', content: 'x' }).behavior).toBe('deny');
     expect(decidePermission(policy, 'Read', { file_path: '/work/repo/src/a.ts' }).behavior).toBe('allow');
-  });
-
-  it('grants no git to the other write types (they commit nothing in the demo)', () => {
-    for (const id of ['discovery', 'migration', 'test-repair', 'docs']) {
-      expect(bash(policyOf(id), 'git commit -m x'), id).toBe('deny');
-    }
   });
 
   it('is still bounced by the protected-operation guard before the permission rules are consulted', () => {

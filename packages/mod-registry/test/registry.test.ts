@@ -19,6 +19,18 @@ describe('fixed registry: load + validate (§2.2)', () => {
     expect(loaded.hash).toMatch(/^[0-9a-f]{64}$/);
   });
 
+  it('lets every write-capable type with a credential profile commit and push through the gateway, and nothing wider', () => {
+    const loaded = loadRegistryFile(resolve(here, '../../../config/process-types.json'));
+    const writers = [...loaded.types.values()].filter((t) => !t.readOnly && t.credentialProfile);
+    expect(writers.map((t) => t.id).sort()).toEqual(['bug-fix', 'discovery', 'docs', 'feature-build', 'migration', 'test-repair']);
+    for (const t of writers) {
+      expect(t.tools.allow, t.id).toEqual(expect.arrayContaining(['Bash(git add:*)', 'Bash(git commit:*)', 'Bash(git push aoc:*)']));
+      expect(t.tools.deny, t.id).toEqual(expect.arrayContaining(['Bash(git merge:*)', 'Bash(git rebase:*)', 'Bash(git reset:*)']));
+      // a push to any other remote or form would bypass the gateway's ref allow-list
+      expect(t.tools.allow?.filter((a) => /git push/.test(a)), t.id).toEqual(['Bash(git push aoc:*)']);
+    }
+  });
+
   it('fails startup with a clear error naming the file and every problem', async () => {
     const bad = writeRegistry({
       version: '1',
