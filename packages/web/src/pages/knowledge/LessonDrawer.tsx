@@ -14,7 +14,8 @@ import {
   formatNumber,
   formatUsd,
 } from '../../components';
-import { RETIRE_REASON, SCOPE_LABEL, STATUS_META, decisionHref } from './model';
+import { decisionHref } from '../../lib/links';
+import { RETIRE_REASON, SCOPE_LABEL, STATUS_META } from './model';
 
 export interface LessonDrawerProps {
   lesson: LessonDTO | null;

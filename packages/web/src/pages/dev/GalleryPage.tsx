@@ -339,10 +339,21 @@ function ShellSection() {
       </div>
       <div className="gallery-navs">
         <div className="gallery-frame gallery-frame--nav">
-          <SideNav items={NAV_ITEMS} inboxCount={3} onToggleCollapsed={() => undefined} />
+          <SideNav
+            items={NAV_ITEMS}
+            inboxCount={3}
+            label="Primary, expanded example"
+            onToggleCollapsed={() => undefined}
+          />
         </div>
         <div className="gallery-frame gallery-frame--nav gallery-frame--rail">
-          <SideNav items={NAV_ITEMS} inboxCount={3} collapsed onToggleCollapsed={() => undefined} />
+          <SideNav
+            items={NAV_ITEMS}
+            inboxCount={3}
+            collapsed
+            label="Primary, icon rail example"
+            onToggleCollapsed={() => undefined}
+          />
         </div>
       </div>
     </Section>

@@ -257,6 +257,23 @@ describe('Ticket page', { timeout: 15_000 }, () => {
     );
   });
 
+  it('offers "withdrawn" only to an Approver: it speaks for the requester and the daemon refuses it otherwise', async () => {
+    const user = userEvent.setup();
+    installApi();
+    const resolutions = async (as: AuthUser) => {
+      const { unmount } = renderAt(`/tickets/${ID}`, as);
+      await user.click(await screen.findByRole('button', { name: 'Close ticket…' }));
+      const dialog = screen.getByRole('alertdialog', { name: 'Close this ticket?' });
+      const values = within(dialog)
+        .getAllByRole('option')
+        .map((o) => (o as HTMLOptionElement).value);
+      unmount();
+      return values;
+    };
+    expect(await resolutions(BUILDER)).toEqual(['duplicate', 'cannot_reproduce', 'wont_fix']);
+    expect(await resolutions(CEO)).toEqual(['duplicate', 'cannot_reproduce', 'wont_fix', 'withdrawn']);
+  });
+
   it('keeps raw media behind the role boundary for Builders', async () => {
     const withMedia = ticket({
       ticketId: ID,

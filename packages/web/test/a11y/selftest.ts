@@ -18,6 +18,7 @@ const PAGE = `<!doctype html><html lang="en"><head><style>
   <div class="wide"></div>
   <figure><svg width="200" height="40"><rect width="120" height="40" fill="#5d3fd3"></rect></svg></figure>
   <figure><svg role="img" aria-label="Drift marks" width="200" height="40"><rect width="120" height="40" style="fill: var(--mark-drift)"></rect></svg><figcaption>3 drift marks</figcaption></figure>
+  <input type="date" aria-label="Day">
 </main></body></html>`;
 
 /** Runs every probe against the defect page; returns the checks that did not fire. */
@@ -57,6 +58,27 @@ export async function probeSelfTest(browser: Browser, probeSource: string): Prom
     else if (bare.indicator !== null) misses.push('keyboard: a control with no focus style looked focused');
     else if (await focusChangesPixels(page, bare.rect, viewport))
       misses.push('keyboard: the pixel check saw a focus change on a control with no focus style');
+
+    // A native date input is one element with a Tab stop per field: walking its fields is not a cycle...
+    const fields: FocusInfo[] = [];
+    for (let i = 0; i < 6; i++) {
+      await page.keyboard.press('Tab');
+      const info = await page.evaluate<FocusInfo | null>('__aocProbe.focusInfo()');
+      if (info?.label !== 'Day') break;
+      fields.push(info);
+    }
+    if (fields.length < 2) misses.push('keyboard: the date input did not give the walk several Tab stops');
+    else if (fields.some((f) => f.revisit))
+      misses.push('keyboard: the fields of one date input were reported as a focus cycle');
+    else if (fields[0]!.nextField || !fields.slice(1).every((f) => f.nextField))
+      misses.push(
+        'keyboard: only the first Tab stop of a date input should be checked for a focus indicator',
+      );
+    // ...but coming back to a control that was already walked still is.
+    await page.evaluate("document.querySelector('button.ok').focus()");
+    const back = await page.evaluate<FocusInfo | null>('__aocProbe.focusInfo()');
+    if (!back?.revisit)
+      misses.push('keyboard: returning to a control already walked was not reported as a cycle');
   } finally {
     await ctx.close();
   }

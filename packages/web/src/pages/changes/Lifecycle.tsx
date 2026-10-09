@@ -5,6 +5,7 @@ import { Icon, type IconName } from '../../components/Icon';
 import { RelativeTime } from '../../components/RelativeTime';
 import { cx } from '../../lib/dom';
 import { formatDateTime, formatDuration } from '../../lib/format';
+import { decisionHref } from '../../lib/links';
 import { ActorName, PersonName } from '../audit/people';
 import { RefValue } from './bits';
 import { SCOPE_META, actorKindOf, lifecycleSegments } from './model';
@@ -162,7 +163,7 @@ export function LifecycleSteps({ change }: { change: ChangeRequestDTO }) {
             : c.decisionId && (
                 <>
                   {' '}
-                  · <Link to={`/decisions?focus=${encodeURIComponent(c.decisionId)}`}>decision</Link>
+                  · <Link to={decisionHref(c.decisionId)}>decision</Link>
                 </>
               )}
         </Step>
@@ -174,7 +175,7 @@ export function LifecycleSteps({ change }: { change: ChangeRequestDTO }) {
       ) : c.status === 'submitted' ? (
         <Step icon="decisions" tone="current" title="Waiting for approval">
           {c.decisionId ? (
-            <Link to={`/decisions?focus=${encodeURIComponent(c.decisionId)}`}>Open the decision</Link>
+            <Link to={decisionHref(c.decisionId)}>Open the decision</Link>
           ) : (
             'no decision card yet'
           )}

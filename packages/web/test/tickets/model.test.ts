@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { DecisionCardView } from '@aoc/contracts';
 import {
   budgetUse,
   budgetsFrom,
@@ -125,18 +126,78 @@ describe('ticket history', () => {
       'Fix-plan sign-off requested',
       'Fix plan submitted to the fix-plan gate',
     ]);
-    const signed = describeEvent(
-      event('decision.resolved', NOW, {
-        decisionId: 'dec_g',
-        kind: 'go_live',
-        optionId: 'approve',
-        resolvedBy: 'usr_ceo',
-        method: 'passkey',
-      }),
-      people,
-      new Map(),
+    const resolvedBy = (method: string, passkeyVerified: boolean) =>
+      describeEvent(
+        event('decision.resolved', NOW, {
+          decisionId: 'dec_g',
+          kind: 'go_live',
+          optionId: 'approve',
+          resolvedBy: 'usr_ceo',
+          method,
+          passkeyVerified,
+        }),
+        people,
+        new Map(),
+      ).text;
+    // The words are the contracts' assurance labels (§6), the same ones the Decisions inbox shows.
+    expect(resolvedBy('passkey', true)).toBe('Go-live resolved: approve — by Chiew Sin Kwang · Signed (passkey)');
+    expect(resolvedBy('button', false)).toBe(
+      'Go-live resolved: approve — by Chiew Sin Kwang · Attribution (bearer token)',
     );
-    expect(signed.text).toBe('Go-live resolved: approve — by Chiew Sin Kwang, signed (passkey)');
+    expect(resolvedBy('policy', false)).toBe('Go-live resolved: approve — by Chiew Sin Kwang · Platform policy');
+  });
+});
+
+describe('after the build and at the gates', () => {
+  const t = 'tkt_01M4FC3GS5VXC370PY64VM0XE8';
+  const line = (e: ReturnType<typeof event>) => describeEvent(e, people, new Map());
+
+  it('says why the flow stopped for a person, including the two reasons that come after the build', () => {
+    const escalated = (reason: string) =>
+      line(event('ticket.escalated_to_human', NOW, { ticketId: t, reason, decisionId: 'dec_x' }));
+    expect(escalated('low_confidence').text).toBe('Escalated to a human: a triage agent reported low confidence');
+    expect(escalated('uat_build_missing').text).toBe(
+      'Escalated to a human: the build finished but its UAT branch does not resolve, so the requester has not been asked to test',
+    );
+    expect(escalated('golive_blocked').text).toBe(
+      'Escalated to a human: go-live could not be requested or completed after the requester signed off UAT',
+    );
+    expect(escalated('golive_blocked').link).toEqual({ to: '/decisions?focus=dec_x', label: 'Open decision' });
+  });
+
+  it('sends a failed UAT back to read-only triage, not to another build', () => {
+    // Created in order: stage spans follow `seq`.
+    const built = event('ticket.build_started', NOW - 60 * MIN, { ticketId: t, sessionId: 'ses_b' });
+    const ready = event('ticket.uat_ready', NOW - 40 * MIN, { ticketId: t });
+    const failed = event('ticket.uat_result', NOW - 30 * MIN, { ticketId: t, requesterId: 'usr_daniel', verdict: 'fail' });
+    // Intake starts the re-triage in the same turn as the result.
+    const retriage = event('ticket.triage_started', NOW - 30 * MIN, { ticketId: t, sessionIds: ['ses_r'] });
+    const spans = stageSpans([built, ready, failed, retriage], NOW);
+    expect(spans.map((s) => [s.stage, s.end - s.start, s.current])).toEqual([
+      ['building', 20 * MIN, false],
+      ['uat', 10 * MIN, false],
+      ['triage', 30 * MIN, true],
+    ]);
+    expect(line(failed).text).toBe(
+      'UAT failed: Daniel Lim still sees the problem; read-only triage looks again with their feedback',
+    );
+    // A pass is not a stage move on its own: go-live is requested next.
+    expect(stageSpans([event('ticket.uat_result', NOW, { verdict: 'pass' })], NOW)).toEqual([]);
+  });
+
+  it('puts a decision that expired on the timeline with how long it waited', () => {
+    const expired = event('decision.expired', NOW, { decisionId: 'dec_fix', ageMs: 4 * 60 * MIN });
+    expect(timelineEvents([expired]).map((e) => e.type)).toEqual(['decision.expired']);
+    expect(line(expired)).toMatchObject({
+      text: 'Decision expired unanswered after 4h',
+      link: { to: '/decisions?focus=dec_fix', label: 'Open decision' },
+    });
+    const known = describeEvent(
+      expired,
+      people,
+      new Map([['dec_fix', { kind: 'fix_plan' } as DecisionCardView]]),
+    );
+    expect(known.text).toBe('Fix-plan sign-off expired unanswered after 4h');
   });
 });
 

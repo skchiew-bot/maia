@@ -190,7 +190,7 @@ async function actions(browser) {
       action: {
         kind: 'resolve_decision',
         label: 'Approve with passkey',
-        href: `/decisions?id=${mainMerge.id}`,
+        href: `/decisions?focus=${mainMerge.id}`,
         decisionId: mainMerge.id,
         requiresPasskey: true,
       },

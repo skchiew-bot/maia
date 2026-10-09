@@ -27,7 +27,7 @@ import {
   useToast,
 } from '../../components';
 import { formatAge, formatPercent, formatShortDate, formatUsd } from '../../lib/format';
-import { useHashScroll } from '../metering/useHashScroll';
+import { useSectionScroll } from '../../lib/sectionScroll';
 import { isEvent } from '../registry/streamEvents';
 import { useNames } from '../registry/useNames';
 import { AllocationMeters, MetersLegend } from './AllocationMeters';
@@ -82,7 +82,7 @@ export default function CreditsPage() {
     refreshOn: (m) => isEvent(m, TOPUP_EVENTS),
   });
   const sessions = useResource<SessionSummary[]>(requesting ? '/api/sessions' : null, { query: { mode: 'managed' } });
-  useHashScroll(me.data !== undefined);
+  useSectionScroll(me);
 
   const today = card.data?.today ?? localDay(now);
   const currentPeriod = today.slice(0, 7);

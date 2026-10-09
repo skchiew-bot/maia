@@ -30,6 +30,22 @@ describe('SideNav structure (axe `list`)', () => {
     ).toBeInTheDocument();
   });
 
+  it('is the "Primary" landmark unless a page that shows several navs names each one', () => {
+    render(
+      <MemoryRouter initialEntries={['/console']}>
+        <SideNav items={NAV_ITEMS} label="Primary, expanded example" />
+        <SideNav items={NAV_ITEMS} collapsed label="Primary, icon rail example" />
+      </MemoryRouter>,
+    );
+    expect(screen.getAllByRole('navigation').map((n) => n.getAttribute('aria-label'))).toEqual([
+      'Primary, expanded example',
+      'Primary, icon rail example',
+    ]);
+    expect(screen.queryByRole('navigation', { name: 'Primary' })).toBeNull();
+    renderNav(false);
+    expect(screen.getByRole('navigation', { name: 'Primary' })).toBeInTheDocument();
+  });
+
   it('keeps the group names for assistive tech when the rail hides the labels', () => {
     renderNav(true);
     expect(screen.queryByText('Operate')).toBeNull();

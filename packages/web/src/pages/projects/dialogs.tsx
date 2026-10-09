@@ -1,8 +1,7 @@
 import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode, type RefObject } from 'react';
 import type { EnhancementDTO, ProjectDetail, SessionSummary, ThreadSummary } from '@aoc/contracts';
-import { ApiError, apiPost } from '../../api';
+import { ApiError, apiPatch, apiPost } from '../../api';
 import { Button, Dialog, InlineAlert, Select, TextArea, TextField, describeError } from '../../components';
-import { apiPatch } from './requests';
 
 /*
  * Write actions of the Projects area. Each dialog is mounted only while open, so its form state starts fresh

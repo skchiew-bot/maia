@@ -41,7 +41,7 @@ export const STAGE_HINT: Record<TicketStage, string> = {
   received: 'Waiting for read-only triage to start.',
   triage: 'Read-only triage agents are diagnosing within the diagnosis budget. No code is touched.',
   awaiting_human:
-    'Triage could not settle the root cause (low confidence, disagreement or an exhausted budget). A Builder decides how to proceed.',
+    'The flow stopped for a person: triage could not settle the root cause (a Builder decides), or the UAT build is missing or go-live is blocked (the Approver decides).',
   fix_plan_gate: 'Nothing touches code until the Approver signs off the fix plan.',
   building: 'A managed build session implements the approved plan on a UAT branch.',
   uat: 'Waiting for the requester to test the fix on UAT and sign it off.',
@@ -113,8 +113,8 @@ const AFTER_FIX_PLAN: ReadonlySet<TicketStage> = new Set(['building', 'uat', 'go
 
 /**
  * The two human gates plus the requester's UAT sign-off (§7), read from the projected stage. A UAT result of
- * "fail" sends the ticket back to building, so a ticket still in UAT with nothing open has passed UAT and is
- * stuck before go-live (the go-live request did not start): that is `blocked`. At the go-live gate, the latest
+ * "fail" sends the ticket back to read-only triage, so a ticket still in UAT with nothing open has passed UAT and
+ * is stuck before go-live (the go-live request did not start): that is `blocked`. At the go-live gate, the latest
  * promotion says whether the Approver rejected it or the approved promotion failed or was refused.
  */
 export function gatesOf(
@@ -261,7 +261,8 @@ function stageAfter(e: AuditEventHeaderDTO): TicketStage | null {
     case 'ticket.uat_ready':
       return 'uat';
     case 'ticket.uat_result':
-      return m.verdict === 'fail' ? 'building' : null;
+      // A failed UAT goes back to read-only triage, not to another build turn (it re-diagnoses with the feedback).
+      return m.verdict === 'fail' ? 'triage' : null;
     case 'ticket.golive_requested':
       return 'go_live_gate';
     case 'ticket.closed':
@@ -312,6 +313,7 @@ const TIMELINE_TYPES: ReadonlySet<string> = new Set([
   'decision.requested',
   'decision.resolved',
   'decision.withdrawn',
+  'decision.expired',
   'decision.escalated',
   'promotion.requested',
   'promotion.completed',

@@ -8,6 +8,7 @@ import { EmptyState, InlineAlert, describeError } from '../../components/EmptySt
 import { Icon } from '../../components/Icon';
 import { RelativeTime } from '../../components/RelativeTime';
 import { useToast } from '../../components/Toast';
+import { decisionHref } from '../../lib/links';
 import { Glyph } from '../sessions/glyphs';
 import './decisionCard.css';
 
@@ -191,7 +192,7 @@ export function DecisionCard({ decision: d, session, onResolved }: DecisionCardP
             Approve
           </Button>
         ) : d.viewer.canResolve ? (
-          <ButtonLink size="sm" variant="primary" to={`/decisions#${encodeURIComponent(d.id)}`} icon={d.requiresPasskey ? 'key' : undefined}>
+          <ButtonLink size="sm" variant="primary" to={decisionHref(d.id)} icon={d.requiresPasskey ? 'key' : undefined}>
             {d.requiresPasskey ? 'Approve with passkey' : 'Choose an option'}
           </ButtonLink>
         ) : (
@@ -199,7 +200,7 @@ export function DecisionCard({ decision: d, session, onResolved }: DecisionCardP
             <Glyph name="lock" size={12} /> {blockedText(d)}
           </span>
         )}
-        <Link className="console-dcard__review" to={`/decisions#${encodeURIComponent(d.id)}`}>
+        <Link className="console-dcard__review" to={decisionHref(d.id)}>
           Review<span className="aoc-sr-only"> {d.title}</span>
         </Link>
       </div>

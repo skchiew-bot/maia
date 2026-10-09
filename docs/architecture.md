@@ -171,7 +171,10 @@ The supervisor is a module inside aocd (`SupervisorService` in
 
 - **Launch** (`aoc run --type <processType>`, the console, or the intake flow). The process type comes from the
   fixed registry ([`config/process-types.json`](../config/process-types.json)). The model comes from
-  `routeModel()`, never from the agent (§2.2, ADR-0005). The supervisor opens or continues the thread and takes its
+  `routeModel()`, never from the agent (§2.2, ADR-0005). A launch for a type the registry does not list is refused
+  (422 `unknown_process_type`), and so is one for a project the ledger does not know (404 `unknown_project`): a
+  launch never creates a project, and a refused launch appends nothing (its idempotency key, if it has one, stays
+  free). The supervisor opens or continues the thread and takes its
   single writer lock, checks credits at the launch boundary, issues a per-session ingest token, appends
   `session.launch_requested`, and prepares a private session directory with the system prompt, `mcp.json` and
   `settings.json` (files written 0600).
@@ -196,7 +199,11 @@ The supervisor is a module inside aocd (`SupervisorService` in
 - **End of a turn** (one process is one turn), checked in this order: an open decision → `waiting_decision`; a
   plan-limit signal → `throttled`; the credit cap reached at a boundary → `blocked`; a stop request → ended; the plan
   complete → ended `completed`; a rollover due at a clean boundary → rollover; a crash without a `result` → failed
-  (Dead, restartable). Otherwise an answer that arrived during the turn is delivered now, or the session
+  (Dead, restartable). A read-only triage type (registry class `triage`, `readOnly`, e.g. `bug-triage`) ends at its
+  diagnosis: once the session's `report_diagnosis` is on record (`ticket.diagnosis_reported`), its turn end ends it
+  `completed` (reason `diagnosis_reported`), whatever its plan says, because the triage prompt asks for a diagnosis
+  and never for `task_done`; a triage turn that ends without one is handled like any other. Otherwise an answer that
+  arrived during the turn is delivered now, or the session
   auto-continues (`autoContinueLimit`, default 1), or it goes `idle` (Waiting on you) with a notification. Every turn
   end is recorded as `session.turn_ended {outcome}`.
 - **Resume** with `claude -p --resume <uuid>` and the same flags:
@@ -676,6 +683,16 @@ the UI and the tests.
   previous close, and `evidence_unverified` when the ref cannot be confirmed. Flagged tasks still count until they are
   reviewed (CEO decision with the mock, 2026-10-09), and the flagged count is shown next to the percentage. The "file changed" fact must come from git (working-tree
   fingerprint or commits), not from tool names (§4; Bash changes files too).
+- **The ledger never holds aocd's thread for git.** aocd is the sole writer, and every managed session's PreToolUse
+  hook has about 2.5 s and fails closed, so each git call of `declare_plan`, `amend_plan` and `task_done` is async with its
+  own timeout (`gitTimeoutMs`, default 4 s) and the event is appended only after git has answered, from the state at
+  that moment. A check that times out is unknown, not refuted: the task is recorded with `evidenceVerified: false`,
+  `flag: evidence_unverified` and `evidenceReason: git_timeout` (a plan declared on a slow repository records
+  `baselineReason: git_timeout`, and commit evidence is then unknown too), never as verified.
+  How git starts is the kernel's rule (G-04): safety settings on every call, and, when aocd is root and a session
+  user owns the working copy (session isolation), git runs as that owner, so the ledger reads session repositories
+  without ever setting `safe.directory`. The two plumbing reads on the evidence path, HEAD and "is this commit new?"
+  (one `rev-list`), also drop system and user config, lazy fetch and every transport by environment.
 - **No manifest, no work.** A process type with `requiresPlan` is blocked from file-changing tools until
   `declare_plan` (`session.blocked {reason: no_manifest}`).
 - **Amendments** (`plan.amended`) record `prevTotalWeight` and `newTotalWeight` under the amending developer's

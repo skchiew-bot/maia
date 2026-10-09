@@ -37,6 +37,16 @@ export function eventDetail(e: Pick<EventHeader, 'type' | 'meta'>): string {
       return str(m.reason).replace(/_/g, ' ');
     case 'session.blocked':
       return str(m.reason).replace(/_/g, ' ');
+    case 'session.git_pushed': {
+      // Counts only: the ref names are agent-chosen text and stay in the encrypted body.
+      const refs = num(m.refs);
+      return [
+        `pushed ${formatInteger(refs)} ${refs === 1 ? 'ref' : 'refs'}`,
+        `${formatInteger(num(m.forwarded))} forwarded`,
+        ...(num(m.refused) > 0 ? [`${formatInteger(num(m.refused))} refused`] : []),
+        ...(num(m.failed) > 0 ? [`${formatInteger(num(m.failed))} failed`] : []),
+      ].join(' · ');
+    }
     case 'tool.used':
       return `${str(m.toolName)}${m.fileChanging ? ' · file change' : ''}${m.ok === false ? ' · failed' : ''}`;
     case 'tool.denied':

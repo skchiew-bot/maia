@@ -854,9 +854,17 @@ export class Supervisor implements SupervisorService {
         'unknown_process_type',
         `Unknown process type "${r.processType}": types come from the fixed registry`,
       );
+    // A launch must not conjure a project: the ledger would create it on first use, and it would then show up in
+    // /api/projects (with a workspace directory and a thread) for anyone who typed a wrong id.
+    const ledger = this.ledger();
+    if (ledger && !ledger.hasProject(r.projectId))
+      throw new HttpError(
+        404,
+        'unknown_project',
+        `Unknown project "${r.projectId}": create it first (POST /api/projects), then launch into it`,
+      );
     const model = MODEL_ID_BY_TIER[this.registry.modelFor(type)];
     if (!type.readOnly && type.credentialProfile) this.credentialsFor(type.credentialProfile);
-    const ledger = this.ledger();
     const thread = ledger
       ? ledger.ensureThread(
           { projectId: r.projectId, threadId: r.threadId ?? null, title: firstLine(r.prompt) },
@@ -1610,7 +1618,8 @@ export class Supervisor implements SupervisorService {
   /**
    * Turn end (§2.3, §4, §5, §10). Operator interrupts first, then in order: open decision → Waiting on you;
    * plan limit → Throttled (resumed at reset); credit cap reached → blocked; stop requested → ended; rollover due
-   * → successor; plan complete → ended; crash → Dead; else deliver late answers / auto-continue / idle.
+   * → successor; plan complete, or a triage diagnosis reported → ended; crash → Dead; else deliver late answers /
+   * auto-continue / idle.
    */
   private finishTurn(live: LiveTurn): void {
     const id = live.sessionId;
@@ -1687,7 +1696,8 @@ export class Supervisor implements SupervisorService {
       return;
     }
     const complete = this.planComplete(s, type, live);
-    const due = complete ? null : this.autoRolloverDue(s, type, live);
+    const diagnosed = !complete && this.diagnosisReported(s, type);
+    const due = complete || diagnosed ? null : this.autoRolloverDue(s, type, live);
     if (due) {
       turnEnded('rollover');
       const r = this.rolloverNow(s, SYSTEM, due, 'auto');
@@ -1699,9 +1709,9 @@ export class Supervisor implements SupervisorService {
       }
       s = this.mustGet(id);
     }
-    if (complete) {
+    if (complete || diagnosed) {
       turnEnded('end_turn');
-      this.endSession(id, 'completed', 'plan_complete', SYSTEM);
+      this.endSession(id, 'completed', complete ? 'plan_complete' : 'diagnosis_reported', SYSTEM);
       return;
     }
     if (code !== 0 && !live.result) {
@@ -1855,6 +1865,22 @@ export class Supervisor implements SupervisorService {
       !!live.result &&
       !live.result.isError
     );
+  }
+
+  /**
+   * A session of a type whose purpose ends at diagnosis whose `report_diagnosis` is on record has nothing left to do:
+   * its turn ends it. Auto-continuing it would only ask the model to "continue" a plan that triage never closes (the
+   * triage prompt asks for a diagnosis, not for task_done), and park it as Waiting on you for good. A turn that ends
+   * without a diagnosis is unfinished work and is handled as before.
+   */
+  private diagnosisReported(s: SupervisedSession, type: ProcessType | null): boolean {
+    if (!type || !endsAtDiagnosis(type)) return false;
+    const reported = this.ctx.store.list({
+      types: ['ticket.diagnosis_reported'],
+      sessionId: s.sessionId,
+      limit: 1,
+    });
+    return reported.length > 0;
   }
 
   private resetAt(text: string): number | null {
@@ -2589,6 +2615,14 @@ function writerLocked(threadId: string, holder: string | null): HttpError {
       holderSessionId: holder,
     },
   );
+}
+
+/**
+ * Process types whose purpose ends at diagnosis: the read-only triage types of the registry (`bug-triage`). The
+ * ticket flow (mod-intake) takes it from there, from the recorded diagnosis, not from the session.
+ */
+function endsAtDiagnosis(type: ProcessType): boolean {
+  return type.class === 'triage' && type.readOnly;
 }
 
 function contextPct(tokens: number, model: string): number {

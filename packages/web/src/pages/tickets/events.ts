@@ -1,7 +1,8 @@
 import type { AuditEventHeaderDTO, DecisionCardView, DecisionKind, PublicTicketStatus } from '@aoc/contracts';
 import type { IconName } from '../../components/Icon';
-import { formatInteger, formatPercent, formatTokens } from '../../lib/format';
-import { KIND_LABEL, requesterOf, shortId, type PeopleLookup } from '../decisions/model';
+import { formatAge, formatInteger, formatPercent, formatTokens } from '../../lib/format';
+import { decisionHref } from '../../lib/links';
+import { KIND_LABEL, assuranceLabel, requesterOf, shortId, type PeopleLookup } from '../decisions/model';
 import { PUBLIC_STATUS_LABEL, RESOLUTION_LABEL } from './model';
 
 export interface EventLine {
@@ -16,10 +17,13 @@ type Meta = Record<string, unknown>;
 const str = (v: unknown) => (typeof v === 'string' ? v : '');
 const num = (v: unknown) => (typeof v === 'number' ? v : null);
 
+/** Why the flow stopped for a person (`ticket.escalated_to_human` reasons, contracts events/intake.ts). */
 const ESCALATION: Record<string, string> = {
   low_confidence: 'a triage agent reported low confidence',
   disagreement: 'the triage agents disagree on the root cause',
   budget_exhausted: 'triage ended without a diagnosis',
+  uat_build_missing: 'the build finished but its UAT branch does not resolve, so the requester has not been asked to test',
+  golive_blocked: 'go-live could not be requested or completed after the requester signed off UAT',
 };
 
 const MEDIA_BASIS: Record<string, string> = {
@@ -42,7 +46,7 @@ export function describeEvent(
   const kind = (str(m.kind) || decision?.kind) as DecisionKind | '';
   const kindLabel = kind ? KIND_LABEL[kind] : 'Decision';
   const decisionLink = m.decisionId
-    ? { to: `/decisions?focus=${encodeURIComponent(str(m.decisionId))}`, label: 'Open decision' }
+    ? { to: decisionHref(str(m.decisionId)), label: 'Open decision' }
     : undefined;
   switch (e.type) {
     case 'intake.submitted':
@@ -98,16 +102,14 @@ export function describeEvent(
       return { icon: 'decisions', tone: 'accent', text: `${kindLabel} requested`, link: decisionLink };
     case 'decision.resolved': {
       const option = decision?.options.find((o) => o.id === str(m.optionId))?.label ?? str(m.optionId);
-      const method =
-        m.method === 'passkey'
-          ? 'signed (passkey)'
-          : m.method === 'policy'
-            ? 'platform policy'
-            : 'attribution (bearer token)';
+      const how = assuranceLabel({
+        method: m.method === 'passkey' || m.method === 'policy' ? m.method : 'button',
+        passkeyVerified: m.passkeyVerified === true,
+      });
       return {
         icon: 'ok',
         tone: 'ok',
-        text: `${kindLabel} resolved: ${option} — by ${who(m.resolvedBy)}, ${method}`,
+        text: `${kindLabel} resolved: ${option} — by ${who(m.resolvedBy)} · ${how}`,
         link: decisionLink,
       };
     }
@@ -116,6 +118,13 @@ export function describeEvent(
         icon: 'close',
         tone: 'neutral',
         text: `${kindLabel} withdrawn (${str(m.reason).replace(/_/g, ' ')})`,
+        link: decisionLink,
+      };
+    case 'decision.expired':
+      return {
+        icon: 'clock',
+        tone: 'neutral',
+        text: `${kindLabel} expired unanswered after ${formatAge(num(m.ageMs) ?? 0)}`,
         link: decisionLink,
       };
     case 'decision.escalated':
@@ -152,7 +161,7 @@ export function describeEvent(
         : {
             icon: 'danger',
             tone: 'danger',
-            text: `UAT failed: ${who(m.requesterId)} still sees the problem; back to building`,
+            text: `UAT failed: ${who(m.requesterId)} still sees the problem; read-only triage looks again with their feedback`,
           };
     case 'ticket.golive_requested':
       return {

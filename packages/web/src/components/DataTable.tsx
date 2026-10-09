@@ -1,4 +1,5 @@
 import {
+  useEffect,
   useId,
   useMemo,
   useState,
@@ -79,11 +80,12 @@ export interface DataTableProps<T> {
   rowTone?: (row: T) => 'warn' | 'danger' | undefined;
   /** Shown when `rows` is empty. Default: a quiet "Nothing to show" EmptyState. */
   empty?: ReactNode;
-  /** Refetch in flight: previous rows stay at reduced opacity, no skeleton flash. */
+  /** Refetch in flight: previous rows stay at full contrast (no skeleton flash), marked by a hairline and aria-busy. */
   busy?: boolean;
   /**
    * Height limit for the scroll area (number = px). The header is sticky inside it — pass this for long
-   * tables (audit, metering) so the column headers stay visible.
+   * tables (audit, metering) so the column headers stay visible. When the area overflows and holds nothing a
+   * keyboard can reach (plain text rows), it becomes a named region with a Tab stop so arrow keys can scroll it.
    */
   maxHeight?: number | string;
   className?: string;
@@ -99,6 +101,9 @@ function compareValues(a: string | number | null | undefined, b: string | number
 
 const INTERACTIVE =
   'a,button,input,select,textarea,label,summary,[role="button"],[role="menuitem"],[role="checkbox"]';
+
+const TAB_STOP =
+  'a[href],button:not([disabled]),input:not([type="hidden"]):not([disabled]),select:not([disabled]),textarea:not([disabled]),summary,[tabindex]:not([tabindex="-1"])';
 
 /**
  * Compact (32px rows) data table with sortable headers (`aria-sort`), sticky header, row navigation, empty
@@ -128,6 +133,8 @@ export function DataTable<T>({
   const sortSelectId = useId();
   const [innerSort, setInnerSort] = useState<SortState | null>(defaultSort ?? null);
   const sort = sortProp !== undefined ? sortProp : innerSort;
+  const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
+  const [scrollsByKeyboard, setScrollsByKeyboard] = useState(false);
 
   const sorted = useMemo(() => {
     if (manualSort || !sort) return rows;
@@ -189,6 +196,23 @@ export function DataTable<T>({
     }
   };
 
+  // A scrolling area with nothing in it a keyboard can reach (plain text rows) takes a Tab stop of its own, or its
+  // overflow could only be read with a pointer. Areas with a link, button or sortable header already have one.
+  useEffect(() => {
+    if (!scroller) return;
+    const measure = () => {
+      const overflows =
+        scroller.scrollHeight > scroller.clientHeight + 1 || scroller.scrollWidth > scroller.clientWidth + 1;
+      setScrollsByKeyboard(overflows && scroller.querySelector(TAB_STOP) === null);
+    };
+    measure();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(scroller);
+    if (scroller.firstElementChild) observer.observe(scroller.firstElementChild);
+    return () => observer.disconnect();
+  }, [scroller, sorted]);
+
   const scrollStyle: CSSProperties | undefined =
     maxHeight !== undefined
       ? { maxHeight: typeof maxHeight === 'number' ? `${maxHeight}px` : maxHeight }
@@ -225,8 +249,10 @@ export function DataTable<T>({
         </div>
       )}
       <div
+        ref={setScroller}
         className={cx('aoc-dt__scroll', maxHeight !== undefined && 'aoc-dt__scroll--bounded')}
         style={scrollStyle}
+        {...(scrollsByKeyboard ? { role: 'region', 'aria-label': caption, tabIndex: 0 } : undefined)}
       >
         <table className="aoc-dt__table" role="table">
           <caption className={captionVisible ? 'aoc-dt__caption' : 'aoc-sr-only'}>{caption}</caption>
