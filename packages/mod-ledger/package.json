@@ -16,5 +16,8 @@
     "@aoc/kernel": "workspace:*",
     "hono": "4.13.13",
     "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@aoc/mod-credits": "workspace:*"
   }
 }

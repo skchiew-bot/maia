@@ -127,6 +127,32 @@ describe('governance findings in a pack', () => {
       meta: { rollbackId: 'rbk_bad', mainShaBefore: 'abc1234', mainShaAfter: 'def5678' },
       source: 'supervisor',
     });
+    append(t, '2026-10-03T02:40:00.000Z', {
+      type: 'rollback.requested',
+      actor: human(b),
+      meta: {
+        rollbackId: 'rbk_fail',
+        projectId: 'prj_1',
+        targetRef: 'v2',
+        targetSha: 'bcd2345',
+        changeId: null,
+      },
+      payload: { reason: 'r' },
+      source: 'api',
+    });
+    append(t, '2026-10-03T02:45:00.000Z', {
+      type: 'rollback.approved',
+      actor: human(b),
+      meta: { rollbackId: 'rbk_fail', decisionId: 'dec_rbk2', approverId: b, passkeyVerified: true },
+      source: 'api',
+    });
+    append(t, '2026-10-03T02:50:00.000Z', {
+      type: 'rollback.failed',
+      actor: sys,
+      meta: { rollbackId: 'rbk_fail', reason: 'push_rejected' },
+      payload: { detail: 'remote rejected the push' },
+      source: 'supervisor',
+    });
 
     append(t, '2026-10-03T03:00:00.000Z', {
       type: 'breakglass.invoked',
@@ -237,6 +263,9 @@ describe('governance findings in a pack', () => {
       testsFailed: 2,
       flags: ['executed_without_clean_verification', 'approved_without_passkey'],
     });
+    // An approved rollback that could not be executed is reported as failed, never as still approved.
+    expect(rollbacks.rollbacks[1]).toMatchObject({ rollbackId: 'rbk_fail', status: 'failed', flags: [] });
+    expect(rollbacks).toMatchObject({ count: 2, executed: 1, flagged: 1 });
 
     const bg = json<EvidenceBreakglassFile>('breakglass.json');
     expect(bg.incidents[0]).toMatchObject({
