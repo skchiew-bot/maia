@@ -65,6 +65,7 @@ const DDL = [
     change_id TEXT NOT NULL, session_id TEXT NOT NULL, started_at TEXT NOT NULL, inherited_from TEXT, PRIMARY KEY (change_id, session_id))`,
   `CREATE INDEX IF NOT EXISTS chg_change_sessions_session ON chg_change_sessions(session_id)`,
   `CREATE TABLE IF NOT EXISTS chg_session_tickets (session_id TEXT PRIMARY KEY, ticket_id TEXT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS chg_session_heads (session_id TEXT NOT NULL, project_id TEXT NOT NULL, sha TEXT NOT NULL, PRIMARY KEY (session_id, project_id, sha))`,
   `CREATE TABLE IF NOT EXISTS chg_ticket_state (ticket_id TEXT PRIMARY KEY, fix_plan_decision_id TEXT, fix_plan_approved_at TEXT, uat_verdict TEXT, uat_at TEXT)`,
   `CREATE TABLE IF NOT EXISTS chg_decisions (
     decision_id TEXT PRIMARY KEY, kind TEXT NOT NULL, subject_type TEXT NOT NULL, subject_id TEXT NOT NULL, status TEXT NOT NULL,
@@ -98,6 +99,7 @@ const TABLES = [
   'chg_affirmations',
   'chg_change_sessions',
   'chg_session_tickets',
+  'chg_session_heads',
   'chg_ticket_state',
   'chg_decisions',
   'chg_pins',
@@ -125,6 +127,7 @@ const HANDLES = [
   'change.started',
   'change.completed',
   'git.ref_pinned',
+  'task.done',
   'phase.completed',
   'rollback.requested',
   'rollback.verification_started',
@@ -351,8 +354,14 @@ function apply(db: DatabaseSync, e: StoredEvent, payload: JsonValue | null): voi
       );
       return;
     }
+    case 'task.done': {
+      const m = metaOf(e, 'task.done');
+      addSessionHead(db, m.sessionId, m.projectId, m.headSha);
+      return;
+    }
     case 'phase.completed': {
       const m = metaOf(e, 'phase.completed');
+      addSessionHead(db, m.sessionId, m.projectId, m.pinnedSha);
       if (m.pinnedSha || m.pinnedTag)
         run(
           db,
@@ -713,6 +722,25 @@ function apply(db: DatabaseSync, e: StoredEvent, payload: JsonValue | null): voi
   }
 }
 
+const HEX_SHA = /^[0-9a-f]{7,64}$/i;
+
+/** HEADs the ledger read from the session's repo (never agent-supplied): the provenance proof that a commit was its work. */
+function addSessionHead(
+  db: DatabaseSync,
+  sessionId: string,
+  projectId: string,
+  sha: string | null | undefined,
+): void {
+  if (sha && HEX_SHA.test(sha))
+    run(
+      db,
+      'INSERT OR IGNORE INTO chg_session_heads (session_id, project_id, sha) VALUES (?,?,?)',
+      sessionId,
+      projectId,
+      sha.toLowerCase(),
+    );
+}
+
 function addPin(
   db: DatabaseSync,
   e: StoredEvent,
@@ -1003,16 +1031,23 @@ export class ChangeReadModel {
       limit,
     );
   }
-  approvedChangeForSession(sessionId: string, projectId: string): string | null {
-    return (
-      one<{ change_id: string }>(
-        this.db(),
-        `SELECT c.change_id FROM chg_change_sessions s JOIN chg_changes c ON c.change_id = s.change_id
-         WHERE s.session_id = ? AND c.project_id = ? AND c.status IN ${APPROVED_SQL} LIMIT 1`,
-        sessionId,
-        projectId,
-      )?.change_id ?? null
-    );
+  approvedChangesForSession(sessionId: string, projectId: string): string[] {
+    return all<{ change_id: string }>(
+      this.db(),
+      `SELECT c.change_id FROM chg_change_sessions s JOIN chg_changes c ON c.change_id = s.change_id
+       WHERE s.session_id = ? AND c.project_id = ? AND c.status IN ${APPROVED_SQL} ORDER BY c.change_id`,
+      sessionId,
+      projectId,
+    ).map((r) => r.change_id);
+  }
+  /** Hex SHAs the ledger recorded as the session's HEAD (task.done, phase.completed). */
+  sessionHeads(sessionId: string, projectId: string): string[] {
+    return all<{ sha: string }>(
+      this.db(),
+      'SELECT sha FROM chg_session_heads WHERE session_id = ? AND project_id = ? ORDER BY sha',
+      sessionId,
+      projectId,
+    ).map((r) => r.sha);
   }
   sessionTicket(sessionId: string): string | null {
     return (

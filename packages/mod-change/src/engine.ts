@@ -1239,18 +1239,31 @@ export class ChangeEngine implements ChangeService {
   }
 
   // ── provenance & promotion ───────────────────────────────────────────────
-  private get lookups(): ProvenanceLookups {
+  /** Lookups for one provenance run: each session's recorded history (`<heads> ^<base>`) is listed once, then memoised. */
+  private lookups(projectId: string, repo: string, baseRef: string): ProvenanceLookups {
+    const git = this.ctx.services.get('git');
+    const recorded = new Map<string, Set<string>>();
     return {
-      changeApproved: (id, projectId) => {
-        const c = this.read.change(id);
-        return !!c && c.project_id === projectId && APPROVED_STATUSES.has(c.status);
-      },
-      sessionChange: (sessionId, projectId) => this.read.approvedChangeForSession(sessionId, projectId),
+      sessionChanges: (sessionId) => this.read.approvedChangesForSession(sessionId, projectId),
       sessionTicket: (sessionId) =>
         this.read.sessionTicket(sessionId) ??
         this.ctx.services.maybe('sessions')?.get(sessionId)?.ticketId ??
         null,
       ticketFixPlanApproved: (ticketId) => this.read.ticketFixPlanApproved(ticketId),
+      sessionRecorded: (sessionId, sha) => {
+        let shas = recorded.get(sessionId);
+        if (!shas) {
+          shas = new Set();
+          const heads = this.read.sessionHeads(sessionId, projectId);
+          if (heads.length) {
+            // A head unknown to this repo (e.g. never pushed from the session's clone) proves nothing: ignored.
+            const r = git.run(repo, ['rev-list', '--ignore-missing', ...heads, `^${baseRef}`]);
+            if (r.code === 0) for (const line of r.stdout.split('\n')) if (line.trim()) shas.add(line.trim());
+          }
+          recorded.set(sessionId, shas);
+        }
+        return shas.has(sha);
+      },
     };
   }
 
@@ -1259,7 +1272,10 @@ export class ChangeEngine implements ChangeService {
     return { ok: d.ok, orphanShas: d.orphanShas, reasons: d.reasons };
   }
 
-  /** Every commit in `<default>..<sha>` must trace through an approved change record or an approved fix plan. */
+  /**
+   * Every commit in `<default>..<sha>` must trace through an approved change record or an approved fix plan, via a
+   * session the platform linked to that gate and whose recorded HEADs contain the commit (provenance.ts).
+   */
   provenanceDetail(projectId: string, ref: string): ProvenanceDTO {
     const fail = (reason: string, sha = ref, baseRef: string | null = null): ProvenanceDTO => ({
       projectId,
@@ -1284,7 +1300,8 @@ export class ChangeEngine implements ChangeService {
     const logged = parseLog(log.stdout);
     if (logged.length > MAX_PROVENANCE_COMMITS)
       return fail(`more than ${MAX_PROVENANCE_COMMITS} commits to trace`, sha, baseRef);
-    const commits = logged.map((c) => classifyCommit(c, projectId, this.lookups));
+    const look = this.lookups(projectId, repo, baseRef);
+    const commits = logged.map((c) => classifyCommit(c, projectId, look));
     const orphans = commits.filter((c) => !c.traced);
     return {
       projectId,

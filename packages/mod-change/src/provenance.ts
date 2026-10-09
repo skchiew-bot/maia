@@ -1,7 +1,12 @@
 /**
- * Provenance guarantee (§14): no orphan commits to main. A commit is traced when its message carries an
- * `AOC-Session: <id>` or `AOC-Change: <id>` trailer that leads to a gate — an approved change record (the session
- * was linked to it by change.started) or a ticket whose fix plan was approved. Everything else is an orphan.
+ * Provenance guarantee (§14): no orphan commits to main. Commit trailers are written by the agent, so a trailer alone
+ * proves nothing. A commit is traced only when
+ *  (a) an `AOC-Session: <id>` trailer names a session the platform itself linked to a gate — an approved change record
+ *      (change.started, inherited on rollover) or a ticket whose fix plan was approved — and every `AOC-Change`
+ *      trailer names one of that session's approved changes, and
+ *  (b) the commit is reachable from a HEAD the ledger recorded for that session (task.done headSha,
+ *      phase.completed pinnedSha), i.e. it really was in that session's working history.
+ * Everything else is an orphan.
  */
 import type { ProvenanceCommitDTO } from '@aoc/contracts';
 
@@ -36,13 +41,16 @@ export function parseTrailers(message: string): { sessionIds: string[]; changeId
 }
 
 export interface ProvenanceLookups {
-  /** Change is approved (approved / in progress / completed) and belongs to the project. */
-  changeApproved(changeId: string, projectId: string): boolean;
-  /** An approved change of the project that the session was linked to via change.started, if any. */
-  sessionChange(sessionId: string, projectId: string): string | null;
+  /** Approved changes of the project the session was linked to (change.started, inherited on rollover). */
+  sessionChanges(sessionId: string, projectId: string): string[];
+  /** The ticket the session was launched or built for (supervisor / intake records, never a trailer). */
   sessionTicket(sessionId: string): string | null;
   ticketFixPlanApproved(ticketId: string): boolean;
+  /** The commit is reachable from a HEAD the ledger recorded for the session (task.done, phase.completed). */
+  sessionRecorded(sessionId: string, sha: string): boolean;
 }
+
+type Via = NonNullable<ProvenanceCommitDTO['via']>;
 
 export function classifyCommit(
   c: LoggedCommit,
@@ -51,36 +59,46 @@ export function classifyCommit(
 ): ProvenanceCommitDTO {
   const { sessionIds, changeIds } = parseTrailers(c.message);
   const base = { sha: c.sha, subject: c.subject, sessionIds, changeIds };
-  if (!sessionIds.length && !changeIds.length) {
-    return {
-      ...base,
-      ticketIds: [],
-      traced: false,
-      via: null,
-      reason: 'no AOC-Session / AOC-Change trailer',
-    };
-  }
-  const approvedChange = changeIds.find((id) => look.changeApproved(id, projectId));
-  if (approvedChange) return { ...base, ticketIds: [], traced: true, via: 'change', reason: null };
-  const ticketIds: string[] = [];
-  for (const s of sessionIds) {
-    if (look.sessionChange(s, projectId))
-      return { ...base, ticketIds, traced: true, via: 'session_change', reason: null };
-    const ticket = look.sessionTicket(s);
-    if (ticket) {
-      ticketIds.push(ticket);
-      if (look.ticketFixPlanApproved(ticket))
-        return { ...base, ticketIds, traced: true, via: 'session_ticket', reason: null };
-    }
-  }
-  const named = [...changeIds.map((id) => `change ${id}`), ...sessionIds.map((id) => `session ${id}`)].join(
-    ', ',
-  );
-  return {
+  const orphan = (ticketIds: string[], reason: string): ProvenanceCommitDTO => ({
     ...base,
     ticketIds,
     traced: false,
     via: null,
-    reason: `${named}: no approved change record or approved fix plan`,
-  };
+    reason,
+  });
+  if (!sessionIds.length && !changeIds.length) return orphan([], 'no AOC-Session / AOC-Change trailer');
+  if (!sessionIds.length)
+    return orphan(
+      [],
+      `${changeIds.map((id) => `change ${id}`).join(', ')}: an AOC-Change trailer alone is self-asserted; no AOC-Session links the commit to it`,
+    );
+  const ticketIds: string[] = [];
+  const problems: string[] = [];
+  for (const s of sessionIds) {
+    const linked = look.sessionChanges(s, projectId);
+    const ticket = look.sessionTicket(s);
+    if (ticket) ticketIds.push(ticket);
+    const unlinked = changeIds.filter((id) => !linked.includes(id));
+    if (unlinked.length) {
+      problems.push(`session ${s} is not linked to approved change ${unlinked.join(', ')}`);
+      continue;
+    }
+    const via: Via | null = changeIds.length
+      ? 'change'
+      : linked.length
+        ? 'session_change'
+        : ticket && look.ticketFixPlanApproved(ticket)
+          ? 'session_ticket'
+          : null;
+    if (!via) {
+      problems.push(`session ${s}: no approved change record or approved fix plan`);
+      continue;
+    }
+    if (!look.sessionRecorded(s, c.sha)) {
+      problems.push(`session ${s} never recorded a HEAD containing this commit (task_done / phase pin)`);
+      continue;
+    }
+    return { ...base, ticketIds, traced: true, via, reason: null };
+  }
+  return orphan(ticketIds, problems.join('; '));
 }

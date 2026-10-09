@@ -169,7 +169,12 @@ export interface ProvenanceCommitDTO {
   sha: string;
   subject: string;
   traced: boolean;
-  /** How the commit traces to a gate: AOC-Change trailer, a session linked to an approved change, or a session on a ticket with an approved fix plan. */
+  /**
+   * How the commit traces to a gate, always through its AOC-Session (trailers alone are self-asserted): `change` = its
+   * AOC-Change trailer names an approved change that session is linked to; `session_change` = the session is linked to
+   * an approved change; `session_ticket` = the session works a ticket with an approved fix plan. Each also requires
+   * the commit to be reachable from a HEAD the ledger recorded for that session.
+   */
   via: 'change' | 'session_change' | 'session_ticket' | null;
   changeIds: string[];
   sessionIds: string[];
