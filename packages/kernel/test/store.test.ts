@@ -35,6 +35,22 @@ describe('EventStore', () => {
     expect(Buffer.concat(raw.map((r) => Buffer.from(r.ct))).toString('utf8')).not.toContain('hello');
   });
 
+  it('verifies in steps a caller can interleave with other work, up to a given seq', () => {
+    const s = mk();
+    for (let i = 0; i < 7; i++) s.append(nudge('ses_a', `n${i}`));
+    const steps = s.verifyChainSteps({ batch: 3, toSeq: 5, atSeqs: [5] });
+    const yielded: number[] = [];
+    let r = steps.next();
+    while (!r.done) {
+      yielded.push(r.value);
+      s.append(nudge('ses_b', 'appended meanwhile'));
+      r = steps.next();
+    }
+    expect(yielded).toEqual([3, 5]);
+    expect(r.value).toMatchObject({ ok: true, headSeq: 5, checked: 5, hashesAt: { 5: s.get(5)!.hash } });
+    expect(s.verifyChain()).toMatchObject({ ok: true, headSeq: 9 });
+  });
+
   it('rejects invalid events and free text in meta', () => {
     const s = mk();
     expect(() => s.append({ ...nudge('ses_a', 'x'), meta: { sessionId: 'ses_a', text: 'leak' } as never })).toThrow(EventValidationError);

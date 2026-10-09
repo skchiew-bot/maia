@@ -1,6 +1,10 @@
 import type { EvidenceAnchorCheck, EvidenceEventLine, EvidenceVerification } from '@aoc/contracts';
-import { canonicalJson, sha256hex, type EventStore } from '@aoc/kernel';
+import { canonicalJson, sha256hex, type ChainVerifyResult, type EventStore } from '@aoc/kernel';
 import { iterateEvents, metaOf } from './events';
+import type { Pacer } from './jobs';
+
+/** Rows per verification step: small enough that one step is a short slice of the daemon thread. */
+const VERIFY_BATCH = 1000;
 
 /** The kernel's event-hash recipe, recomputed from an exported line so packs are verifiable offline. */
 export function recomputeLineHash(chainId: string, l: EvidenceEventLine): string {
@@ -41,16 +45,31 @@ export interface RangeLinkage {
 }
 
 /**
- * Whole-chain verification plus every anchor: the hash recomputed at each anchored seq must equal the hash
- * recorded when it was anchored. The in-file chain alone is defeatable (R2) — anchors are what make it evidence.
+ * Whole-chain verification (up to the pack's head) plus every anchor: the hash recomputed at each anchored seq must
+ * equal the hash recorded when it was anchored. The in-file chain alone is defeatable (R2) — anchors are what make
+ * it evidence. The chain is walked in steps with the event loop handed back between them (R-05).
  */
-export function buildVerification(
+export async function buildVerification(
   store: EventStore,
   headSeq: number,
   linkage: RangeLinkage,
-): EvidenceVerification {
+  pacer: Pacer,
+): Promise<EvidenceVerification> {
   const anchorEvents = [...iterateEvents(store, { types: ['anchor.created'], toSeq: headSeq })];
-  const chain = store.verifyChain({ atSeqs: anchorEvents.map((a) => metaOf(a, 'anchor.created').seq) });
+  const steps = store.verifyChainSteps({
+    atSeqs: anchorEvents.map((a) => metaOf(a, 'anchor.created').seq),
+    toSeq: headSeq,
+    batch: VERIFY_BATCH,
+  });
+  let chain: ChainVerifyResult;
+  for (;;) {
+    const step = steps.next();
+    if (step.done) {
+      chain = step.value;
+      break;
+    }
+    await pacer.yield();
+  }
   const anchors: EvidenceAnchorCheck[] = anchorEvents.map((a) => {
     const m = metaOf(a, 'anchor.created');
     const recomputed = chain.hashesAt[m.seq] ?? null;

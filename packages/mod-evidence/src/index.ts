@@ -14,7 +14,9 @@ import {
   type Actor,
   type ComplianceMappingDTO,
   type EvidencePackIntegrity,
+  type EvidencePackJobDTO,
   type EvidencePackManifest,
+  type EvidencePackRequest,
   type EvidencePackSummaryDTO,
   type MetaOf,
   type StoredEvent,
@@ -32,9 +34,10 @@ import {
   type ModuleContext,
 } from '@aoc/kernel';
 import { iterateEvents, metaOf } from './events';
+import { PackJobQueue, type PackJob, type PackJobLimits } from './jobs';
 import { loadMapping, type LoadedMapping } from './mapping';
 import { buildEvidencePack, type MappingSnapshot } from './pack';
-import { resolveRange } from './range';
+import { resolveRange, type ResolvedRange } from './range';
 import { PACK_ID_RE, discardUnrecorded, packPath, readStored, writeFrozen } from './storage';
 
 export * from './mapping';
@@ -50,6 +53,7 @@ export { resolveRange, zonedStartOfDay, isCalendarDate, type ResolvedRange } fro
 export { renderReport, esc } from './report';
 export { recomputeLineHash } from './verification';
 export { PACK_ID_RE, PackExistsError, packPath, writeFrozen } from './storage';
+export { DEFAULT_PACK_JOB_LIMITS, PackJobQueue, type PackJobLimits } from './jobs';
 
 export const DEFAULT_MAPPING_FILE = 'config/iso42001-mapping.json';
 const SYSTEM: Actor = { kind: 'system', id: 'evidence' };
@@ -63,6 +67,13 @@ export interface EvidenceModuleOptions {
   maxRangeDays?: number;
   /** Local time of the daily re-hash of every stored pack. Default 03:00 (after the nightly anchor). */
   integritySweepAt?: string;
+  /** Pack requests per user per hour and queue length (defaults: DEFAULT_PACK_JOB_LIMITS); one pack builds at a time. */
+  packLimits?: Partial<PackJobLimits>;
+}
+
+interface BuiltRecord {
+  event: StoredEvent;
+  manifest: EvidencePackManifest;
 }
 
 /** Publish the loaded mapping when its hash differs from the latest published one (restarts stay quiet). */
@@ -96,6 +107,7 @@ export function createEvidenceModule(opts: EvidenceModuleOptions = {}): AocModul
   let loaded: LoadedMapping;
   let packDirPath: string | null = null;
   let ephemeralPackDir = false;
+  let jobs: PackJobQueue<BuiltRecord, EvidencePackRequest>;
   const maxRangeDays = opts.maxRangeDays ?? 366;
 
   /** Resolved on first use; an in-memory store (tests) gets a temp dir that is removed on stop. */
@@ -242,10 +254,81 @@ export function createEvidenceModule(opts: EvidenceModuleOptions = {}): AocModul
     }
   }
 
+  /** Builds, freezes and records one pack: what a queued job runs. */
+  async function generatePack(range: ResolvedRange, body: EvidencePackRequest, generatedBy: Actor): Promise<BuiltRecord> {
+    const packId = newId('evidencePack', ctx.clock.now());
+    const generatedAt = ctx.clock.iso();
+    const mapping = snapshot();
+    const built = await buildEvidencePack({ store: ctx.store, packId, range, generatedAt, generatedBy, mapping });
+    const v = built.manifest.verification;
+    const meta: MetaOf<'evidence_pack.generated'> = {
+      packId,
+      from: body.from,
+      to: body.to,
+      generatedAt,
+      packHash: built.packHash,
+      bytes: built.zip.length,
+      eventCount: built.manifest.eventCount,
+      headSeq: built.manifest.head.seq,
+      mappingVersion: loaded.mapping.version,
+      mappingHash: loaded.hash,
+      mappingStamped: mapping.status === 'stamped',
+      rateCardVersion: built.manifest.rateCard?.version ?? 0,
+      chainOk: v.chainOk,
+      anchorsChecked: v.anchorsChecked,
+      anchorsMatched: v.anchorsMatched,
+    };
+    // Validate before writing so a rejected event never leaves an unrecorded file behind.
+    const problems = validateEvent('evidence_pack.generated', meta, null);
+    if (problems.length) throw new Error(`evidence_pack.generated invalid: ${problems.join('; ')}`);
+    const path = packPath(packDir(), packId);
+    writeFrozen(path, built.zip);
+    let e: StoredEvent;
+    try {
+      e = ctx.store.append({ type: 'evidence_pack.generated', actor: generatedBy, meta, source: 'api' });
+    } catch (err) {
+      discardUnrecorded(path);
+      throw err;
+    }
+    if (!v.ok) {
+      ctx.notify({
+        kind: 'info',
+        severity: 'danger',
+        title: `Evidence pack ${packId} records a failed chain or anchor verification`,
+        audience: ['approver', 'builder'],
+        link: `/audit/evidence/${packId}`,
+        refs: { packId },
+      });
+    }
+    ctx.log.info('evidence pack generated', { packId, from: body.from, to: body.to, events: meta.eventCount, chainOk: v.chainOk });
+    return { event: e, manifest: built.manifest };
+  }
+
+  function jobDto(job: PackJob<BuiltRecord, EvidencePackRequest>): EvidencePackJobDTO {
+    return {
+      jobId: job.id,
+      status: job.status,
+      from: job.info.from,
+      to: job.info.to,
+      requestedBy: job.userId,
+      requestedAt: new Date(job.requestedAt).toISOString(),
+      position: jobs.position(job),
+      pack: job.status === 'done' && job.result ? summaryOf(job.result.event) : null,
+      error:
+        job.status !== 'failed'
+          ? null
+          : job.error instanceof HttpError
+            ? job.error.message
+            : 'Evidence pack generation failed (see the aocd log)',
+      statusUrl: `/api/evidence/jobs/${job.id}`,
+    };
+  }
+
   return {
     name: 'evidence',
     init(c) {
       ctx = c;
+      jobs = new PackJobQueue(opts.packLimits ?? {}, () => c.clock.now());
       loaded = loadMapping(opts.mappingFile === undefined ? (c.config.compliance?.mappingFile ?? DEFAULT_MAPPING_FILE) : opts.mappingFile);
       if (loaded.warnings.length)
         c.log.warn('compliance mapping warnings', { source: loaded.source, warnings: loaded.warnings });
@@ -320,66 +403,33 @@ export function createEvidenceModule(opts: EvidenceModuleOptions = {}): AocModul
         const resolved = resolveRange(body.from, body.to, ctx.config.timezone, ctx.clock.now(), maxRangeDays);
         if (!resolved.ok)
           throw new HttpError(422, 'invalid_range', resolved.problems.join('; '), resolved.problems);
-        const packId = newId('evidencePack', ctx.clock.now());
-        const generatedAt = ctx.clock.iso();
-        const generatedBy: Actor = { kind: 'human', id: auth.user.id };
-        const mapping = snapshot();
-        const built = buildEvidencePack({
-          store: ctx.store,
-          packId,
-          range: resolved.range,
-          generatedAt,
-          generatedBy,
-          mapping,
-        });
-        const v = built.manifest.verification;
-        const meta: MetaOf<'evidence_pack.generated'> = {
-          packId,
-          from: body.from,
-          to: body.to,
-          generatedAt,
-          packHash: built.packHash,
-          bytes: built.zip.length,
-          eventCount: built.manifest.eventCount,
-          headSeq: built.manifest.head.seq,
-          mappingVersion: loaded.mapping.version,
-          mappingHash: loaded.hash,
-          mappingStamped: mapping.status === 'stamped',
-          rateCardVersion: built.manifest.rateCard?.version ?? 0,
-          chainOk: v.chainOk,
-          anchorsChecked: v.anchorsChecked,
-          anchorsMatched: v.anchorsMatched,
-        };
-        // Validate before writing so a rejected event never leaves an unrecorded file behind.
-        const problems = validateEvent('evidence_pack.generated', meta, null);
-        if (problems.length) throw new Error(`evidence_pack.generated invalid: ${problems.join('; ')}`);
-        const path = packPath(packDir(), packId);
-        writeFrozen(path, built.zip);
-        let e: StoredEvent;
-        try {
-          e = ctx.store.append({ type: 'evidence_pack.generated', actor: generatedBy, meta, source: 'api' });
-        } catch (err) {
-          discardUnrecorded(path);
-          throw err;
-        }
-        if (!v.ok) {
-          ctx.notify({
-            kind: 'info',
-            severity: 'danger',
-            title: `Evidence pack ${packId} records a failed chain or anchor verification`,
-            audience: ['approver', 'builder'],
-            link: `/audit/evidence/${packId}`,
-            refs: { packId },
+        const refusal = jobs.refusal(auth.user.id);
+        if (refusal) {
+          c.header('retry-after', String(Math.ceil(refusal.retryAfterMs / 1000)));
+          throw new HttpError(429, refusal.code, refusal.message, {
+            jobId: refusal.jobId,
+            retryAfterMs: refusal.retryAfterMs,
           });
         }
-        ctx.log.info('evidence pack generated', {
-          packId,
-          from: body.from,
-          to: body.to,
-          events: meta.eventCount,
-          chainOk: v.chainOk,
-        });
-        return c.json({ ...summaryOf(e), integrity: 'ok' as const, manifest: built.manifest }, 201);
+        const generatedBy: Actor = { kind: 'human', id: auth.user.id };
+        const job = jobs.submit(auth.user.id, body, () =>
+          generatePack(resolved.range, body, generatedBy).catch((err: unknown) => {
+            ctx.log.error('evidence pack generation failed', { from: body.from, to: body.to, err: String(err) });
+            throw err;
+          }),
+        );
+        if (job.status !== 'running') return c.json(jobDto(job), 202);
+        // Nothing else was building: answer with the pack once it is done (the event loop stays free meanwhile).
+        if ((await job.finished) === 'failed') throw job.error;
+        const done = job.result!;
+        return c.json({ ...summaryOf(done.event), integrity: 'ok' as const, manifest: done.manifest }, 201);
+      });
+
+      app.get('/api/evidence/jobs/:id', (c) => {
+        requirePermission(c, 'audit.view');
+        const job = jobs.get(c.req.param('id'));
+        if (!job) throw new HttpError(404, 'not_found', 'Evidence pack job not found');
+        return c.json(jobDto(job));
       });
 
       app.get('/api/evidence/packs', (c) => {

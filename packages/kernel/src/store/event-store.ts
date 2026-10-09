@@ -73,6 +73,14 @@ export interface ListQuery {
   order?: 'asc' | 'desc';
 }
 
+export interface ChainVerifyOptions {
+  /** Seqs whose recomputed hashes are returned in `hashesAt` (anchor checks). */
+  atSeqs?: number[];
+  batch?: number;
+  /** Verify up to this seq only (a pack built as of a head ignores events appended meanwhile). */
+  toSeq?: number;
+}
+
 export interface ChainVerifyResult {
   ok: boolean;
   chainId: string;
@@ -492,7 +500,19 @@ export class EventStore {
    * Recompute every hash and link. NOTE: an in-file chain alone is defeatable (drop trigger + recompute);
    * mod-audit compares `hashesAt` with off-host anchors — that is the real verification (§13, R2).
    */
-  verifyChain(opts: { atSeqs?: number[]; batch?: number } = {}): ChainVerifyResult {
+  verifyChain(opts: ChainVerifyOptions = {}): ChainVerifyResult {
+    const steps = this.verifyChainSteps(opts);
+    for (;;) {
+      const step = steps.next();
+      if (step.done) return step.value;
+    }
+  }
+
+  /**
+   * verifyChain one batch at a time: yields the count checked so far after every batch, so a caller on the daemon
+   * thread can hand the event loop back between batches (evidence packs, R-05). Stops after `toSeq` when given.
+   */
+  *verifyChainSteps(opts: ChainVerifyOptions = {}): Generator<number, ChainVerifyResult, void> {
     const want = new Set(opts.atSeqs ?? []);
     const hashesAt: Record<number, string> = {};
     const problems: string[] = [];
@@ -501,9 +521,12 @@ export class EventStore {
     let checked = 0;
     let firstBad: number | null = null;
     const batch = opts.batch ?? 5000;
+    const toSeq = opts.toSeq ?? Number.MAX_SAFE_INTEGER;
     let from = 1;
     for (;;) {
-      const rows = this.db.prepare('SELECT * FROM events WHERE seq >= ? ORDER BY seq LIMIT ?').all(from, batch) as unknown as EventRow[];
+      const rows = this.db
+        .prepare('SELECT * FROM events WHERE seq >= ? AND seq <= ? ORDER BY seq LIMIT ?')
+        .all(from, toSeq, batch) as unknown as EventRow[];
       if (!rows.length) break;
       for (const r of rows) {
         const e = rowToEvent(r);
@@ -550,6 +573,7 @@ export class EventStore {
         checked++;
       }
       from = rows[rows.length - 1]!.seq + 1;
+      yield checked;
     }
     return { ok: problems.length === 0, chainId: this.chainId, headSeq: expectSeq - 1, headHash: prev, checked, firstBadSeq: firstBad, problems: problems.slice(0, 50), hashesAt };
   }
