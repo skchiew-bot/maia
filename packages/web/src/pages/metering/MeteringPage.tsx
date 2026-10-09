@@ -53,7 +53,6 @@ import {
 } from './meteringModel';
 import { MigrationPanel } from './MigrationPanel';
 import { OutcomePanel } from './OutcomePanel';
-import { blendedRate } from './outcomeModel';
 import { RateCardPanel } from './RateCardPanel';
 import type { RateCardDraft } from './RateCardDialog';
 import { ThrottlePanel } from './ThrottlePanel';
@@ -84,11 +83,7 @@ export default function MeteringPage() {
   const ready = span !== undefined;
   const team = scope === 'org';
 
-  // The team's days always load: their stamped RM prices the outcomes below, a portfolio view whatever the scope.
-  // "My sessions" loads its own days next to them.
-  const teamDaily = useResource<MeteringDailyDTO>('/api/metering/daily', { query: span, enabled: ready, refreshOn: (m) => isEvent(m, USAGE_EVENTS) });
-  const mineDaily = useResource<MeteringDailyDTO>('/api/metering/daily', { query: q, enabled: ready && !team, refreshOn: (m) => isEvent(m, USAGE_EVENTS) });
-  const daily = team ? teamDaily : mineDaily;
+  const daily = useResource<MeteringDailyDTO>('/api/metering/daily', { query: q, enabled: ready, refreshOn: (m) => isEvent(m, USAGE_EVENTS) });
   // Cost per outcome is a portfolio lens: the daemon refuses a per-person view, so it never takes the scope.
   const outcomes = useResource<CostPerOutcomeDTO>('/api/metering/cost-per-outcome', { query: span, enabled: ready, refreshOn: (m) => isEvent(m, OUTCOME_EVENTS) });
   const summary = useResource<MeteringSummaryDTO>('/api/metering/summary', {
@@ -138,7 +133,6 @@ export default function MeteringPage() {
     return v;
   };
 
-  const outcomeRate = blendedRate(teamDaily.data?.totals);
   const days = daily.data ? meteredDays(daily.data) : [];
   const unpriced = daily.data ? unpricedSummary(daily.data) : null;
   const totals = daily.data?.totals;
@@ -316,7 +310,7 @@ export default function MeteringPage() {
           </WidgetGrid>
 
           <WidgetGrid>
-            <OutcomePanel resource={outcomes} basis={outcomeRate} projectName={projectName} />
+            <OutcomePanel resource={outcomes} projectName={projectName} />
           </WidgetGrid>
 
           <WidgetGrid>

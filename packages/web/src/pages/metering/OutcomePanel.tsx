@@ -4,6 +4,7 @@ import type { CostPerOutcomeDTO } from '@aoc/contracts';
 import { ApiError, type ResourceState } from '../../api';
 import {
   Button,
+  Chip,
   DataTable,
   EmptyState,
   Icon,
@@ -13,23 +14,28 @@ import {
   Widget,
   type DataTableColumn,
 } from '../../components';
-import { formatInteger, formatMyr, formatShortDate, formatUsd } from '../../lib/format';
+import { formatInteger, formatShortDate } from '../../lib/format';
 import { shortId } from '../audit/ids';
 import { OutcomeMarks } from './OutcomeMarks';
 import {
   OUTCOME_KINDS,
+  activeProcessType,
   byProject,
   noOutcomes,
   outcomeAxis,
   outcomeClasses,
-  outcomeRm,
+  outcomeMyr,
   outcomeRows,
   outcomeUsd,
   phaseIdOf,
+  processTypes,
+  rmIncompleteText,
+  withProcessType,
+  type OutcomeClassView,
   type OutcomeKindInfo,
   type OutcomeRow,
+  type ProcessTypeCount,
   type ProjectOutcomes,
-  type RateBasis,
 } from './outcomeModel';
 
 type View = 'list' | 'project';
@@ -41,26 +47,44 @@ const VIEWS: readonly { value: View; label: string }[] = [
 const INFO =
   'Notional spend tied to what it produced: a ticket closed as fixed, a change completed, a phase completed. A portfolio lens, never a ranking of people. API-equivalent cost, not a bill.';
 
+function RmIncomplete() {
+  return (
+    <span className="met-flag">
+      <Icon name="warn" size={12} />
+      RM incomplete
+    </span>
+  );
+}
+
 /**
- * Notional US$ with ringgit under it (indicative: the daemon prices outcomes in US$). An outcome with usage no rate
- * priced says so on the ringgit line, so the cost never reads as complete.
+ * Notional US$ with the daemon's ringgit under it, never converted here. `rm` is null when there is no figure to show;
+ * `rmComplete` false says some usage was left out of it, so the cost never reads as complete. An outcome with usage no
+ * rate priced says so too.
  */
-function OutcomeMoney({ usd, rate, unpriced }: { usd: number; rate: number | null; unpriced?: boolean }) {
-  const rm = outcomeRm(usd, rate);
+function OutcomeMoney({
+  usd,
+  rm,
+  rmComplete,
+  unpriced,
+}: {
+  usd: number;
+  rm: number | null;
+  rmComplete: boolean;
+  unpriced?: boolean;
+}) {
   return (
     <span className="met-out__money aoc-num">
       <b>{outcomeUsd(usd)}</b>
-      {(rm || unpriced) && (
-        <span className="met-sub">
-          {rm}
-          {unpriced && (
-            <span className="met-flag">
-              <Icon name="warn" size={12} />
-              unpriced
-            </span>
-          )}
-        </span>
-      )}
+      <span className="met-sub">
+        {rm !== null && outcomeMyr(rm)}
+        {!rmComplete && <RmIncomplete />}
+        {unpriced && (
+          <span className="met-flag">
+            <Icon name="warn" size={12} />
+            unpriced
+          </span>
+        )}
+      </span>
     </span>
   );
 }
@@ -74,11 +98,9 @@ const LIST_SHOWN = 10;
  */
 function OutcomeList({
   rows,
-  rate,
   projectName,
 }: {
   rows: readonly OutcomeRow[];
-  rate: number | null;
   projectName: (projectId: string) => string | null;
 }) {
   const [all, setAll] = useState(false);
@@ -106,6 +128,11 @@ function OutcomeList({
           ),
       },
       {
+        id: 'process',
+        header: 'Process type',
+        cell: (r) => r.item.processType ?? <span className="met-muted">Mixed or unknown</span>,
+      },
+      {
         id: 'completed',
         header: 'Completed',
         cell: (r) => <RelativeTime value={r.item.completedAt} suffix=" ago" />,
@@ -114,7 +141,14 @@ function OutcomeList({
         id: 'cost',
         header: 'Notional cost',
         numeric: true,
-        cell: (r) => <OutcomeMoney usd={r.item.notionalUsd} rate={rate} unpriced={r.item.unpriced} />,
+        cell: (r) => (
+          <OutcomeMoney
+            usd={r.item.notionalUsd}
+            rm={r.item.rmComplete ? r.item.notionalRm : null}
+            rmComplete={r.item.rmComplete}
+            unpriced={r.item.unpriced}
+          />
+        ),
       },
       {
         id: 'sessions',
@@ -124,7 +158,7 @@ function OutcomeList({
         cell: (r) => formatInteger(r.item.sessions),
       },
     ],
-    [rate, projectName],
+    [projectName],
   );
   return (
     <>
@@ -148,7 +182,7 @@ function OutcomeList({
 }
 
 /** Projects in name order (never by cost), with each kind's median and how many outcomes it rests on. */
-function ProjectTable({ rows, rate }: { rows: readonly ProjectOutcomes[]; rate: number | null }) {
+function ProjectTable({ rows }: { rows: readonly ProjectOutcomes[] }) {
   const columns = useMemo<DataTableColumn<ProjectOutcomes>[]>(() => {
     const kind = (info: OutcomeKindInfo): DataTableColumn<ProjectOutcomes> => ({
       id: info.key,
@@ -157,14 +191,13 @@ function ProjectTable({ rows, rate }: { rows: readonly ProjectOutcomes[]; rate: 
       cell: (r) => {
         const f = r.byKind[info.key];
         if (f.count === 0) return <span className="met-muted">—</span>;
-        const median = f.medianUsd ?? 0;
-        const rm = outcomeRm(median, rate);
         return (
           <span className="met-out__money aoc-num">
-            <b>{outcomeUsd(median)}</b>
+            <b>{outcomeUsd(f.medianUsd ?? 0)}</b>
             <span className="met-sub">
               median of {f.count}
-              {rm ? ` · ${rm}` : ''}
+              {f.medianRm !== null && ` · ${outcomeMyr(f.medianRm)}`}
+              {!f.rmComplete && <RmIncomplete />}
             </span>
           </span>
         );
@@ -178,9 +211,14 @@ function ProjectTable({ rows, rate }: { rows: readonly ProjectOutcomes[]; rate: 
         cell: (r) => (r.projectId ? <Link to={`/projects/${encodeURIComponent(r.projectId)}`}>{r.name}</Link> : r.name),
       },
       ...OUTCOME_KINDS.map(kind),
-      { id: 'total', header: 'Total spend', numeric: true, cell: (r) => <OutcomeMoney usd={r.totalUsd} rate={rate} /> },
+      {
+        id: 'total',
+        header: 'Total spend',
+        numeric: true,
+        cell: (r) => <OutcomeMoney usd={r.total.totalUsd} rm={r.total.totalRm} rmComplete={r.total.rmComplete} />,
+      },
     ];
-  }, [rate]);
+  }, []);
   return (
     <DataTable
       caption="Notional cost of outcomes per project and kind, in project name order"
@@ -191,47 +229,114 @@ function ProjectTable({ rows, rate }: { rows: readonly ProjectOutcomes[]; rate: 
   );
 }
 
-function Footnote({ dto, basis, unpriced }: { dto: CostPerOutcomeDTO; basis: RateBasis | null; unpriced: number }) {
+/**
+ * Chips to look at one process type at a time (single choice; "All" clears it). Offered only when the outcomes name
+ * more than one. Types are in name order; a count is how many outcomes the type is the main spend of.
+ */
+function ProcessTypeFilter({
+  types,
+  total,
+  value,
+  onChange,
+}: {
+  types: readonly ProcessTypeCount[];
+  total: number;
+  value: string | null;
+  onChange: (processType: string | null) => void;
+}) {
   return (
-    <div className="met-out__foot">
-      <p>
-        Counted by the day each outcome completed ({formatShortDate(dto.from)} to {formatShortDate(dto.to)}); the spend
-        behind one can predate the range.
+    <div className="met-out__filter" role="group" aria-label="Filter outcomes by process type">
+      <span className="met-out__filter-label">Process type</span>
+      <Chip selected={value === null} onToggle={() => onChange(null)}>
+        All <span className="aoc-num">{total}</span>
+      </Chip>
+      {types.map((t) => (
+        <Chip
+          key={t.processType}
+          selected={value === t.processType}
+          onToggle={(on) => onChange(on ? t.processType : null)}
+        >
+          {t.processType} <span className="aoc-num">{t.count}</span>
+        </Chip>
+      ))}
+      <p className="met-quiet met-out__filter-note">
+        An outcome is filed under the process type that spent most on it; mixed ones appear only under All.
       </p>
-      <p className="aoc-num">
-        {basis
-          ? `RM is indicative: ≈ US$ × ${basis.rate.toFixed(4)}, this range's blend of the stamped BNM rates (${formatMyr(basis.rm)} ÷ ${formatUsd(basis.usd)} of notional cost). Outcomes are priced in US$.`
-          : 'RM is not shown: it needs metered cost in the range and a stamped BNM rate on every day that has some.'}
-      </p>
-      {unpriced > 0 && (
-        <p>
-          <Icon name="warn" size={12} /> Unpriced usage counts as US$0, so {unpriced} of these outcomes cost more than shown.
-        </p>
-      )}
     </div>
   );
 }
 
+function Footnote({
+  dto,
+  classes,
+  filtered,
+}: {
+  dto: CostPerOutcomeDTO;
+  classes: readonly OutcomeClassView[];
+  filtered: boolean;
+}) {
+  const shown = classes.reduce((n, c) => n + c.stats.count, 0);
+  const unpriced = classes.reduce((n, c) => n + c.unpriced, 0);
+  const rmIncomplete = classes.reduce((n, c) => n + c.rmIncomplete, 0);
+  return (
+    <div className="met-out__foot">
+      <p>
+        Counted by the day each outcome completed ({formatShortDate(dto.from)} to {formatShortDate(dto.to)}); the
+        spend behind one can predate the range. Ringgit is converted by the daemon, usage day by usage day, at that
+        day's stamped BNM rate.
+      </p>
+      {rmIncomplete > 0 && (
+        <p>
+          <Icon name="warn" size={12} /> RM incomplete: {rmIncompleteText(rmIncomplete, shown)}. Their US$ is complete.
+        </p>
+      )}
+      {unpriced > 0 && (
+        <p>
+          <Icon name="warn" size={12} /> Unpriced usage counts as US$0, so {unpriced} of these outcomes cost more than
+          shown.
+        </p>
+      )}
+      {filtered && <p>Figures cover the {shown} outcomes of the chosen process type; the scale is the whole range's.</p>}
+    </div>
+  );
+}
+
+/** What the panel shows for the loaded outcomes: the chosen process type's, on the scale of the whole range. */
+function usePanelView(dto: CostPerOutcomeDTO | undefined, picked: string | null) {
+  return useMemo(() => {
+    if (!dto) return null;
+    const types = processTypes(dto);
+    const processType = activeProcessType(picked, types);
+    const narrowed = withProcessType(dto, processType);
+    return {
+      types,
+      total: OUTCOME_KINDS.reduce((n, k) => n + dto[k.key].stats.count, 0),
+      processType,
+      narrowed,
+      axis: outcomeAxis(dto),
+      classes: outcomeClasses(narrowed),
+    };
+  }, [dto, picked]);
+}
+
 export interface OutcomePanelProps {
   resource: ResourceState<CostPerOutcomeDTO>;
-  /** RM per US$ for the range from the team's daily rollups, with the figures it comes from; null when unknown. */
-  basis: RateBasis | null;
   projectName: (projectId: string) => string | null;
 }
 
 /**
  * Cost per outcome (§14.4): what the notional spend bought, as a portfolio. Range marks per kind on one scale, then
- * the outcomes themselves (each opening its ticket, change or phase) or the same figures by project. Never per
- * person, never ranked: the daemon refuses a per-person view, and nothing here sorts by cost.
+ * the outcomes themselves (each opening its ticket, change or phase) or the same figures by project, in US$ with the
+ * daemon's ringgit beside it, and by process type when the outcomes name more than one. Never per person, never
+ * ranked: the daemon refuses a per-person view, and nothing here sorts by cost.
  */
-export function OutcomePanel({ resource, basis, projectName }: OutcomePanelProps) {
+export function OutcomePanel({ resource, projectName }: OutcomePanelProps) {
   const [view, setView] = useState<View>('list');
+  const [picked, setPicked] = useState<string | null>(null);
   const dto = resource.data;
-  const rate = basis?.rate ?? null;
   const forbidden = dto === undefined && resource.error instanceof ApiError && resource.error.status === 403;
-  const shown = dto && !noOutcomes(dto) ? dto : null;
-  const classes = useMemo(() => (dto ? outcomeClasses(dto) : []), [dto]);
-  const unpriced = classes.reduce((n, c) => n + c.unpriced, 0);
+  const show = usePanelView(dto, picked);
+  const shown = dto && show && !noOutcomes(dto) ? { dto, ...show } : null;
 
   return (
     <Widget
@@ -240,13 +345,19 @@ export function OutcomePanel({ resource, basis, projectName }: OutcomePanelProps
       className="met-outcomes"
       title="Cost per outcome"
       subtitle="What the notional spend bought · the whole portfolio, never a person"
-      info={dto ? `${dto.costLabel}. ${INFO} ${dto.method.attribution} ${dto.method.window} ${dto.method.percentile}` : INFO}
+      info={
+        dto
+          ? `${dto.costLabel}. ${INFO} ${dto.method.attribution} ${dto.method.window} ${dto.method.percentile} ${dto.method.fx} ${dto.method.processType}`
+          : INFO
+      }
       actions={
         shown ? (
           <SegmentedControl label="Outcome view" size="sm" value={view} onChange={setView} options={VIEWS} />
         ) : undefined
       }
-      footer={shown ? <Footnote dto={shown} basis={basis} unpriced={unpriced} /> : undefined}
+      footer={
+        shown ? <Footnote dto={shown.dto} classes={shown.classes} filtered={shown.processType !== null} /> : undefined
+      }
     >
       {forbidden ? (
         <EmptyState
@@ -270,19 +381,29 @@ export function OutcomePanel({ resource, basis, projectName }: OutcomePanelProps
             />
           }
         >
-          {(d) => (
-            <>
-              <p className="met-quiet met-out__notice">
-                <Icon name="info" size={12} /> {d.notice}
-              </p>
-              <OutcomeMarks classes={classes} axis={outcomeAxis(d)} rate={rate} />
-              {view === 'list' ? (
-                <OutcomeList rows={outcomeRows(d)} rate={rate} projectName={projectName} />
-              ) : (
-                <ProjectTable rows={byProject(d, projectName)} rate={rate} />
-              )}
-            </>
-          )}
+          {() =>
+            shown && (
+              <>
+                <p className="met-quiet met-out__notice">
+                  <Icon name="info" size={12} /> {shown.dto.notice}
+                </p>
+                {shown.types.length > 1 && (
+                  <ProcessTypeFilter
+                    types={shown.types}
+                    total={shown.total}
+                    value={shown.processType}
+                    onChange={setPicked}
+                  />
+                )}
+                <OutcomeMarks classes={shown.classes} axis={shown.axis} filtered={shown.processType !== null} />
+                {view === 'list' ? (
+                  <OutcomeList rows={outcomeRows(shown.narrowed)} projectName={projectName} />
+                ) : (
+                  <ProjectTable rows={byProject(shown.narrowed, projectName)} />
+                )}
+              </>
+            )
+          }
         </ResourceView>
       )}
     </Widget>
