@@ -1,33 +1,23 @@
 import type { AocConfig, LlmService } from '@aoc/contracts';
-import { FakeLlm, type Logger } from '@aoc/kernel';
-
-type CreateLlm = (
-  extractor: AocConfig['fx']['extractor'],
-  opts: Record<string, unknown>,
-) => LlmService | Promise<LlmService>;
+import { createLlm } from '@aoc/llm';
 
 /**
- * The `llm` service from @aoc/llm's `createLlm(config.fx.extractor, …)`. Imported dynamically so the
- * daemon builds before that package exports it; until then (or if it throws) the kernel FakeLlm is
- * used, which fails every call loudly, so LLM-backed jobs (FX extraction, distillation) report errors.
+ * The `llm` service for `config.fx.extractor` (FX extraction, distillation). Only `fake` gets the kernel's FakeLlm
+ * (it fails every unscripted call loudly); an extractor that cannot be built stops aocd at startup instead of
+ * degrading to it.
  */
-export async function resolveLlm(config: AocConfig, log: Logger): Promise<LlmService> {
-  const { createLlm } = (await import('@aoc/llm')) as unknown as { createLlm?: CreateLlm };
-  if (typeof createLlm !== 'function') {
-    log.warn('@aoc/llm does not export createLlm yet; using the FakeLlm (LLM-backed jobs will fail)');
-    return new FakeLlm();
+export function resolveLlm(
+  config: AocConfig,
+  env: Record<string, string | undefined> = process.env,
+): LlmService {
+  const extractor = config.fx.extractor;
+  if (extractor === 'anthropic-sdk' && !env.ANTHROPIC_API_KEY) {
+    throw new Error('fx.extractor "anthropic-sdk" needs ANTHROPIC_API_KEY in the environment');
   }
-  try {
-    return await createLlm(config.fx.extractor, {
-      claudeBin: config.supervisor.claudeBin,
-      claudeArgsPrefix: config.supervisor.claudeArgsPrefix,
-      log: log.child({ component: 'llm' }),
-    });
-  } catch (err) {
-    log.error('createLlm failed; using the FakeLlm (LLM-backed jobs will fail)', {
-      extractor: config.fx.extractor,
-      err: String(err),
-    });
-    return new FakeLlm();
-  }
+  return createLlm(extractor, {
+    // The claude the supervisor runs for sessions (e.g. claude-sim as `node <sim>`), with no session flags.
+    claudeBin: config.supervisor.claudeBin,
+    extraArgs: config.supervisor.claudeArgsPrefix,
+    apiKey: env.ANTHROPIC_API_KEY,
+  });
 }
