@@ -2,8 +2,8 @@
  * Pure builders for what a managed `claude -p` turn is started with: argv, environment (credential isolation, §3),
  * the per-session MCP config and the hook settings. Verified against Claude Code 2.1.295 (research §2, §4.5, §8).
  */
-import { readFileSync } from 'node:fs';
-import { isAbsolute } from 'node:path';
+import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, type Stats } from 'node:fs';
+import { isAbsolute, join } from 'node:path';
 import { z } from 'zod';
 import { AOC_MCP_SERVER_NAME, FILE_CHANGING_TOOLS, type ProcessType } from '@aoc/contracts';
 import { builtinToolsOf, MANAGED_HOOK_EVENTS } from './claude-facts';
@@ -158,6 +158,44 @@ export function buildSessionEnv(i: SessionEnvInput): Record<string, string> {
   return { ...env, ...i.aoc };
 }
 
+/**
+ * What to redact from a session's output: its ingest token and credential values, raw and as they appear inside
+ * stream-json strings, longest first. Values under 8 characters are too common to redact and too short to be secrets.
+ */
+export function secretsToRedact(values: readonly string[]): string[] {
+  const out = new Set<string>();
+  for (const v of values) {
+    if (v.length < 8) continue;
+    out.add(v);
+    out.add(JSON.stringify(v).slice(1, -1));
+  }
+  return [...out].sort((a, b) => b.length - a.length);
+}
+
+/**
+ * The text of a profile's key files, whole and line by line, so a key the model prints (`cat` of its copy) is
+ * redacted like an env secret. Unreadable files contribute nothing (the launch reports them).
+ */
+export function keyFileSecrets(files: Record<string, string>): string[] {
+  const out: string[] = [];
+  for (const path of Object.values(files)) {
+    let text: string;
+    try {
+      text = readFileSync(path, 'utf8');
+    } catch {
+      continue;
+    }
+    out.push(text.trim(), ...text.split('\n').map((l) => l.trim()));
+  }
+  return out;
+}
+
+export function redactSecrets(text: string, secrets: readonly string[]): string {
+  let out = text;
+  for (const s of secrets) if (out.includes(s)) out = out.split(s).join('[redacted]');
+  return out;
+}
+
 const FILE_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
 const FILE_REF = /\{\{file:([^}]*)\}\}/g;
 /** Key files are small; anything bigger is a mistake in the profile, not a key. */
@@ -241,6 +279,74 @@ export function resolveFileRefs(
 export function readCredentialProfile(file: string, profile: string): Record<string, string> {
   const p = readCredentialProfileSpec(file, profile);
   return resolveFileRefs(p.env, p.files);
+}
+
+/**
+ * Project and local Claude Code settings live in the workspace, which the agent (or the repository) controls, and
+ * every turn is a new process that loads them. `disableAllHooks` would switch AOC's hooks off, and any `env` entry
+ * overrides the environment the supervisor composed (§3): AOC_* (the hooks' mode and token), NODE_OPTIONS or PATH
+ * (the hook and MCP binaries), ANTHROPIC_BASE_URL (where the conversation goes). A file that is not plain JSON
+ * cannot be shown to be harmless.
+ */
+export function workspaceSettingsProblems(cwd: string): string[] {
+  const problems: string[] = [];
+  // aocd (root, with session isolation) must not read through a link the agent planted.
+  if (lstatOrNull(join(cwd, '.claude'))?.isSymbolicLink()) return ['.claude is a link'];
+  for (const name of ['settings.json', 'settings.local.json']) {
+    const shown = `.claude/${name}`;
+    let text: string;
+    try {
+      text = readWorkspaceFile(join(cwd, '.claude', name));
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') problems.push(`${shown} is unreadable`);
+      continue;
+    }
+    let settings: unknown;
+    try {
+      settings = JSON.parse(text);
+    } catch {
+      problems.push(`${shown} is not plain JSON`);
+      continue;
+    }
+    if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
+      problems.push(`${shown} is not a JSON object`);
+      continue;
+    }
+    const s = settings as Record<string, unknown>;
+    if (s.disableAllHooks) problems.push(`${shown} sets disableAllHooks`);
+    if (s.env !== undefined) {
+      const keys = s.env && typeof s.env === 'object' && !Array.isArray(s.env) ? Object.keys(s.env) : null;
+      if (!keys) problems.push(`${shown} has a malformed env`);
+      else if (keys.length) problems.push(`${shown} sets env (${keys.slice(0, 10).join(', ')})`);
+    }
+  }
+  return problems;
+}
+
+const MAX_WORKSPACE_SETTINGS_BYTES = 1024 * 1024;
+
+/**
+ * A file in an agent-writable workspace, read by aocd: never through a link at its own name, never blocking on a
+ * FIFO planted there (a synchronous read would stall aocd's event loop), and bounded.
+ */
+function readWorkspaceFile(file: string): string {
+  const fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    const st = fstatSync(fd);
+    if (!st.isFile() || st.size > MAX_WORKSPACE_SETTINGS_BYTES)
+      throw Object.assign(new Error('not a plain, small file'), { code: 'EINVAL' });
+    return readFileSync(fd, 'utf8');
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function lstatOrNull(path: string): Stats | null {
+  try {
+    return lstatSync(path);
+  } catch {
+    return null;
+  }
 }
 
 // ── per-session MCP config and hook settings ───────────────────────────────

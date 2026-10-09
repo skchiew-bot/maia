@@ -36,12 +36,17 @@ export function resolveMode(env: Env, homeDir: string): HookMode {
   if (env[ENV.mode] === 'managed') {
     if (env[HOOKS_ENV.hookScope] === 'observed')
       return { kind: 'off', reason: 'managed-registration-owns-session' };
+    const aocSessionId = nonEmpty(env[ENV.sessionId]);
     return {
       kind: 'managed',
-      aocSessionId: nonEmpty(env[ENV.sessionId]),
+      aocSessionId,
       daemonUrl: nonEmpty(env[ENV.daemonUrl]),
       token: nonEmpty(env[ENV.ingestToken]),
-      spoolDir: nonEmpty(env[ENV.spoolDir]) ?? join(aocDir, 'spool', 'managed'),
+      // One spool per session: a flush replays every item with this session's token, and the daemon refuses (and
+      // the client then deletes) items of any other session.
+      spoolDir:
+        nonEmpty(env[ENV.spoolDir]) ??
+        join(aocDir, 'spool', 'managed', (aocSessionId ?? 'unknown').replace(/[^A-Za-z0-9_-]/g, '_')),
     };
   }
   const config = readObserverConfig(nonEmpty(env[HOOKS_ENV.clientConfig]) ?? join(aocDir, 'client.json'));

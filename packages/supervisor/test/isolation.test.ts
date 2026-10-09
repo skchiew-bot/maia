@@ -13,6 +13,7 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -34,9 +35,13 @@ import {
 } from '../src/isolation';
 import {
   buildSessionEnv,
+  keyFileSecrets,
   readCredentialProfile,
   readCredentialProfileSpec,
+  redactSecrets,
   resolveFileRefs,
+  secretsToRedact,
+  workspaceSettingsProblems,
 } from '../src/launch-config';
 import { createHarness, type Harness, type HarnessOptions } from './harness';
 
@@ -159,6 +164,32 @@ describe('isolation settings', () => {
     await h.launch('second', { threadId: 'thr_2' });
     expect(lines.filter((l) => l.includes('supervisor.isolation is \\"none\\"')).length).toBe(1);
     expect(lines.filter((l) => l.includes('ISOLATION OFF')).length).toBe(2);
+  });
+});
+
+describe('workspace settings are read without trusting the workspace', () => {
+  const workspace = () => {
+    const cwd = temp('aoc-ws-');
+    mkdirSync(join(cwd, '.claude'));
+    return cwd;
+  };
+
+  it('never blocks on a FIFO planted as a settings file', () => {
+    const cwd = workspace();
+    const fifo = spawnSync('mkfifo', [join(cwd, '.claude', 'settings.local.json')]);
+    if (fifo.status !== 0) return; // no mkfifo on this host
+    expect(workspaceSettingsProblems(cwd)).toEqual(['.claude/settings.local.json is unreadable']);
+  });
+
+  it('never reads through a link planted at a settings file or at .claude', () => {
+    const cwd = workspace();
+    const elsewhere = join(temp('aoc-ws-target-'), 'settings.json');
+    writeFileSync(elsewhere, JSON.stringify({ env: { FROM_ELSEWHERE: '1' } }));
+    symlinkSync(elsewhere, join(cwd, '.claude', 'settings.json'));
+    expect(workspaceSettingsProblems(cwd)).toEqual(['.claude/settings.json is unreadable']);
+    const linked = temp('aoc-ws-');
+    symlinkSync(join(cwd, '.claude'), join(linked, '.claude'));
+    expect(workspaceSettingsProblems(linked)).toEqual(['.claude is a link']);
   });
 });
 
@@ -334,6 +365,17 @@ describe('credential profiles with key files', () => {
     expect(resolveFileRefs(spec.env, { 'ssh-key': '/h/ses_1/credentials/ssh-key' }).GIT_SSH_COMMAND).toBe(
       'ssh -i /h/ses_1/credentials/ssh-key -o IdentitiesOnly=yes',
     );
+  });
+
+  it('redacts a printed key file from session output, whole or line by line', () => {
+    const key = join(temp('aoc-key-'), 'id_ed25519');
+    const pem =
+      '-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA\nQyNTUxOQAAACBkZXBsb3k\n-----END OPENSSH PRIVATE KEY-----\n';
+    writeFileSync(key, pem);
+    const secrets = secretsToRedact(keyFileSecrets({ 'ssh-key': key, missing: '/nonexistent/key' }));
+    expect(redactSecrets(`$ cat key\n${pem}`, secrets)).not.toMatch(/b3BlbnNz|QyNTUxOQ/);
+    expect(redactSecrets(JSON.stringify({ result: pem }), secrets)).not.toMatch(/b3BlbnNz|QyNTUxOQ/);
+    expect(redactSecrets('head -2: b3BlbnNzaC1rZXktdjEAAAAA', secrets)).toBe('head -2: [redacted]');
   });
 
   it('rejects undeclared references and relative key paths without echoing values', () => {
@@ -569,8 +611,8 @@ describe.skipIf(!canCreateUsers)('OS-level isolation end to end (needs root to c
       bash(`cat ${join(w.aocdHome, '.ssh', 'id_ed25519')}`),
       bash('ls -a ~/.ssh'),
       bash(`cat ${w.keyFile}`),
-      // Its own profile's key works: a private copy, named in GIT_SSH_COMMAND.
-      bash('set -- $GIT_SSH_COMMAND; printf "%s\\n" "$3"; cat "$3"'),
+      // Its own profile's key works: a private copy, named in GIT_SSH_COMMAND. Printing it reaches no builder.
+      bash('set -- $GIT_SSH_COMMAND; printf "%s\\n" "$3"; wc -c < "$3"; cat "$3"'),
       endTurn,
     ]);
     const id = await h.launch(`${marker} probe the sandbox`, { processType: 'iso-build' });
@@ -592,13 +634,14 @@ describe.skipIf(!canCreateUsers)('OS-level isolation end to end (needs root to c
     ] as const)
       expect(r[i], what).toMatch(/^Exit code \d+[\s\S]*Permission denied/);
     expect(r[7]).toMatch(/No such file or directory/);
-    expect(r[9]!.split('\n')).toEqual([join(dirs.credentials, 'ssh-key'), 'TEST-KEY-git-feature']);
+    expect(r[9]!.split('\n')).toEqual([join(dirs.credentials, 'ssh-key'), '21', '[redacted]']);
     const all = r.join('\n');
     for (const secret of [
       'AOCD-SSH-PRIVATE-KEY',
       readFileSync(w.kek, 'utf8').trim(),
       'ghp_feature_E2E',
       'SQLite format',
+      'TEST-KEY-git-feature',
     ])
       expect(all).not.toContain(secret);
 
