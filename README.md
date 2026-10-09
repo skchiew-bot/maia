@@ -44,7 +44,7 @@ math, decision routing, credits, FX, error learning, change control and identity
 
 ## Quick start
 
-Requirements: Node ≥ 22.13 (for `node:sqlite`), pnpm 10, git. Tests never call the real `claude` binary
+Requirements: Node ≥ 22.20 (`node:sqlite` with FTS5, and repeated numbered parameters), pnpm 10, git. Tests never call the real `claude` binary
 (`@aoc/claude-sim` stands in).
 
 ```bash

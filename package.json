@@ -5,7 +5,7 @@
   "description": "AOC — Agent Ops Console (AOC-SPEC-003): multi-user project lifecycle platform for Claude Code",
   "type": "module",
   "packageManager": "pnpm@10.28.0",
-  "engines": { "node": ">=22.13" },
+  "engines": { "node": ">=22.20" },
   "bin": {
     "aoc": "dist/bin/aoc.mjs",
     "aocd": "dist/bin/aocd.mjs"

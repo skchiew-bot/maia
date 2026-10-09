@@ -10,7 +10,7 @@
 
 | Item | Default | Production |
 | --- | --- | --- |
-| Process | One Node ≥ 22.13 process, `aocd`: the sole writer | A supervised service (systemd), restarted on failure, running as service user `aoc` |
+| Process | One Node ≥ 22.20 process, `aocd`: the sole writer | A supervised service (systemd), restarted on failure, running as service user `aoc` |
 | Listen | `127.0.0.1:7420` | Loopback, behind a TLS reverse proxy; `publicUrl` and `identity.origin` set to the public HTTPS origin (WebAuthn requires it) |
 | Data | `.aoc/data/`: `aoc.db` (chain and read models), `bodies.db` (encrypted bodies), `blobs/`, and `master.key` (dev only) | `/var/lib/aoc/data`, on a disk with monitoring; the KEK elsewhere ([key custody](key-custody.md)) |
 | Config | `AocConfigSchema.parse({})` gives a complete, safe local default (`packages/contracts/src/config.ts`) | See the example below |
@@ -280,7 +280,7 @@ Jobs must be idempotent: a daily job forced by hand runs again even if it alread
    governance core, check that it carries a human code review
    ([self-modification boundary](../compliance/self-modification-boundary.md)).
 2. **Back up and verify** (§6, [anchoring §6](anchoring.md#6-verify)).
-3. **Node.** Stay within `engines` (Node ≥ 22.13). `node:sqlite` behaviour is re-tested on every Node upgrade
+3. **Node.** Stay within `engines` (Node ≥ 22.20). `node:sqlite` behaviour is re-tested on every Node upgrade
    (ADR-0002); do not upgrade Node and AOC in the same window.
 4. **Claude Code.** A new Claude Code version can change hook events, stream-json lines, flags or usage-limit
    messages. Before upgrading `claude` on the host, re-run the captures in the

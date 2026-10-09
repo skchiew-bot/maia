@@ -6,7 +6,7 @@ sidecar, AOC MCP server, hooks, and one daemon (`aocd`) that is the **sole write
 hash-chained SQLite event log.
 
 ## Stack
-- TypeScript (strict), ESM, Node >= 22.13 (`node:sqlite` built-in, WAL). pnpm workspaces.
+- TypeScript (strict), ESM, Node >= 22.20 (`node:sqlite` built-in, WAL; FTS5 needs 22.16, repeated `?1` parameters 22.20). pnpm workspaces.
 - Server: Hono (+ @hono/node-server). Validation: zod v3 (`import { z } from 'zod'`).
 - MCP: @modelcontextprotocol/sdk. Tests: vitest 3. UI: React 19 + Vite 7 + react-router-dom 7.
 - Binaries (daemon, cli, hooks, mcp-server, sidecar, claude-sim) are bundled with esbuild by `scripts/build.mjs`.
