@@ -1,19 +1,16 @@
 /**
- * Git operations that run through the supervisor's isolated runner (§2.4, §3): rollback verification,
- * rollback execution and promotion. Branches only ever move forward — no force push, no history rewrite.
+ * Git plumbing shared by promotion and rollback (§8, §14; G-04): how a restore commit is made, how a push to the
+ * protected remote is judged, and how a project with no remote has its own branch moved. Branches only ever move
+ * forward — no history rewrite, and every update is a compare-and-swap from a verified base.
  */
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-
 export interface RunResult {
   code: number;
   stdout: string;
   stderr: string;
 }
 
-/** Runs `git <args>` in `cwd` inside a supervisor-controlled environment. */
-export type GitRunner = (cwd: string, args: string[]) => Promise<RunResult>;
+/** Runs `git <args>` in `cwd` (argv only, never a shell) with extra environment variables. */
+export type GitRunner = (cwd: string, args: string[], env?: Record<string, string>) => Promise<RunResult>;
 
 export class RepoOpError extends Error {
   constructor(
@@ -24,12 +21,76 @@ export class RepoOpError extends Error {
   }
 }
 
-const output = (r: RunResult) => `${r.stdout}\n${r.stderr}`.trim().slice(-2000);
+export const output = (r: RunResult) => `${r.stdout}\n${r.stderr}`.trim().slice(-2000);
 
-async function must(git: GitRunner, cwd: string, args: string[], reason: string): Promise<string> {
-  const r = await git(cwd, args);
-  if (r.code !== 0) throw new RepoOpError(reason, `${reason}: ${output(r) || `git exited with ${r.code}`}`);
-  return r.stdout.trim();
+export type PublishResult =
+  | { ok: true; before: string; after: string; warning: string | null }
+  | { ok: false; refused: 'not_fast_forward'; detail: string }
+  | { ok: false; failed: string; detail: string };
+
+/** Transports a promotion remote may use. Plain http, git://, ext:: and helper URLs are refused. */
+export type Transport = 'ssh' | 'https' | 'file';
+
+export function transportOf(url: string): Transport | null {
+  if (!url || url.startsWith('-') || /[\s\0]/.test(url)) return null;
+  const scheme = /^([A-Za-z][A-Za-z0-9+.-]*):\/\//.exec(url)?.[1]?.toLowerCase();
+  if (scheme) return scheme === 'https' || scheme === 'ssh' || scheme === 'file' ? scheme : null;
+  if (url.startsWith('/')) return 'file';
+  // scp-like `[user@]host:path`: a colon before any slash (git's own rule), and no `<helper>::` syntax.
+  return /^(?:[A-Za-z0-9._-]+@)?[A-Za-z0-9.-]+:(?!:)/.test(url) ? 'ssh' : null;
+}
+
+/** A remote URL without its user-info, where a token may hide: for messages and event payloads. */
+export function displayUrl(url: string): string {
+  return url.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/@]*@/i, '$1***@');
+}
+
+/** `git push --porcelain` result for the single ref pushed; `stale` when the remote was not where the lease said. */
+export function pushOutcome(r: RunResult): { ok: true } | { ok: false; stale: boolean; detail: string } {
+  if (r.code === 0) return { ok: true };
+  return { ok: false, stale: /\(stale info\)/.test(`${r.stdout}\n${r.stderr}`), detail: output(r) };
+}
+
+export interface GitIdentity {
+  name: string;
+  email: string;
+}
+
+export const AOC_GIT_IDENTITY: GitIdentity = { name: 'AOC Supervisor', email: 'aoc-supervisor@localhost' };
+
+/** A commit fully specified by its inputs, so the same object id comes out wherever it is made. */
+export interface CommitSpec {
+  tree: string;
+  parent: string;
+  message: string[];
+  identity: GitIdentity;
+  /** Author and committer time, in seconds since the epoch (UTC). */
+  time: number;
+}
+
+/** `git commit-tree` for a spec: plumbing only (no hook, index, worktree or filter), never signed, UTF-8. */
+export function commitTreeArgs(c: CommitSpec): { args: string[]; env: Record<string, string> } {
+  const date = `${Math.floor(c.time)} +0000`;
+  return {
+    args: [
+      '-c',
+      'i18n.commitEncoding=UTF-8',
+      'commit-tree',
+      '--no-gpg-sign',
+      c.tree,
+      '-p',
+      c.parent,
+      ...c.message.flatMap((m) => ['-m', m]),
+    ],
+    env: {
+      GIT_AUTHOR_NAME: c.identity.name,
+      GIT_AUTHOR_EMAIL: c.identity.email,
+      GIT_AUTHOR_DATE: date,
+      GIT_COMMITTER_NAME: c.identity.name,
+      GIT_COMMITTER_EMAIL: c.identity.email,
+      GIT_COMMITTER_DATE: date,
+    },
+  };
 }
 
 export async function revParse(git: GitRunner, cwd: string, ref: string): Promise<string | null> {
@@ -57,171 +118,64 @@ export async function listWorktrees(git: GitRunner, repo: string): Promise<Workt
     .filter((w) => w.path);
 }
 
-export async function pickRemote(git: GitRunner, repo: string): Promise<string | null> {
-  const r = await git(repo, ['remote']);
-  const remotes =
-    r.code === 0
-      ? r.stdout
-          .split('\n')
-          .map((s) => s.trim())
-          .filter(Boolean)
-      : [];
-  return remotes.includes('origin') ? 'origin' : (remotes[0] ?? null);
-}
-
-async function withTempWorktree<T>(
-  git: GitRunner,
-  repo: string,
-  prefix: string,
-  addArgs: (dir: string) => string[],
-  fn: (dir: string) => Promise<T>,
-): Promise<T> {
-  const tmp = mkdtempSync(join(tmpdir(), prefix));
-  const dir = join(tmp, 'wt');
-  try {
-    await must(git, repo, addArgs(dir), 'worktree_failed');
-    return await fn(dir);
-  } finally {
-    await git(repo, ['worktree', 'remove', '--force', dir]).catch(() => undefined);
-    rmSync(tmp, { recursive: true, force: true });
-    await git(repo, ['worktree', 'prune']).catch(() => undefined);
-  }
-}
-
-/** Check `sha` out on a NEW branch in a temporary worktree (the branch is kept as evidence; the worktree is removed). */
-export async function withVerificationCheckout<T>(
-  git: GitRunner,
-  repo: string,
-  branch: string,
-  sha: string,
-  fn: (dir: string) => Promise<T>,
-): Promise<T> {
-  await git(repo, ['worktree', 'prune']);
-  // A previous attempt (crash mid-verification) may still hold the branch.
-  for (const wt of await listWorktrees(git, repo)) {
-    if (wt.branch === `refs/heads/${branch}`) await git(repo, ['worktree', 'remove', '--force', wt.path]);
-  }
-  return withTempWorktree(
-    git,
-    repo,
-    'aoc-rollback-verify-',
-    (dir) => ['worktree', 'add', '-B', branch, dir, sha],
-    fn,
-  );
-}
-
 /**
- * Create a NEW commit on top of `branch` whose tree is exactly `targetSha`'s tree (`git restore --source=<sha>
- * --staged --worktree :/` + `git commit`). It is built in a detached temporary worktree of the branch so that no
- * shared working tree — possibly a running session's — is disturbed; `fastForward` then publishes it.
+ * Moves `branch` of the project repository itself to `next`. `git` runs as the session user (the repository is the
+ * agents' workspace), with the kernel's safety settings and the repository's filter drivers switched off. `from` is
+ * the value the branch must still hold (a local target: a compare-and-swap); null accepts any value `next`
+ * fast-forwards (the courtesy update after a push). A rollback's restore commit is first made again here from its
+ * spec and must come out with the same id. A worktree of this repository that has the branch checked out is
+ * fast-forwarded in place, with its work tree pinned to that path.
  */
-export async function createRestoreCommit(
+export async function updateProjectBranch(
   git: GitRunner,
   repo: string,
   branch: string,
-  targetSha: string,
-  message: string[],
-): Promise<{ parent: string; commit: string }> {
-  return withTempWorktree(
-    git,
-    repo,
-    'aoc-rollback-exec-',
-    (dir) => ['worktree', 'add', '--detach', dir, `refs/heads/${branch}`],
-    async (dir) => {
-      const parent = await must(git, dir, ['rev-parse', 'HEAD'], 'rev_parse_failed');
-      await must(
-        git,
-        dir,
-        ['restore', `--source=${targetSha}`, '--staged', '--worktree', ':/'],
-        'restore_failed',
-      );
-      if ((await git(dir, ['diff', '--cached', '--quiet'])).code === 0) {
-        throw new RepoOpError('already_at_target', `${branch} already has the tree of ${targetSha}`);
-      }
-      const ident = await git(dir, ['config', 'user.email']);
-      const identity =
-        ident.code === 0 && ident.stdout.trim()
-          ? []
-          : ['-c', 'user.name=AOC Supervisor', '-c', 'user.email=aoc-supervisor@localhost'];
-      // --no-verify: the restored tree was committed before and has just passed its acceptance tests.
-      await must(
-        git,
-        dir,
-        [...identity, 'commit', '--no-verify', '-q', ...message.flatMap((m) => ['-m', m])],
-        'commit_failed',
-      );
-      return { parent, commit: await must(git, dir, ['rev-parse', 'HEAD'], 'rev_parse_failed') };
-    },
-  );
-}
-
-export type FastForwardResult =
-  | { ok: true; before: string; after: string; remote: string | null; warning: string | null }
-  | { ok: false; refused: 'not_fast_forward'; detail: string }
-  | { ok: false; failed: string; detail: string };
-
-/**
- * Move `branch` forward to `newTip`: fast-forward only, never a force push. When the repo has a remote it is the
- * source of truth and is pushed first, so a failure leaves every copy of the branch unchanged. A working tree that
- * has the branch checked out is fast-forwarded in place (it must be clean); otherwise the ref is compare-and-swapped.
- */
-export async function fastForward(
-  git: GitRunner,
-  repo: string,
-  branch: string,
-  newTip: string,
-  expectedBefore?: string,
-): Promise<FastForwardResult> {
-  const before = await revParse(git, repo, `refs/heads/${branch}`);
-  if (!before) return { ok: false, failed: 'branch_missing', detail: `refs/heads/${branch} does not exist` };
-  if (expectedBefore && before !== expectedBefore)
-    return {
-      ok: false,
-      refused: 'not_fast_forward',
-      detail: `${branch} moved from ${expectedBefore} to ${before}`,
-    };
-  if (before === newTip) return { ok: true, before, after: newTip, remote: null, warning: null };
-  if ((await git(repo, ['merge-base', '--is-ancestor', before, newTip])).code !== 0) {
-    return {
-      ok: false,
-      refused: 'not_fast_forward',
-      detail: `${newTip} does not contain ${branch} at ${before}`,
-    };
+  from: string | null,
+  next: string,
+  restore?: CommitSpec,
+): Promise<PublishResult> {
+  const ref = `refs/heads/${branch}`;
+  const current = await revParse(git, repo, ref);
+  if (!current) return { ok: false, failed: 'branch_missing', detail: `${ref} does not exist` };
+  if (from && current !== from)
+    return { ok: false, refused: 'not_fast_forward', detail: `${branch} moved from ${from} to ${current}` };
+  if (current === next) return { ok: true, before: current, after: next, warning: null };
+  if (restore) {
+    const { args, env } = commitTreeArgs(restore);
+    const made = await git(repo, args, env);
+    if (made.code !== 0 || made.stdout.trim() !== next)
+      return {
+        ok: false,
+        failed: 'local_update_failed',
+        detail: `the restore commit could not be made again in the project repository: ${output(made) || made.stdout.trim()}`,
+      };
   }
-  const holder = (await listWorktrees(git, repo)).find((w) => w.branch === `refs/heads/${branch}`);
+  if ((await git(repo, ['merge-base', '--is-ancestor', current, next])).code !== 0)
+    return { ok: false, refused: 'not_fast_forward', detail: `${next} does not contain ${branch} at ${current}` };
+  const holder = (await listWorktrees(git, repo)).find((w) => w.branch === ref);
   if (holder) {
-    const status = await git(holder.path, ['status', '--porcelain']);
-    if (status.code !== 0 || status.stdout.trim()) {
+    // Worktree metadata is agent-writable: only a worktree of this very repository is touched.
+    const own = await git(repo, ['rev-parse', '--path-format=absolute', '--git-common-dir']);
+    const theirs = await git(holder.path, ['rev-parse', '--path-format=absolute', '--git-common-dir']);
+    if (own.code !== 0 || theirs.code !== 0 || own.stdout.trim() !== theirs.stdout.trim())
+      return {
+        ok: false,
+        failed: 'local_update_failed',
+        detail: `the worktree at ${holder.path}, which has ${branch} checked out, does not belong to this repository`,
+      };
+    const pinned = ['--work-tree', holder.path];
+    const status = await git(holder.path, [...pinned, 'status', '--porcelain']);
+    if (status.code !== 0 || status.stdout.trim())
       return {
         ok: false,
         failed: 'default_branch_worktree_dirty',
         detail: `the working tree at ${holder.path} has uncommitted changes on ${branch}`,
       };
-    }
+    const merged = await git(holder.path, [...pinned, 'merge', '--ff-only', '-q', next]);
+    if (merged.code !== 0) return { ok: false, failed: 'local_update_failed', detail: output(merged) };
+  } else {
+    const updated = await git(repo, ['update-ref', ref, next, current]);
+    if (updated.code !== 0) return { ok: false, failed: 'local_update_failed', detail: output(updated) };
   }
-  const remote = await pickRemote(git, repo);
-  if (remote) {
-    const push = await git(repo, ['push', remote, `${newTip}:refs/heads/${branch}`]);
-    if (push.code !== 0) return { ok: false, failed: 'push_failed', detail: output(push) };
-  }
-  const local = holder
-    ? await git(holder.path, ['merge', '--ff-only', '-q', newTip])
-    : await git(repo, ['update-ref', `refs/heads/${branch}`, newTip, before]);
-  if (local.code !== 0) {
-    if (!remote) return { ok: false, failed: 'local_update_failed', detail: output(local) };
-    return {
-      ok: true,
-      before,
-      after: newTip,
-      remote,
-      warning: `pushed to ${remote}, but the local ${branch} could not be updated: ${output(local)}`,
-    };
-  }
-  return {
-    ok: true,
-    before,
-    after: (await revParse(git, repo, `refs/heads/${branch}`)) ?? newTip,
-    remote,
-    warning: null,
-  };
+  return { ok: true, before: current, after: (await revParse(git, repo, ref)) ?? next, warning: null };
 }

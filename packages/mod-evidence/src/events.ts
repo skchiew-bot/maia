@@ -15,12 +15,13 @@ const BATCH = 5000;
 export function* iterateEvents(
   store: EventStore,
   q: Omit<ListQuery, 'limit' | 'order'>,
+  batch = BATCH,
 ): Generator<StoredEvent> {
   let from = q.fromSeq ?? 1;
   for (;;) {
-    const page = store.list({ ...q, fromSeq: from, limit: BATCH, order: 'asc' });
+    const page = store.list({ ...q, fromSeq: from, limit: batch, order: 'asc' });
     yield* page;
-    if (page.length < BATCH) return;
+    if (page.length < batch) return;
     from = page[page.length - 1]!.seq + 1;
   }
 }

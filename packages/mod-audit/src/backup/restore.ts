@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { blobRelativePath, EventStore, keyFingerprint, silentLogger, systemClock, type Clock } from '@aoc/kernel';
 import type { ExternalAnchor } from '../anchor-record';
-import { GitAnchorProvider } from '../anchor/git';
+import { anchorGitEnv, GitAnchorProvider } from '../anchor/git';
 import type { AnchorProvider, ExternalListing } from '../anchor/provider';
 import { Rfc3161AnchorProvider } from '../anchor/rfc3161';
 import { brief, exec } from '../exec';
@@ -176,7 +176,7 @@ async function anchorSources(
   if (a.gitRemote) {
     repoPath = join(scratch, 'anchor-clone');
     const r = await exec(o.gitBin ?? 'git', ['clone', '--quiet', '--no-checkout', '--', a.gitRemote, repoPath], {
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+      env: anchorGitEnv(),
       timeoutMs: 120_000,
     });
     if (r.code !== 0) {

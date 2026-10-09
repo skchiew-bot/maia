@@ -1,4 +1,4 @@
-import { strToU8, zipSync } from 'fflate';
+import { strToU8, zip, type AsyncZippable, type ZipOptions } from 'fflate';
 import {
   EVIDENCE_PACK_FORMAT,
   type Actor,
@@ -13,6 +13,7 @@ import {
 } from '@aoc/contracts';
 import { canonicalJson, sha256hex, type EventStore } from '@aoc/kernel';
 import { iterateEvents, lineOf, refOf, spread } from './events';
+import { Pacer } from './jobs';
 import { matchesFilter, rowIndex, type LoadedMapping } from './mapping';
 import type { ResolvedRange } from './range';
 import { renderReport } from './report';
@@ -37,6 +38,13 @@ import {
 export const PACK_PRIVACY_STATEMENT =
   'events.jsonl holds chained event headers only (ids, enums, numbers, hashes). Event payloads and bodies are never exported: personal data stays behind the role boundary.';
 const SAMPLES_PER_ROW = 20;
+/** Events read per page while building: one page is a short slice of the daemon thread. */
+const PAGE = 1000;
+
+/** fflate compresses in worker threads: a large events.jsonl never deflates on the daemon thread. */
+function zipAsync(files: AsyncZippable, opts: ZipOptions): Promise<Uint8Array> {
+  return new Promise((resolve, reject) => zip(files, opts, (err, out) => (err ? reject(err) : resolve(out))));
+}
 
 export interface MappingSnapshot {
   loaded: LoadedMapping;
@@ -86,11 +94,14 @@ function publicRange(r: ResolvedRange): EvidencePackRange {
 }
 
 /**
- * Build a frozen evidence pack from the log as of the current head. Reads chained headers only — never
+ * Build a frozen evidence pack from the log as of the verified head. Reads chained headers only — never
  * payloads — so nothing behind the role boundary (personal data, prompts, file contents) can leak into it.
+ * It walks up to a year of events, so it hands the event loop back as it goes and deflates off-thread (R-05):
+ * managed hooks keep being answered while a pack is built.
  */
-export function buildEvidencePack(input: BuildPackInput): BuiltPack {
+export async function buildEvidencePack(input: BuildPackInput): Promise<BuiltPack> {
   const { store, range, mapping } = input;
+  const pacer = new Pacer();
   const verified = input.verification.report ?? input.verification.inFile;
   const head = { seq: verified.headSeq, hash: verified.headHash, chainId: verified.chainId };
   const endTsIncl = new Date(range.endMs - 1).toISOString();
@@ -126,7 +137,8 @@ export function buildEvidencePack(input: BuildPackInput): BuiltPack {
   const credits: StoredEvent[] = [];
   const carryAlerts: StoredEvent[] = [];
 
-  for (const e of iterateEvents(store, { fromTs: range.fromTs, toTs: endTsIncl, toSeq: head.seq })) {
+  for (const e of iterateEvents(store, { fromTs: range.fromTs, toTs: endTsIncl, toSeq: head.seq }, PAGE)) {
+    await pacer.yield();
     const line = lineOf(e);
     lines.push(canonicalJson(line));
     linkage.eventCount++;
@@ -163,11 +175,15 @@ export function buildEvidencePack(input: BuildPackInput): BuiltPack {
 
   const verification = buildVerification(store, head.seq, linkage, input.verification);
   const gatesFile = buildGates(ctx, resolved);
+  await pacer.yield();
   const changesFile = buildChanges(ctx, changes);
+  await pacer.yield();
   const rollbacksFile = buildRollbacks(ctx, rollbacks);
   const breakglassFile = buildBreakglass(ctx, breakglass, breakglassPromotions);
+  await pacer.yield();
   const creditsFile = buildCredits(credits);
   const fxFile = buildFx(ctx, carryAlerts);
+  await pacer.yield();
   const rateCard = rateCardInForce(ctx);
   const m = mapping.loaded.mapping;
   const controls: EvidenceControls = {
@@ -263,9 +279,10 @@ export function buildEvidencePack(input: BuildPackInput): BuiltPack {
     }),
   );
   const manifest: EvidencePackManifest = { ...base, files: [...dataFiles, fileEntry('index.html', html)] };
-  const zip = zipSync(
+  await pacer.yield();
+  const zipped = await zipAsync(
     { 'manifest.json': json(manifest), ...Object.fromEntries(data), 'index.html': html },
     { level: 6, mtime: new Date(input.generatedAt) },
   );
-  return { zip, packHash: sha256hex(zip), manifest, verification };
+  return { zip: zipped, packHash: sha256hex(zipped), manifest, verification };
 }

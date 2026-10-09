@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
+import { childEnv } from '@aoc/kernel';
 import { parseAnchor, serializeAnchor, type AnchorRecord, type ExternalAnchor } from '../anchor-record';
 import { brief, exec, type ExecResult } from '../exec';
 import {
@@ -29,17 +30,32 @@ these files. Push this repository off-host, protect the branch against force-pus
 `;
 
 const REMOTE_REF = 'refs/aoc/anchor-remote';
-const REPO_ENV = [
-  'GIT_DIR',
-  'GIT_WORK_TREE',
-  'GIT_INDEX_FILE',
-  'GIT_OBJECT_DIRECTORY',
-  'GIT_ALTERNATE_OBJECT_DIRECTORIES',
-  'GIT_COMMON_DIR',
-  'GIT_NAMESPACE',
-  'GIT_CEILING_DIRECTORIES',
-  'GIT_DISCOVERY_ACROSS_FILESYSTEM',
-];
+
+/** What signing and pushing take from aocd's environment, on top of the kernel's child allowlist. */
+const SIGN_AND_PUSH_ENV = [
+  'GNUPGHOME',
+  'GIT_SSH_COMMAND',
+  'GIT_SSH',
+  'GIT_ASKPASS',
+  'SSH_AUTH_SOCK',
+] as const;
+
+/**
+ * The environment of every git the anchor code starts (G-46, O-13): the kernel's child allowlist plus the settings
+ * that signing and pushing need — GNUPGHOME (`audit.gnupgHome`, else aocd's own) and the ssh / askpass variables the
+ * deploy key is wired through — and nothing else of aocd's. AOC_* secrets, API keys, tokens, and variables that
+ * would redirect git to another repository (GIT_DIR, GIT_WORK_TREE…) never get through.
+ */
+export function anchorGitEnv(
+  gnupgHome?: string,
+  source: Record<string, string | undefined> = process.env,
+): Record<string, string> {
+  const forwarded: Record<string, string> = {};
+  for (const k of SIGN_AND_PUSH_ENV) if (source[k]) forwarded[k] = source[k]!;
+  if (gnupgHome) forwarded.GNUPGHOME = gnupgHome;
+  return childEnv(source, { ...forwarded, GIT_TERMINAL_PROMPT: '0', LC_ALL: 'C' });
+}
+
 const sameKey = (want: string, fpr: string, primary: string, signer: string) => {
   const id = want.replace(/^0x/i, '');
   if (/^[0-9a-f]{8,40}$/i.test(id))
@@ -76,13 +92,9 @@ export class GitAnchorProvider implements AnchorProvider {
   constructor(private readonly cfg: GitAnchorConfig) {}
 
   private run(args: string[], opts: { input?: string; timeoutMs?: number } = {}): Promise<ExecResult> {
-    const env: NodeJS.ProcessEnv = { ...process.env, GIT_TERMINAL_PROMPT: '0', LC_ALL: 'C' };
-    // An inherited GIT_DIR / GIT_WORK_TREE (aocd started from a hook, a test runner…) must never redirect anchors.
-    for (const k of REPO_ENV) delete env[k];
-    if (this.cfg.gnupgHome) env.GNUPGHOME = this.cfg.gnupgHome;
     return exec(this.cfg.gitBin ?? 'git', ['-c', 'core.hooksPath=/dev/null', ...args], {
       cwd: this.cfg.repoPath,
-      env,
+      env: anchorGitEnv(this.cfg.gnupgHome),
       ...opts,
     });
   }

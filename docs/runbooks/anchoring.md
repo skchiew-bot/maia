@@ -38,6 +38,12 @@
    denial of service), though it cannot rewrite or delete history on a protected remote. Recovery needs an
    operator: remove the bogus file with a new commit on the remote, then bring the local anchor repository level
    with the remote (fetch and fast-forward) so that pushes succeed again. The history keeps both.
+
+   The anchor git (and the `openssl` of the RFC 3161 provider) does not inherit aocd's environment: it gets `PATH`,
+   `HOME`, the locale, proxy and CA settings, plus `GNUPGHOME` (`audit.gnupgHome`, else aocd's own),
+   `GIT_SSH_COMMAND`, `GIT_SSH`, `GIT_ASKPASS` and `SSH_AUTH_SOCK` when aocd has them. Wire the deploy key through
+   one of those or through `~/.ssh/config` of the service user. Anything else (`GITHUB_TOKEN`, cloud credentials,
+   `AOC_*`) never reaches git.
 4. **Commit signing.** `mod-audit` signs anchor commits with OpenPGP when it is given a key id (the module
    option `gpgKeyId`, with an optional `GNUPGHOME`); Verify then rejects unsigned commits and commits signed by
    another key. **`aocd` cannot pass that option yet** (threat model O-11), so anchor commits are unsigned in the

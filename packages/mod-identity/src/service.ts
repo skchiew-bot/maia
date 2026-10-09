@@ -27,7 +27,8 @@ export const TOKEN_SHOWN_ONCE_NOTE =
   'Store this token now: it is shown only once and cannot be recovered (only its hash is kept).';
 
 const USER_KINDS: readonly IdentityTokenKind[] = ['user', 'web_session'];
-const INGEST_KINDS: readonly IdentityTokenKind[] = ['ingest_session', 'observer', 'system'];
+const INGEST_KINDS: readonly IdentityTokenKind[] = ['ingest_session', 'ingest_sidecar', 'observer', 'system'];
+const SESSION_TOKEN_KIND = { session: 'ingest_session', sidecar: 'ingest_sidecar' } as const;
 const DAY_MS = 86_400_000;
 const MAX_COOKIE_AGE_S = 400 * 86_400;
 
@@ -323,6 +324,14 @@ export class IdentityServiceImpl implements IdentityService {
     return this.issue('ingest_session', { sessionId }, actor).token;
   }
 
+  /**
+   * Sidecar token (`aoc_c_…`) of one managed session: only the session's sidecar reports its heartbeats, activity,
+   * usage, throttles and process exits. Never in the claude environment, unlike the session token (G-44).
+   */
+  issueSidecarToken(sessionId: string, actor: Actor = IDENTITY_SYSTEM_ACTOR): string {
+    return this.issue('ingest_sidecar', { sessionId }, actor).token;
+  }
+
   /** Observer token (`aoc_o_…`) for `aoc hooks install-observed`: observed, read-only sessions. */
   issueObserverToken(actor: Actor = IDENTITY_SYSTEM_ACTOR, opts: IssueTokenOptions = {}): string {
     return this.issueObserver(actor, opts).token;
@@ -380,8 +389,17 @@ export class IdentityServiceImpl implements IdentityService {
     return events.map((e) => e.meta.tokenId);
   }
 
-  revokeIngestTokensFor(sessionId: string, actor: Actor = IDENTITY_SYSTEM_ACTOR): void {
-    const rows = this.liveTokenRows("kind = 'ingest_session' AND session_id = ?", sessionId);
+  revokeIngestTokensFor(
+    sessionId: string,
+    actor: Actor = IDENTITY_SYSTEM_ACTOR,
+    kind?: 'session' | 'sidecar',
+  ): void {
+    const kinds = kind ? [SESSION_TOKEN_KIND[kind]] : Object.values(SESSION_TOKEN_KIND);
+    const rows = this.liveTokenRows(
+      `kind IN (${kinds.map(() => '?').join(', ')}) AND session_id = ?`,
+      ...kinds,
+      sessionId,
+    );
     if (rows.length) this.ctx.store.appendMany(rows.map((r) => this.revokedEvent(r, 'session_ended', actor)));
   }
 
@@ -465,8 +483,10 @@ export class IdentityServiceImpl implements IdentityService {
   verifyIngestToken(token: string): IngestPrincipal | null {
     const r = this.checkIngestCredential(token);
     if (!r.ok) return null;
-    if (r.row.kind === 'ingest_session')
-      return r.row.session_id ? { kind: 'session', sessionId: r.row.session_id, tokenId: r.row.id } : null;
+    if (r.row.kind === 'ingest_session' || r.row.kind === 'ingest_sidecar') {
+      const kind = r.row.kind === 'ingest_session' ? 'session' : 'sidecar';
+      return r.row.session_id ? { kind, sessionId: r.row.session_id, tokenId: r.row.id } : null;
+    }
     return r.row.kind === 'observer'
       ? { kind: 'observer', tokenId: r.row.id }
       : { kind: 'system', tokenId: r.row.id };

@@ -359,7 +359,7 @@ export function formatRatio(ratio: number): string {
   return `${ratio.toFixed(1)}×`;
 }
 
-/** Stable display order for the seven signals; unknown signals keep their server order after them. */
+/** Stable display order for the signals; unknown signals keep their server order after them. */
 export function orderAnomalies(rows: readonly TowerAnomaly[], order: readonly AnomalySignal[]): TowerAnomaly[] {
   const idx = (s: string) => {
     const i = (order as readonly string[]).indexOf(s);

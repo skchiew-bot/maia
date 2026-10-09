@@ -5,6 +5,11 @@ import {
   computeProgress,
   deriveLiveness,
   hasPermission,
+  ID_PREFIX,
+  idKindOf,
+  INTAKE_ENVELOPE_BYTES,
+  intakeRequestBytes,
+  intakeTotalBytes,
   newId,
   requiredRoleFor,
   requiresPasskey,
@@ -86,6 +91,13 @@ describe('roles & decisions (§6)', () => {
     expect(hasPermission('requester', 'mapping.stamp', { complianceLead: true })).toBe(false);
   });
 
+  it('keeps an on-demand backup of the audit state with the Approver (audit.backup), apart from audit.verify', () => {
+    expect(hasPermission('approver', 'audit.backup')).toBe(true);
+    expect(hasPermission('builder', 'audit.backup')).toBe(false);
+    expect(hasPermission('requester', 'audit.backup')).toBe(false);
+    expect(hasPermission('builder', 'audit.verify')).toBe(true);
+  });
+
   it('labels a bearer-token button as attribution and only a verified passkey as a signature (G-29)', () => {
     const label = (method: 'button' | 'passkey' | 'policy', passkeyVerified: boolean) =>
       RESOLUTION_ASSURANCE_LABEL[resolutionAssurance({ method, passkeyVerified })];
@@ -148,6 +160,9 @@ describe('registry + config + misc', () => {
   it('defaults config and builds ids/paths', () => {
     expect(AocConfigSchema.parse({}).port).toBe(7420);
     expect(newId('session')).toMatch(/^ses_[0-9A-Z]{26}$/);
+    expect(ID_PREFIX.backup).toBe('bkp');
+    expect(newId('backup')).toMatch(/^bkp_[0-9A-Z]{26}$/);
+    expect(idKindOf(newId('backup'))).toBe('backup');
     expect(transcriptPathFor('/home/u/my.repo', 'abc', '/h/.claude')).toBe('/h/.claude/projects/-home-u-my-repo/abc.jsonl');
   });
   // Expected slugs were produced by the slug function embedded in the Claude Code 2.1.295 binary (research C11).
@@ -161,5 +176,21 @@ describe('registry + config + misc', () => {
     // Non-ASCII characters count as one UTF-16 unit each and become '-'.
     expect(projectSlug('/srv/wörk/' + 'x'.repeat(195))).toBe('-srv-w-rk-' + 'x'.repeat(190) + '-q0c2ns');
     expect(projectSlug('/tmp/aoc-capture/work')).toBe('-tmp-aoc-capture-work');
+  });
+});
+
+describe('intake upload allowance', () => {
+  it('has one total, shared by the published limits and every request-body cap: one maximum-size video', () => {
+    const defaults = AocConfigSchema.parse({}).intake;
+    expect(intakeTotalBytes(defaults)).toBe(200 * 1024 * 1024);
+    expect(INTAKE_ENVELOPE_BYTES).toBe(1024 * 1024);
+    expect(intakeRequestBytes(defaults)).toBe(200 * 1024 * 1024 + INTAKE_ENVELOPE_BYTES);
+
+    // Not attachments x the largest single allowance: more attachments never raise the total.
+    const many = AocConfigSchema.parse({
+      intake: { maxVideoBytes: 4096, maxImageBytes: 1024, maxAttachments: 9 },
+    }).intake;
+    expect(intakeTotalBytes(many)).toBe(4096);
+    expect(intakeRequestBytes(many)).toBe(4096 + INTAKE_ENVELOPE_BYTES);
   });
 });

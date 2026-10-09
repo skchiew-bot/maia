@@ -1,7 +1,7 @@
 import type { Context } from 'hono';
 import type { z } from 'zod';
 import type { AocConfig, AuthContext, IngestPrincipal, Permission } from '@aoc/contracts';
-import { hasPermission, INGEST_PATHS } from '@aoc/contracts';
+import { hasPermission, INGEST_GIT_PREFIX, INGEST_PATHS, intakeRequestBytes, MAX_PUSH_BYTES } from '@aoc/contracts';
 import { EventValidationError } from '../store/event-store';
 import type { AppEnv } from './module';
 
@@ -30,11 +30,17 @@ export function requirePermission(c: Ctx, perm: Permission): AuthContext {
   return auth;
 }
 
-/** Ingest auth: session tokens may only write for their own session; observer tokens only observed events. */
-export function requireIngest(c: Ctx, opts: { sessionId?: string | null; allowObserver?: boolean; allowSystem?: boolean } = {}): IngestPrincipal {
+/**
+ * Ingest auth: session (and sidecar) tokens may only write for their own session; observer tokens only observed
+ * events. A sidecar token is refused unless the route asks for it (`allowSidecar`): it never posts hooks or MCP calls.
+ */
+export function requireIngest(
+  c: Ctx,
+  opts: { sessionId?: string | null; allowObserver?: boolean; allowSystem?: boolean; allowSidecar?: boolean } = {},
+): IngestPrincipal {
   const p = c.get('ingest');
   if (!p) throw new HttpError(401, 'unauthenticated', 'Ingest token required');
-  if (p.kind === 'session') {
+  if (p.kind === 'session' || (p.kind === 'sidecar' && opts.allowSidecar)) {
     if (opts.sessionId && opts.sessionId !== p.sessionId) throw new HttpError(403, 'forbidden', 'Token not valid for this session');
     return p;
   }
@@ -77,19 +83,24 @@ export function errorResponse(err: unknown, c: Ctx): Response {
 
 const MiB = 1024 * 1024;
 /** Request-body caps (bytes). The spool carries batches of hook bodies; hook bodies carry tool input/output. */
-export const MAX_BODY_BYTES = { spool: 64 * MiB, ingest: 16 * MiB, api: 4 * MiB, formOverhead: MiB } as const;
+export const MAX_BODY_BYTES = {
+  spool: 64 * MiB,
+  ingest: 16 * MiB,
+  /** A session's push through the supervisor's gateway carries a git pack. */
+  push: MAX_PUSH_BYTES,
+  api: 4 * MiB,
+} as const;
 
 /**
  * Cap for a request path, enforced before authentication or any parsing so an anonymous client cannot make the
- * sole-writer daemon buffer an unbounded body. Intake uploads get the configured attachment allowance (§7).
+ * sole-writer daemon buffer an unbounded body. Intake uploads get the intake module's total allowance plus the form
+ * envelope (§7): the very number `GET /portal/api/limits` publishes, from one function in @aoc/contracts.
  */
 export function bodyLimitFor(path: string, config: AocConfig): number {
   if (path === INGEST_PATHS.spool) return MAX_BODY_BYTES.spool;
+  if (path.startsWith(INGEST_GIT_PREFIX)) return MAX_BODY_BYTES.push;
   if (path.startsWith('/ingest/')) return MAX_BODY_BYTES.ingest;
-  if (path.startsWith('/portal/')) {
-    const i = config.intake;
-    return i.maxAttachments * Math.max(i.maxImageBytes, i.maxVideoBytes) + MAX_BODY_BYTES.formOverhead;
-  }
+  if (path.startsWith('/portal/')) return intakeRequestBytes(config.intake);
   return MAX_BODY_BYTES.api;
 }
 

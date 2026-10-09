@@ -68,6 +68,11 @@ export class DevIdentityService implements IdentityService {
     this.ingest.set(token, { kind: 'session', sessionId, tokenId: newId('token') });
     return token;
   }
+  issueSidecarToken(sessionId: string, _actor: Actor): string {
+    const token = `aoc_c_${randomBytes(18).toString('hex')}`;
+    this.ingest.set(token, { kind: 'sidecar', sessionId, tokenId: newId('token') });
+    return token;
+  }
   issueObserverToken(): string {
     const token = `aoc_o_${randomBytes(18).toString('hex')}`;
     this.ingest.set(token, { kind: 'observer', tokenId: newId('token') });
@@ -78,8 +83,11 @@ export class DevIdentityService implements IdentityService {
     this.ingest.set(token, { kind: 'system', tokenId: newId('token') });
     return token;
   }
-  revokeIngestTokensFor(sessionId: string): void {
-    for (const [k, v] of this.ingest) if (v.kind === 'session' && v.sessionId === sessionId) this.ingest.delete(k);
+  revokeIngestTokensFor(sessionId: string, _actor?: Actor, kind?: 'session' | 'sidecar'): void {
+    for (const [k, v] of this.ingest) {
+      if ((v.kind === 'session' || v.kind === 'sidecar') && v.sessionId === sessionId && (!kind || v.kind === kind))
+        this.ingest.delete(k);
+    }
   }
   verifyIngestToken(token: string): IngestPrincipal | null {
     return this.ingest.get(token) ?? null;
