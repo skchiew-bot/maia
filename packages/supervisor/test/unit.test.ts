@@ -332,7 +332,7 @@ describe('stream-json reader', () => {
         api_error_status: 429,
       }),
     );
-    expect(res.result).toEqual({ isError: true, subtype: 'success', text: 'boom', apiErrorStatus: 429 });
+    expect(res.result).toEqual({ isError: true, subtype: 'success', text: 'boom', apiErrorStatus: 429, modelUsage: null });
     const rl = readStreamLine(
       JSON.stringify({
         type: 'rate_limit_event',

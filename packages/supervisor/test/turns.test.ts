@@ -256,14 +256,34 @@ describe('turn end: crash, auto-continue, completion, credit cap', () => {
     expect(h.callsFor(id).length).toBe(1);
   });
 
-  it("keeps an ended session's ingest token valid until its sidecar has made the final usage flush", async () => {
+  it('stops the sidecar as soon as its turn ends, and revokes its token once that last report is in', async () => {
+    h = await createHarness({ sidecarHold: true, supervisor: { autoContinueLimit: 1 } });
+    h.ledger.defaultPct = 100;
+    const id = await h.launch('Finish');
+    await h.waitLifecycle(id, 'ended');
+    const ended = Date.now();
+    // the session token dies with the session; the sidecar is told to report what is left at once, not after the grace
+    expect(h.t.identity!.verifyIngestToken(h.callsFor(id)[0]!.env.AOC_INGEST_TOKEN!)).toBeNull();
+    await h.waitFor(() => h!.sidecarSignals().length === 1, 'sidecar stopped', 3_000);
+    expect(h.sidecarSignals()[0]!.at - ended).toBeLessThan(2_000);
+    const sidecarToken = h.sidecarCalls()[0]!.env.AOC_INGEST_TOKEN!;
+    // … with its token still valid while it does
+    expect(h.t.identity!.verifyIngestToken(sidecarToken)).toMatchObject({ kind: 'sidecar', sessionId: id });
+    h.releaseSidecars();
+    await h.waitFor(() => h!.t.identity!.verifyIngestToken(sidecarToken) === null, 'sidecar token revoked');
+  });
+
+  it("keeps an ended session's sidecar token valid until its sidecar has made the final usage flush", async () => {
     h = await createHarness({ supervisor: { autoContinueLimit: 1 }, module: { sidecarGraceMs: 1_000 }, env: { FAKE_SIDECAR_LINGER: '1' } });
     h.ledger.defaultPct = 100;
     const id = await h.launch('Finish');
     await h.waitLifecycle(id, 'ended');
-    const token = h.callsFor(id)[0]!.env.AOC_INGEST_TOKEN!;
+    // The session token is in the model's environment: it dies with the session (G-44).
+    expect(h.t.identity!.verifyIngestToken(h.callsFor(id)[0]!.env.AOC_INGEST_TOKEN!)).toBeNull();
+    const token = h.sidecarCalls()[0]!.env.AOC_INGEST_TOKEN!;
     // The sidecar reports the last turn's usage only after claude has exited: refusing it would lose that usage.
-    expect(h.t.identity!.verifyIngestToken(token)).not.toBeNull();
+    expect(h.t.identity!.verifyIngestToken(token)).toMatchObject({ kind: 'sidecar', sessionId: id });
+    // This sidecar never announced it handles SIGTERM, so it gets it after the grace.
     await h.waitFor(() => h!.sidecarCalls().some((c) => 'sigterm' in c), 'the sidecar to be sent SIGTERM after the grace');
     await h.waitRevoked(token);
   });

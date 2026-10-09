@@ -144,17 +144,19 @@ describe('token storage', () => {
         expect: 201,
       });
       const ingest = service.issueIngestToken('ses_TEST1', { kind: 'system', id: 'supervisor' });
+      const sidecar = service.issueSidecarToken('ses_TEST1', { kind: 'system', id: 'supervisor' });
       const system = service.issueSystemToken();
-      const tokens = [owner.token, personal.token, session, observer.token, ingest, system];
+      const tokens = [owner.token, personal.token, session, observer.token, ingest, sidecar, system];
       expect(tokens.map((x) => x.slice(0, 6))).toEqual([
         'aoc_u_',
         'aoc_u_',
         'aoc_w_',
         'aoc_o_',
         'aoc_i_',
+        'aoc_c_',
         'aoc_s_',
       ]);
-      for (const tok of tokens) expect(tok).toMatch(/^aoc_[uwios]_[0-9A-Za-z]{43}$/);
+      for (const tok of tokens) expect(tok).toMatch(/^aoc_[uwicos]_[0-9A-Za-z]{43}$/);
 
       const events = t.rt.store.list({ limit: 10_000 });
       const issued = events.filter((e) => e.type === 'token.issued');
@@ -756,6 +758,59 @@ describe('ingest tokens', () => {
       ['session_ended', 'ses_A', 'supervisor'],
       ['session_ended', 'ses_A', 'supervisor'],
     ]);
+    await t.close();
+  });
+
+  it('give a session sidecar its own principal: only routes that ask for it, only its session, revoked on its own', async () => {
+    const probe: AocModule = {
+      name: 'probe',
+      routes(app) {
+        app.post('/ingest/probe/:sessionId', (c) =>
+          c.json(requireIngest(c, { sessionId: c.req.param('sessionId') })),
+        );
+        app.post('/ingest/sidecar-probe/:sessionId', (c) =>
+          c.json(requireIngest(c, { sessionId: c.req.param('sessionId'), allowSidecar: true })),
+        );
+      },
+    };
+    const t = await createTestRuntime({ modules: [createIdentityModule({ bootstrap: false }), probe] });
+    const service = identityServiceOf(t.rt.services);
+    const supervisor = { kind: 'system' as const, id: 'supervisor' };
+    const session = service.issueIngestToken('ses_A', supervisor);
+    const sidecar = service.issueSidecarToken('ses_A', supervisor);
+    const otherSidecar = service.issueSidecarToken('ses_B', supervisor);
+    const bearer = (tok: string) => ({ authorization: `Bearer ${tok}` });
+    const status = async (path: string, tok: string) =>
+      (await t.request('POST', path, { headers: bearer(tok) })).status;
+
+    expect(service.verifyIngestToken(sidecar)).toMatchObject({ kind: 'sidecar', sessionId: 'ses_A' });
+    expect(service.authenticate(sidecar)).toBeNull();
+    expect((await t.request('GET', '/api/auth/me', { headers: bearer(sidecar) })).status).toBe(401);
+    // hooks and MCP calls (routes that do not ask for a sidecar) refuse it, even for its own session
+    expect(await status('/ingest/probe/ses_A', sidecar)).toBe(403);
+    expect(await status('/ingest/sidecar-probe/ses_A', sidecar)).toBe(200);
+    expect(await status('/ingest/sidecar-probe/ses_B', sidecar)).toBe(403);
+    expect(await status('/ingest/sidecar-probe/ses_A', session)).toBe(200); // the route decides what a session token may report
+
+    // the session token dies at session end; the sidecar's lives until its last report is in
+    service.revokeIngestTokensFor('ses_A', supervisor, 'session');
+    expect(service.verifyIngestToken(session)).toBeNull();
+    expect(service.verifyIngestToken(sidecar)).toMatchObject({ kind: 'sidecar' });
+    service.revokeIngestTokensFor('ses_A', supervisor, 'sidecar');
+    expect(service.verifyIngestToken(sidecar)).toBeNull();
+    expect(await status('/ingest/sidecar-probe/ses_A', sidecar)).toBe(401);
+    // without a kind, both go
+    const bSession = service.issueIngestToken('ses_B', supervisor);
+    service.revokeIngestTokensFor('ses_B', supervisor);
+    expect([service.verifyIngestToken(bSession), service.verifyIngestToken(otherSidecar)]).toEqual([null, null]);
+    expect(
+      service.listTokens({ kind: 'ingest_sidecar' }).map((x) => [x.sessionId, x.status, x.revokeReason]),
+    ).toEqual(
+      expect.arrayContaining([
+        ['ses_A', 'revoked', 'session_ended'],
+        ['ses_B', 'revoked', 'session_ended'],
+      ]),
+    );
     await t.close();
   });
 });
