@@ -1875,6 +1875,7 @@ export class Supervisor implements SupervisorService {
             prompt: rolloverPrompt(s.sessionId, s.threadId),
             cwd: s.cwd,
             ticketId: s.ticketId,
+            changeId: s.changeId,
             parentSessionId: s.sessionId,
             brief: brief.text,
             idempotencyKey: `rollover:${startedEvent.id}`,
