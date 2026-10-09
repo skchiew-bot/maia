@@ -156,6 +156,7 @@ export function DecisionCard({ decision: d, session, onResolved }: DecisionCardP
       <h3 id={titleId} className="console-dcard__q">
         {d.title}
       </h3>
+      {d.question && d.question !== d.title && <p className="console-dcard__ask">{d.question}</p>}
       {session && (
         <p className="console-dcard__src">
           {session.projectName ?? 'No project'} ·{' '}

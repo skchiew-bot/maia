@@ -53,6 +53,7 @@ export function SessionDecisions({ decisions, nameOf, now, onResolved }: Session
         cell: (d) => (
           <span className="session-dlog__q">
             {d.title}
+            {d.question && d.question !== d.title && <span className="session-dlog__ask">{d.question}</span>}
             <span className="session-dlog__kind">
               {DECISION_KIND_WORD[d.kind] ?? d.kind} <TestChip test={d.test} />
             </span>

@@ -48,6 +48,24 @@ const feed = [
   { seq: 90, id: 'evt_1', ts: ago(150), type: 'drift.detected', actor: { kind: 'system', id: 'ledger' }, scope: { sessionId: 'ses_work' }, meta: { kind: 'off_plan_change', severity: 'medium' }, hash: 'c'.repeat(64) },
 ];
 
+/** matchMedia that reports a phone-width viewport (≤640px). Returns a restore function. */
+function stubPhoneWidth(): () => void {
+  const previous = window.matchMedia;
+  window.matchMedia = ((query: string) => ({
+    matches: query.includes('max-width: 640px'),
+    media: query,
+    onchange: null,
+    addEventListener: () => undefined,
+    removeEventListener: () => undefined,
+    addListener: () => undefined,
+    removeListener: () => undefined,
+    dispatchEvent: () => false,
+  })) as unknown as typeof window.matchMedia;
+  return () => {
+    window.matchMedia = previous;
+  };
+}
+
 describe('SessionPage', () => {
   let session: SessionDetail;
   let posts: { url: string; body: unknown }[];
@@ -86,6 +104,7 @@ describe('SessionPage', () => {
               sessionId: 'ses_work',
               status: 'resolved',
               title: 'Store summaries as JSONB?',
+              question: 'JSONB column on summaries, or a table of its own?',
               test: 'irreversible',
               options: [
                 { id: 'jsonb', label: 'JSONB column' },
@@ -170,6 +189,7 @@ describe('SessionPage', () => {
     expect(await within(decisions).findByRole('heading', { name: 'Merge summariser into main?' })).toBeInTheDocument();
     const log = within(decisions).getByRole('table', { name: 'Decisions this session raised' });
     expect(within(log).getByText('JSONB column (recommended)')).toBeInTheDocument();
+    expect(within(log).getByText('JSONB column on summaries, or a table of its own?')).toBeInTheDocument();
     expect(within(log).getByText('Aisyah Rahman (you)')).toBeInTheDocument();
 
     const lineage = screen.getByRole('region', { name: 'Thread lineage' });
@@ -187,7 +207,7 @@ describe('SessionPage', () => {
     renderSession();
     const ops = await screen.findByRole('region', { name: 'Operator actions' });
     expect(within(ops).getByRole('button', { name: /Restart/ })).toBeDisabled();
-    expect(within(ops).getByText(/is unavailable: Not at a clean task boundary: t4 in progress/)).toBeInTheDocument();
+    expect(within(ops).getByText(/is unavailable\. Not at a clean task boundary: t4 in progress\./)).toBeInTheDocument();
     await user.click(within(ops).getByRole('button', { name: /Nudge/ }));
     const dialog = screen.getByRole('dialog', { name: 'Nudge this session' });
     await user.click(within(dialog).getByRole('button', { name: 'Send nudge' }));
@@ -223,6 +243,18 @@ describe('SessionPage', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Restart' }));
     expect(await within(dialog).findByText(/Another session is this thread’s writer/)).toBeInTheDocument();
     expect(within(dialog).getByRole('link', { name: '…iter01' })).toHaveAttribute('href', '/sessions/ses_other_writer01');
+  });
+
+  it('asks for a shorter first page of events on phones, where each event is a stacked card', async () => {
+    const restore = stubPhoneWidth();
+    try {
+      renderSession();
+      await screen.findByRole('table', { name: 'Events for this session, newest first' });
+      const urls = vi.mocked(fetch).mock.calls.map(([u]) => String(u));
+      expect(urls.filter((u) => u.startsWith('/api/sessions/ses_work/events?'))).toEqual(['/api/sessions/ses_work/events?limit=10']);
+    } finally {
+      restore();
+    }
   });
 
   it('marks observed sessions read-only', async () => {

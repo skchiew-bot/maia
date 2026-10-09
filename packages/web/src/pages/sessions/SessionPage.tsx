@@ -26,7 +26,7 @@ import { LivenessBadge } from '../../components/liveness/LivenessBadge';
 import { PageHeader } from '../../components/PageHeader';
 import { Widget } from '../../components/Widget';
 import { useNow } from '../../lib/clock';
-import { cx } from '../../lib/dom';
+import { cx, useMediaQuery } from '../../lib/dom';
 import { formatAge, formatClock, formatInteger, formatNumber, formatShortDate } from '../../lib/format';
 import { useActivitySeqs } from '../console/useActivitySeqs';
 import { EventFeed, type FeedEvent } from './EventFeed';
@@ -43,6 +43,8 @@ import { ThreadLineage } from './ThreadLineage';
 import './session.css';
 
 const FEED_PAGE = 25;
+/** At ≤640px every event is a stacked card rather than a table row, so the first page is shorter. */
+const FEED_PAGE_PHONE = 10;
 const FEED_MAX = 500;
 
 const enc = encodeURIComponent;
@@ -78,7 +80,8 @@ export default function SessionPage() {
     query: { sessionId: id },
     refreshOn: (m) => aoc(m)?.type.startsWith('decision.') ?? false,
   });
-  const [feedLimit, setFeedLimit] = useState(FEED_PAGE);
+  const phone = useMediaQuery('(max-width: 640px)');
+  const [feedLimit, setFeedLimit] = useState(phone ? FEED_PAGE_PHONE : FEED_PAGE);
   const events = useResource<FeedEvent[]>(`/api/sessions/${enc(id)}/events`, { query: { limit: feedLimit }, refreshOn: mine });
   const metering = useResource<MeteringSessionDTO>(d && d.tokens.length > 0 ? `/api/metering/sessions/${enc(id)}` : null, {
     refreshOn: (m) => mine(m) && /^(usage|throttle|task)\./.test(aoc(m)!.type),

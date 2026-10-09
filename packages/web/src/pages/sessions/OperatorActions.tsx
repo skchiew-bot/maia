@@ -32,6 +32,12 @@ const ACTION_META: Record<ActionId, { label: string; glyph: GlyphName; help: str
 
 const MAX_TEXT = 20_000;
 
+/** A server reason as a sentence: capitalised, with exactly one closing period. */
+function sentence(reason: string): string {
+  const t = reason.trim().replace(/[.\s]+$/, '');
+  return t ? `${t.charAt(0).toUpperCase()}${t.slice(1)}.` : '';
+}
+
 /** The single reason when every action is off for the same cause (observed, not yours, ended). */
 export function sharedBlock(actions: SessionDetail['actions']): string | null {
   const reasons = Object.values(actions).map((a) => (a.enabled ? null : a.reason));
@@ -127,7 +133,7 @@ export function OperatorActions({ session, pendingStop, threadWriter, onDone }: 
                     <>
                       <Glyph name="lock" size={12} />
                       <span>
-                        <strong>{word}</strong> is unavailable: {a.reason ?? 'not allowed right now'}.
+                        <strong>{word}</strong> is unavailable. {sentence(a.reason ?? 'Not allowed right now')}
                       </span>
                     </>
                   )}

@@ -1,4 +1,5 @@
 import type { AmendmentDTO, ManifestPhaseDTO, ManifestTaskDTO } from '@aoc/contracts';
+import { Fragment } from 'react';
 import { Link } from 'react-router-dom';
 import { Icon } from '../../components/Icon';
 import { InlineAlert } from '../../components/EmptyState';
@@ -54,13 +55,29 @@ function TaskStatus({ task, now }: { task: ManifestTaskDTO; now: number }) {
   );
 }
 
+/** Paths and test ids break after a separator rather than mid-name ("src/claims/" + "idempotency.ts"). */
+function Breakable({ text }: { text: string }) {
+  return (
+    <>
+      {text.split(/(?<=[/>])/).map((part, i) => (
+        <Fragment key={i}>
+          {i > 0 && <wbr />}
+          {part}
+        </Fragment>
+      ))}
+    </>
+  );
+}
+
 function Evidence({ task }: { task: ManifestTaskDTO }) {
   if (!task.evidence) return <span className="session-task__none">—</span>;
   const e = task.evidence;
   return (
     <span className={cx('session-evidence', !e.verified && 'is-unverified')} title={e.ref}>
       <span className="session-evidence__kind">{e.kind}</span>
-      <code className="session-evidence__ref">{evidenceRef(e.kind, e.ref)}</code>
+      <code className="session-evidence__ref">
+        <Breakable text={evidenceRef(e.kind, e.ref)} />
+      </code>
       {!e.verified && <span className="session-evidence__note">unverified</span>}
     </span>
   );

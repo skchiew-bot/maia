@@ -204,6 +204,8 @@ describe('ConsolePage', () => {
     expect(within(cards[1]!).getByRole('link', { name: /Approve with passkey/ })).toHaveAttribute('href', '/decisions#dec_gate');
     expect(within(cards[2]!).getByText('An Approver decides')).toBeInTheDocument();
     expect(within(cards[0]!).getByText('Agent recommends')).toBeInTheDocument();
+    // the headline and, under it, the question the agent actually asked
+    expect(within(cards[0]!).getByText('Overnight batches, one transaction now, or derive on read?')).toBeInTheDocument();
 
     await user.click(within(cards[0]!).getByRole('button', { name: 'Approve: Batches of 5,000, 01:00–04:00' }));
     await waitFor(() => expect(posts).toHaveLength(1));

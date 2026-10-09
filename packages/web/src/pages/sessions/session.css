@@ -709,6 +709,16 @@ details[open] > .session-phase__summary .session-phase__chev {
   flex-direction: column;
   line-height: 1.3;
 }
+.session-dlog__ask {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  font-weight: 400;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
 .session-dlog__kind {
   color: var(--text-3);
   font-size: var(--fs-xs);
