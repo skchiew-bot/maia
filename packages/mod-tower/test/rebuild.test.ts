@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { availableParallelism, loadavg, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { AocConfigSchema } from '@aoc/contracts';
@@ -268,15 +268,23 @@ describe('performance', () => {
     expect(projectHistory(h, 100_000)).toBeGreaterThanOrEqual(100_000);
     const model = new TowerReadModel(h.t.rt.ctx);
     model.snapshot(); // warm the statement cache
-    const times: number[] = [];
+    const wall: number[] = [];
+    const cpu: number[] = [];
     for (let i = 0; i < 7; i++) {
+      const c0 = process.cpuUsage();
       const t0 = performance.now();
       const s = model.snapshot();
-      times.push(performance.now() - t0);
+      wall.push(performance.now() - t0);
+      const c = process.cpuUsage(c0);
+      cpu.push((c.user + c.system) / 1000);
       expect(s.attention.length).toBeGreaterThan(0);
     }
-    const median = [...times].sort((a, b) => a - b)[3]!;
-    // Target < 50 ms; the bound leaves headroom for loaded CI machines.
-    expect(median).toBeLessThan(100);
+    const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[3]!;
+    // Target < 50 ms; the bound leaves headroom for a busy machine. The CPU time a read consumes does not depend on
+    // what else the host runs, so it is always bounded. On an overloaded host wall time measures the scheduler, so
+    // it is bounded in CI and wherever the host has headroom (1-minute load below 2 per core).
+    expect(median(cpu)).toBeLessThan(100);
+    const headroom = loadavg()[0]! / availableParallelism() < 2;
+    if (process.env.CI || headroom) expect(median(wall)).toBeLessThan(100);
   }, 120_000);
 });
