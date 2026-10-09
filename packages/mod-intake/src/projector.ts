@@ -12,7 +12,7 @@ const DDL = [
     submitted_at TEXT NOT NULL, updated_at TEXT NOT NULL,
     fix_plan TEXT, fix_plan_session_id TEXT, build_session_id TEXT, build_attempts INTEGER NOT NULL DEFAULT 0,
     triage_round INTEGER NOT NULL DEFAULT 0,
-    uat_ref TEXT, uat_sha TEXT, resolution TEXT
+    uat_ref TEXT, uat_sha TEXT, uat_failed_at TEXT, uat_feedback TEXT, resolution TEXT
   )`,
   `CREATE TABLE IF NOT EXISTS itk_attachments (
     attachment_id TEXT PRIMARY KEY, ticket_id TEXT NOT NULL, sha256 TEXT NOT NULL, mime TEXT NOT NULL, bytes INTEGER NOT NULL,
@@ -111,11 +111,16 @@ export const intakeProjector: Projector = {
         stage(db, m.ticketId as string, 'building', e.ts);
         break;
       case 'ticket.uat_ready':
-        db.prepare('UPDATE itk_tickets SET uat_ref = ?, uat_sha = ? WHERE ticket_id = ?').run(m.uatRef as string, m.uatSha as string, m.ticketId as string);
+        // A new build to test: earlier UAT feedback is answered.
+        db.prepare('UPDATE itk_tickets SET uat_ref = ?, uat_sha = ?, uat_failed_at = NULL, uat_feedback = NULL WHERE ticket_id = ?').run(m.uatRef as string, m.uatSha as string, m.ticketId as string);
         stage(db, m.ticketId as string, 'uat', e.ts);
         break;
       case 'ticket.uat_result':
-        if (m.verdict === 'fail') stage(db, m.ticketId as string, 'building', e.ts);
+        // A failed UAT goes back through read-only triage and the fix-plan gate before another build.
+        if (m.verdict === 'fail') {
+          db.prepare('UPDATE itk_tickets SET uat_failed_at = ?, uat_feedback = ? WHERE ticket_id = ?').run(e.ts, p ? (s(p.comment) ?? '') : '[erased]', m.ticketId as string);
+          stage(db, m.ticketId as string, 'triage', e.ts);
+        }
         break;
       case 'ticket.golive_requested':
         stage(db, m.ticketId as string, 'go_live_gate', e.ts);
@@ -167,7 +172,9 @@ export const intakeProjector: Projector = {
     }
   },
   onErase(db, scopeId) {
-    db.prepare("UPDATE itk_tickets SET title = '[erased]', description = '[erased]', comment = NULL, fix_plan = CASE WHEN fix_plan IS NULL THEN NULL ELSE '[erased]' END WHERE ticket_id = ?").run(scopeId);
+    db.prepare(
+      "UPDATE itk_tickets SET title = '[erased]', description = '[erased]', comment = NULL, fix_plan = CASE WHEN fix_plan IS NULL THEN NULL ELSE '[erased]' END, uat_feedback = CASE WHEN uat_feedback IS NULL THEN NULL ELSE '[erased]' END WHERE ticket_id = ?",
+    ).run(scopeId);
     db.prepare("UPDATE itk_attachments SET file_name = '[erased]' WHERE ticket_id = ?").run(scopeId);
     // Diagnoses are written under the ticket's key scope and routinely quote the ticket's personal data.
     db.prepare(

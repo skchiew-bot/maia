@@ -190,9 +190,21 @@ describe('ticket lifecycle', () => {
     await t.json('POST', `/portal/api/tickets/${ticketId}/uat`, { headers: req.headers, body: { verdict: 'fail', comment: 'Still blank on Safari' } });
     await t.drain();
     expect(s.errors[0]).toMatchObject({ source: 'uat', priority: 'high' });
+    // The feedback is reviewed before any build turn: read-only re-triage, then the fix-plan gate (G-45).
+    expect(s.launches.filter((l) => l.processType === 'bug-fix')).toHaveLength(1);
+    const retriage = s.launches.filter((l) => l.processType === 'bug-triage').slice(2);
+    expect(retriage).toHaveLength(2);
+    expect(retriage[0]!.prompt).toMatch(/re-diagnosis/);
+    expect(retriage[0]!.prompt).toContain('Still blank on Safari');
+    await report(retriage[0]!.sessionId, 0.9, 'safari-render');
+    await report(retriage[1]!.sessionId, 0.9, 'safari-render');
+    await t.drain();
+    const revised = t.decisions!.list({ subjectId: ticketId, kind: ['fix_plan'], status: ['open'] })[0]!;
+    await t.decisions!.resolve(revised.id, { optionId: 'approve' }, approver.user);
+    await t.drain();
     const rebuild = s.launches.filter((l) => l.processType === 'bug-fix');
     expect(rebuild).toHaveLength(2);
-    expect(rebuild[1]!.prompt).toMatch(/UAT_FEEDBACK/);
+    expect(rebuild[1]!.prompt).not.toContain('Still blank on Safari');
     endBuild(rebuild[1]!.sessionId);
     await t.drain();
     await t.json('POST', `/portal/api/tickets/${ticketId}/uat`, { headers: req.headers, body: { verdict: 'pass' } });
@@ -209,7 +221,7 @@ describe('ticket lifecycle', () => {
     expect((await t.json<PublicTicket>('GET', `/portal/api/tickets/${ticketId}`, { headers: req.headers })).statusLabel).toBe('Completed');
     const internal = await t.json<InternalTicket>('GET', `/api/tickets/${ticketId}`, { headers: approver.headers });
     expect(internal.resolution).toBe('fixed');
-    expect(internal.diagnoses).toHaveLength(2);
+    expect(internal.diagnoses).toHaveLength(4);
     expect((await t.request('GET', `/api/tickets/${ticketId}`, { headers: req.headers })).status).toBe(403);
   });
 
