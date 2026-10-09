@@ -2,15 +2,11 @@
 import type { SessionDetail, StoredEvent } from '@aoc/contracts';
 import { waitFor, type Harness, type TestUser } from './harness';
 
-/**
- * POST /api/sessions; `scenario` is a claude-sim scenario name or the path of a scenario JSON file. The marker is on
- * its own line: the first line becomes the thread title, and a rollover brief (which carries the title into the
- * successor's first turn) would otherwise hand the successor the predecessor's scenario.
- */
+/** POST /api/sessions; `scenario` is a claude-sim scenario name or the path of a scenario JSON file. */
 export async function launchSim(h: Harness, as: TestUser, projectId: string, scenario: string, processType = 'feature-build'): Promise<string> {
   const r = await h.api<{ sessionId: string }>('POST', '/api/sessions', {
     as,
-    body: { processType, projectId, prompt: `Work through your plan.\n[[scenario:${scenario}]]` },
+    body: { processType, projectId, prompt: `Work through your plan. [[scenario:${scenario}]]` },
     expect: 201,
   });
   return r.sessionId;
