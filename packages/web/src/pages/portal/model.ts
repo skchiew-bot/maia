@@ -78,13 +78,15 @@ export const TESTED_NOTE =
   'Thanks for testing. We are finishing up and will mark this request completed here.';
 
 /**
- * The server moves a request back to "being worked on" as soon as the requester's pass is recorded. Until it has,
- * and for requests whose pass was recorded before it did, "ready for testing" with no test left to answer reads as
- * being worked on, with a thank-you note.
+ * The server moves a request back to "being worked on" as soon as the requester's pass is recorded and says so with
+ * `fixConfirmed` (until a new build needs testing). Until it has moved it, and for requests whose pass was recorded
+ * before it did, "ready for testing" with no test left to answer reads as being worked on. Either way the requester
+ * is thanked rather than promised another test.
  */
-export function viewOf(t: Pick<PublicTicket, 'status' | 'canSignOffUat'>): TicketView {
+export function viewOf(t: Pick<PublicTicket, 'status' | 'canSignOffUat' | 'fixConfirmed'>): TicketView {
   if (t.status === 'ready_for_testing' && !t.canSignOffUat)
     return { status: 'being_worked_on', tested: true, needsYou: false };
+  if (t.status === 'being_worked_on' && t.fixConfirmed) return { status: 'being_worked_on', tested: true, needsYou: false };
   return { status: t.status, tested: false, needsYou: t.status === 'ready_for_testing' };
 }
 

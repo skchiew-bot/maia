@@ -330,7 +330,14 @@ export interface ChangeService {
   createDraft(input: { projectId: string; scope: ChangeScope; title: string; sessionId?: string | null; breakglassId?: string | null }, actor: Actor): Promise<{ changeId: string }>;
   /** Provenance check then a passkey go-live decision; promotion.completed follows approval (meta carries ticketId). */
   requestPromotion(
-    input: { projectId: string; fromRef: string; ticketId?: string | null; changeId?: string | null },
+    input: {
+      projectId: string;
+      fromRef: string;
+      ticketId?: string | null;
+      changeId?: string | null;
+      /** The go-live card's title, for callers that know what the release is in words (an intake ticket). */
+      title?: string | null;
+    },
     actor: Actor,
   ): Promise<{ promotionId: string; decisionId: string | null; refused: string[] | null }>;
 }

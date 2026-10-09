@@ -182,7 +182,11 @@ The supervisor is a module inside aocd (`SupervisorService` in
   --include-partial-messages --mcp-config <mcp.json> --strict-mcp-config --settings <settings.json>
   [--permission-mode <mode>] --append-system-prompt <AOC prompt> [--tools <built-in set>] --allowedTools mcp__aoc …
   [--disallowedTools …] --session-id|--resume <uuid> --model <model> -- <prompt>`. The prompt goes last, after
-  `--`, because the variadic tool flags would otherwise swallow it.
+  `--`, because the variadic tool flags would otherwise swallow it. Nobody can answer a permission prompt in `-p`, so
+  `--allowedTools` is the whole grant: the `aoc` server, the registry type's own `tools.allow`, and `Bash` for a writer
+  type whose entry says nothing about Bash (a registry that names Bash rules, like the shipped types' git verbs, is
+  passed as written; read-only types never get it). Without the grant `git commit` and `npm test` are refused
+  ([research §13.3 D1](research/claude-code-integration.md#133-divergences-found-and-fixed)).
 - **Hook settings** are generated and checked against a strict schema **before** they are written, because Claude
   Code silently ignores invalid settings in `-p` mode. There is one command hook per event, and the command line
   carries no secret.

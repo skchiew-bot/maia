@@ -28,6 +28,21 @@ function scenario(steps: unknown[]): Record<string, string> {
   return { CLAUDE_SIM_SCENARIO: file };
 }
 
+/** The still-allowed plan window, shaped like the one a subscription login prints on 2.1.295. */
+const ALLOWED = {
+  status: 'allowed',
+  resetsAt: expect.any(Number),
+  rateLimitType: 'five_hour',
+  utilization: expect.any(Number),
+  overageStatus: 'rejected',
+  overageDisabledReason: 'org_level_disabled',
+  isUsingOverage: false,
+  unifiedWindows: {
+    five_hour: { utilization: expect.any(Number), resetsAt: expect.any(Number) },
+    seven_day: { utilization: expect.any(Number), resetsAt: expect.any(Number) },
+  },
+};
+
 describe('stream-json', () => {
   it('emits init first and result last, with assistant/user messages mirroring the transcript', async () => {
     const run = await runSim(box, ['-p', '--session-id', SESSION_A, ...STREAM, ...YOLO, 'go']);
@@ -107,7 +122,7 @@ describe('stream-json', () => {
     expect(allowed).toEqual([
       {
         type: 'rate_limit_event',
-        rate_limit_info: { status: 'allowed', resetsAt: expect.any(Number), rateLimitType: 'five_hour' },
+        rate_limit_info: ALLOWED,
         uuid: expect.any(String),
         session_id: SESSION_A,
       },
@@ -267,7 +282,7 @@ describe('usage limit', () => {
         .filter((message) => message.type === 'rate_limit_event')
         .map((message) => message.rate_limit_info),
     ).toEqual([
-      { status: 'allowed', resetsAt: expect.any(Number), rateLimitType: 'five_hour' },
+      ALLOWED,
       { status: 'rejected', resetsAt: RESET, rateLimitType: 'five_hour' },
     ]);
     const result = messages.at(-1)!;

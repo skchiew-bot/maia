@@ -16,6 +16,11 @@ export interface PublicTicket {
   attachments: { attachmentId: string; fileName: string; mime: string; bytes: number }[];
   /** True only when the requester is asked to test on UAT. */
   canSignOffUat: boolean;
+  /**
+   * True once the requester has confirmed the fix on UAT and the request is not complete yet: the portal thanks them
+   * instead of promising another test. False again when a new build needs testing.
+   */
+  fixConfirmed: boolean;
 }
 
 /**

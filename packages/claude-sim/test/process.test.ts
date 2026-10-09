@@ -172,4 +172,72 @@ describe('the claude-sim executable', () => {
     expect(readJsonLines(hookLog).map((input) => input.reason)).toEqual(['other']);
     expect(readTranscript(box, SESSION_A).some((line) => line.type === 'cost-state')).toBe(false);
   }, 30_000);
+
+  // Real Claude Code 2.1.295: SIGINT is not SIGTERM. The turn ends cleanly — the pending tool call is rejected, the
+  // interruption is written down, a result of subtype error_during_execution is printed, the cost state is saved,
+  // SessionEnd fires, no Stop hook runs, and the exit status is 0 (the supervisor relies on this for nudges and stops).
+  it('hang: SIGINT ends the turn cleanly (error_during_execution, aborted_streaming, exit 0) and the session resumes', async () => {
+    const hookLog = box.file('hooks.jsonl');
+    const settings = hookSettings({
+      Stop: [{ command: 'cat >> "$HOOK_LOG"; echo >> "$HOOK_LOG"' }],
+      SessionEnd: [{ command: 'cat >> "$HOOK_LOG"; echo >> "$HOOK_LOG"' }],
+    });
+    const common = ['--session-id', SESSION_A, '--output-format', 'stream-json', '--verbose', '--settings', settings, '--permission-mode', 'acceptEdits'];
+    const hanging = spawnSim(box, ['-p', 'import the rows', ...common], { CLAUDE_SIM_SCENARIO: 'stall', HOOK_LOG: hookLog });
+    await until(() => parseLines(hanging.stdout()).some((message) => message.tool_use_result?.type === 'create'));
+    hanging.child.kill('SIGINT');
+    const run = await hanging.done;
+    expect(run.code).toBe(0);
+    const messages = parseLines(run.stdout);
+    const result = messages.find((message) => message.type === 'result')!;
+    expect(result).toMatchObject({
+      subtype: 'error_during_execution',
+      is_error: true,
+      stop_reason: 'tool_use',
+      terminal_reason: 'aborted_streaming',
+      errors: [expect.stringContaining('[ede_diagnostic]')],
+    });
+    expect(result).not.toHaveProperty('result');
+    expect(messages.at(-1)).toBe(result);
+    expect(messages.filter((message) => message.type === 'user').at(-1)!.message.content).toEqual([
+      { type: 'text', text: '[Request interrupted by user]' },
+    ]);
+    // SessionEnd fires, Stop does not; the cost state is saved.
+    expect(readJsonLines(hookLog).map((input) => input.hook_event_name)).toEqual(['SessionEnd']);
+    expect(readTranscript(box, SESSION_A).filter((line) => line.type === 'cost-state')).toHaveLength(1);
+
+    // The same conversation carries on with a resume.
+    const resumed = await spawnSim(box, ['-p', 'continue', '--resume', SESSION_A, '--output-format', 'stream-json', '--verbose', '--settings', settings, '--permission-mode', 'acceptEdits'], {
+      CLAUDE_SIM_SCENARIO: 'stall',
+      HOOK_LOG: hookLog,
+      CLAUDE_SIM_SPEED: '0.001',
+    }).done;
+    expect(parseLines(resumed.stdout)[0]).toMatchObject({ session_id: SESSION_A });
+  }, 30_000);
+
+  it('a SIGINT while a tool call is pending rejects it: the model reads "User rejected tool use", terminal reason aborted_tools', async () => {
+    fs.writeFileSync(
+      box.file('slow-tool.json'),
+      JSON.stringify({ name: 'slow-tool', steps: [{ kind: 'bash', command: 'sleep 20; echo late', stdout: 'late', exec: true }, { kind: 'endTurn', final: true }] }),
+    );
+    const hanging = spawnSim(
+      box,
+      ['-p', 'go', '--session-id', SESSION_A, '--output-format', 'stream-json', '--verbose', '--dangerously-skip-permissions'],
+      { CLAUDE_SIM_EXEC: '1', CLAUDE_SIM_SCENARIO: box.file('slow-tool.json'), CLAUDE_SIM_SPEED: '1' },
+    );
+    await until(() => parseLines(hanging.stdout()).some((message) => message.type === 'assistant' && JSON.stringify(message).includes('"name":"Bash"')));
+    hanging.child.kill('SIGINT');
+    const run = await hanging.done;
+    expect(run.code).toBe(0);
+    const messages = parseLines(run.stdout);
+    expect(messages.find((message) => message.type === 'result')).toMatchObject({ subtype: 'error_during_execution', terminal_reason: 'aborted_tools' });
+    const rejected = messages.filter((message) => message.type === 'user');
+    expect(rejected.at(-2)!.message.content[0]).toMatchObject({
+      type: 'tool_result',
+      is_error: true,
+      content: expect.stringContaining("The user doesn't want to proceed with this tool use."),
+    });
+    expect(rejected.at(-2)!.tool_use_result).toBe('User rejected tool use');
+    expect(rejected.at(-1)!.message.content).toEqual([{ type: 'text', text: '[Request interrupted by user for tool use]' }]);
+  }, 30_000);
 });
