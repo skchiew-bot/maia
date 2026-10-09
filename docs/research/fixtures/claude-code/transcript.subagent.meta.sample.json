@@ -1,0 +1,8 @@
+{
+  "agentType": "general-purpose",
+  "description": "Reply PONG",
+  "toolUseId": "toolu_014Y8nZdAL2v89VmLaa9KmMX",
+  "spawnDepth": 1,
+  "requestShape": "foreground",
+  "requestNonInteractive": true
+}
