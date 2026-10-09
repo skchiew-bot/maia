@@ -4,8 +4,93 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { GitCommit, GitService } from '@aoc/contracts';
 
+export interface GitRunResult {
+  code: number;
+  stdout: string;
+  stderr: string;
+}
+
+/** Transports git knows natively. Each is denied by name: a repository's own `protocol.<name>.allow` outranks `protocol.allow`. */
+const TRANSPORTS = ['file', 'git', 'ssh', 'http', 'https', 'ftp', 'ftps', 'ext'] as const;
+
+/**
+ * Command-line settings on every git process AOC starts (threat model T-2, gap G-04). Command-line config outranks a
+ * repository's own, so whatever an agent wrote into `.git/config` or `.git/hooks` of a repository AOC reads, git runs
+ * no hook, fsmonitor command, signing or verification program, submodule recursion or automatic gc, and opens no
+ * transport (a crafted partial clone cannot lazy-fetch through `core.sshCommand` or a local remote's `uploadpack`).
+ * An operation that needs one transport allows it after these: the later `-c` wins.
+ */
+export const GIT_SAFETY_ARGS: readonly string[] = Object.entries({
+  'core.hooksPath': '/dev/null',
+  'core.fsmonitor': 'false',
+  'core.attributesFile': '/dev/null',
+  'log.showSignature': 'false',
+  'commit.gpgSign': 'false',
+  'tag.gpgSign': 'false',
+  // %G? and friends verify signatures whatever log.showSignature says: no repository-chosen program may run.
+  'gpg.program': '/dev/null',
+  'gpg.openpgp.program': '/dev/null',
+  'gpg.x509.program': '/dev/null',
+  'gpg.ssh.program': '/dev/null',
+  'submodule.recurse': 'false',
+  'fetch.recurseSubmodules': 'false',
+  'gc.auto': '0',
+  'maintenance.auto': 'false',
+  'protocol.allow': 'never',
+  ...Object.fromEntries(TRANSPORTS.map((t) => [`protocol.${t}.allow`, 'never'])),
+}).flatMap(([k, v]) => ['-c', `${k}=${v}`]);
+
+/**
+ * Environment of git in a repository AOC owns (mod-change's service clones): no system or global config (an agent
+ * that could write aocd's home could otherwise plant hooks, aliases, `url.*.insteadOf` or credential helpers there),
+ * no prompt, no lazy fetch, no home directory.
+ */
+export const GIT_SERVICE_ENV: Readonly<Record<string, string>> = {
+  GIT_CONFIG_NOSYSTEM: '1',
+  GIT_CONFIG_GLOBAL: '/dev/null',
+  GIT_ATTR_NOSYSTEM: '1',
+  GIT_TERMINAL_PROMPT: '0',
+  GIT_NO_LAZY_FETCH: '1',
+  HOME: '/nonexistent',
+};
+
+const SERVICE_ENV_ALLOWLIST = ['PATH', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TZ'] as const;
+
+/** PATH and locale from `source`, then GIT_SERVICE_ENV, then `extra`: nothing else of aocd's environment. */
+export function serviceGitEnv(
+  extra: Record<string, string> = {},
+  source: Record<string, string | undefined> = process.env,
+): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const k of SERVICE_ENV_ALLOWLIST) {
+    const v = source[k];
+    if (typeof v === 'string') env[k] = v;
+  }
+  return { ...env, ...GIT_SERVICE_ENV, ...extra };
+}
+
+const spawnGit = (dir: string, args: string[], env: Record<string, string>, timeoutMs = 60_000): GitRunResult => {
+  const r = spawnSync('git', [...GIT_SAFETY_ARGS, ...args], {
+    cwd: dir,
+    encoding: 'utf8',
+    env,
+    timeout: timeoutMs,
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  return { code: r.status ?? 1, stdout: r.stdout ?? '', stderr: r.stderr ?? (r.error ? String(r.error) : '') };
+};
+
+/** git in a repository AOC owns: argv only, GIT_SAFETY_ARGS first, a scrubbed environment (serviceGitEnv). */
+export function runServiceGit(
+  dir: string,
+  args: string[],
+  opts: { env?: Record<string, string>; timeoutMs?: number } = {},
+): GitRunResult {
+  return spawnGit(dir, args, serviceGitEnv(opts.env), opts.timeoutMs);
+}
+
 function git(dir: string, args: string[], opts: { env?: Record<string, string>; timeoutMs?: number } = {}) {
-  const r = spawnSync('git', args, {
+  const r = spawnSync('git', [...GIT_SAFETY_ARGS, ...args], {
     cwd: dir,
     encoding: 'utf8',
     env: { ...process.env, GIT_TERMINAL_PROMPT: '0', ...opts.env },
@@ -15,7 +100,32 @@ function git(dir: string, args: string[], opts: { env?: Record<string, string>; 
   return { code: r.status ?? 1, stdout: r.stdout ?? '', stderr: r.stderr ?? (r.error ? String(r.error) : '') };
 }
 
-/** Thin wrapper over the git CLI (argument arrays only — never a shell). */
+/**
+ * Env-config entries that switch off every filter driver `dir` defines: a driver's clean or process command runs on
+ * `git status` and `git diff`, as whoever runs them. They go in GIT_CONFIG_KEY_n / VALUE_n because a driver name
+ * may contain "=", which `-c` cannot express; they outrank the repository's config like `-c` does.
+ */
+export function filterDriverOverrides(dir: string): Record<string, string> {
+  const names = new Set<string>();
+  for (const rec of git(dir, ['config', '-z', '--get-regexp', '^filter\\.']).stdout.split('\0')) {
+    const m = /^filter\.(.+)\.[a-z]+$/s.exec(rec.split('\n', 1)[0] ?? '');
+    if (m) names.add(m[1]!);
+  }
+  const entries = [...names].flatMap((n) => [
+    [`filter.${n}.clean`, ''],
+    [`filter.${n}.smudge`, ''],
+    [`filter.${n}.process`, ''],
+    [`filter.${n}.required`, 'false'],
+  ]);
+  const env: Record<string, string> = { GIT_CONFIG_COUNT: String(entries.length) };
+  entries.forEach(([k, v], i) => {
+    env[`GIT_CONFIG_KEY_${i}`] = k!;
+    env[`GIT_CONFIG_VALUE_${i}`] = v!;
+  });
+  return env;
+}
+
+/** Thin wrapper over the git CLI (argument arrays only — never a shell; GIT_SAFETY_ARGS on every call). */
 export function createGitService(): GitService {
   const svc: GitService = {
     isRepo: (dir) => existsSync(dir) && git(dir, ['rev-parse', '--is-inside-work-tree']).stdout.trim() === 'true',
@@ -31,8 +141,10 @@ export function createGitService(): GitService {
     },
     workingTreeFingerprint: (dir) => {
       if (!svc.isRepo(dir)) return null;
-      const status = git(dir, ['status', '--porcelain=v1', '--untracked-files=all']).stdout;
-      const diff = git(dir, ['diff', 'HEAD', '--no-color']).stdout;
+      // A read-only look at an agent's tree: no index write, no filter, diff driver or submodule worktree runs.
+      const env = filterDriverOverrides(dir);
+      const status = git(dir, ['--no-optional-locks', 'status', '--porcelain=v1', '--untracked-files=all', '--ignore-submodules=dirty'], { env }).stdout;
+      const diff = git(dir, ['--no-optional-locks', 'diff', 'HEAD', '--no-color', '--no-ext-diff', '--no-textconv', '--ignore-submodules=dirty'], { env }).stdout;
       const head = svc.head(dir) ?? 'no-head';
       return createHash('sha256').update(head).update('\0').update(status).update('\0').update(diff).digest('hex');
     },
