@@ -131,6 +131,8 @@ export interface SupervisorModuleOptions {
    * one that never did gets it after this grace, and SIGKILL after twice the grace (default 5 s).
    */
   sidecarGraceMs?: number;
+  /** Time a sidecar that was told to stop gets for its last report, at a session's end and at shutdown (default 5 s). */
+  sidecarFlushMs?: number;
   /** Retry delay for a usage limit whose reset time is unknown (default 30 min). */
   throttleFallbackMs?: number;
   /** Output items kept per session for GET /api/sessions/:id/output (default 500). */
@@ -287,6 +289,7 @@ export class Supervisor implements SupervisorService {
   private readonly gatewayRoot: string;
   private readonly ownsGatewayRoot: boolean;
   private stopping = false;
+  private shutdownRun: Promise<void> | null = null;
 
   constructor(
     private readonly ctx: ModuleContext,
@@ -757,10 +760,17 @@ export class Supervisor implements SupervisorService {
     }
   }
 
-  /** Daemon shutdown: interrupt running turns; the next start marks them Dead. Nothing is appended. */
-  async shutdown(): Promise<void> {
-    // Ended sessions keep no valid token across a restart, even if their sidecars are still flushing.
-    for (const revoke of [...this.pendingRevocations.values()]) revoke();
+  /**
+   * Daemon shutdown: interrupt running turns (the next start marks them Dead), then let every sidecar send its last
+   * report. Nothing else is appended. aocd runs this while its HTTP server still answers (the module's quiesce), since
+   * a sidecar that cannot reach it only spools a report nobody replays; once, whichever of quiesce and stop comes first.
+   */
+  shutdown(): Promise<void> {
+    this.shutdownRun ??= this.runShutdown();
+    return this.shutdownRun;
+  }
+
+  private async runShutdown(): Promise<void> {
     this.stopping = true;
     this.queue.length = 0;
     for (const t of this.timers) clearTimeout(t);
@@ -769,9 +779,38 @@ export class Supervisor implements SupervisorService {
     await settleWithin(lives, 2_000);
     for (const l of lives) if (!l.exit) signalTree(l.pid!, 'SIGKILL');
     await settleWithin(lives, 1_000);
-    for (const sc of this.sidecars) sc.kill('SIGTERM');
+    await this.stopSidecars();
+    // Ended sessions keep no valid token across a restart: what a sidecar did not release by now is revoked.
+    for (const revoke of [...this.pendingRevocations.values()]) revoke();
     if (this.ownsSessionsRoot) rmSync(this.sessionsRoot, { recursive: true, force: true });
     if (this.ownsGatewayRoot) rmSync(this.gatewayRoot, { recursive: true, force: true });
+  }
+
+  /** Every running sidecar reports what is left and exits; one that takes longer than the flush time is killed. */
+  private async stopSidecars(): Promise<void> {
+    const running = () => [...this.sidecars].filter((sc) => sc.exitCode === null && sc.signalCode === null);
+    const targets = running();
+    if (!targets.length) return;
+    const exited = Promise.all(
+      targets.map(
+        (sc) =>
+          new Promise<void>((done) => {
+            sc.once('exit', () => done());
+            sc.once('error', () => done());
+          }),
+      ),
+    );
+    for (const sc of targets) sc.kill('SIGTERM');
+    let timer: NodeJS.Timeout | undefined;
+    await Promise.race([
+      exited,
+      new Promise<void>((r) => {
+        timer = setTimeout(r, this.sidecarFlushMs());
+        timer.unref();
+      }),
+    ]);
+    clearTimeout(timer);
+    for (const sc of running()) sc.kill('SIGKILL');
   }
 
   // ── launch ────────────────────────────────────────────────────────────────
@@ -799,6 +838,7 @@ export class Supervisor implements SupervisorService {
     // The first turn carries a rollover brief as fenced data (R-10); it is the launch prompt replayed on recovery.
     const prompt = r.brief ? withHandoffBrief(r.prompt, r.brief, r.parentSessionId ?? null) : r.prompt;
     checkText(prompt);
+    assertNotShuttingDown(this.stopping);
     this.assertConfigured();
     if (!this.ctx.services.maybe('identity')) {
       throw new HttpError(
@@ -1021,6 +1061,7 @@ export class Supervisor implements SupervisorService {
 
   /** Validates and reserves synchronously (a slot or a queue place), so concurrent callers can never double-start. */
   private requestTurn(req: TurnRequest): Promise<void> {
+    assertNotShuttingDown(this.stopping);
     const s = this.mustGet(req.sessionId);
     assertNotEnded(s);
     if (this.rollingOver.has(s.sessionId))
@@ -2301,11 +2342,15 @@ export class Supervisor implements SupervisorService {
     };
     if (!this.sessionSidecars.get(sessionId)?.size) return revoke();
     this.pendingRevocations.set(sessionId, revoke);
-    this.later(revoke, this.sidecarGraceMs() + SIDECAR_FLUSH_MS);
+    this.later(revoke, this.sidecarGraceMs() + this.sidecarFlushMs());
   }
 
   private sidecarGraceMs(): number {
     return this.opts.sidecarGraceMs ?? SIDECAR_GRACE_MS;
+  }
+
+  private sidecarFlushMs(): number {
+    return this.opts.sidecarFlushMs ?? SIDECAR_FLUSH_MS;
   }
 
   /** Runs `next` once the session's earlier reports are in (one chain per session, in turn order). */
@@ -2522,6 +2567,11 @@ function checkText(text: string): void {
 function assertNotEnded(s: SupervisedSession): void {
   if (TERMINAL_LIFECYCLES.includes(s.lifecycle))
     throw new HttpError(409, 'session_ended', `Session ${s.sessionId} has ${s.lifecycle}`);
+}
+
+/** aocd keeps serving while it winds the supervisor down: nothing new may start in that window. */
+function assertNotShuttingDown(stopping: boolean): void {
+  if (stopping) throw new HttpError(503, 'shutting_down', 'aocd is shutting down');
 }
 
 function assertNotStopping(live: LiveTurn): void {

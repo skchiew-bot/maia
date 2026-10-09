@@ -92,7 +92,7 @@ export async function runDaemon(
     }
     stopping = true;
     log.info('shutting down', { signal });
-    stop(server, aoc).then(
+    stopDaemon(server, aoc).then(
       () => {
         log.info('stopped');
         process.exit(0);
@@ -120,8 +120,12 @@ function listen(aoc: AocServer, host: string, port: number): Promise<Server> {
   });
 }
 
-/** Stop accepting, end the event streams, let in-flight requests finish (bounded), then stop the runtime. */
-async function stop(server: Server, aoc: AocServer): Promise<void> {
+/**
+ * Quiesce the modules while the server still answers (a session's sidecar sends its last usage through it), then stop
+ * accepting, end the event streams, let in-flight requests finish (bounded), then stop the runtime.
+ */
+export async function stopDaemon(server: Server, aoc: AocServer): Promise<void> {
+  await aoc.quiesce();
   const closed = new Promise<void>((resolve) => server.close(() => resolve()));
   aoc.closeStreams();
   server.closeIdleConnections();

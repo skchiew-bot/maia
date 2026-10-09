@@ -296,6 +296,8 @@ export interface HarnessOptions {
   log?: Logger;
   /** The fake sidecar runs until SIGTERM, then holds its exit until `releaseSidecars()` (its last-report window). */
   sidecarHold?: boolean;
+  /** The fake sidecar ignores SIGTERM and never exits on its own (only SIGKILL ends it). */
+  sidecarStubborn?: boolean;
   /** Process types added to the stub registry. */
   types?: ProcessType[];
   /** aocd environment entries added to (or, with undefined, removed from) the default one (e.g. FAKE_SIDECAR_LINGER=1). */
@@ -369,7 +371,13 @@ export async function createHarness(o: HarnessOptions = {}) {
         claudeArgsPrefix: [FAKE_CLAUDE],
         mcpCommand: ['node', '/opt/aoc/mcp-server.js'],
         hookCommand: ['node', '/opt/aoc/aoc-hook.js'],
-        sidecarCommand: [process.execPath, FAKE_SIDECAR, sidecarLog, ...(o.sidecarHold ? ['--hold', sidecarHoldDir] : [])],
+        sidecarCommand: [
+          process.execPath,
+          FAKE_SIDECAR,
+          sidecarLog,
+          ...(o.sidecarHold ? ['--hold', sidecarHoldDir] : []),
+          ...(o.sidecarStubborn ? ['--stubborn'] : []),
+        ],
         envAllowlist: [...defaultConfig().supervisor.envAllowlist, 'FAKE_CLAUDE_LOG', 'FAKE_SIDECAR_LINGER'],
         credentialProfilesFile: profilesFile,
         maxConcurrentSessions: 4,

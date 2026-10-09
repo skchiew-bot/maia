@@ -65,6 +65,10 @@ export function createSupervisorModule(opts: SupervisorModuleOptions = {}): AocM
     start() {
       return need().recover();
     },
+    // While aocd still serves: the sidecars of finished and interrupted turns send their last reports through it.
+    async quiesce() {
+      await sup?.shutdown();
+    },
     async stop() {
       await sup?.shutdown();
     },

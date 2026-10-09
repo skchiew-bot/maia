@@ -212,7 +212,9 @@ The supervisor is a module inside aocd (`SupervisorService` in
 - **Startup recovery.** A session recorded as running whose process is gone gets a `crashed` turn and is marked
   failed (Dead, restartable). An orphaned process left by a previous daemon is interrupted. Queued launches start
   again, and a decision answered just before a crash is delivered. Waiting, throttled and blocked sessions stay as
-  they are. On shutdown, running turns are interrupted, and the next start marks them Dead.
+  they are. On shutdown, running turns are interrupted, and the next start marks them Dead. The supervisor does this in
+  its module's `quiesce` hook, which aocd runs before its HTTP server stops accepting, and then waits (up to 5 s) for
+  the sidecars to send their last reports through the API; nothing new starts in that window.
 - **Rollover** to a fresh session with a deterministic handoff brief, only at a clean task boundary (§14, ADR-0008).
 - **`runIsolated`** runs rollback verification and promotion commands with an allowlisted environment plus, for
   promotion, the promotion credential profile. It is never exposed to agents.

@@ -108,11 +108,15 @@ Look in the log for `registry.changed` or `config.changed` events. They are expe
    boundary** on running sessions (`session.stop_requested`).
 2. Wait until no session is in `running`. Sessions that are **waiting** (on a decision, a top-up or a throttle)
    have no process. They survive restarts and resume later by themselves.
-3. `systemctl stop aocd`. On SIGTERM aocd stops the scheduler (no job starts from then on), drains queued reactions,
-   stops modules in reverse order (a running anchor or backup is aborted), waits up to 10 s for a job that is still
-   running so that its run is recorded, and closes the databases. Reactions to events a finishing job appends are
-   replayed at the next start. The supervisor interrupts any turn still running (SIGINT, then SIGKILL after 2 s) and
-   stops the sidecars, without appending anything. At the next start those sessions are marked failed and show Dead.
+3. `systemctl stop aocd`. On SIGTERM aocd first lets the modules wind down while it still answers requests: the
+   supervisor interrupts any turn still running (SIGINT, then SIGKILL after 2 s) and tells every sidecar to send its
+   last usage report, waiting up to 5 s for it (a sidecar still there after that is killed), so the last usage of a
+   session that ended just before the stop is not lost; it appends nothing, and starts no new turn or launch (503
+   `shutting_down`). Then aocd stops accepting connections and lets in-flight requests finish, stops the scheduler
+   (no job starts from then on), drains queued reactions, stops modules in reverse order (a running anchor or backup
+   is aborted), waits up to 10 s for a job that is still running so that its run is recorded, and closes the
+   databases. Reactions to events a finishing job appends are replayed at the next start. At the next start the
+   interrupted sessions are marked failed and show Dead.
 
 An **unplanned** stop (crash or kill) loses no committed events. Running turns lose their daemon, so their next
 hook fails closed and they stop. At the next start the supervisor marks them failed, interrupting any that are
