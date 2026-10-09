@@ -2,13 +2,7 @@
  * Pure rules behind the Decisions inbox: SLA aging, queue order, viewer-facing wording and latency statistics.
  * Labels mirror `@aoc/contracts` (typed against it); only types are imported so zod never reaches the bundle.
  */
-import type {
-  DecisionBlockReason,
-  DecisionCardView,
-  DecisionKind,
-  DecisionTest,
-  Role,
-} from '@aoc/contracts';
+import type { DecisionBlockReason, DecisionCardView, DecisionKind, DecisionTest, Role } from '@aoc/contracts';
 import { formatAge } from '../../lib/format';
 
 const MIN = 60_000;
@@ -104,7 +98,10 @@ export function closedWithinSla(card: Pick<DecisionCardView, 'kind' | 'ageMs'>):
   return sla === undefined ? null : card.ageMs <= sla;
 }
 
-export const AGING_META: Record<AgingState, { word: string; tone: 'danger' | 'warn' | 'neutral'; icon: 'danger' | 'warn' | 'clock' }> = {
+export const AGING_META: Record<
+  AgingState,
+  { word: string; tone: 'danger' | 'warn' | 'neutral'; icon: 'danger' | 'warn' | 'clock' }
+> = {
   over: { word: 'Over SLA', tone: 'danger', icon: 'danger' },
   due_soon: { word: 'Due soon', tone: 'warn', icon: 'warn' },
   within: { word: 'Within SLA', tone: 'neutral', icon: 'clock' },
@@ -165,7 +162,10 @@ export interface BlockExplanation {
 
 /** Why this viewer sees the card read-only, in plain words (role routing and separation of duties, §6). */
 export function explainBlock(
-  card: Pick<DecisionCardView, 'requiredRole' | 'requesterId' | 'excludedApproverIds' | 'eligibleUserIds' | 'kind'>,
+  card: Pick<
+    DecisionCardView,
+    'requiredRole' | 'requesterId' | 'excludedApproverIds' | 'eligibleUserIds' | 'kind'
+  >,
   reason: DecisionBlockReason | null,
   viewer: Viewer,
   people: PeopleLookup,
@@ -281,12 +281,18 @@ export function requesterOf(requesterId: string, people: Pick<PeopleLookup, 'nam
     const component = requesterId.replace(/^system:/, '');
     return { kind: 'system', name: `${capitalise(component)} (AOC system)`, sessionId: null };
   }
-  return { kind: 'person', name: people.nameOf(requesterId) ?? `User ${shortId(requesterId)}`, sessionId: null };
+  return {
+    kind: 'person',
+    name: people.nameOf(requesterId) ?? `User ${shortId(requesterId)}`,
+    sessionId: null,
+  };
 }
 
 /** `ses_01M4FC3G…` → `ses_…3FJ` style short form that stays recognisable. */
 export function shortId(id: string): string {
-  const [prefix, rest] = id.includes('_') ? [id.slice(0, id.indexOf('_')), id.slice(id.indexOf('_') + 1)] : ['', id];
+  const [prefix, rest] = id.includes('_')
+    ? [id.slice(0, id.indexOf('_')), id.slice(id.indexOf('_') + 1)]
+    : ['', id];
   if (rest.length <= 8) return id;
   return `${prefix ? `${prefix}_` : ''}…${rest.slice(-6)}`;
 }
@@ -313,7 +319,9 @@ export interface KindLatency {
 }
 
 /** Time to decide per kind (resolved cards only; withdrawn and expired never got a decision). */
-export function latencyByKind(cards: readonly Pick<DecisionCardView, 'kind' | 'status' | 'ageMs'>[]): KindLatency[] {
+export function latencyByKind(
+  cards: readonly Pick<DecisionCardView, 'kind' | 'status' | 'ageMs'>[],
+): KindLatency[] {
   const groups = new Map<DecisionKind, number[]>();
   for (const c of cards) {
     if (c.status !== 'resolved') continue;
@@ -345,7 +353,9 @@ export function latencyByKind(cards: readonly Pick<DecisionCardView, 'kind' | 's
 }
 
 /** Median time to decide across resolved cards, or null when none. */
-export function medianDecisionMs(cards: readonly Pick<DecisionCardView, 'status' | 'ageMs'>[]): number | null {
+export function medianDecisionMs(
+  cards: readonly Pick<DecisionCardView, 'status' | 'ageMs'>[],
+): number | null {
   const ages = cards
     .filter((c) => c.status === 'resolved')
     .map((c) => c.ageMs)
@@ -360,11 +370,14 @@ export function recommendedOption(card: Pick<DecisionCardView, 'options' | 'reco
 }
 
 /** Label of the chosen option on a closed card ("[erased]" text stays as the API sends it). */
-export function outcomeLabel(card: Pick<DecisionCardView, 'options' | 'resolution' | 'status' | 'withdrawal'>): string {
+export function outcomeLabel(
+  card: Pick<DecisionCardView, 'options' | 'resolution' | 'status' | 'withdrawal'>,
+): string {
   if (card.status === 'resolved' && card.resolution) {
     return card.options.find((o) => o.id === card.resolution!.optionId)?.label ?? card.resolution.optionId;
   }
-  if (card.status === 'withdrawn') return `Withdrawn${card.withdrawal ? ` (${card.withdrawal.reason.replace(/_/g, ' ')})` : ''}`;
+  if (card.status === 'withdrawn')
+    return `Withdrawn${card.withdrawal ? ` (${card.withdrawal.reason.replace(/_/g, ' ')})` : ''}`;
   if (card.status === 'expired') return 'Expired';
   return 'Open';
 }
