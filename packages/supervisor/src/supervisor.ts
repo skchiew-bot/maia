@@ -1511,6 +1511,7 @@ export class Supervisor implements SupervisorService {
     this.afterReports(live.sessionId, () => reported.then(() => this.reconcileTurn(live)));
     live.markClosed();
     if (this.stopping) return;
+    this.recordHead(live);
     try {
       this.finishTurn(live);
     } catch (err) {
@@ -1525,6 +1526,44 @@ export class Supervisor implements SupervisorService {
     // Dead in between. A follow-up turn already holds the session and reports its own process when it spawns.
     if (!this.busy(live.sessionId)) this.liveness()?.recordProcess(live.sessionId, false, null);
     this.pump();
+  }
+
+  /**
+   * G-25: when a build session's turn ends, the HEAD of the project repository it works in is recorded, so a commit made
+   * after its last task close can still be traced to it. The sha is read here, by the kernel git service, which runs
+   * git as the repository's owner with the safety settings (never as root inside a tree the agent can write); the
+   * session supplies nothing. A HEAD that did not move since the last record adds no event, and a repository that
+   * cannot be read costs the turn nothing. The proof is the one `task.done` gives: the commit was in the workspace.
+   */
+  private recordHead(live: LiveTurn): void {
+    const s = this.view.get(live.sessionId);
+    if (!s || s.readOnly) return;
+    try {
+      const repo = this.projectRepoOf(s);
+      const sha = repo ? this.ctx.services.get('git').head(repo) : null;
+      if (!sha) return;
+      const last = this.ctx.store.list({ sessionId: s.sessionId, types: ['session.head_recorded'], order: 'desc', limit: 1 })[0];
+      if (last?.meta.sha === sha) return;
+      this.ctx.store.append(
+        ev({
+          type: 'session.head_recorded',
+          actor: SYSTEM,
+          scope: scopeOf(s),
+          meta: { sessionId: s.sessionId, projectId: s.projectId, sha, turn: live.turn },
+          source: 'supervisor',
+          idempotencyKey: `supervisor:head:${s.sessionId}:${live.turn}`,
+        }),
+      );
+    } catch (err) {
+      this.log.warn('could not record the session HEAD', { sessionId: s.sessionId, err: String(err) });
+    }
+  }
+
+  /** The project's repository, when the session works in it: a HEAD read anywhere else says nothing about the session. */
+  private projectRepoOf(s: SupervisedSession): string | null {
+    const repo = this.ledger()?.projectRepoPath(s.projectId);
+    if (!repo || !s.cwd || !isDirectory(repo)) return null;
+    return isWithin(realpathOr(s.cwd), realpathOr(repo)) ? repo : null;
   }
 
   /**

@@ -705,11 +705,17 @@ copying a trailer.
   only the supervisor can move `main` (Ops).
 - **Required (O-27, gap G-25):** cross-check every traced commit against AOC's **own records**, not the message. For
   example, require each commit to be reachable from a HEAD that AOC recorded for a managed session linked to that
-  change or ticket (`task.done.headSha`, `change.completed.pinnedSha`, `phase.completed.pinnedSha`), and not
-  reachable from the base. A stronger option: per-session commit-signing keys issued by the supervisor, verified at
-  promotion; a laptop has no such key.
+  change or ticket (`task.done.headSha`, `change.completed.pinnedSha`, `phase.completed.pinnedSha`, and the
+  supervisor's `session.head_recorded.sha` at the end of every build turn), and not reachable from the base. A
+  stronger option: per-session commit-signing keys issued by the supervisor, verified at promotion; a laptop has no
+  such key.
 - **Residual until O-27:** the gate proves only that commit messages **claim** a governed origin. It does not stop
   off-platform work (T-1) that copies a trailer.
+- **Residual after the recorded heads:** a recorded HEAD proves a commit was in the session's workspace when the
+  platform read it, not that the session wrote it. A session (or a prompt injected into one) that checks a foreign
+  commit out before a turn ends or a task closes, for example one fetched from a branch of the remote, gets it
+  recorded for itself, and a copied `AOC-Session` trailer then traces. Only commit signing closes this; the go-live
+  decision and its diff review stay the control.
 
 ---
 

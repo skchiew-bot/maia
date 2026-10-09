@@ -130,6 +130,18 @@ describe('provenance guarantee and promotion (§14)', () => {
     });
   }
 
+  /** What the supervisor appends when a build session's turn ends: the HEAD it read from the project repository (G-25). */
+  let turns = 0;
+  function turnEnd(sessionId: string, sha: string) {
+    h.t.rt.store.append({
+      type: 'session.head_recorded',
+      actor: { kind: 'system', id: 'supervisor' },
+      scope: { sessionId, projectId: PROJECT },
+      meta: { sessionId, projectId: PROJECT, sha, turn: ++turns },
+      source: 'supervisor',
+    });
+  }
+
   /** A second approved change record, worked by session ses_other. */
   async function otherChange(): Promise<string> {
     h.t.sessions!.add({ sessionId: 'ses_other', projectId: PROJECT });
@@ -255,6 +267,36 @@ describe('provenance guarantee and promotion (§14)', () => {
     expect(svc.provenance(PROJECT, tip!)).toMatchObject({ ok: false, orphanShas: [tip] });
     recordHead('ses_change', tip!);
     expect(svc.provenance(PROJECT, tip!)).toEqual({ ok: true, orphanShas: [], reasons: [] });
+  });
+
+  it('traces a commit made after the last task close through the HEAD recorded at the turn end; a foreign commit stays an orphan (G-25)', async () => {
+    await setup();
+    // ses_change closed a task at `closed`, then kept working: `tail` came after its last task_done.
+    const [closed, tail] = branch('feature/tail', [
+      ['feat: first task\n\nAOC-Session: ses_change', { 'a.ts': '1' }],
+      ['feat: after the last task_done\n\nAOC-Session: ses_change', { 'b.ts': '1' }],
+    ]);
+    recordHead('ses_change', closed!);
+    const svc = h.t.rt.services.get('change') as ChangeService;
+    const reasons = svc.provenance(PROJECT, tail!).reasons.join('\n');
+    expect(svc.provenance(PROJECT, tail!)).toMatchObject({ ok: false, orphanShas: [tail] });
+    expect(reasons).toContain('session ses_change never recorded a HEAD containing this commit');
+
+    turnEnd('ses_change', tail!);
+    expect(svc.provenance(PROJECT, tail!)).toEqual({ ok: true, orphanShas: [], reasons: [] });
+
+    // A commit that only carries the trailer was in no HEAD the platform read from the session, whoever else's turn
+    // ended on it, and a HEAD this repository never saw proves nothing.
+    const [foreign] = branch('feature/foreign', [['feat: laptop work\n\nAOC-Session: ses_change', { 'c.ts': '1' }]]);
+    turnEnd('ses_other', foreign!);
+    turnEnd('ses_change', 'f'.repeat(40));
+    expect(svc.provenance(PROJECT, foreign!)).toMatchObject({ ok: false, orphanShas: [foreign] });
+    expect(svc.provenance(PROJECT, tail!)).toEqual({ ok: true, orphanShas: [], reasons: [] });
+
+    // The heads are a projection of the log: a rebuild reproduces them.
+    h.t.rt.store.rebuildProjections(['change']);
+    expect(svc.provenance(PROJECT, tail!)).toEqual({ ok: true, orphanShas: [], reasons: [] });
+    expect(svc.provenance(PROJECT, foreign!)).toMatchObject({ ok: false, orphanShas: [foreign] });
   });
 
   it('refuses to promote orphan commits; no gate is raised and main is untouched', async () => {
