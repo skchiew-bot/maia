@@ -4,16 +4,17 @@
  * (--slots decision), next to the seeded Working, Thinking and Stalled sessions that aocd's startup recovery launches.
  */
 import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { demoLayout, type DemoTokens } from '../src/layout';
+import { groupAlive } from '../src/process-group';
 import { CLAUDE_SIM_BIN } from '../src/sim-guard';
-import { DEMO_SRC, childEnv, claudeTripwire, eventsAfter, freePort, launchedArgv, stopChild, tsxImport, waitFor } from './helpers';
+import { DEMO_SRC, childEnv, claudeTripwire, eventsAfter, freePort, launchedArgv, removeTree, stopChild, tsxImport, waitFor } from './helpers';
 
 const dir = mkdtempSync(join(tmpdir(), 'aoc-demo-live-'));
-afterAll(() => rmSync(dir, { recursive: true, force: true }));
+afterAll(() => removeTree(dir));
 
 describe('pnpm --filter @aoc/demo live', () => {
   it('runs real managed sessions on claude-sim, never the claude CLI, and stops cleanly on Ctrl-C', async () => {
@@ -52,6 +53,10 @@ describe('pnpm --filter @aoc/demo live', () => {
     }
     expect(stopped, out).toEqual({ code: 0, signal: null });
     expect(out).toContain('Stopped.');
+    // "Stopped." means nothing is left: aocd's sidecars outlive it for a final flush, and the launcher waits for them.
+    const daemonPid = Number(/aocd pid (\d+)/.exec(out)?.[1]);
+    expect(daemonPid).toBeGreaterThan(0);
+    expect(groupAlive(daemonPid)).toBe(false);
 
     const events = eventsAfter(layout.aocData, seededHead);
     const decision = events.find((e) => e.type === 'decision.requested');
