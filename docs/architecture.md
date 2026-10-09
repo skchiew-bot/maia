@@ -119,7 +119,7 @@ flowchart TB
 | **aocd** | `packages/daemon` | Composition root. One process hosts the HTTP API, ingest, SSE, the job scheduler, every domain module and the launcher/supervisor. It is the **sole writer** of the event log. | Built |
 | **Kernel** | `packages/kernel` | `EventStore` (hash chain, idempotency, projections, rebuild, verification, crypto-shred), `BodyStore` (per-scope envelope encryption, blobs), module host (`AocRuntime`), guard policy, broadcaster, reactor bus, job scheduler, git wrapper, test kit. | Built |
 | **Launcher / supervisor** | `packages/supervisor` | Spawns `claude -p` per turn with the AOC hooks, the AOC MCP server, the env allowlist and the process type's credential profile. Resumes, nudges, restarts, stops, rolls over, and runs isolated verification commands. | Built |
-| **Per-session sidecar** | `packages/sidecar` | Started by the supervisor next to each managed session. Heartbeats from the process (hooks cannot fire while the model generates, §2.1). Tails the transcript and subagent transcripts for per-message usage (deduplicated by `message.id`) and plan-limit hits. Spools when aocd is down. | Built |
+| **Per-session sidecar** | `packages/sidecar` | Started by the supervisor next to each managed session. Heartbeats from the process (hooks cannot fire while the model generates, §2.1). Tails the transcript and subagent transcripts for per-message usage (deduplicated by `message.id`) and plan-limit hits. Spools when aocd is down. Reports with its own `sidecar` token, never the session's (G-44). | Built |
 | **AOC MCP server** | `packages/mcp-server` | The agent's structured voice (§2). Eight schema-validated tools, relayed verbatim to `/ingest/mcp/<tool>`. Refuses to start without a session id, daemon URL and ingest token. Never retries writes. | Built |
 | **Hooks** | `packages/hooks` | A thin relay from Claude Code hook events to `/ingest/hook`. The daemon decides the effect; the hook only applies it (ADR-0004). Managed mode fails closed. Observed mode never blocks and spools locally. | Built |
 | **Ingest client** | `packages/client` | Timeouts, bounded retries and a local JSONL spool replayed through `/ingest/spool` (idempotent). Shared by the hooks, sidecar, MCP server and CLI. | Built |
@@ -147,9 +147,10 @@ aocd's parts:
 - **Ingest** (`INGEST_PATHS` in [`ingest.ts`](../packages/contracts/src/ingest.ts)): `/ingest/hook`,
   `/ingest/spool`, `/ingest/heartbeat`, `/ingest/activity`, `/ingest/usage`, `/ingest/throttle`,
   `/ingest/process` and `/ingest/mcp/<tool>`. Ingest uses separate principals (§15): per-session tokens (valid only
-  for their own session), an observer token (observed events only) and system tokens. A request without a valid
-  ingest token is refused (401) **before any body is parsed**, and observed-mode events can never target a managed
-  session.
+  for their own session), a per-session sidecar token (the only principal that reports a managed session's
+  heartbeats, activity, usage, throttles and process exit), an observer token (observed events only) and system
+  tokens. A request without a valid ingest token is refused (401) **before any body is parsed**, and observed-mode
+  events can never target a managed session.
 - **Request limits.** Every body is capped before authentication or parsing: 64 MiB for the spool, 16 MiB for
   other ingest, 4 MiB for the API, and the attachment allowance plus 1 MiB for the portal. A larger body gets 413.
   A single huge request therefore cannot stall the sole writer, and with it every managed session's hooks.
@@ -232,6 +233,20 @@ Thinking must be told apart from Stalled (§2.1). The sidecar fills that gap:
   come first, see §6) and reports `/ingest/throttle`.
 - It reports the process exit (`/ingest/process`), flushes and stops. Its offsets and counted state persist in a
   0600 state file, so a restart does not double-count.
+- **It has its own principal (G-44).** The supervisor issues one `sidecar` ingest token (`aoc_c_…`) per managed
+  session and passes it only in the sidecar's environment (`AOC_INGEST_TOKEN`, never argv, never the `claude`
+  environment). `/ingest/usage`, `heartbeat`, `activity`, `process` and `throttle` for a managed session accept only
+  that principal. The session's own token, which the model's environment holds, gets `403 sidecar_token_required`,
+  and so does a spooled item posted under it. Observed sessions keep their observer token. The token is revoked
+  after the session's last sidecar has exited.
+- **Hand-off at the end of a turn.** The sidecar prints `aoc-sidecar ready` once it is tailing. The supervisor stops
+  a finished turn's sidecar with SIGTERM only after that line, so the final flush and the exit report land before
+  the turn is reconciled and before the token is revoked.
+- **Reconciliation.** After each turn the supervisor compares what the sidecar reported with the stream-json
+  `result.modelUsage` (cumulative across `--resume`, so a turn is the difference from the previous result) and
+  appends `usage.reconciled` with `match`, `overhead` (compaction usage that is only in `modelUsage`),
+  `under_reported`, `over_reported`, `regressed` or `unverified`. Tower counts the three discrepancy statuses as the
+  `metering_discrepancy` signal.
 
 ### 2.4 AOC MCP server: the agent's structured voice
 
@@ -613,7 +628,7 @@ Signals and their sources:
 | Signal | Source | Trust |
 | --- | --- | --- |
 | Process alive or exited | The supervisor (parent of `claude`) and the sidecar (`kill(pid, 0)`) | Supervisor: authoritative. Sidecar: see the threat model |
-| Heartbeat | Sidecar, every 5 s | Agent-reachable token (threat model T-3) |
+| Heartbeat | Sidecar, every 5 s, with the session's sidecar token (never in the `claude` env, G-44) | Observational; out of the model's reach with session isolation (threat model T-4) |
 | Tool in flight or finished | `PreToolUse` / `PostToolUse` / `PostToolUseFailure` hooks | Agent-reachable token |
 | Model output | stream-json deltas seen by the supervisor; transcript growth seen by the sidecar | Supervisor: authoritative |
 | Throttle | `rate_limit_event` (status `rejected`, `resetsAt`), the `StopFailure` hook with `error: rate_limit`, `result.api_error_status: 429`, then the text fallback | Supervisor stream first |
@@ -768,7 +783,8 @@ flowchart TD
 Metering facts that the sidecar and metering module rely on (research note §6.3): count each assistant `message.id`
 once; tail subagent transcripts too (their usage is not in the main file); price 5-minute and 1-hour cache writes
 separately; never sum `total_cost_usd` across `--resume` invocations, because it is cumulative per session.
-Throttle idle time is metered too, because the enterprise case is productivity lost to throttling, not only
+The same cumulative behaviour is what lets the supervisor check each turn's sidecar totals against `modelUsage`
+(§2.3). Throttle idle time is metered too, because the enterprise case is productivity lost to throttling, not only
 dollars.
 
 ## 11. FX state machine
@@ -988,6 +1004,7 @@ Identity is done properly before any non-CEO surface ships (§6, §15.3). Implem
 | First Approver | — | A one-time bootstrap token from `AOC_BOOTSTRAP_TOKEN`, or generated into `identity.bootstrapTokenFile` (default `<dataDir>/bootstrap-token`, mode 0600; the path is logged, never the token) | Bootstrapping runs only while no user exists. Log in, create a personal token and a passkey, then revoke the bootstrap token and delete the file |
 | Passkey | credential id hash | A WebAuthn assertion over a challenge that is the SHA-256 of a binding: user, decision, option, a hash of the card as shown, a nonce and an expiry | Required for `go_live`, `rollback` and `break_glass`. `passkey.asserted` keeps the signed assertion and its binding, so the approval can be re-verified independently later. The signature counter is tracked |
 | Managed session | `ses_…` (actor kind `agent`) | A per-session ingest token (`aoc_i_…`) | Issued at launch and revoked when the session ends. **Visible to the model** (it is in the claude environment), so it is scoped to its own session and is append-only (threat model T-3) |
+| Session sidecar | `ses_…` (actor kind `agent`) | A per-session sidecar token (`aoc_c_…`) | Issued by the supervisor and passed only in the sidecar's environment, never the `claude` one; revoked once the session's last sidecar has exited. Valid for the five sidecar report routes of its own session and nothing else (threat model T-4) |
 | Observer | — | An observer ingest token (`aoc_o_…`), issued by the Approver with a label and an expiry | Observed events only. It can never post managed events or block |
 | System component | name (`supervisor`, `scheduler:fx`) | A system token (`aoc_s_…`) or in-process | Reactors and jobs act as `system` actors |
 
@@ -1103,8 +1120,8 @@ Open items found while writing this document. Owners and details are in the
    Approver**, including a break-glass the Approver invokes. That is the CEO's decision (the fallback is off), so the
    remaining action is to appoint a second Approver, or to have Builders invoke break-glass.
 5. The `self-modification` guard is built and always protects AOC's audit state, but it protects the core code only
-   once `selfModification.aocRepoPaths` is set (the default is empty), and the default `protectedPaths` list omits
-   governance-relevant packages (see the [self-modification boundary](compliance/self-modification-boundary.md)).
+   once `selfModification.aocRepoPaths` is set (the default is empty). The default `protectedPaths` list now covers
+   all of Tier 1 (see the [self-modification boundary](compliance/self-modification-boundary.md)).
 6. Default anchoring (`anchorProvider: git` with no `anchorRemote`) is local only and does not mitigate R2 until a
    remote is configured, and it runs nightly only (gap G-40). Anchor-commit signing and TSA certificate checks
    are module options that the aocd configuration does not expose yet. Evidence packs compare anchors with the

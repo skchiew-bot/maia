@@ -129,8 +129,10 @@ export interface LaunchedSession {
   cwd: string;
   transcriptPath: string;
   prompt: string;
-  /** The session's ingest token (the supervisor hands it to hooks, MCP server and sidecar). */
+  /** The session's ingest token (the supervisor hands it to hooks and the MCP server, in the claude env). */
   token: string;
+  /** The session's sidecar token (the supervisor hands it to the sidecar only, G-44). */
+  sidecarToken: string;
   /** pid of the stand-in "claude" process (a sleeper) the sidecar watches. */
   pid: number;
   claude: ChildProcess;
@@ -193,6 +195,7 @@ export class StubSupervisor implements SupervisorService {
       throw new Error(`thread ${thread.threadId} already has an active writer`);
     }
     const token = ctx.services.get('identity').issueIngestToken(sessionId, SUPERVISOR);
+    const sidecarToken = ctx.services.get('identity').issueSidecarToken(sessionId, SUPERVISOR);
     const claude = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1 << 30)'], { stdio: 'ignore' });
     if (!claude.pid) throw new Error('could not start the stand-in claude process');
     const claudeSessionId = randomUUID();
@@ -237,6 +240,7 @@ export class StubSupervisor implements SupervisorService {
       transcriptPath,
       prompt: req.prompt,
       token,
+      sidecarToken,
       pid: claude.pid,
       claude,
     };

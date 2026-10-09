@@ -5,7 +5,7 @@
  * (so a quiet previous week cannot turn one event into an alert). Percent signals need a minimum sample.
  */
 import type { SQLInputValue } from 'node:sqlite';
-import { BLIND_AFFIRM_DWELL_MS, type AnomalySignal, type TowerAnomaly } from '@aoc/contracts';
+import { BLIND_AFFIRM_DWELL_MS, USAGE_DISCREPANCIES, type AnomalySignal, type TowerAnomaly } from '@aoc/contracts';
 import { LATE_DONE_SHARE } from './projector';
 import { all, inProject, type ReadCtx } from './read';
 import { classifyRuns, runsLaunched } from './runs';
@@ -100,7 +100,20 @@ const SIGNALS: Record<AnomalySignal, SignalDef> = {
     scopeKind: 'project',
     describe: (k, n, v) => `${k} of ${n} changes approved in 7d were self-approved (${v}%).`,
   },
+  metering_discrepancy: {
+    signal: 'metering_discrepancy',
+    label: 'Metering discrepancies',
+    unit: '%',
+    floor: 5,
+    minSample: 5,
+    scopeKind: 'process_type',
+    describe: (k, n, v) =>
+      `${k} of ${n} turns reconciled in 7d had sidecar usage that disagreed with the process's own figures (${v}%).`,
+  },
 };
+
+/** usage.reconciled statuses that flag a turn (unverified turns were not judged, so they count in neither n nor k). */
+const DISCREPANT = USAGE_DISCREPANCIES.map((s) => `'${s}'`).join(', ');
 
 /** Observations aggregated per window (current 7d or the 7d before) and process type / project. */
 interface Group {
@@ -149,6 +162,11 @@ export function buildAnomalies(r: ReadCtx): TowerAnomaly[] {
       ...pa,
     ),
     discovery_with_playbook: runGroups(r, from, split),
+    metering_discrepancy: window(
+      `SELECT ts_ms > ? AS cur, process_type AS scope, COUNT(*) AS n, SUM(status IN (${DISCREPANT})) AS k
+       FROM twr_usage_checks WHERE status <> 'unverified' AND ts_ms > ? AND ts_ms <= ?${pw} GROUP BY cur, scope`,
+      ...pa,
+    ),
   };
   return (Object.keys(SIGNALS) as AnomalySignal[]).map((s) => evaluate(r, SIGNALS[s], groups[s]));
 }

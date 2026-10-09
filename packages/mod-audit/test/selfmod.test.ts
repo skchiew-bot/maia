@@ -11,14 +11,14 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { SessionInfo, SessionMode } from '@aoc/contracts';
+import { DEFAULT_PROTECTED_PATHS, type SessionInfo, type SessionMode } from '@aoc/contracts';
 import { sha256hex } from '@aoc/kernel';
 import { BoundaryMatcher, verifyExternalAuditLog } from '../src';
 import { auditRuntime, type AuditTest } from './helpers';
 
 const FILES = [
   'packages/kernel/src/store.ts',
-  'packages/mod-ledger/src/ledger.ts',
+  'packages/mod-tower/src/tower.ts',
   'packages/mod-audit/src/index.ts',
   'config/rate-card.json',
   'CLAUDE.md',
@@ -52,7 +52,7 @@ beforeAll(async () => {
   writeFileSync(join(root, 'fix.patch'), KERNEL_PATCH);
   writeFileSync(
     join(root, 'ledger.patch'),
-    KERNEL_PATCH.replaceAll('packages/kernel/src/store.ts', 'packages/mod-ledger/src/ledger.ts'),
+    KERNEL_PATCH.replaceAll('packages/kernel/src/store.ts', 'packages/mod-tower/src/tower.ts'),
   );
   a = await auditRuntime({ config: { selfModification: { aocRepoPaths: [root] } } });
   session = a.t.sessions!.add({ sessionId: 'ses_agent1', mode: 'managed', cwd: root, projectId: 'prj_aoc' });
@@ -148,7 +148,7 @@ describe('self-modification guard: file tools', () => {
   });
 
   it('allows the platform to build its own features and leaves other repos alone', () => {
-    expect(pre('Edit', { file_path: join(root, 'packages/mod-ledger/src/ledger.ts') })).toMatchObject({
+    expect(pre('Edit', { file_path: join(root, 'packages/mod-tower/src/tower.ts') })).toMatchObject({
       decision: 'allow',
     });
     expect(pre('Write', { file_path: join(root, 'docs/notes.md') })).toMatchObject({ decision: 'allow' });
@@ -168,16 +168,16 @@ describe('self-modification guard: file tools', () => {
 
   it('is path-normalised: `..` traversal both ways, absolute paths from other repos', () => {
     expect(
-      pre('Edit', { file_path: join(root, 'packages/mod-ledger/../kernel/src/store.ts') }),
+      pre('Edit', { file_path: join(root, 'packages/mod-tower/../kernel/src/store.ts') }),
     ).toMatchObject({ decision: 'deny' });
     expect(
-      pre('Edit', { file_path: 'packages/mod-ledger/../../../maia/packages/kernel/src/store.ts' }),
+      pre('Edit', { file_path: 'packages/mod-tower/../../../maia/packages/kernel/src/store.ts' }),
     ).toMatchObject({ decision: 'deny' });
     expect(pre('Write', { file_path: './packages//kernel/./src/new.ts' })).toMatchObject({
       decision: 'deny',
     });
     expect(
-      pre('Edit', { file_path: join(root, 'packages/kernel/../mod-ledger/src/ledger.ts') }),
+      pre('Edit', { file_path: join(root, 'packages/kernel/../mod-tower/src/tower.ts') }),
     ).toMatchObject({ decision: 'allow' });
     expect(
       pre('Edit', { file_path: join(root, 'packages/kernel/src/store.ts') }, { cwd: other }),
@@ -185,12 +185,12 @@ describe('self-modification guard: file tools', () => {
   });
 
   it('is symlink-safe: links into the core (also dangling ones and links from outside), and hard links', () => {
-    symlinkSync('../kernel', join(root, 'packages/mod-ledger/k'));
-    expect(pre('Edit', { file_path: join(root, 'packages/mod-ledger/k/src/store.ts') })).toMatchObject({
+    symlinkSync('../kernel', join(root, 'packages/mod-tower/k'));
+    expect(pre('Edit', { file_path: join(root, 'packages/mod-tower/k/src/store.ts') })).toMatchObject({
       decision: 'deny',
     });
-    symlinkSync('../../kernel/src/new.ts', join(root, 'packages/mod-ledger/src/evil.ts'));
-    expect(pre('Write', { file_path: join(root, 'packages/mod-ledger/src/evil.ts') })).toMatchObject({
+    symlinkSync('../../kernel/src/new.ts', join(root, 'packages/mod-tower/src/evil.ts'));
+    expect(pre('Write', { file_path: join(root, 'packages/mod-tower/src/evil.ts') })).toMatchObject({
       decision: 'deny',
     });
     symlinkSync(join(root, 'packages/kernel'), join(base, 'outside-link'));
@@ -240,6 +240,7 @@ describe('self-modification guard: Bash', () => {
     'mv packages/kernel/src/store.ts /tmp/store.ts',
     'mv -i packages/kernel/src/store.ts /tmp/',
     'mv /tmp/evil.ts packages/kernel/src/store.ts',
+    'mv /tmp/newpkg packages/', // could arrive with its own package.json (packages/*/package.json is Tier 1)
     'cp /tmp/evil.ts packages/kernel/src/store.ts',
     'cp -r /tmp/evil/. packages/kernel/',
     'cp -t packages/kernel /tmp/evil.ts',
@@ -250,7 +251,7 @@ describe('self-modification guard: Bash', () => {
     'truncate -s 0 packages/kernel/src/store.ts',
     'touch -m packages/kernel/src/store.ts',
     'dd if=/dev/zero of=packages/kernel/src/store.ts count=1',
-    'ln -s ../kernel packages/mod-ledger/k2',
+    'ln -s ../kernel packages/mod-tower/k2',
     'git checkout -- packages/kernel/src/store.ts',
     'git checkout HEAD~1 -- packages/kernel',
     'git checkout -- .',
@@ -275,9 +276,9 @@ describe('self-modification guard: Bash', () => {
     "find packages/kernel -name '*.ts' | xargs rm",
     'for f in packages/kernel/src/*.ts; do rm "$f"; done',
     'while read f; do rm "$f"; done < <(ls packages/kernel/src/*.ts)',
-    'echo x > packages/{mod-ledger,kernel}/src/a.ts',
+    'echo x > packages/{mod-tower,kernel}/src/a.ts',
     'echo x > packages/kern*/src/a.ts',
-    'echo x > ./packages/mod-ledger/../kernel/src/a.ts',
+    'echo x > ./packages/mod-tower/../kernel/src/a.ts',
     'echo x > "packages/kernel/src/$NAME"',
     'X=$(echo x > packages/kernel/src/a.ts)',
     'P=packages/kernel; echo x > $P/src/a.ts',
@@ -303,9 +304,9 @@ describe('self-modification guard: Bash', () => {
     'git log -- packages/kernel',
     'git checkout -b feature/ledger',
     'cp packages/kernel/src/store.ts /tmp/copy.ts',
-    'echo x > packages/mod-ledger/src/x.ts',
-    'rm -rf packages/mod-ledger/dist node_modules',
-    'mv /tmp/evil packages/',
+    'echo x > packages/mod-tower/src/x.ts',
+    'rm -rf packages/mod-tower/dist node_modules',
+    'mv /tmp/evil mocks/',
     "sed -n '1,10p' packages/kernel/src/store.ts",
     'npm test > $LOG 2>&1',
     'pnpm --filter @aoc/kernel test',
@@ -376,6 +377,23 @@ describe('BoundaryMatcher', () => {
   });
 });
 
+describe('default protectedPaths (Tier 1 of the boundary)', () => {
+  const m = new BoundaryMatcher({ aocRepoPaths: ['/r'], protectedPaths: [...DEFAULT_PROTECTED_PATHS], auditStorePaths: [] });
+  const hit = (p: string) => m.check(`/r/${p}`, '/', false) !== null;
+
+  it('covers every package that enforces governance, audit, credits, ingest or launch, and the build and rule files', () => {
+    const tier1 = ['kernel', 'contracts', 'mod-audit', 'mod-credits', 'mod-decisions', 'mod-identity', 'hooks', 'supervisor', 'mod-change', 'mod-sessions', 'mod-ledger', 'mod-metering', 'mod-registry', 'distill', 'mod-evidence', 'daemon', 'client', 'mcp-server', 'sidecar'];
+    for (const pkg of tier1) expect(hit(`packages/${pkg}/src/index.ts`), pkg).toBe(true);
+    for (const f of ['config/rate-card.json', 'package.json', 'packages/web/package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'scripts/check.sh', '.github/CODEOWNERS', 'CLAUDE.md', 'docs/spec/AOC-SPEC-003.md', 'docs/compliance/gaps.md'])
+      expect(hit(f), f).toBe(true);
+  });
+
+  it('leaves the feature packages and ordinary documentation to normal change control', () => {
+    for (const f of ['packages/web/src/App.tsx', 'packages/mod-tower/src/index.ts', 'packages/mod-learning/src/index.ts', 'packages/mod-fx/src/index.ts', 'packages/mod-intake/src/index.ts', 'packages/llm/src/index.ts', 'packages/cli/src/index.ts', 'packages/claude-sim/src/index.ts', 'packages/demo/src/seed.ts', 'mocks/index.html', 'docs/architecture.md', 'README.md'])
+      expect(hit(f), f).toBe(false);
+  });
+});
+
 describe('self-modification guard: degraded external log', () => {
   it('still denies (and says so in the chain) when the external audit log cannot be written', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'aoc-extlog-'));
@@ -409,6 +427,7 @@ describe('self-modification service for the promotion gate (G-41)', () => {
       'packages/kernel/src/store.ts',
       'packages/mod-audit/src/index.ts',
       'config/rate-card.json',
+      'CLAUDE.md',
     ]);
     const nested = join(root, 'nested-ws');
     mkdirSync(join(nested, '.git'), { recursive: true });
