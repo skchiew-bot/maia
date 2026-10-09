@@ -51,6 +51,18 @@
   changing the meaning of an existing field. The hash header carries `v: 1` so the hashing scheme itself can be
   versioned.
 
+## Implementation status (integration commit `e97e53e`)
+
+The mitigations for blocking are built, except for projection rebuilds:
+
+- The kernel's and the ledger's git calls run off aocd's thread, each with its own time limit.
+- Evidence packs are built by a queued job, and chain verification hands the event loop back between batches.
+- A backup snapshots the databases in a worker thread.
+- On SIGTERM the modules quiesce while the HTTP server still answers (the supervisor interrupts running turns and
+  lets each sidecar send its last usage), then the server drains, then the runtime stops
+  ([architecture §2.1](../architecture.md)).
+- A projection rebuild still holds the write lock. It is maintenance: it runs at startup or in a window.
+
 ## Alternatives rejected
 
 | Alternative | Why rejected |

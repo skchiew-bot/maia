@@ -19,7 +19,7 @@ and the authors were not independent of the code.
 Therefore: **before AOC governs real work, one or more humans who were not part of the build must review the
 governance, audit and credit core (§1, Tier 1) and sign off.** The scope and the record are in §5. Until that
 sign-off exists, treat every AOC control as provisional, and say so in any evidence pack. At integration commit
-`a1c8a0c` no such review has taken place ([gap P-06](gaps.md)).
+`e97e53e` no such review has taken place ([gap P-06](gaps.md)).
 
 ## 1. What the core is
 
@@ -109,13 +109,17 @@ There are four layers. Each one makes up for the weakness of the layer before it
     so aocd cannot tell where its operator keeps clones: listing them stays the operator's duty. Development is
     not asked.
   - Bash can change files without naming them (a script, a Make target, an interpreter reading its program from
-    a file), so this layer is a speed bump (§2.4 of the spec makes the same point about command matching). And
-    while sessions run as the aocd OS user (threat model O-1), nothing at the file-system level backs it up.
+    a file), so this layer is a speed bump (§2.4 of the spec makes the same point about command matching). What backs
+    it up is below it: with session isolation the file system keeps a session out of aocd's state (it runs as another
+    OS user), and in the AOC repository itself the push gateway, the promotion gate (Layer 3) and the human review stop
+    a core change. What a builder's shell may run at all is an open CEO decision (threat model O-30, gap P-26).
 
 ### Layer 2: credentials (the wall)
 
-AOC's managed sessions hold no credential that can update the AOC repository's `main`. That follows from credential
-isolation ([runbook](../runbooks/credential-isolation.md)). A session can at most push a feature branch.
+AOC's managed sessions hold no credential that can push at all. That follows from credential isolation
+([runbook](../runbooks/credential-isolation.md)): a session pushes through aocd's gateway (`git push aoc …`), which
+refuses `main`, `master`, `production`, `release/*`, tags and deletions, and forwards the rest with the profile's
+credential, which stays with aocd (R-02). A session can at most push a feature branch.
 
 ### Layer 3: human review on GitHub, which AOC cannot bypass
 
@@ -191,7 +195,8 @@ the chain is part of what is being protected. Three external records:
 - [ ] **Body store and crypto:**
   - AES-256-GCM with random 96-bit nonces and AAD binding;
   - DEK wrapping;
-  - erasure completeness (`bodies.db`, blobs, read models, the `aoc.db` gap in threat model O-24);
+  - erasure completeness (`bodies.db`, blobs, read models, `aoc.db` with `secure_delete` and a WAL truncate, the
+    FTS5 index; threat model O-24);
   - KEK loading (no environment KEK in production, O-13).
 - [ ] **Strict meta** across the whole event catalog: nothing personal or free-text in clear.
 - [ ] **Ingest authentication:** session-token scoping, observer restrictions, fail-closed paths, system tokens.
@@ -207,17 +212,21 @@ the chain is part of what is being protected. Three external records:
   - cookie flags and CSRF protection (O-22);
   - WebAuthn ceremonies (challenge binding, origin and rpId checks, signature counter).
 - [ ] **Supervisor:**
-  - `envAllowlist` and credential-profile injection, including the `HOME` it passes through;
-  - the separate sandbox user (O-1, not built);
-  - `runIsolated` and no privileged git in workspaces (O-2, not built);
-  - settings validation and launch fail-closed checks (O-15);
-  - the sidecar's token and principal (O-3).
-- [ ] **Change control:** the provenance algorithm (O-27); isolation of rollback verification and its acceptance
-      command; break-glass audit; immutable pin tags.
+  - `envAllowlist` and the credential-profile split: `env` and `files` stay with aocd, and a session gets only the
+    `session` part (R-02);
+  - the push gateway: the refusal list, `push.refs`, access only during a turn, and the rate limit (R-02);
+  - session isolation: the session users, the per-session `HOME`, and the startup self-check (O-1, G-01);
+  - `runIsolated` and the service-owned clone: no privileged git in an agent-writable tree (O-2, G-04);
+  - the tool grants (`toolPolicy`) and what a builder's shell may run (O-30, undecided);
+  - settings validation and launch fail-closed checks (O-15, partly built);
+  - the sidecar's token and principal (O-3, G-44), and the turn-end HEAD record (G-25).
+- [ ] **Change control:** the provenance algorithm (O-27, G-25) and the service-owned clone; isolation of rollback
+      verification and its acceptance command (G-50 is open); break-glass audit; immutable pin tags.
 - [ ] **Audit:** anchoring to off-host records; Verify reads the remote and refuses to anchor a chain that no
-      longer matches; the erasure API's authorisation (O-28); the self-modification guard (path resolution,
-      symlinks, hard links, the Bash analysis, the external log's hash chain).
-- [ ] **Evidence:** packs that check anchors against the off-host records (O-29).
+      longer matches; the erasure API's authorisation (O-28, open); the self-modification guard (path resolution,
+      symlinks, hard links, the Bash analysis, the external log's hash chain); the sealed backup format, the key
+      separation checks and the restore verification (G-21).
+- [ ] **Evidence:** packs that check anchors against the off-host records (O-29, G-42).
 - [ ] **Supply chain:** every dependency pinned to an exact version and reviewed; the lockfile matches.
 
 **Record of the review:** reviewer names, the commit SHA reviewed, findings and their dispositions, and a sign-off

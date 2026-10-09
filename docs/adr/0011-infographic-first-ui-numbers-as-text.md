@@ -48,6 +48,13 @@
   threshold; a cost-of-delay ranking in the Control Tower; and a credit forecast that names developers for capacity
   planning, while the anomaly radar stays portfolio-only.
 
+## Implementation status (integration commit `e97e53e`)
+
+The console and the portal are built to the approved mock, with one token set for light and dark. The accessibility
+gate (axe, keyboard paths, 360 px, and the WCAG AA contrast of every token pair in both themes) passed when it was last
+run; its report names the commit ([`a11y/report.md`](../../packages/web/test/a11y/report.md)). The Showcase is a live 2D
+map of the fleet at `/showcase`, driven only by events; there is no 3D view.
+
 ## Alternatives rejected
 
 | Alternative | Why rejected |

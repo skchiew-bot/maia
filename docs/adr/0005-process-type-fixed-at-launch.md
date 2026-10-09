@@ -46,6 +46,13 @@
 - **Required:** the supervisor must pass `--model` explicitly, re-pass the same flags on every `--resume`, and never
   read a model or type from agent output.
 
+## Implementation status (integration commit `e97e53e`)
+
+The registry's `tools.allow` and `tools.deny` are where the shell a builder may use is decided. The shipped writer
+types grant scoped git verbs only, and the supervisor adds blanket `Bash` to a writer type whose entry says nothing
+about Bash. Which of the two is the policy is an open CEO decision (threat model O-30, gap P-26). The registry also
+lists a `rollback-verify` type that nothing launches: rollback verification runs through `runIsolated`.
+
 ## Alternatives rejected
 
 | Alternative | Why rejected |

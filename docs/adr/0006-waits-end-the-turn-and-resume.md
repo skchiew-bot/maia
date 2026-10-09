@@ -53,6 +53,15 @@
 - **Bad: turns are not tasks.** A turn can end mid-task (waiting for a decision), so turn boundaries are not task
   boundaries. Credits and rollover are enforced only at task boundaries (ADR-0007, ADR-0008).
 
+## Implementation status (integration commit `e97e53e`)
+
+Checked against the real Claude Code 2.1.295 ([research §13.1](../research/claude-code-integration.md#131-what-was-checked-and-what-came-out)): after
+`request_decision` the model made no further tool call, the process was gone, and the session resumed with `--resume`
+and the answer injected; the model wrote the human's pick. The end-your-turn instruction travels as the first key of the
+tool result's `structuredContent`, because Claude Code shows the model that JSON and drops the text blocks
+([§13.3, D2](../research/claude-code-integration.md#133-divergences-found-and-fixed)). A guard denial that raises a card still answers `deny`;
+answering `defer` (item 4) is gap G-48.
+
 ## Alternatives rejected
 
 | Alternative | Why rejected |

@@ -47,6 +47,13 @@
   [T-14](../security/threat-model.md#t-14-credit-gaming)). Metering is reconciled against supervisor-observed
   totals.
 
+## Implementation status (integration commit `e97e53e`)
+
+Checked against the real Claude Code ([research §13.3, D8](../research/claude-code-integration.md#133-divergences-found-and-fixed)): a model ignored the
+plain "do not start another task" notice and did the next step. The supervisor still ended the session at the end of
+the turn, and the notice now says that the order outranks the prompt. Within a turn, obedience rests on the model until
+a guard denies tool calls after a stop (gap G-54).
+
 ## Alternatives rejected
 
 | Alternative | Why rejected |

@@ -128,7 +128,7 @@ flowchart TB
 | **Ingest client** | `packages/client` | Timeouts, bounded retries and a local JSONL spool replayed through `/ingest/spool` (idempotent). Shared by the hooks, sidecar, MCP server and CLI. | Built |
 | **Domain modules** | `packages/mod-*` | Each exports an `AocModule`: events, projectors, reactors, guards, routes, jobs and services. Modules depend only on the service interfaces in `contracts/services.ts`, never on each other's code. | Built |
 | **Control Tower** | `packages/mod-tower` | The Approver's landing view: an exception-first attention queue ranked by cost of delay, plus flow, fleet, spend, integrity and a portfolio-level anomaly radar (`TowerSnapshot` in [`dto/tower.ts`](../packages/contracts/src/dto/tower.ts)). Never ranks people (R11). | Built |
-| **Web** | `packages/web` | The operator console and the intake portal: React, infographic-first (§12, ADR-0011). One token set for light and dark. Built to the static mock [`mocks/aoc-mock.html`](../mocks/README.md), which the CEO approved on 2026-10-09 with its proposed defaults. | Built; the accessibility gate (axe, keyboard, token contrast) passes, see [`a11y/report.md`](../packages/web/test/a11y/report.md) |
+| **Web** | `packages/web` | The operator console and the intake portal: React, infographic-first (§12, ADR-0011). One token set for light and dark. Built to the static mock [`mocks/aoc-mock.html`](../mocks/README.md), which the CEO approved on 2026-10-09 with its proposed defaults. | Built; the accessibility gate (axe, keyboard, 360 px, token contrast) passed at the commit named in [`a11y/report.md`](../packages/web/test/a11y/report.md) |
 | **Demo seeder** | `packages/demo` | Deterministic demo history for walkthroughs and UI work. It writes `<dataDir>/aoc.config.json`, which runs managed sessions on `claude-sim` with the fake LLM extractor and the FX job off: demos never call the real `claude` CLI. The fake extractor answers the error-learning passes with canned "nothing to report" replies, so a demo's log stays quiet; any other model call fails loudly. | Built |
 | **CLI** | `packages/cli` | `aoc`: `login`, `logout`, `whoami`, `status`, `run --type …`, `sessions` and `session`, `prompt` / `nudge` / `restart` / `stop` / `rollover`, `projects` and `project create` / `timeline`, `decisions` and `decide`, `users` and `token create`, `hooks install-observed`, `doctor`, `verify`, `anchor`, `evidence`, `backup now` / `list`, `serve`. | Built |
 | **claude-sim** | `packages/claude-sim` | Deterministic fake `claude` CLI for end-to-end tests and demo data. Tests never call the real binary. | Built |
@@ -1165,7 +1165,8 @@ repository was AI-built. Its governance core must have a human code review befor
 
 Each stage needs CEO sign-off. Discovery-class stages run on Opus; work from the UI onward runs on Sonnet. A static
 design mock of the three main pages ([`mocks/aoc-mock.html`](../mocks/README.md)) is approved before any UI code;
-the CEO approved it on 2026-10-09, with its proposed defaults. The 3D Showcase tab is built last.
+the CEO approved it on 2026-10-09, with its proposed defaults. The Showcase tab (a 2D live map of the fleet; there is
+no 3D view) was built last.
 
 | Stage | Delivers | Packages | Sign-off evidence |
 | --- | --- | --- | --- |

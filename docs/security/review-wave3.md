@@ -23,7 +23,7 @@ No Critical or High severity finding. One Low finding, fixed with a regression t
 
 | # | Sev | Finding | Status |
 | --- | --- | --- | --- |
-| W3-01 | Low | `ChangeEngine.start()` could link an **observed** (unverified, laptop) session to an approved change record, which is exactly the data the provenance trace's `via: 'session_change'` path reads | Fixed `<see commit>` |
+| W3-01 | Low | `ChangeEngine.start()` could link an **observed** (unverified, laptop) session to an approved change record, which is exactly the data the provenance trace's `via: 'session_change'` path reads | Fixed `89a0e95` |
 
 ## Fixed
 
