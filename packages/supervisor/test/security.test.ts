@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -13,14 +13,57 @@ afterEach(async () => {
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
 });
 
-/** A workspace whose Claude Code project/local settings were written by the agent (or shipped by the repo). */
+function tempDir(prefix: string): string {
+  const d = mkdtempSync(join(tmpdir(), prefix));
+  dirs.push(d);
+  return d;
+}
+
+/** prj_demo's repository, whose Claude Code project/local settings were written by the agent (or shipped by the repo). */
 function workspace(files: Record<string, string>): string {
-  const cwd = mkdtempSync(join(tmpdir(), 'aoc-ws-'));
-  dirs.push(cwd);
+  const cwd = tempDir('aoc-ws-');
+  h!.ledger.repoPaths.set('prj_demo', cwd);
   mkdirSync(join(cwd, '.claude'), { recursive: true });
   for (const [name, text] of Object.entries(files)) writeFileSync(join(cwd, '.claude', name), text);
   return cwd;
 }
+
+describe('a managed session works only in its own project (R-09)', () => {
+  it("refuses a cwd outside the project's repository and workspace, also through a symlink", async () => {
+    h = await createHarness();
+    const outside = tempDir('aoc-outside-');
+    const workspaces = h.t.config.supervisor.workspacesDir;
+    mkdirSync(join(workspaces, 'prj_demo'), { recursive: true });
+    mkdirSync(join(workspaces, 'prj_other'), { recursive: true });
+    symlinkSync(outside, join(workspaces, 'prj_demo', 'escape'));
+    for (const cwd of [outside, join(workspaces, 'prj_demo', 'escape'), join(workspaces, 'prj_other'), workspaces]) {
+      await expect(h.launch('Build the login page', { cwd }), cwd).rejects.toMatchObject({ status: 422, code: 'cwd_outside_project' });
+    }
+    expect(h.calls()).toHaveLength(0);
+
+    const repo = tempDir('aoc-repo-');
+    mkdirSync(join(repo, 'packages', 'web'), { recursive: true });
+    h.ledger.repoPaths.set('prj_demo', repo);
+    const inRepo = await h.launch('Build the login page', { cwd: join(repo, 'packages', 'web') });
+    await h.waitLifecycle(inRepo, 'idle');
+    expect(h.callsFor(inRepo)[0]!.cwd).toBe(join(repo, 'packages', 'web'));
+  });
+
+  it('refuses the next turn once its working directory has been swapped for a link out of the project', async () => {
+    h = await createHarness();
+    const outside = tempDir('aoc-outside-');
+    const repo = tempDir('aoc-repo-');
+    const pkg = join(repo, 'pkg');
+    mkdirSync(pkg);
+    h.ledger.repoPaths.set('prj_demo', repo);
+    const id = await h.launch('Build the login page', { cwd: pkg });
+    await h.waitLifecycle(id, 'idle');
+    rmSync(pkg, { recursive: true });
+    symlinkSync(outside, pkg);
+    await expect(h.sup.nudge(id, 'carry on', h.ownerActor)).rejects.toMatchObject({ code: 'cwd_outside_project' });
+    expect(h.callsFor(id)).toHaveLength(1);
+  });
+});
 
 describe('managed turns never start with workspace settings that subvert AOC (§2, §3)', () => {
   const subversions: [string, Record<string, string>][] = [

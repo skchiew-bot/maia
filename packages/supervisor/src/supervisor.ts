@@ -16,7 +16,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { isAbsolute, join, resolve } from 'node:path';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { z } from 'zod';
 import {
   AOC_ENV,
@@ -689,7 +689,10 @@ export class Supervisor implements SupervisorService {
     if (requested) {
       if (!isAbsolute(requested) || !isDirectory(requested))
         throw new HttpError(422, 'invalid_cwd', 'cwd must be an existing absolute directory');
-      return resolve(requested);
+      // The session keeps the physical path: a symlink swapped in along it later cannot move the session.
+      const physical = realpathSync(requested);
+      if (!this.withinProject(physical, projectId)) throw cwdOutsideProject(422, projectId);
+      return physical;
     }
     const repo = this.ledger()?.projectRepoPath(projectId);
     if (repo) {
@@ -704,6 +707,18 @@ export class Supervisor implements SupervisorService {
     const dir = resolve(this.ctx.config.supervisor.workspacesDir, projectId);
     mkdirSync(dir, { recursive: true });
     return dir;
+  }
+
+  /**
+   * Where a session of the project may work (R-09): the project's repository, or the project's own directory
+   * under the workspaces dir — compared physically, so a symlink inside either cannot lead out of it.
+   */
+  private withinProject(cwd: string, projectId: string): boolean {
+    const roots = [this.ledger()?.projectRepoPath(projectId), resolve(this.ctx.config.supervisor.workspacesDir, projectId)]
+      .filter((r): r is string => !!r && isDirectory(r))
+      .map((r) => realpathSync(r));
+    const physical = realpathOr(cwd);
+    return roots.some((root) => isWithin(physical, root));
   }
 
   /** The appended system prompt is fixed at launch (Claude Code snapshots it per conversation) and reused on resume. */
@@ -935,6 +950,8 @@ export class Supervisor implements SupervisorService {
       );
     const sup = this.ctx.config.supervisor;
     const cwd = s.cwd ?? this.resolveCwd(null, s.projectId);
+    // Checked again on every turn: the agent can replace its directory with a link between turns.
+    if (!this.withinProject(cwd, s.projectId)) throw cwdOutsideProject(409, s.projectId);
     const overrides = workspaceSettingsProblems(cwd);
     if (overrides.length)
       throw new HttpError(
@@ -1950,6 +1967,19 @@ function realpathOr(p: string): string {
   } catch {
     return p;
   }
+}
+
+function isWithin(inner: string, outer: string): boolean {
+  const rel = relative(outer, inner);
+  return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
+}
+
+function cwdOutsideProject(status: 409 | 422, projectId: string): HttpError {
+  return new HttpError(
+    status,
+    'cwd_outside_project',
+    `A session of project ${projectId} works in the project's repository or its directory under supervisor.workspacesDir`,
+  );
 }
 
 function isDirectory(p: string): boolean {
