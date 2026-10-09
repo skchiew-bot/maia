@@ -1,0 +1,55 @@
+/* Context meter (Console tiles and the Session metering panel): fill + rollover tick, amber when due. */
+.session-ctx {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.session-ctx__bar {
+  position: relative;
+  display: block;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--surface-3);
+}
+.session-ctx--panel .session-ctx__bar {
+  height: 8px;
+}
+.session-ctx__fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: inherit;
+  background: var(--text-2);
+}
+.session-ctx.is-due .session-ctx__fill {
+  background: var(--warn);
+}
+.session-ctx__tick {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: var(--text);
+}
+.session-ctx__sub {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.session-ctx.is-due .session-ctx__sub {
+  color: var(--text);
+}
+.session-ctx__warn {
+  color: var(--warn);
+}
+.session-ctx__none {
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+}
