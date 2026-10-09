@@ -77,6 +77,7 @@ const REFUSAL_LABEL: Record<string, string> = {
   gate_missing: 'gate missing',
   tests_failed: 'tests failed',
   not_fast_forward: 'not a fast-forward',
+  self_modification: 'self-modification of the governance core',
 };
 
 const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
