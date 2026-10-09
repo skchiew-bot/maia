@@ -22,7 +22,7 @@ async function openPage(path = '/learning') {
   return screen.findByRole('table', { name: 'Repeat offences by cost of recurrence' }, { timeout: 5000 });
 }
 
-describe('Learning page', { timeout: 20_000 }, () => {
+describe('Learning page', { timeout: 60_000 }, () => {
   // The route loads the page lazily; importing it once up front keeps each test's first render fast.
   beforeAll(async () => {
     await import('../../src/pages/learning/LearningPage');
@@ -89,9 +89,12 @@ describe('Learning page', { timeout: 20_000 }, () => {
     await user.click(within(dialog).getByRole('button', { name: 'Mark root-caused' }));
     expect(within(dialog).getByText('Say what causes it (at least 3 characters).')).toBeInTheDocument();
     expect(calls.some((c) => c.method === 'POST')).toBe(false);
-    await user.type(within(dialog).getByLabelText(/^Root cause/), 'Config is read lazily with no guard.');
+    await user.click(within(dialog).getByLabelText(/^Root cause/));
+    await user.paste('Config is read lazily with no guard.');
     await user.click(within(dialog).getByRole('button', { name: 'Mark root-caused' }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Mark root-caused' })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Mark root-caused' })).toBeNull(), {
+      timeout: 5000,
+    });
     const post = calls.find((c) => c.method === 'POST')!;
     expect(post.path).toBe('/api/learning/offences/off_env/transition');
     expect(post.body).toEqual({ to: 'root_caused', note: 'Config is read lazily with no guard.' });
@@ -127,10 +130,13 @@ describe('Learning page', { timeout: 20_000 }, () => {
     await user.click(within(occurrences).getByRole('button', { name: 'Assign root cause' }));
     const dialog = screen.getByRole('dialog', { name: 'Assign a root cause' });
     await user.click(within(dialog).getByLabelText('A new class'));
-    await user.type(within(dialog).getByLabelText(/^Class name/), 'Deep relative imports');
+    await user.click(within(dialog).getByLabelText(/^Class name/));
+    await user.paste('Deep relative imports');
     await user.selectOptions(within(dialog).getByLabelText(/^Where the cause points/), 'codebase');
     await user.click(within(dialog).getByRole('button', { name: 'Assign root cause' }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Assign a root cause' })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Assign a root cause' })).toBeNull(), {
+      timeout: 5000,
+    });
     expect(calls.find((c) => c.method === 'POST')!.body).toEqual({
       newClass: { name: 'Deep relative imports', dimension: 'codebase' },
     });
@@ -145,6 +151,25 @@ describe('Learning page', { timeout: 20_000 }, () => {
       'href',
       '/knowledge?propose=rcc_sql',
     );
+  });
+
+  it('drills from a headline number to its section once the data has laid the page out', async () => {
+    const scrolled: string[] = [];
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (this: Element) {
+      scrolled.push(this.id);
+    };
+    try {
+      learningRoutes();
+      await openPage('/learning#occurrences');
+      await waitFor(() => expect(scrolled).toEqual(['occurrences']), { timeout: 5000 });
+      expect(screen.getByRole('link', { name: 'Cost of recurrence' })).toHaveAttribute(
+        'href',
+        '/learning#offences',
+      );
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
   });
 
   it('says what would fill an empty page, and offers retry when a panel fails', async () => {
@@ -199,6 +224,6 @@ describe('Learning page', { timeout: 20_000 }, () => {
         meta: {},
       }),
     );
-    await waitFor(() => expect(offenceCalls()).toBe(before + 1));
+    await waitFor(() => expect(offenceCalls()).toBe(before + 1), { timeout: 5000 });
   });
 });

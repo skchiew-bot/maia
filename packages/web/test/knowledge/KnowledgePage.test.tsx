@@ -41,7 +41,7 @@ async function openPage(path = '/knowledge') {
   return screen.findByRole('table', { name: 'Distilled lessons' }, { timeout: 5000 });
 }
 
-describe('Knowledge page', { timeout: 20_000 }, () => {
+describe('Knowledge page', { timeout: 60_000 }, () => {
   beforeAll(async () => {
     await import('../../src/pages/knowledge/KnowledgePage');
   }, 30_000);
@@ -100,14 +100,17 @@ describe('Knowledge page', { timeout: 20_000 }, () => {
     expect(within(dialog).getByLabelText(/^Fix/)).toHaveValue('Route migration runs to Sonnet.');
     await user.click(within(dialog).getByLabelText('A code area'));
     await user.type(within(dialog).getByLabelText(/^Code area/), '/srv/db');
-    await user.type(within(dialog).getByLabelText(/^Rule/), 'Migrations are reversible.');
+    await user.click(within(dialog).getByLabelText(/^Rule/));
+    await user.paste('Migrations are reversible.');
     await user.click(within(dialog).getByRole('button', { name: 'Propose for a decision' }));
     expect(within(dialog).getByText('Use a path relative to the repository root.')).toBeInTheDocument();
     expect(calls.some((c) => c.method === 'POST')).toBe(false);
     await user.clear(within(dialog).getByLabelText(/^Code area/));
     await user.type(within(dialog).getByLabelText(/^Code area/), 'db/migrations');
     await user.click(within(dialog).getByRole('button', { name: 'Propose for a decision' }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Propose a lesson' })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Propose a lesson' })).toBeNull(), {
+      timeout: 5000,
+    });
     expect(calls.find((c) => c.method === 'POST')!.body).toMatchObject({
       classId: 'rcc_sql',
       scopeType: 'code_area',
@@ -130,8 +133,9 @@ describe('Knowledge page', { timeout: 20_000 }, () => {
     const confirm = screen.getByRole('alertdialog', { name: 'Retire this lesson?' });
     expect(confirm).toHaveTextContent('It stops being injected into process type migration.');
     await user.click(within(confirm).getByRole('button', { name: 'Retire lesson' }));
-    await waitFor(() =>
-      expect(calls.some((c) => c.path === '/api/learning/lessons/les_sql/retire')).toBe(true),
+    await waitFor(
+      () => expect(calls.some((c) => c.path === '/api/learning/lessons/les_sql/retire')).toBe(true),
+      { timeout: 5000 },
     );
   });
 

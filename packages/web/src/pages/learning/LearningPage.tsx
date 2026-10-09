@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link, useLocation, useSearchParams } from 'react-router-dom';
+import { useCallback, useMemo, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import type {
   ErrorOccurrenceDTO,
   ModelDimensionReportDTO,
@@ -35,7 +35,7 @@ import { LifecycleSteps } from './LifecycleSteps';
 import { ModelDimensionList } from './ModelDimension';
 import { OccurrencesPanel } from './OccurrencesPanel';
 import { OffenceDrawer } from './OffenceDrawer';
-import { combine } from './resources';
+import { combine, useSectionScroll } from './resources';
 import { TransitionDialog } from './TransitionDialog';
 import {
   DIMENSION_META,
@@ -79,7 +79,6 @@ export default function LearningPage() {
   const { user } = useAuth();
   // learning.curate: both operator roles may assign root causes and move offences (the server enforces it).
   const canCurate = user?.role === 'approver' || user?.role === 'builder';
-  const location = useLocation();
   // Waiting ages are text: the shared minute clock is enough, and nothing redraws between events.
   const now = useNow();
 
@@ -94,6 +93,7 @@ export default function LearningPage() {
     query: { limit: ERROR_LIMIT },
     refreshOn,
   });
+  useSectionScroll(offences, classes, trend, model, errors);
 
   // The open offence lives in the URL (`?class=<classId>`) so other pages can link straight to it.
   const [params, setParams] = useSearchParams();
@@ -124,12 +124,6 @@ export default function LearningPage() {
     () => new Map((model.data?.classes ?? []).map((c) => [c.classId, c])),
     [model.data],
   );
-
-  // KPI links point at in-page sections; the router does not scroll to hashes on its own.
-  useEffect(() => {
-    if (!location.hash) return;
-    document.getElementById(location.hash.slice(1))?.scrollIntoView({ block: 'start' });
-  }, [location.hash]);
 
   const openOffence = openClassId ? (ranked.find((o) => o.classId === openClassId) ?? null) : null;
   const transitionOffence = transition
@@ -267,12 +261,14 @@ export default function LearningPage() {
         />
         <KpiTile
           label="Cost of recurrence"
+          href="#offences"
           value={loaded ? formatUsd(summary.openCostUsd) : '—'}
           footnote="notional · open offences · UAT and high priority ×3"
           info="Each occurrence costs its session's usage in the 30 minutes after it (notional API-equivalent, not a bill). UAT and high-priority occurrences weigh three times. This is the ranking key, not the count."
         />
         <KpiTile
           label="Agent time lost"
+          href="#offences"
           value={loaded ? formatDuration(summary.openCostMs) : '—'}
           footnote={
             loaded && summary.openCostTokens > 0
@@ -292,6 +288,7 @@ export default function LearningPage() {
         />
         <KpiTile
           label="Verified closed"
+          href="#offences"
           value={loaded ? summary.closed : '—'}
           footnote="no recurrence for a full window after the fix"
         />

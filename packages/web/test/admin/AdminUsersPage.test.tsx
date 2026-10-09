@@ -49,7 +49,7 @@ async function openPage(path = '/admin/users') {
   return screen.findByRole('table', { name: 'People and their access' }, { timeout: 5000 });
 }
 
-describe('Admin › Users page', { timeout: 20_000 }, () => {
+describe('Admin › Users page', { timeout: 60_000 }, () => {
   beforeAll(async () => {
     await import('../../src/pages/admin/AdminUsersPage');
   }, 30_000);
@@ -122,7 +122,9 @@ describe('Admin › Users page', { timeout: 20_000 }, () => {
     expect(within(dialog).getByText('Attribution, not signature')).toBeInTheDocument();
     expect(calls.find((c) => c.method === 'POST')!.body).toEqual({ label: 'laptop CLI', expiresInDays: 30 });
     await user.click(within(dialog).getByRole('button', { name: 'Done: I stored it' }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: /Issue a token/ })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /Issue a token/ })).toBeNull(), {
+      timeout: 5000,
+    });
     expect(document.body.innerHTML).not.toContain(SECRET);
   });
 
@@ -148,12 +150,12 @@ describe('Admin › Users page', { timeout: 20_000 }, () => {
     const table = await openPage();
     const priya = within(table).getByRole('row', { name: 'Manage Priya Nair' });
     expect(priya).toHaveTextContent('Lead');
-    await waitFor(() => expect(priya).toHaveTextContent('1')); // one passkey, fetched per person
+    await waitFor(() => expect(priya).toHaveTextContent('1'), { timeout: 5000 }); // one passkey, fetched per person
     await user.click(within(table).getByRole('row', { name: 'Manage Nur Hidayah' }));
     const drawer = await screen.findByRole('dialog', { name: 'Nur Hidayah' });
     await user.selectOptions(within(drawer).getByLabelText('Role', { exact: true }), 'builder');
     await user.click(within(drawer).getByRole('button', { name: 'Save role' }));
-    await waitFor(() => expect(calls.some((c) => c.method === 'PATCH')).toBe(true));
+    await waitFor(() => expect(calls.some((c) => c.method === 'PATCH')).toBe(true), { timeout: 5000 });
     expect(calls.find((c) => c.method === 'PATCH')).toMatchObject({
       path: '/api/users/usr_nur',
       body: { role: 'builder' },

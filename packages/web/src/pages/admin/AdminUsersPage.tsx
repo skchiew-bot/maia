@@ -24,7 +24,7 @@ import {
   useToast,
   type DataTableColumn,
 } from '../../components';
-import { combine } from '../learning/resources';
+import { combine, useSectionScroll } from '../learning/resources';
 import { CreateUserDialog } from './CreateUserDialog';
 import { GateCoverage } from './GateCoverage';
 import { AttributionNote, IssueTokenDialog, type TokenTarget } from './IssueTokenDialog';
@@ -82,6 +82,7 @@ export default function AdminUsersPage() {
   const people = users.data?.users;
   const ids = useMemo(() => people?.map((u) => u.id), [people]);
   const facts = useUserFacts(ids);
+  useSectionScroll(users, userTokens, sessions, observers, facts);
 
   const [createRole, setCreateRole] = useState<Role | null>(null);
   const [tokenTarget, setTokenTarget] = useState<TokenTarget | null>(null);
@@ -343,6 +344,7 @@ export default function AdminUsersPage() {
       <KpiStrip label="Identity at a glance">
         <KpiTile
           label="Active people"
+          href="#people"
           value={people ? counts.approver + counts.builder + counts.requester : '—'}
           footnote={
             people
@@ -354,6 +356,7 @@ export default function AdminUsersPage() {
         />
         <KpiTile
           label="Approvers"
+          href="#people"
           value={people ? counts.approver : '—'}
           tone={people && counts.approver < 2 ? (counts.approver === 0 ? 'danger' : 'warn') : 'neutral'}
           footnote={
@@ -363,6 +366,7 @@ export default function AdminUsersPage() {
         />
         <KpiTile
           label="Passkey coverage"
+          href="#your-passkeys"
           value={
             facts.data
               ? `${formatInteger(approvers.length - approversWithoutKey.length)} of ${formatInteger(approvers.length)}`
@@ -380,6 +384,7 @@ export default function AdminUsersPage() {
         />
         <KpiTile
           label="Live personal tokens"
+          href="#people"
           value={userTokens.data ? hygiene.live : '—'}
           tone={hygiene.orphaned > 0 ? 'danger' : 'neutral'}
           footnote={
@@ -393,6 +398,7 @@ export default function AdminUsersPage() {
         />
         <KpiTile
           label="Observer tokens"
+          href="#observer-tokens"
           value={observers.data ? liveObservers.length : '—'}
           footnote="for read-only observed sessions"
         />
@@ -461,6 +467,7 @@ export default function AdminUsersPage() {
 
         <Widget
           span={12}
+          id="people"
           title="People"
           subtitle="Role, flags, passkeys, tokens and when each person was last seen"
           flush
@@ -521,6 +528,7 @@ export default function AdminUsersPage() {
 
         <Widget
           span={6}
+          id="observer-tokens"
           title="Observer tokens"
           subtitle="Read-only observed sessions on developer hosts"
           actions={

@@ -37,7 +37,7 @@ import {
   useToast,
   type DataTableColumn,
 } from '../../components';
-import { combine } from '../learning/resources';
+import { combine, useSectionScroll } from '../learning/resources';
 import { KnowledgeSearch } from './KnowledgeSearch';
 import { LessonDrawer } from './LessonDrawer';
 import { PayoffChart } from './PayoffChart';
@@ -106,6 +106,7 @@ export default function KnowledgePage() {
   const offences = useResource<OffenceDTO[]>('/api/learning/offences', { refreshOn });
   const classes = useResource<RootCauseClassDTO[]>('/api/learning/classes', { refreshOn: classRefresh });
   const types = useResource<RegistryTypesResponse>('/api/registry/process-types');
+  useSectionScroll(lessons, decisions, offences, classes, types);
 
   const [status, setStatus] = useState<StatusFilter>('all');
   const [retireTarget, setRetireTarget] = useState<LessonDTO | null>(null);
@@ -295,6 +296,7 @@ export default function KnowledgePage() {
       <KpiStrip label="Lessons at a glance">
         <KpiTile
           label="Lessons in force"
+          href="#lessons"
           value={lessons.data ? summary.inForce : '—'}
           footnote={
             lessons.data
@@ -307,6 +309,7 @@ export default function KnowledgePage() {
         />
         <KpiTile
           label="Repeats prevented"
+          href="#payoff"
           value={lessons.data ? (summary.measurable > 0 ? signed(summary.repeatsPrevented) : '—') : '—'}
           footnote={
             summary.measurable > 0
@@ -317,6 +320,7 @@ export default function KnowledgePage() {
         />
         <KpiTile
           label="Saved"
+          href="#payoff"
           value={lessons.data ? formatUsd(summary.usdSaved) : '—'}
           footnote={`notional · ${formatDuration(Math.max(0, summary.msSaved))} agent time${
             summary.tokensSaved > 0 ? ` · ${formatTokens(summary.tokensSaved)} tokens` : ''
@@ -342,6 +346,7 @@ export default function KnowledgePage() {
         />
         <KpiTile
           label="Retirement candidates"
+          href="#lessons"
           value={lessons.data ? candidates.length : '—'}
           tone={candidates.length > 0 ? 'warn' : 'neutral'}
           footnote={
@@ -356,6 +361,7 @@ export default function KnowledgePage() {
       <WidgetGrid>
         <Widget
           span={7}
+          id="payoff"
           title="Payoff by lesson"
           subtitle="Repeats prevented since binding · savings notional"
           info="One shared scale around zero. A bar left of zero means the class recurs more than its baseline predicts: prune that lesson."
