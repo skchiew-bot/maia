@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { sha256hex } from '@aoc/kernel';
+import { childEnv, sha256hex } from '@aoc/kernel';
 import { parseAnchor, serializeAnchor, type AnchorRecord, type ExternalAnchor } from '../anchor-record';
 import { brief, exec } from '../exec';
 import type { TsaFetch } from '../options';
@@ -70,7 +70,7 @@ export class Rfc3161AnchorProvider implements AnchorProvider {
   constructor(private readonly cfg: Rfc3161Config) {}
 
   private openssl(args: string[]) {
-    return exec(this.cfg.opensslBin ?? 'openssl', args, { env: { ...process.env, LC_ALL: 'C' } });
+    return exec(this.cfg.opensslBin ?? 'openssl', args, { env: childEnv(process.env, { LC_ALL: 'C' }) });
   }
 
   private requireDir(): string {

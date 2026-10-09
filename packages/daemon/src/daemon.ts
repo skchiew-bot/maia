@@ -5,6 +5,7 @@ import { sessionIsolationOf, type AocConfig } from '@aoc/contracts';
 import { createLogger } from '@aoc/kernel';
 import pkg from '../package.json' with { type: 'json' };
 import { ConfigError, loadConfig, parseDaemonArgs, type LoadedConfig } from './config';
+import { describeMapping } from './mapping';
 import { runRestoreCommand } from './restore';
 import { createAocServer, type AocServer } from './server';
 
@@ -16,7 +17,7 @@ const USAGE = `Usage: aocd [--config <file>] [--version]
 Config file: --config <file>, else $AOC_CONFIG, else ./aoc.config.json, else built-in defaults.
 Env overrides: AOC_PORT, AOC_HOST, AOC_DATA_DIR, AOC_PUBLIC_URL; AOC_LOG_LEVEL=debug|info|warn|error.
 Secrets never go in the config file: AOC_BOOTSTRAP_TOKEN and ANTHROPIC_API_KEY come from the environment, the KEK
-from keys.masterKeyFile (AOC_MASTER_KEY is accepted in development only): see .env.example.
+from keys.masterKeyFile (AOC_MASTER_KEY is accepted in development only, with a warning): see .env.example.
 `;
 
 /** Intake videos (up to intake.maxVideoBytes) on slow links need longer than Node's 5-minute default. */
@@ -129,7 +130,7 @@ async function stop(server: Server, aoc: AocServer): Promise<void> {
   await closed;
   clearInterval(idle);
   clearTimeout(force);
-  // Drains reactors, stops jobs and modules, closes the DB. Managed claude processes are the
+  // Drains reactors, stops modules, waits for running jobs, closes the DB. Managed claude processes are the
   // supervisor's to stop or recover; the daemon never kills them itself.
   await aoc.close();
 }
@@ -142,6 +143,7 @@ function banner(aoc: AocServer, loaded: LoadedConfig, port: number, env: NodeJS.
     `  console  ${config.port === 0 ? `http://localhost:${port}` : config.publicUrl}/`,
     `  config   ${loaded.file ?? 'built-in defaults (no aoc.config.json)'}`,
     `  data     ${config.dataDir}`,
+    `  mapping  ${describeMapping(config.compliance.mappingFile)}`,
     `  sessions ${sessionsLine(config)}`,
   ];
   if (!aoc.webDir) lines.push('  ui       not built (run `pnpm build`); serving the API only');

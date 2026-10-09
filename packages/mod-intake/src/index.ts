@@ -6,6 +6,7 @@ import {
   SEVERITIES,
   hasPermission,
   type AocConfig,
+  intakeTotalBytes,
   type IntakeLimits,
   type InternalTicket,
   type McpErrorResult,
@@ -38,8 +39,8 @@ export function intakeLimits(cfg: AocConfig['intake']): IntakeLimits {
   return {
     maxAttachments: cfg.maxAttachments,
     maxBytes: { image: cfg.maxImageBytes, video: cfg.maxVideoBytes, document: cfg.maxImageBytes },
-    // aocd caps an intake request body at one maximum-size video plus the form envelope.
-    maxTotalBytes: cfg.maxVideoBytes,
+    // The total the request-body caps (the kernel's and aocd's) are built from: this plus the form envelope.
+    maxTotalBytes: intakeTotalBytes(cfg),
     titleLength: { ...TITLE_LENGTH },
     descriptionLength: { ...DESCRIPTION_LENGTH },
     accepted: ACCEPTED_MEDIA.map((m) => ({ mime: m.mime, kind: m.kind, extensions: [...m.extensions] })),
