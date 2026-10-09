@@ -34,7 +34,7 @@ So the wall is built from two things only:
 
 | Credential | What it can do | Where it lives | Never on |
 | --- | --- | --- | --- |
-| **Supervisor machine identity** (`aoc-supervisor` machine user, or a GitHub App) | Update `main` and `release/*`; create `aoc/*` pin tags | The supervisor's `promotion` profile, used only by `SupervisorService.runIsolated` for promotion, rollback and tagging | Any session environment; any developer machine; any process type in the registry |
+| **Supervisor machine identity** (`aoc-supervisor` machine user, or a GitHub App) | Update `main` and `release/*`; create `aoc/*` pin tags | The `prod-promote` credential profile, used only by the `git push` from mod-change's service clone (promotion, rollback, break-glass; §4.5) | Any session environment; any developer machine; any process type in the registry |
 | **Feature push credential** (profile `git-feature`) | Push feature branches | Credential profiles file; injected only into sessions whose type names `git-feature` | Read-only types; developer machines |
 | **UAT credential** (profile `uat-deploy`) | Push `uat/*` branches and deploy to UAT | Credential profiles file; `bug-fix` sessions only | Read-only types; developer machines |
 | **Production deploy credentials** | Deploy to production | Only behind the promotion path (`runIsolated`) | Every session; every developer machine |
@@ -140,7 +140,7 @@ The host that runs aocd and the supervisor:
      "profiles": {
        "git-feature": { "env": { "GIT_SSH_COMMAND": "ssh -i /etc/aoc/keys/git-feature -o IdentitiesOnly=yes" } },
        "uat-deploy": { "env": { "GIT_SSH_COMMAND": "ssh -i /etc/aoc/keys/uat-deploy -o IdentitiesOnly=yes" } },
-       "promotion": { "env": { "GIT_SSH_COMMAND": "ssh -i /etc/aoc/keys/promotion -o IdentitiesOnly=yes" } }
+       "prod-promote": { "env": { "GIT_SSH_COMMAND": "ssh -i /etc/aoc/keys/promotion -o IdentitiesOnly=yes -o UserKnownHostsFile=/etc/aoc/known_hosts" } }
      }
    }
    ```
@@ -148,24 +148,65 @@ The host that runs aocd and the supervisor:
    The key files are owned by `aoc`, mode `0600`. The supervisor copies the profile's `env` into the session's
    environment as it is, so a key file named there must be readable by the session's user. The target design
    (gap G-01) hands a session key to the sandbox user only for that session (a per-session copy, deleted when
-   the session ends), and the `promotion` key never leaves the `aoc` user.
+   the session ends), and the promotion key never leaves the `aoc` user.
 3. **No process type names the promotion profile.** Check:
-   `jq -r '.types[].credentialProfile' config/process-types.json | sort -u` must not list `promotion`.
+   `jq -r '.types[].credentialProfile' config/process-types.json | sort -u` must not list `prod-promote` (the
+   profile name mod-change uses, its `promoteCredentialProfile`).
    `config/` is a protected path, and every edit is audited (`registry.changed`).
 4. **Environment allowlist.** Review `supervisor.envAllowlist`. Everything not on it is dropped from session
    environments. Remove what you do not need. The Claude credentials on the default list are readable by the model
    (threat model O-14).
-5. **Privileged git.** Promotion, tagging and rollback run from a **service-owned clone** that fetches candidate
-   commits by SHA, never in an agent's workspace. An agent can plant git hooks and config there (threat model
-   [T-2](../security/threat-model.md#t-2-code-execution-through-git-configuration-in-agent-workspaces)). At this
-   commit, `mod-change` promotes from the **project's repository path**, without fetching into a separate clone,
-   and lets that repository's `pre-push` hook run with the promotion credential. If any session can write that
-   repository, or a worktree that shares its `.git` directory, this is exploitable. Managed sessions work in that
-   very repository by default. **Do not give the promotion profile a real credential until threat model O-1 and
-   O-2 are done** (gaps G-01, G-04): until then any session can also read the key file directly. How `main`
-   moves in the meantime is a CEO decision; record it. If a credential is ever used before then, compare the
-   repository's `.git/config` and `.git/hooks/` with a known-good checksum kept off the host before each
-   promotion.
+5. **Privileged git (gap G-04: enforced).** Promotion, rollback, break-glass, pin tags and rollback verification
+   never run git or repository code with privilege in a tree an agent can write (threat model
+   [T-2](../security/threat-model.md#t-2-code-execution-through-git-configuration-in-agent-workspaces), O-2):
+
+   - **A service-owned clone per project**, `<dataDir>/git/<projectId>.git`: a bare repository that only aocd
+     writes. AOC refuses to use it when it would overlap the project's working tree or git directory, so keep
+     `dataDir` outside every project. Candidate commits enter it by id only:
+     `git fetch --no-tags -- <project repository> <sha>` with `protocol.allow=never` and `protocol.file.allow=user`
+     (the local transport and nothing else; `protocol.file.allow=never` would refuse this very fetch) and
+     `transfer.fsckObjects=true`. The project's upload-pack serves the objects; no AOC command reads the project's
+     hooks or config.
+   - **Every git command in the clone** runs with hooks off (`core.hooksPath=/dev/null`), no fsmonitor, no signing
+     or signature-verification program, no submodule recursion or automatic gc, and every transport denied unless
+     that step needs one. It sees no system or global config (`GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null`)
+     and nothing of aocd's environment but `PATH`, the locale and the time zone. AOC never sets `safe.directory`.
+   - **Provenance and the fast-forward checks** run in the clone, against where AOC last moved the branch, and run
+     again when the approved promotion executes. The project repository's own view of `main` cannot hide an orphan.
+   - **The push target is AOC's configuration, never the project's.** It is the service clone's `origin`, or
+     `projects.<id>.promotionRemote` in mod-change's options. `remote.*`, `pushurl` and `url.*.insteadOf` in the
+     project's `.git/config` are ignored. Only ssh, https and absolute local paths are accepted. When the project
+     repository has remotes and AOC has none configured, promotions, rollbacks and break-glass are refused
+     (`promotion_remote_unconfigured`). A project with no remote at all has its own branch moved.
+   - **The promotion credential reaches one process:** `git push --no-verify` from the service clone. The push is a
+     compare-and-swap of a verified fast-forward (`--force-with-lease=<branch>:<verified base>`): the branch moves
+     only from the commit whose delta passed the gate, and never backwards, so ruleset A needs no bypass. If the
+     remote is not where AOC left it, nothing is pushed (`default_branch_moved`); a `main` moved outside AOC is an
+     R1 breach (§7). The project repository's `pre-push` hook no longer runs, and `AOC_SUPERVISOR_PUSH` is no
+     longer set.
+   - **Rollback verification** checks the pinned target out of the clone into a fresh, standalone checkout (its own
+     `.git`, no link back to the clone). Its acceptance tests run as the session user (`supervisor.sessionUser`,
+     gap G-01), never with a credential, with nothing of aocd's environment but `PATH`, the locale and proxy
+     settings. Without a session user they run as the aocd user, still without credentials: development only, and
+     logged as a warning. The evidence branch `aoc/rollback/<id>` and the change pins `aoc/change/<id>` live in
+     the clone.
+   - **Writes to the project repository** (a project without a remote, and the project's branch following a push)
+     run as the session user, with hooks, fsmonitor and the repository's filter drivers switched off.
+
+   **Can the promotion profile hold a real credential now?** Yes, but only once G-01 is in place as well. Until
+   then sessions run as the aocd user (item 1): any session can read the profiles file and the key file directly,
+   and can write `<dataDir>/git`. With `supervisor.sessionUser` set and its startup self-check passing:
+
+   1. Define the `prod-promote` profile (item 2). The key file is owned by `aoc`, mode `0600`. The push runs as
+      `aoc`, so the key never reaches a session. Pin the host key (`UserKnownHostsFile`), as in the example.
+   2. Point each project's clone at the protected remote, once, as the `aoc` user:
+      `git --git-dir=<dataDir>/git/<projectId>.git remote add origin git@github.com:<org>/<repo>.git`.
+      AOC creates the clone on first use; the `promotion_remote_unconfigured` refusal prints its exact path. A
+      local-path remote must be owned by `aoc` too, because its hooks run inside the push, with the credential.
+   3. Keep `dataDir` owned by `aoc`, mode `0700`. Keep aocd's temporary directory traversable by the session user:
+      verification checkouts are made there, then handed over to that user.
+   4. A candidate whose objects fail git's checks is refused. To accept a known, harmless problem in old history,
+      set `fetch.fsck.<msg-id>=warn` in that project's clone (`git --git-dir=… config`).
 6. **Read-only types** never receive credentials. The registry schema refuses a read-only type with a
    `credentialProfile`. Do not work around it.
 
@@ -192,8 +233,9 @@ Every Builder, before getting access, and then every quarter:
 ### 5.2 The pre-push speed bump
 
 AOC ships the guard in `packages/hooks/git/pre-push`. It carries the marker `aoc:pre-push-guard`. It refuses any
-push that updates or deletes `main`, `master`, `production` or `release/*` unless `AOC_SUPERVISOR_PUSH=1`, which
-only the supervisor's promotion executor sets. Next to it is `prepare-commit-msg`, which adds the `AOC-Session`,
+push that updates or deletes `main`, `master`, `production` or `release/*` unless `AOC_SUPERVISOR_PUSH=1`. AOC's
+own pushes never meet it: they run from the service clone with hooks switched off (§4.5). Next to it is
+`prepare-commit-msg`, which adds the `AOC-Session`,
 `AOC-Change` and `AOC-Ticket` trailers inside managed sessions and does nothing elsewhere. The supervisor does not
 install either hook in managed workspaces yet (gap G-37).
 

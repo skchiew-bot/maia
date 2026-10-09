@@ -45,18 +45,37 @@ all denied; `HOME` in the session env differs from aocd's; a read-only session c
 startup fails when `sessionUser` can read `dataDir`.
 
 ### G-04 Privileged git never in agent-writable trees (threat model O-2)
-Rows: S3-b, S8-g, S14.2-a, R1. **Owner: unassigned.**
-Promotion, pin tagging and rollback verification run in the **project repository** through temporary worktrees that
-share its `.git` (`packages/mod-change/src/repo.ts:79-108`, `engine.ts:849-862`), so hooks or config an agent
-planted there run with the promotion credential (pushes) or as aocd (acceptance tests via `sh -c`). The credential
-isolation runbook (§4.5) tells operators not to give the promotion profile a real credential until this is fixed —
-so today main can only move through a promotion profile that must stay empty.
-**Change** (`packages/mod-change`, `packages/supervisor`, `packages/kernel` git): keep a service-owned bare clone per
-project, fetch candidate SHAs into it (`git fetch <repo> <sha>`), run promotion / tagging there with
-`core.hooksPath=/dev/null`, `-c protocol.file.allow=never`, no `safe.directory=*`; run acceptance tests for rollback
-verification as the session user from G-01 in a fresh checkout of that clone, never as aocd.
-**Tests:** plant a `pre-push` hook and an `alias`/`core.sshCommand` in the project repo → promotion and rollback
-ignore them and still succeed; an acceptance test that writes outside its checkout fails under the sandbox user.
+Rows: S3-b, S8-g, S14.2-a, R1. **Status: enforced in code** (G-04 agent; `packages/mod-change`,
+`packages/supervisor`, `packages/kernel/src/git.ts`). The promotion credential may hold a real key **once G-01 is
+in place too** (`docs/runbooks/credential-isolation.md` §4.5): until sessions run as their own OS user, any session
+can still read the key file and write AOC's data directory.
+**Now enforced:** promotion, rollback, break-glass, pin tags and rollback verification run in a service-owned bare
+clone per project (`<dataDir>/git/<project>.git`; refused when it would overlap the project repository). Commits
+enter it by id only (`git fetch --no-tags -- <repo> <sha>`, `protocol.allow=never` + `protocol.file.allow=user`,
+`transfer.fsckObjects`); `protocol.file.allow=never`, as first proposed here, would refuse that fetch. Every git
+command there runs with hooks off, no fsmonitor, signing or verification program, every transport denied unless
+needed, no system or global config and a scrubbed environment; no `safe.directory`. Provenance and the
+fast-forward checks run in the clone against where AOC last moved the branch, and again at execution. The push
+target is AOC's configuration (the clone's `origin`, or `promotionRemote`), never the project's `.git/config`;
+remotes there with none configured → `promotion_remote_unconfigured`. The `prod-promote` profile reaches one
+process: `git push --no-verify` from the clone, a compare-and-swap of a verified fast-forward
+(`--force-with-lease=<branch>:<base>`; `default_branch_moved` when the remote moved outside AOC). Rollback
+verification checks out of the clone into a fresh standalone checkout and runs the acceptance tests through
+`runIsolated` sandboxed: as the session user when configured, never with a credential. The kernel git service adds
+the same safety settings to every git process it starts (mod-ledger's evidence checks and pin tags included).
+**Tests:** `packages/mod-change/test/privileged-git.test.ts` › "ignores a planted pre-push hook, core.hooksPath,
+aliases and core.sshCommand (and more): promotion and rollback to a remote still succeed", › "ignores the same
+planted config when the project has no remote…", › "keeps the service clone outside the project repository, and
+refuses a clones directory inside it", › "never pushes where the project repository points…", › "moves the remote
+only from the base it verified…", › "traces against the branch as AOC moved it…", › "G-04 end to end, with the
+real supervisor" (the remote sees the credential on AOC's push only; an acceptance test that writes outside its
+checkout fails as the session user; skipped with the reason when aocd is not root or there is no `nobody` user);
+`packages/supervisor/test/isolated.test.ts`; `packages/kernel/test/git.test.ts`.
+**Still open:** the session user itself (G-01; the sandbox reads `supervisor.sessionUser` once G-01 adds it to the
+schema, else runs as aocd without credentials, warned); `SupervisorService.runIsolated` needs the `sandbox` field
+in the contract (used through a local type today); acceptance commands still run through `sh -c`; pin tags stay in
+the clone (not pushed, so ruleset C is unused); request-time `rev-parse` / `log` and mod-ledger's evidence checks
+still read agent repositories as aocd (hardened flags, not yet as the session user).
 
 ## P1 — software
 
