@@ -129,7 +129,7 @@ async function stop(server: Server, aoc: AocServer): Promise<void> {
   await closed;
   clearInterval(idle);
   clearTimeout(force);
-  // Drains reactors, stops jobs and modules, closes the DB. Managed claude processes are the
+  // Drains reactors, stops modules, waits for running jobs, closes the DB. Managed claude processes are the
   // supervisor's to stop or recover; the daemon never kills them itself.
   await aoc.close();
 }
