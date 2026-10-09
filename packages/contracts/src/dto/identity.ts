@@ -28,6 +28,22 @@ export interface IdentityUserDto {
   updatedAt: string;
 }
 
+/**
+ * `GET /api/directory`: who is who on the operator surface, so every governance record can name its developer
+ * (§6). Approvers and Builders only — requesters are end users behind the role boundary — and no emails.
+ */
+export interface DirectoryPersonDto {
+  id: string;
+  name: string;
+  role: Exclude<Role, 'requester'>;
+  active: boolean;
+  complianceLead: boolean;
+}
+
+export interface DirectoryDto {
+  people: DirectoryPersonDto[];
+}
+
 export interface AuthMeDto {
   user: IdentityUserDto;
   permissions: Permission[];

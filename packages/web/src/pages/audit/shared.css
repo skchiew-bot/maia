@@ -1,0 +1,183 @@
+/* Shared by the governance pages (changes, rollbacks, audit, compliance): people, skeletons, step tracks. */
+
+.audit-person {
+  white-space: nowrap;
+}
+.audit-person--none {
+  color: var(--text-3);
+}
+.audit-person__you,
+.audit-person__kind {
+  color: var(--text-3);
+  font-weight: 400;
+}
+.audit-person__kind {
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.audit-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+.audit-skeleton__block {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+/* Gated-flow step track (rollbacks, change lifecycle): one row of steps, each with a state glyph and words. */
+.gov-track {
+  display: grid;
+  grid-template-columns: repeat(var(--steps, 4), minmax(0, 1fr));
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.gov-track__step {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 6px 8px 7px;
+  border-top: 3px solid var(--surface-3);
+  background: var(--surface-2);
+  font-size: var(--fs-xs);
+}
+.gov-track__step:first-child {
+  border-radius: 0 0 0 var(--radius-sm);
+}
+.gov-track__step:last-child {
+  border-radius: 0 0 var(--radius-sm) 0;
+}
+.gov-track__step.is-done {
+  border-top-color: var(--ok);
+}
+.gov-track__step.is-current {
+  border-top-color: var(--mark-decision);
+  background: var(--accent-soft);
+}
+.gov-track__step.is-failed {
+  border-top-color: var(--danger);
+  background: var(--danger-soft);
+}
+.gov-track__step.is-skipped {
+  color: var(--text-3);
+}
+.gov-track__label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text);
+  font-weight: 600;
+}
+.gov-track__step.is-done .gov-track__label .aoc-icon {
+  color: var(--ok);
+}
+.gov-track__step.is-current .gov-track__label .aoc-icon {
+  color: var(--mark-decision);
+}
+.gov-track__step.is-failed .gov-track__label .aoc-icon {
+  color: var(--danger);
+}
+.gov-track__step.is-pending .gov-track__label,
+.gov-track__step.is-skipped .gov-track__label {
+  color: var(--text-2);
+}
+.gov-track__step .aoc-icon {
+  flex-shrink: 0;
+}
+.gov-track__detail {
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+.gov-track__when {
+  color: var(--text-3);
+}
+@media (max-width: 640px) {
+  .gov-track {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .gov-track__step,
+  .gov-track__step:first-child,
+  .gov-track__step:last-child {
+    border-top: 0;
+    border-left: 3px solid var(--surface-3);
+    border-radius: 0;
+  }
+  .gov-track__step.is-done {
+    border-left-color: var(--ok);
+  }
+  .gov-track__step.is-current {
+    border-left-color: var(--mark-decision);
+  }
+  .gov-track__step.is-failed {
+    border-left-color: var(--danger);
+  }
+}
+@media (forced-colors: active) {
+  .gov-track__step {
+    border: 1px solid CanvasText;
+  }
+}
+
+/* Audit event rows (event explorer, change audit trails). */
+.audit-seq {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-decoration: none;
+  cursor: pointer;
+}
+.audit-seq:hover {
+  text-decoration: underline;
+}
+.audit-time {
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.audit-type {
+  display: inline-flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 3px 0;
+  line-height: 1.3;
+}
+.audit-type code {
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.audit-type__scope {
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  overflow-wrap: anywhere;
+}
+.audit-body {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+}
+.audit-body .aoc-icon {
+  color: var(--text-3);
+}
+.audit-body--none {
+  color: var(--text-3);
+}
+
+@media (max-width: 640px) {
+  /* Edge-to-edge tables become cards on a phone; their sort control keeps the card body's inset. */
+  .gov-flush .aoc-dt__mobile-sort {
+    padding: 0 var(--sp-4);
+  }
+}
