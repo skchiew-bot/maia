@@ -214,7 +214,7 @@ describe('aoc evidence', () => {
       'Your previous evidence pack is still being built',
       'wait for your pack being built to finish, then try again in 10 s',
     ],
-    ['rate_limited', 'At most 6 evidence packs per user per hour', 'try again in 1800 s'],
+    ['rate_limited', 'At most 12 evidence packs per user per hour', 'try again in 1800 s'],
     ['queue_full', 'Too many evidence packs are waiting to be built', 'try again in 30 s'],
   ])('names a 429 %s and when to retry', async (code, message, hint) => {
     const retryAfterMs = { pack_pending: 10_000, rate_limited: 1_800_000, queue_full: 30_000 }[code]!;
