@@ -10,10 +10,11 @@ const KIND_BY_LETTER: Record<string, IdentityTokenKind> = {
   u: 'user',
   w: 'web_session',
   i: 'ingest_session',
+  c: 'ingest_sidecar',
   o: 'observer',
   s: 'system',
 };
-const TOKEN_RE = /^aoc_([uwios])_([0-9A-Za-z]{32,128})$/;
+const TOKEN_RE = /^aoc_([uwicos])_([0-9A-Za-z]{32,128})$/;
 
 export function randomBase62(length: number): string {
   let out = '';

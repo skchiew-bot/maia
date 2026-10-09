@@ -67,6 +67,9 @@ export function identityTestHelpers(service: IdentityServiceImpl) {
             : service.issueIngestToken(sessionId, TEST_ACTOR);
       return bearer(token);
     },
+    sidecarHeaders(sessionId: string): Record<string, string> {
+      return bearer(service.issueSidecarToken(sessionId, TEST_ACTOR));
+    },
   };
 }
 export type IdentityTestHelpers = ReturnType<typeof identityTestHelpers>;

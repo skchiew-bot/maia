@@ -15,6 +15,43 @@ const thresholds = z
 const LOCAL_TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
 const localTime = z.string().regex(LOCAL_TIME, 'expected HH:MM (24-hour local time)');
 
+/**
+ * Tier 1 of the self-modification boundary (docs/compliance/self-modification-boundary.md §1): the code and
+ * configuration that decide who may approve what, what is recorded and what is charged, plus the build,
+ * dependency and rule files that can change any of them. Relative to an AOC repo root; no `./` prefix.
+ */
+export const DEFAULT_PROTECTED_PATHS = [
+  'packages/kernel/',
+  'packages/contracts/',
+  'packages/mod-audit/',
+  'packages/mod-credits/',
+  'packages/mod-decisions/',
+  'packages/mod-identity/',
+  'packages/hooks/',
+  'config/',
+  'packages/supervisor/',
+  'packages/mod-change/',
+  'packages/mod-sessions/',
+  'packages/mod-ledger/',
+  'packages/mod-metering/',
+  'packages/mod-registry/',
+  'packages/distill/',
+  'packages/mod-evidence/',
+  'packages/daemon/',
+  'packages/client/',
+  'packages/mcp-server/',
+  'packages/sidecar/',
+  'package.json',
+  'packages/*/package.json',
+  'pnpm-lock.yaml',
+  'pnpm-workspace.yaml',
+  'scripts/',
+  '.github/',
+  'CLAUDE.md',
+  'docs/spec/',
+  'docs/compliance/',
+] as const;
+
 export const AocConfigSchema = z.object({
   /**
    * 'production' turns binding controls into startup refusals and withdraws development conveniences:
@@ -33,7 +70,7 @@ export const AocConfigSchema = z.object({
   timezone: z.string().default('Asia/Kuala_Lumpur'),
   keys: z
     .object({
-      /** 32-byte KEK (hex or base64) wrapping per-scope body keys. Generated (0600) in dataDir when absent — see docs/runbooks/key-custody.md. */
+      /** 32-byte KEK (hex or base64) wrapping per-scope body keys. Generated (0600) in dataDir when absent, but only while dataDir holds no data — see docs/runbooks/key-custody.md. */
       masterKeyFile: z.string().optional(),
     })
     .default({}),
@@ -55,9 +92,11 @@ export const AocConfigSchema = z.object({
       /** Env vars copied from aocd into sessions (everything else is dropped — credential isolation, §3). */
       envAllowlist: z.array(z.string()).default(['PATH', 'HOME', 'LANG', 'LC_ALL', 'TERM', 'TZ', 'TMPDIR', 'SHELL', 'USER', 'CLAUDE_CONFIG_DIR', 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'HTTPS_PROXY', 'HTTP_PROXY', 'NO_PROXY', 'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE']),
       /**
-       * JSON file `{ profiles: { [name]: { env: Record<string,string>, files?: Record<string,string> } } }` readable
-       * only by aocd's user. `files` names key files; an env value refers to one as `{{file:<name>}}` and a session
-       * gets a private per-session copy of it (deleted when its turn ends).
+       * JSON file `{ profiles: { [name]: { env, files?, push?: { refs }, session?: { env, files? } } } }` readable
+       * only by aocd's user. `env`/`files` are the credential, held by aocd alone (R-02): the push gateway forwards
+       * a session's pushes with it, to the branches `push.refs` allows; a session never receives it. `session` is what
+       * the session itself gets (model-visible: never a key that can push). A file is named by an env value as
+       * `{{file:<name>}}`; a session's `session.files` come as private per-turn copies (deleted when the turn ends).
        */
       credentialProfilesFile: z.string().optional(),
       /**
@@ -232,9 +271,7 @@ export const AocConfigSchema = z.object({
       /** Repo roots that ARE the AOC platform itself. */
       aocRepoPaths: z.array(z.string()).default([]),
       /** Governance/audit/credit core (glob-ish prefixes relative to an AOC repo root). */
-      protectedPaths: z
-        .array(z.string())
-        .default(['packages/kernel/', 'packages/contracts/', 'packages/mod-audit/', 'packages/mod-credits/', 'packages/mod-decisions/', 'packages/mod-identity/', 'packages/hooks/', 'config/']),
+      protectedPaths: z.array(z.string()).default([...DEFAULT_PROTECTED_PATHS]),
       externalAuditLog: z.string().default('.aoc/selfmod-audit.log'),
     })
     .default({}),

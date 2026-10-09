@@ -4,15 +4,20 @@
  * Scenarios run at 5x speed (CLAUDE_SIM_SPEED).
  */
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { demoLayout, type DemoTokens } from '../src/layout';
-import { REPO, call, childEnv, claudeTripwire, daemonChildEnv, eventsAfter, freePort, seedDemo, stopChild, tsxImport, waitFor } from './helpers';
+import { groupExited } from '../src/process-group';
+import { REPO, call, childEnv, claudeTripwire, daemonChildEnv, diagnostics, eventsAfter, freePort, removeTree, seedDemo, stopChild, tsxImport, waitFor } from './helpers';
 
 const dir = mkdtempSync(join(tmpdir(), 'aoc-demo-intake-'));
-afterAll(() => rmSync(dir, { recursive: true, force: true }));
+// A failed run keeps its directory (the daemon log, the event log, the repos) for inspection.
+let kept = false;
+afterAll(() => {
+  if (!kept) removeTree(dir);
+});
 
 const git = (repo: string, ...args: string[]) => spawnSync('git', args, { cwd: repo, encoding: 'utf8' }).stdout.trim();
 
@@ -33,6 +38,7 @@ describe('intake on a seeded demo', () => {
       cwd: REPO,
       env: daemonChildEnv(layout, port, trip.binDir, { CLAUDE_SIM_SPEED: '0.2' }),
       stdio: ['ignore', 'pipe', 'pipe'],
+      detached: true, // its own process group: the sidecars it leaves behind are found through it
     });
     aocd.stdout!.on('data', (d: Buffer) => (log += d.toString()));
     aocd.stderr!.on('data', (d: Buffer) => (log += d.toString()));
@@ -73,8 +79,14 @@ describe('intake on a seeded demo', () => {
       expect(events.filter((e) => e.type === 'promotion.refused')).toEqual([]);
       expect(events.filter((e) => e.type === 'selfmod.blocked')).toEqual([]);
       expect(events.some((e) => e.type === 'task.done' && e.meta.sessionId === build.meta.sessionId && e.meta.evidenceKind === 'commit' && e.meta.evidenceVerified === true)).toBe(true);
+    } catch (err) {
+      kept = true;
+      if (err instanceof Error) err.message += `\n\nkept ${dir}\n${diagnostics(layout.aocData, tokens.head.seq, log, ticketId)}`;
+      throw err;
     } finally {
       stopped = await stopChild(aocd, 'SIGTERM', 60_000);
+      // aocd's sidecars outlive it for a final flush that writes a spool file into the data directory.
+      await groupExited(aocd.pid!, 20_000);
     }
     expect(stopped, log).toEqual({ code: 0, signal: null });
     expect(existsSync(trip.invoked)).toBe(false);

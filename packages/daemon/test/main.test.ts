@@ -53,6 +53,12 @@ describe('aocd entry (src/main.ts)', () => {
       };
       expect(health.modules.at(-1)).toBe('aocd');
       expect(stdout).toContain(`data     ${join(cwd, 'data')}`);
+      // Started from a directory with no config/ of its own: the packaged mapping is loaded, and the banner says which.
+      const mapping = stdout.split('\n').find((l) => l.startsWith('  mapping  '));
+      expect(mapping).toMatch(/^ {2}mapping {2}.+ \(version \S+\)$/);
+      expect(mapping!.slice('  mapping  '.length).split(' (version ')[0]).toBe(
+        join(repoRoot, 'config', 'iso42001-mapping.json'),
+      );
       child.kill('SIGTERM');
       expect(await exited).toBe(0);
       expect(stderr).not.toContain('ExperimentalWarning');

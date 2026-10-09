@@ -130,6 +130,7 @@ export const ID_PREFIX = {
   rootCauseClass: 'rcc',
   playbook: 'pbk',
   anchor: 'anc',
+  backup: 'bkp',
   evidencePack: 'evp',
   topup: 'tpu',
   event: 'evt',

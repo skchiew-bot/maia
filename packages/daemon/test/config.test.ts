@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -252,6 +252,48 @@ describe('loadConfig', () => {
     writeJson(join(cwd, 'aoc.config.json'), { registryFile: 'config/process-types.json' });
     expect(loadConfig({ cwd, env: {}, binDir: join(dist, 'bin'), repoRoot: null }).config.registryFile).toBe(
       join(dist, 'config', 'process-types.json'),
+    );
+  });
+
+  it('falls back to the packaged ISO 42001 mapping the same way, instead of silently using the built-in one', () => {
+    const cwd = tempDir();
+    const fromCheckout = loadConfig({
+      cwd,
+      env: {},
+      binDir: join(repoRoot, 'packages', 'daemon', 'src'),
+      repoRoot,
+    });
+    expect(fromCheckout.config.compliance.mappingFile).toBe(
+      join(repoRoot, 'config', 'iso42001-mapping.json'),
+    );
+
+    const dist = tempDir('aocd-dist-');
+    writeJson(join(dist, 'config', 'iso42001-mapping.json'), {});
+    const relocated = { cwd, env: {}, binDir: join(dist, 'bin'), repoRoot: null };
+    expect(loadConfig(relocated).config.compliance.mappingFile).toBe(
+      join(dist, 'config', 'iso42001-mapping.json'),
+    );
+
+    // The copy next to the config wins over the packaged one.
+    writeJson(join(cwd, 'config', 'iso42001-mapping.json'), {});
+    expect(loadConfig(relocated).config.compliance.mappingFile).toBe(
+      join(cwd, 'config', 'iso42001-mapping.json'),
+    );
+    rmSync(join(cwd, 'config'), { recursive: true });
+
+    // A mapping file the operator names is theirs, relative to the config file; naming the default does not opt out.
+    writeJson(join(cwd, 'aoc.config.json'), { compliance: { mappingFile: 'governed/mapping.json' } });
+    expect(loadConfig(relocated).config.compliance.mappingFile).toBe(join(cwd, 'governed', 'mapping.json'));
+    writeJson(join(cwd, 'aoc.config.json'), { compliance: { mappingFile: 'config/iso42001-mapping.json' } });
+    expect(loadConfig(relocated).config.compliance.mappingFile).toBe(
+      join(dist, 'config', 'iso42001-mapping.json'),
+    );
+
+    // Nowhere to fall back to: the path stays resolved (so the startup line can name it), not a bare relative one.
+    const nowhere = { cwd, env: {}, binDir: tempDir('aocd-bin-'), repoRoot: null };
+    writeJson(join(cwd, 'aoc.config.json'), {});
+    expect(loadConfig(nowhere).config.compliance.mappingFile).toBe(
+      join(cwd, 'config', 'iso42001-mapping.json'),
     );
   });
 

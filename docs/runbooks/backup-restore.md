@@ -97,8 +97,9 @@ audit state.
    4. pack and seal everything into `.aoc-backup-….partial`, fsync, rename to the final name;
    5. run `backupCopyCommand`, prune past retention, append `backup.completed`.
 
-A manual `aoc backup now` (permission `audit.verify`) runs the same steps; a second manual run within 10 minutes is
-refused (429), so repeated full copies cannot fill the disk.
+A manual `aoc backup now` (permission `audit.backup`, held by the Approver only: a Builder's `audit.verify` and
+`audit.view` do not reach it, and Builders can still list the backups) runs the same steps; a second manual run within
+10 minutes is refused (429), so repeated full copies cannot fill the disk.
 
 ## 4. Daily checks
 
@@ -152,9 +153,10 @@ to touch a directory that holds anything.
    than the backup: events between the backup head and that seq existed and are lost. Record the range in the
    incident (outside AOC).
 4. **Put the KEK where aocd loads it** (`keys.masterKeyFile`, outside the data dir). The command warns if the
-   configured location is missing or holds a different KEK; starting without it would make aocd generate a new KEK
-   and fail every append with a body. If the local anchor repository was lost, clone it again from the anchor remote
-   into `audit.anchorRepoPath`.
+   configured location is missing or holds a different KEK. Starting without the KEK in place is refused ("refusing
+   to generate a new KEK": aocd never generates one beside restored data, production or not), and starting with a
+   *different* KEK would fail every append with a body. If the local anchor repository was lost, clone it again from
+   the anchor remote into `audit.anchorRepoPath`.
 5. **Start aocd and run `aoc verify`** before any other work. Re-issue session and observer ingest tokens.
 6. **After a lossy restore** (step 3 showed a recovery point), the off-host anchors of the lost range describe a
    history that no longer exists: Verify keeps reporting them and anchoring refuses to anchor over a mismatch. Keep

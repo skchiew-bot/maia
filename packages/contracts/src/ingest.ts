@@ -14,6 +14,16 @@ export const INGEST_PATHS = {
 } as const;
 
 /**
+ * The push gateway (§3, R-02): git's smart HTTP protocol for a managed session's pushes, `<publicUrl>/ingest/git/
+ * <repo>.git`. It lives under /ingest, so only a valid ingest token reaches it, and the supervisor decides what a
+ * session may push.
+ */
+export const INGEST_GIT_PREFIX = '/ingest/git/';
+
+/** Largest push body (a git pack) the gateway accepts: every HTTP layer and git's receive.maxInputSize enforce it. */
+export const MAX_PUSH_BYTES = 256 * 1024 * 1024;
+
+/**
  * Env vars AOC sets on the processes it starts: managed claude sessions (inherited by hooks and the model's own Bash;
  * passed explicitly to the MCP server), the supervisor's promotion executor and @aoc/llm's own CLI calls.
  */
@@ -36,6 +46,12 @@ export const AOC_ENV = {
   /** "1" on @aoc/llm's own claude CLI calls (FX extraction, distillation): not a session, observed hooks skip them. */
   internalLlm: 'AOC_INTERNAL_LLM',
 } as const;
+
+/**
+ * The sidecar prints this line on stdout once it handles SIGTERM (report what is left, then exit): the supervisor
+ * stops a finished turn's sidecar no earlier, or the signal would kill it before it reported anything.
+ */
+export const SIDECAR_READY_LINE = 'aoc-sidecar ready';
 
 export interface HookIngestRequest {
   mode: 'managed' | 'observed';

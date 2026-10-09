@@ -6,6 +6,7 @@ import {
   SEVERITIES,
   hasPermission,
   type AocConfig,
+  intakeTotalBytes,
   type IntakeLimits,
   type InternalTicket,
   type McpErrorResult,
@@ -38,8 +39,8 @@ export function intakeLimits(cfg: AocConfig['intake']): IntakeLimits {
   return {
     maxAttachments: cfg.maxAttachments,
     maxBytes: { image: cfg.maxImageBytes, video: cfg.maxVideoBytes, document: cfg.maxImageBytes },
-    // aocd caps an intake request body at one maximum-size video plus the form envelope.
-    maxTotalBytes: cfg.maxVideoBytes,
+    // The total the request-body caps (the kernel's and aocd's) are built from: this plus the form envelope.
+    maxTotalBytes: intakeTotalBytes(cfg),
     titleLength: { ...TITLE_LENGTH },
     descriptionLength: { ...DESCRIPTION_LENGTH },
     accepted: ACCEPTED_MEDIA.map((m) => ({ mime: m.mime, kind: m.kind, extensions: [...m.extensions] })),
@@ -128,7 +129,7 @@ export function createIntakeModule(opts: IntakeModuleOptions = {}): AocModule {
         async react(e, _p, ctx) {
           const ticketId = (e.meta as { ticketId: string }).ticketId;
           if (ctx.store.findByCausation(e.id, 'ticket.triage_started').length) return;
-          if (flow.sessions(ticketId, 'triage').length) return;
+          // Launches are keyed on this event, so a redelivery after a partial start completes it instead of stalling.
           await flow.startTriage(ticketId, e.id);
         },
       },
@@ -143,7 +144,7 @@ export function createIntakeModule(opts: IntakeModuleOptions = {}): AocModule {
           if (e.type === 'session.ended' && link.role === 'build') {
             const t = flow.ticket(link.ticket_id);
             if (!t || t.build_session_id !== sessionId || t.stage !== 'building') return;
-            if (ctx.store.findByCausation(e.id).length) return; // UAT ready or escalated already
+            if (flow.reacted(e.id)) return; // UAT ready or escalated already
             const outcome = (e.meta as { outcome: string }).outcome;
             if (outcome === 'completed') flow.readyForUat(t, e.id);
             else ctx.notify({ kind: 'session.attention', title: `Build for ${t.ticket_id} ended (${outcome}) before UAT`, audience: ['approver', 'builder'], severity: 'warn', refs: { ticketId: t.ticket_id, sessionId } });
@@ -165,7 +166,7 @@ export function createIntakeModule(opts: IntakeModuleOptions = {}): AocModule {
           if (e.type === 'promotion.completed') return flow.close(row.ticket_id, 'fixed', INTAKE_ACTOR, 'Promoted to main', e.id);
           // Approved but not executed (main moved on, push failed): the ticket must not sit at the gate with nothing open.
           const t = flow.ticket(row.ticket_id);
-          if (!t || t.resolution || ctx.store.findByCausation(e.id).length) return;
+          if (!t || t.resolution || flow.reacted(e.id)) return;
           flow.escalateGoLive(t, `promotion ${promotionId} ${e.type === 'promotion.refused' ? 'was refused' : 'failed'} at execution (${reason ?? 'unknown'})`, e.id);
         },
       },
@@ -392,7 +393,16 @@ export function createIntakeModule(opts: IntakeModuleOptions = {}): AocModule {
         const body = await readJson(c, z.object({ resolution: z.enum(['wont_fix', 'duplicate', 'cannot_reproduce', 'withdrawn']), note: z.string().max(2000).optional() }));
         const t = flow.ticket(c.req.param('id'));
         if (!t) throw new HttpError(404, 'not_found', 'Ticket not found');
-        flow.close(t.ticket_id, body.resolution, { kind: 'human', id: auth.user.id }, body.note);
+        const { user } = auth;
+        // "withdrawn" speaks for the requester: only an Approver records it. Otherwise the owner of linked work may close.
+        const ok =
+          hasPermission(user.role, 'ticket.close_any', user.flags) ||
+          (body.resolution !== 'withdrawn' &&
+            hasPermission(user.role, 'ticket.close_own', user.flags) &&
+            flow.sessions(t.ticket_id).some((s) => ctx.services.maybe('sessions')?.get(s.session_id)?.ownerId === user.id));
+        if (!ok)
+          throw new HttpError(403, 'forbidden', 'Only an Approver, or the owner of a session working on this ticket, may close it (only an Approver records a withdrawal)');
+        flow.close(t.ticket_id, body.resolution, { kind: 'human', id: user.id }, body.note);
         return c.json(internalView(ctx, flow, flow.ticket(t.ticket_id)!));
       });
     },

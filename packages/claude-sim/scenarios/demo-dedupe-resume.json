@@ -16,8 +16,8 @@
     {"kind":"bash","command":"git add src/claims/idempotency.ts test/claims/dedupe.test.ts","exec":true,"description":"Stage the guard and its test"},
     {"kind":"bash","command":"git commit -m \"Make claim submission idempotent on retry\" -m \"AOC-Ticket: $AOC_TICKET_ID\" -m \"AOC-Session: $AOC_SESSION_ID\"","exec":true,"description":"Commit with the AOC trailers"},
     {"kind":"bash","command":"git rev-parse --short HEAD","exec":true,"description":"The UAT commit","stdout":"0000000","saveAs":"fix"},
-    {"kind":"bash","command":"git switch -","exec":true,"description":"Leave the shared working copy where it was"},
     {"kind":"mcp","server":"aoc","tool":"task_done","args":{"task_id":"dedupe-3","evidence":{"kind":"commit","ref":"{{fix.stdout}}","detail":"Guard and regression test committed to the UAT branch"}}},
+    {"kind":"bash","command":"git switch -","exec":true,"description":"Leave the shared working copy where it was"},
     {"kind":"text","text":"The retry-dedupe fix is committed to its UAT branch with its regression test."},
     {"kind":"endTurn","final":true}
   ]

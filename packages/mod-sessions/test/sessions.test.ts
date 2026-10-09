@@ -221,7 +221,7 @@ describe('hook ingest', () => {
     launch(owner, 'ses_B', {}, randomUUID());
     const res = await t.request('POST', '/ingest/hook', { headers: t.ingestHeaders('ses_A'), body: hook('ses_B', CLAUDE_A, 'PostToolUse', { tool_name: 'Read', tool_input: {}, tool_response: {} }) });
     expect(res.status).toBe(403);
-    const hb = await t.request('POST', '/ingest/heartbeat', { headers: t.ingestHeaders('ses_A'), body: { sessionId: 'ses_B', pid: 1, alive: true, at: t.clock.iso(), transcriptBytes: 0, lastTranscriptWriteAt: null } });
+    const hb = await t.request('POST', '/ingest/heartbeat', { headers: t.sidecarHeaders('ses_A'), body: { sessionId: 'ses_B', pid: 1, alive: true, at: t.clock.iso(), transcriptBytes: 0, lastTranscriptWriteAt: null } });
     expect(hb.status).toBe(403);
   });
 
@@ -250,7 +250,7 @@ describe('hook ingest', () => {
         batches: [{ model: 'claude-opus-5-5', inputTokens: 5, outputTokens: 7, cacheReadTokens: 0, cacheWrite5mTokens: 0, cacheWrite1hTokens: 0, messageIds: ids, firstAt: t.clock.iso(), lastAt: t.clock.iso(), contextTokens: 900 }],
       },
     });
-    const sidecar = t.ingestHeaders('ses_A');
+    const sidecar = t.sidecarHeaders('ses_A');
     const items = [
       usage('ses_A', ['m1'], 'sidecar-usage-1'),
       { path: '/ingest/throttle', queuedAt: t.clock.iso(), body: { sessionId: 'ses_A', resetAt: '2026-10-09T07:00:00.000Z', message: "You've hit your session limit · resets 3pm (Asia/Kuala_Lumpur)", source: 'transcript' } },
@@ -263,7 +263,7 @@ describe('hook ingest', () => {
     // A second replay of the same items changes nothing.
     expect(await t.json('POST', '/ingest/spool', { headers: sidecar, body: { items: items.slice(0, 2) } })).toEqual({ accepted: 0, duplicates: 2, rejected: 0 });
     expect(t.rt.store.list({ types: ['usage.recorded', 'throttle.hit'], sessionId: 'ses_A' })).toHaveLength(2);
-    // A session token never replays another session's items.
+    // A sidecar token never replays another session's items.
     expect(await t.json('POST', '/ingest/spool', { headers: sidecar, body: { items: [usage('ses_B', ['m9'], 'other-session')] } })).toEqual({ accepted: 0, duplicates: 0, rejected: 1 });
 
     // Observed hooks spool usage keyed by the claude session id, replayed with the observer token.
@@ -296,7 +296,7 @@ describe('per-turn sidecars', () => {
     await setup();
     const owner = t.user('builder');
     launch(owner); // turn 1: pid 4242
-    const headers = t.ingestHeaders('ses_A');
+    const headers = t.sidecarHeaders('ses_A');
     const heartbeat = (pid: number, alive: boolean) =>
       t.json('POST', '/ingest/heartbeat', { headers, body: { sessionId: 'ses_A', pid, alive, at: t.clock.iso(), transcriptBytes: 0, lastTranscriptWriteAt: null } });
     const exited = (pid?: number) =>
@@ -326,7 +326,7 @@ describe('usage + throttle ingest', () => {
     await setup();
     const owner = t.user('builder');
     launch(owner);
-    const headers = t.ingestHeaders('ses_A');
+    const headers = t.sidecarHeaders('ses_A');
     const batch = (ids: string[], ctx: number) => ({ model: 'claude-opus-5-5', inputTokens: 10, outputTokens: 20, cacheReadTokens: 1000, cacheWrite5mTokens: 5, cacheWrite1hTokens: 0, messageIds: ids, firstAt: t.clock.iso(), lastAt: t.clock.iso(), contextTokens: ctx });
     const r1 = await t.json<{ recorded: number }>('POST', '/ingest/usage', { headers, body: { sessionId: 'ses_A', idempotencyKey: 'usage-key-1', batches: [batch(['m1', 'm2'], 50_000)] } });
     const r2 = await t.json<{ recorded: number; skipped: number }>('POST', '/ingest/usage', { headers, body: { sessionId: 'ses_A', idempotencyKey: 'usage-key-2', batches: [batch(['m1', 'm2'], 50_000), batch(['m3'], 120_000)] } });

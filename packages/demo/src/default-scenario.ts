@@ -103,8 +103,10 @@ export function defaultScenario(t: ScriptedTickets): ScenarioInput {
     git('git add src/uploads/normalize.ts test/uploads/normalize.test.ts', { description: 'Stage the fix' }),
     git(`git commit -m "Apply the EXIF orientation before stripping upload metadata" -m "AOC-Ticket: ${t.receipts}" -m "AOC-Session: $AOC_SESSION_ID"`, { description: 'Commit with the AOC trailers' }),
     git('git rev-parse --short HEAD', { description: 'The UAT commit', stdout: '0000000', saveAs: 'uat' }),
-    git('git switch -', { description: 'Leave the shared working copy where it was' }),
+    // Provenance (G-25) accepts a commit only when it is reachable from a HEAD the session recorded: close the commit
+    // task while HEAD is the UAT commit, then leave the shared working copy where it was.
     done('bd-receipts-3', 'commit', '{{uat.stdout}}', `uat/${t.receipts}`),
+    git('git switch -', { description: 'Leave the shared working copy where it was' }),
     text(`The fix is committed on uat/${t.receipts}, ready for the requester to test.`),
     end,
 

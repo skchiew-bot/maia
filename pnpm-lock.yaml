@@ -318,6 +318,10 @@ importers:
       zod:
         specifier: 3.25.76
         version: 3.25.76
+    devDependencies:
+      '@aoc/supervisor':
+        specifier: workspace:*
+        version: link:../supervisor
 
   packages/mod-credits:
     dependencies:

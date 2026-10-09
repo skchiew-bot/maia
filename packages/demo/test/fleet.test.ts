@@ -61,6 +61,29 @@ describe('the default scenario', () => {
   it('carries no scenario marker: the prompts around a requester\'s text never select a scenario', () => {
     expect(JSON.stringify(scenario)).not.toContain('[[scenario:');
   });
+
+  it("closes the commit task while HEAD is the UAT commit: provenance only traces commits in a session's recorded HEADs (G-25)", () => {
+    const build = scenario.steps.findIndex((s) => (s as { label?: string }).label === 'build-receipts');
+    expect(build).toBeGreaterThan(-1);
+    const at = (match: (s: (typeof scenario.steps)[number]) => boolean) => scenario.steps.findIndex((s, i) => i >= build && match(s));
+    const commit = at((s) => s.kind === 'bash' && s.command.startsWith('git commit'));
+    const commitTask = at((s) => s.kind === 'mcp' && s.tool === 'task_done' && (s.args as { task_id?: string }).task_id === 'bd-receipts-3');
+    const leave = at((s) => s.kind === 'bash' && s.command === 'git switch -');
+    expect(commit).toBeGreaterThan(-1);
+    expect(commitTask).toBeGreaterThan(commit);
+    expect(leave).toBeGreaterThan(commitTask);
+  });
+
+  it('does the same in the dedupe continuation, which commits for the ticket whose build waited on a decision', () => {
+    const steps = builtInScenario('demo-dedupe-resume')!.steps;
+    const index = (match: (s: (typeof steps)[number]) => boolean) => steps.findIndex(match);
+    const commit = index((s) => s.kind === 'bash' && s.command.startsWith('git commit'));
+    const commitTask = index((s) => s.kind === 'mcp' && s.tool === 'task_done' && (s.args as { task_id?: string }).task_id === 'dedupe-3');
+    const leave = index((s) => s.kind === 'bash' && s.command === 'git switch -');
+    expect(commit).toBeGreaterThan(-1);
+    expect(commitTask).toBeGreaterThan(commit);
+    expect(leave).toBeGreaterThan(commitTask);
+  });
 });
 
 describe('nextAction', () => {

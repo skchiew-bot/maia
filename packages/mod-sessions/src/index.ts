@@ -4,14 +4,18 @@ import { registerApiRoutes } from './api';
 import { livenessServiceOf, SessionsEngine } from './engine';
 import { isReadOnlyBash, registerIngestRoutes } from './ingest';
 import { createSessionsProjector } from './projector';
+import { ObserverLimiter, type ObserverLimits } from './rate-limit';
 
 export { SessionsEngine } from './engine';
 export { SessionReadModels, APM_WINDOW_MINUTES } from './api';
-export { isReadOnlyBash, summarize, HookDispatcher } from './ingest';
+export { isReadOnlyBash, summarize, HookDispatcher, boundUsageTimes, USAGE_MAX_AGE_MS } from './ingest';
+export { DEFAULT_OBSERVER_LIMITS, type ObserverLimits } from './rate-limit';
 
 export interface SessionsModuleOptions {
   /** Liveness sweep interval (ms); 0 disables the timer (tests call engine.refreshAll()). */
   sweepIntervalMs?: number;
+  /** Per-observer-token limits on observed ingest (defaults: DEFAULT_OBSERVER_LIMITS). */
+  observerLimits?: Partial<ObserverLimits>;
 }
 
 /** Defence-in-depth guard for read-only (triage) sessions (§7: triage agents run read-only). */
@@ -48,7 +52,8 @@ export function createSessionsModule(opts: SessionsModuleOptions = {}): AocModul
       ctx.services.provide('liveness', livenessServiceOf(engine));
     },
     routes(app, ctx) {
-      registerIngestRoutes(app, { ctx, engine: engine! });
+      const observerLimiter = new ObserverLimiter(opts.observerLimits ?? {}, () => ctx.clock.now());
+      registerIngestRoutes(app, { ctx, engine: engine!, observerLimiter });
       registerApiRoutes(app, ctx, engine!);
     },
     start() {

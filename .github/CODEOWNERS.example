@@ -1,0 +1,48 @@
+# CODEOWNERS for the AOC repository itself (example: copy to .github/CODEOWNERS and replace the handles).
+#
+# This is layer 3 of the self-modification boundary (docs/compliance/self-modification-boundary.md, section 2):
+# the main-branch ruleset must "Require review from Code Owners" and dismiss stale approvals, so nothing under a
+# Tier 1 path merges without a person who did not write the change.
+#
+#   * @your-org/aoc-core-reviewers must be a team of at least two named humans. Never a machine user, a bot, or
+#     the identity an AOC-managed session pushes with.
+#   * Keep the Tier 1 lines identical to DEFAULT_PROTECTED_PATHS in packages/contracts/src/config.ts; a test in
+#     packages/mod-audit checks that every default protected path has a line here.
+#   * The last matching pattern wins, so the catch-all comes first.
+#
+# Until a human who was not part of the build has reviewed the governance, audit and credit core and signed the
+# record (gap P-06), treat every AOC control as provisional.
+
+# Everything else: one reviewer.
+*    @your-org/aoc-reviewers
+
+# Tier 1: governance, audit, credit, ingest, launch, build and rule files.
+/packages/kernel/           @your-org/aoc-core-reviewers
+/packages/contracts/        @your-org/aoc-core-reviewers
+/packages/mod-audit/        @your-org/aoc-core-reviewers
+/packages/mod-credits/      @your-org/aoc-core-reviewers
+/packages/mod-decisions/    @your-org/aoc-core-reviewers
+/packages/mod-identity/     @your-org/aoc-core-reviewers
+/packages/hooks/            @your-org/aoc-core-reviewers
+/config/                    @your-org/aoc-core-reviewers
+/packages/supervisor/       @your-org/aoc-core-reviewers
+/packages/mod-change/       @your-org/aoc-core-reviewers
+/packages/mod-sessions/     @your-org/aoc-core-reviewers
+/packages/mod-ledger/       @your-org/aoc-core-reviewers
+/packages/mod-metering/     @your-org/aoc-core-reviewers
+/packages/mod-registry/     @your-org/aoc-core-reviewers
+/packages/distill/          @your-org/aoc-core-reviewers
+/packages/mod-evidence/     @your-org/aoc-core-reviewers
+/packages/daemon/           @your-org/aoc-core-reviewers
+/packages/client/           @your-org/aoc-core-reviewers
+/packages/mcp-server/       @your-org/aoc-core-reviewers
+/packages/sidecar/          @your-org/aoc-core-reviewers
+/package.json               @your-org/aoc-core-reviewers
+/packages/*/package.json    @your-org/aoc-core-reviewers
+/pnpm-lock.yaml             @your-org/aoc-core-reviewers
+/pnpm-workspace.yaml        @your-org/aoc-core-reviewers
+/scripts/                   @your-org/aoc-core-reviewers
+/.github/                   @your-org/aoc-core-reviewers
+/CLAUDE.md                  @your-org/aoc-core-reviewers
+/docs/spec/                 @your-org/aoc-core-reviewers
+/docs/compliance/           @your-org/aoc-core-reviewers

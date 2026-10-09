@@ -46,6 +46,9 @@ describe('(f) throttle', () => {
     // The API refuses the next request: Claude Code writes a synthetic assistant message, the turn ends on
     // StopFailure(rate_limit) and the -p process exits.
     claude.transcript.apiError(LIMIT);
+    // The sidecar's report carries the stated reset. The hook's exit marker has none, and arriving first it would
+    // open the episode and win, so this scenario lets the sidecar speak first.
+    await waitFor(() => h.events({ types: ['throttle.hit'], sessionId: s.sessionId }).length > 0, { what: 'the sidecar’s throttle report' });
     await claude.hook('StopFailure', { error: 'rate_limit', last_assistant_message: LIMIT });
 
     const d = await waitFor(async () => {

@@ -1,6 +1,15 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { ChangeRequestDTO, ChangeService, LedgerService } from '@aoc/contracts';
-import { approveChange, draftAndAffirm, harness, makeRepo, type Harness, type TestRepo } from './helpers';
+import {
+  approveChange,
+  cloneGit,
+  cloneRef,
+  draftAndAffirm,
+  harness,
+  makeRepo,
+  type Harness,
+  type TestRepo,
+} from './helpers';
 
 const DRAFT = {
   impact: 'Changes the session cookie format; every logged-in user is re-authenticated once.',
@@ -308,8 +317,10 @@ describe('change requests (§8, §14)', () => {
       headers: h.builder.headers,
     });
     expect(done).toMatchObject({ status: 'completed', pinnedSha: work, pinnedTag: `aoc/change/${changeId}` });
-    expect(repo.git('cat-file', '-t', `aoc/change/${changeId}`)).toBe('tag');
-    expect(repo.head(`aoc/change/${changeId}^{commit}`)).toBe(work);
+    // The pin is an annotated tag in the service clone, where no agent can move it; the project repository has none.
+    expect(cloneGit(h, 'prj_app', 'cat-file', '-t', `refs/tags/aoc/change/${changeId}`).stdout.trim()).toBe('tag');
+    expect(cloneRef(h, 'prj_app', `refs/tags/aoc/change/${changeId}^{commit}`)).toBe(work);
+    expect(() => repo.git('rev-parse', '--verify', `refs/tags/aoc/change/${changeId}`)).toThrow();
     expect(h.t.rt.store.list({ types: ['git.ref_pinned'] })[0]!.meta).toEqual({
       projectId: 'prj_app',
       tag: `aoc/change/${changeId}`,
@@ -519,5 +530,32 @@ describe('change requests (§8, §14)', () => {
       h.builder,
     );
     expect(h.t.rt.store.list({ types: ['change.approved'] })).toHaveLength(1);
+  });
+
+  // G-25: an observed session is unverified laptop work (threat model §2.2, T-12) and must never be linked to an
+  // approved change record — that linkage is exactly what the provenance trace's `via: 'session_change'` reads.
+  it('refuses to start an approved change on an observed session', async () => {
+    await setup();
+    const changeId = await draftAndAffirm(h, {
+      projectId: 'prj_app',
+      scope: 'reversible_off_main',
+      owner: h.builder,
+      rollbackRef: repo.head(),
+    });
+    await approveChange(h, changeId, h.builder);
+    h.t.sessions!.add({ sessionId: 'ses_laptop', projectId: 'prj_app', mode: 'observed' });
+    await h.t.json('POST', `/api/changes/${changeId}/start`, {
+      headers: h.builder.headers,
+      body: { sessionId: 'ses_laptop' },
+      expect: 422,
+    });
+    expect(h.t.rt.store.list({ types: ['change.started'] })).toHaveLength(0);
+    // A managed session for the same project still starts the change normally.
+    h.t.sessions!.add({ sessionId: 'ses_managed', projectId: 'prj_app' });
+    const started = await h.t.json<ChangeRequestDTO>('POST', `/api/changes/${changeId}/start`, {
+      headers: h.builder.headers,
+      body: { sessionId: 'ses_managed' },
+    });
+    expect(started.sessions.map((s) => s.sessionId)).toContain('ses_managed');
   });
 });

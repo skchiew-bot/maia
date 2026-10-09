@@ -1,8 +1,11 @@
 import { randomBytes } from 'node:crypto';
+import { existsSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { silentLogger, type AocModule } from '@aoc/kernel';
-import { createIntakeModule } from '@aoc/mod-intake';
-import { CONTENT_SECURITY_POLICY, JSON_BODY_LIMIT } from '../src/http';
+import { INTAKE_ENVELOPE_BYTES, MAX_PUSH_BYTES } from '@aoc/contracts';
+import { bodyLimitFor as kernelBodyLimitFor, silentLogger, type AocModule } from '@aoc/kernel';
+import { createIntakeModule, intakeLimits } from '@aoc/mod-intake';
+import { bodyLimitFor, CONTENT_SECURITY_POLICY, INTAKE_UPLOAD_PATH, JSON_BODY_LIMIT } from '../src/http';
 import { createDefaultModules, MODULE_ORDER } from '../src/modules';
 import { createAocServer } from '../src/server';
 import { bootTestServer, removeTempDirs, tempDir, testConfig, type TestServer } from './helpers';
@@ -25,6 +28,7 @@ const echoModule: AocModule = {
     app.post('/api/echo', async (c) => c.json({ bytes: (await c.req.arrayBuffer()).byteLength }));
     app.post('/portal/api/intakes', async (c) => c.json({ bytes: (await c.req.arrayBuffer()).byteLength }));
     app.post('/ingest/hook', async (c) => c.json({ bytes: (await c.req.arrayBuffer()).byteLength }));
+    app.post('/ingest/git/:repo/git-receive-pack', async (c) => c.json({ bytes: (await c.req.arrayBuffer()).byteLength }));
   },
 };
 
@@ -203,6 +207,27 @@ describe('aocd HTTP surface', () => {
     expect(await smallStream.json()).toEqual({ bytes: 1000 });
   });
 
+  it('lets a push to the git gateway carry a pack that the JSON cap would refuse, up to its own cap (R-02)', async () => {
+    const t = await boot({ modules: [echoModule] });
+    const auth = { authorization: `Bearer ${t.identity.issueObserverToken()}` };
+    const n = 2 * JSON_BODY_LIMIT;
+    const push = await t.request('/ingest/git/prj_a.git/git-receive-pack', {
+      method: 'POST',
+      body: chunked(n),
+      headers: auth,
+      duplex: 'half',
+    } as RequestInit);
+    expect(await push.json()).toEqual({ bytes: n });
+    const hook = await t.request('/ingest/hook', { method: 'POST', body: chunked(n), headers: auth, duplex: 'half' } as RequestInit);
+    expect(hook.status).toBe(413);
+    const announced = await t.request('/ingest/git/prj_a.git/git-receive-pack', {
+      method: 'POST',
+      body: '{}',
+      headers: { ...auth, 'content-length': String(MAX_PUSH_BYTES + 1) },
+    });
+    expect(announced.status).toBe(413);
+  });
+
   it('lets intake uploads through up to the video cap', async () => {
     const cap = 3 * 1024 * 1024;
     const t = await boot({ modules: [echoModule], config: { intake: { maxVideoBytes: cap } } });
@@ -225,6 +250,15 @@ describe('aocd HTTP surface', () => {
       duplex: 'half',
     } as RequestInit);
     expect(tooBig.status).toBe(413);
+  });
+
+  it('caps the intake upload at the total the portal is told plus the form envelope, in aocd and in the kernel alike', () => {
+    const intake = { maxVideoBytes: 3 * 1024 * 1024, maxImageBytes: 1024 * 1024, maxAttachments: 4 };
+    const config = testConfig(tempDir(), { intake });
+    const published = intakeLimits(config.intake).maxTotalBytes;
+    expect(published).toBe(3 * 1024 * 1024);
+    expect(bodyLimitFor(INTAKE_UPLOAD_PATH, config)).toBe(published + INTAKE_ENVELOPE_BYTES);
+    expect(kernelBodyLimitFor(INTAKE_UPLOAD_PATH, config)).toBe(published + INTAKE_ENVELOPE_BYTES);
   });
 
   it('refuses cross-site writes that ride on the session cookie', async () => {
@@ -289,5 +323,27 @@ describe('aocd HTTP surface', () => {
       await aoc.close();
       await aoc.close();
     }
+  });
+
+  it('does not start in development with a lost KEK beside existing data, and generates nothing', async () => {
+    const dir = tempDir();
+    const config = testConfig(dir);
+    const open = () => createAocServer(config, { log: silentLogger, webDir: null, modules: [] });
+    const first = await open(); // a fresh data dir: the development KEK is generated into <dataDir>/master.key
+    first.runtime.store.append({
+      type: 'session.nudged',
+      actor: { kind: 'human', id: 'usr_1' },
+      scope: { sessionId: 'ses_1' },
+      meta: { sessionId: 'ses_1' },
+      payload: { text: 'sealed under the first KEK' },
+      source: 'api',
+    });
+    await first.close();
+    const keyFile = join(config.dataDir, 'master.key');
+    expect(existsSync(keyFile)).toBe(true);
+
+    rmSync(keyFile); // the key file is lost (or the data was restored without it)
+    await expect(open()).rejects.toThrow(/refusing to generate a new KEK.*docs\/runbooks\/key-custody\.md/s);
+    expect(existsSync(keyFile)).toBe(false);
   });
 });

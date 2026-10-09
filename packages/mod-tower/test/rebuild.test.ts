@@ -26,6 +26,7 @@ import {
   plan,
   playbookApproved,
   project,
+  reconciled,
   resolveDecision,
   setup,
   sys,
@@ -74,6 +75,8 @@ function richHistory(): void {
     carriedOver: 2,
   });
   usage(h, 'ses_2', 50_000, { contextTokens: 650_000 });
+  reconciled(h, 'ses_1', 'match', { at: ago(h, hours(2)) });
+  reconciled(h, 'ses_2', 'over_reported', { at: ago(h, minutes(12)) });
   h.emit(
     {
       type: 'throttle.hit',

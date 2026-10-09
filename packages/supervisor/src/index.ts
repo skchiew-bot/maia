@@ -18,7 +18,11 @@ export {
   toolPolicy,
   redactArgv,
   readCredentialProfile,
+  readCredentialProfiles,
+  GATEWAY_REMOTE,
+  type CredentialProfile,
 } from './launch-config';
+export { PushGateway, serviceRepoPathFor, type PushGatewayOptions } from './push-gateway';
 export { buildSystemPrompt, decisionAnswersText } from './prompts';
 export { parseResetAt, isLimitNotice } from './throttle';
 export { readStreamLine } from './stream';

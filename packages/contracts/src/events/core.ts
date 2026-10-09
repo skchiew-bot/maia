@@ -9,6 +9,24 @@ import { defineEvent, meta, payload, zId, zIso, zLabel, zNonNeg } from './define
 
 const liveness = z.enum(LIVENESS_STATES).nullable();
 
+/** A turn's sidecar-recorded usage compared with the claude process's own figures (G-44, O-5). */
+export const USAGE_RECONCILIATION_STATUSES = [
+  'match',
+  /** The process reported more and the turn compacted: compaction usage never reaches the transcript. */
+  'overhead',
+  'under_reported',
+  'over_reported',
+  /** The process's cumulative figures went down: the cost state it resumes from was edited. */
+  'regressed',
+  /** Nothing exact to compare: no result line, or turns since the last check were never reconciled. */
+  'unverified',
+] as const;
+export type UsageReconciliationStatus = (typeof USAGE_RECONCILIATION_STATUSES)[number];
+/** The statuses that flag a turn: neither figure can be trusted alone. */
+export const USAGE_DISCREPANCIES: readonly UsageReconciliationStatus[] = ['under_reported', 'over_reported', 'regressed'];
+
+const zTokenCounts = z.object({ input: zNonNeg, output: zNonNeg, cacheRead: zNonNeg, cacheWrite: zNonNeg }).strict();
+
 export const SESSION_EVENTS = [
   defineEvent({
     type: 'session.launch_requested',
@@ -119,6 +137,31 @@ export const SESSION_EVENTS = [
     payload: null,
   }),
   defineEvent({
+    type: 'session.git_pushed',
+    owner: 'supervisor',
+    description:
+      "A managed session pushed through the supervisor's push gateway (§3, R-02). The supervisor checked every ref against the session's credential profile and forwarded the allowed ones upstream with the credential only it holds. Ref names are agent-chosen text: they stay in the encrypted body.",
+    meta: meta({
+      sessionId: zId,
+      credentialProfile: zLabel,
+      refs: z.number().int().min(1),
+      forwarded: z.number().int().min(0),
+      refused: z.number().int().min(0),
+      failed: z.number().int().min(0),
+    }),
+    payload: payload({
+      results: z.array(
+        z.object({
+          ref: z.string(),
+          oldSha: z.string(),
+          newSha: z.string(),
+          result: z.enum(['forwarded', 'refused', 'failed']),
+          reason: z.string().nullable(),
+        }),
+      ),
+    }),
+  }),
+  defineEvent({
     type: 'session.ended',
     owner: 'supervisor',
     description: 'Session finished for good.',
@@ -200,6 +243,37 @@ export const ACTIVITY_EVENTS = [
       lastAt: zIso,
     }),
     payload: payload({ messageIds: z.array(z.string()) }),
+  }),
+  defineEvent({
+    type: 'usage.reconciled',
+    owner: 'supervisor',
+    description:
+      "A finished turn's usage as the sidecar recorded it (usage.recorded since the previous check) against the claude process's own figures: stream-json result.modelUsage, cumulative per session, so this turn is the difference from the previous result. Numbers and model ids only.",
+    meta: meta({
+      sessionId: zId,
+      turn: z.number().int().min(1),
+      status: z.enum(USAGE_RECONCILIATION_STATUSES),
+      /** The turn's result line carried the process's figures. */
+      reported: z.boolean(),
+      compacted: z.boolean(),
+      /** usage.recorded batches counted for this turn. */
+      batches: z.number().int().min(0),
+      models: z
+        .array(
+          z
+            .object({
+              model: z.string().min(1).max(80),
+              /** This turn as the process reported it; null when unknown (no result or baseline) or regressed. */
+              process: zTokenCounts.nullable(),
+              sidecar: zTokenCounts,
+              /** The process's cumulative figures after this turn (carried forward without a result): the next baseline. */
+              cumulative: zTokenCounts.nullable(),
+            })
+            .strict(),
+        )
+        .max(32),
+    }),
+    payload: null,
   }),
   defineEvent({
     type: 'throttle.hit',

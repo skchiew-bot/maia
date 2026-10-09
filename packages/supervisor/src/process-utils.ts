@@ -1,8 +1,9 @@
 /** Process helpers: signalling process groups, verifying a pid still belongs to a session, isolated command runs. */
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcessByStdio } from 'node:child_process';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { constants } from 'node:os';
 import { isAbsolute } from 'node:path';
+import type { Readable } from 'node:stream';
 
 export function signalProcess(pid: number, signal: NodeJS.Signals): boolean {
   try {
@@ -81,7 +82,7 @@ export interface IsolatedRun {
   env: Record<string, string>;
   timeoutMs: number;
   maxOutputBytes?: number;
-  /** Run as this user (aocd must be root). */
+  /** Run as this user (aocd must be root); supplementary groups are dropped. */
   uid?: number;
   gid?: number;
 }
@@ -99,6 +100,7 @@ export function runCommand(i: IsolatedRun): Promise<{ exitCode: number; stdout: 
     const err = new Capture(max);
     let timedOut = false;
     let done = false;
+    let timer: NodeJS.Timeout | undefined;
     const finish = (exitCode: number, note?: string) => {
       if (done) return;
       done = true;
@@ -110,14 +112,21 @@ export function runCommand(i: IsolatedRun): Promise<{ exitCode: number; stdout: 
         stderr: note ? `${stderr}${stderr ? '\n' : ''}${note}` : stderr,
       });
     };
-    const child = spawn(bin, args, {
-      cwd: i.cwd,
-      env: i.env,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      detached: true,
-      ...(i.uid !== undefined ? { uid: i.uid, gid: i.gid } : {}),
-    });
-    const timer = setTimeout(() => {
+    let child: ChildProcessByStdio<null, Readable, Readable>;
+    try {
+      child = spawn(bin, args, {
+        cwd: i.cwd,
+        env: i.env,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        detached: true,
+        ...(i.uid !== undefined ? { uid: i.uid, gid: i.gid } : {}),
+      });
+    } catch (e) {
+      // A uid/gid switch aocd may not make fails synchronously (EPERM).
+      finish(127, `[aoc] could not start ${bin}: ${(e as Error).message}`);
+      return;
+    }
+    timer = setTimeout(() => {
       timedOut = true;
       if (child.pid) signalTree(child.pid, 'SIGKILL');
     }, i.timeoutMs);
