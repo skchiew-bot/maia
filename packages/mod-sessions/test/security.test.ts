@@ -40,6 +40,16 @@ const hook = (sid: string | null, claudeId: string, event: string, extra: Record
   idempotencyKey: `key-${randomUUID()}`,
 });
 
+describe('ingest authentication comes before body parsing', () => {
+  it('answers 401 to an anonymous caller without parsing its body', async () => {
+    await setup();
+    for (const path of ['/ingest/hook', '/ingest/spool', '/ingest/heartbeat', '/ingest/activity', '/ingest/usage', '/ingest/throttle', '/ingest/process']) {
+      const res = await t.app.request(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"not": json' });
+      expect(res.status, path).toBe(401);
+    }
+  });
+});
+
 describe('client-supplied header fields', () => {
   it('rejects a free-text sentAt before anything is chained', async () => {
     await setup();

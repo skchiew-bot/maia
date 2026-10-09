@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import { Hono } from 'hono';
+import { bodyLimit } from 'hono/body-limit';
 import type { AocConfig, JsonValue, Notification, StoredEvent } from '@aoc/contracts';
 import type { Clock } from '../clock';
 import { loadOrCreateMasterKey } from '../crypto';
@@ -8,7 +9,7 @@ import type { Logger } from '../logger';
 import { EventStore } from '../store/event-store';
 import { localParts } from '../time';
 import { Broadcaster } from './broadcast';
-import { errorResponse, tokenFrom } from './http';
+import { bodyLimitFor, errorResponse, HttpError, tokenFrom } from './http';
 import type { AocModule, AppEnv, Job, ModuleContext, Reactor } from './module';
 import { GuardPolicy } from './policy';
 import { ServiceRegistry } from './services';
@@ -143,18 +144,29 @@ export class AocRuntime {
 
   /** Mount auth middleware, module routes and the error handler on a Hono app. */
   mount(app: Hono<AppEnv> = new Hono<AppEnv>()): Hono<AppEnv> {
+    app.use('*', (c, next) => {
+      const maxSize = bodyLimitFor(c.req.path, this.opts.config);
+      return bodyLimit({
+        maxSize,
+        onError: () => {
+          throw new HttpError(413, 'payload_too_large', `Request body exceeds ${maxSize} bytes`);
+        },
+      })(c, next);
+    });
     app.use('*', async (c, next) => {
       c.set('requestId', c.req.header('x-request-id') ?? Math.random().toString(36).slice(2, 10));
       c.set('auth', null);
       c.set('ingest', null);
       const tok = tokenFrom(c);
       const identity = this.services.maybe('identity');
-      if (tok && identity) {
-        if (c.req.path.startsWith('/ingest/')) c.set('ingest', identity.verifyIngestToken(tok.token));
-        else {
-          const auth = identity.authenticate(tok.token);
-          if (auth) c.set('auth', { ...auth, method: tok.method });
-        }
+      if (c.req.path.startsWith('/ingest/')) {
+        const principal = tok && identity ? identity.verifyIngestToken(tok.token) : null;
+        // Every ingest route needs a token: refuse anonymous callers before any route parses their body.
+        if (!principal) throw new HttpError(401, 'unauthenticated', 'Ingest token required');
+        c.set('ingest', principal);
+      } else if (tok && identity) {
+        const auth = identity.authenticate(tok.token);
+        if (auth) c.set('auth', { ...auth, method: tok.method });
       }
       await next();
     });

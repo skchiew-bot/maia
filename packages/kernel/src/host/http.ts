@@ -1,7 +1,7 @@
 import type { Context } from 'hono';
 import type { z } from 'zod';
-import type { AuthContext, IngestPrincipal, Permission } from '@aoc/contracts';
-import { hasPermission } from '@aoc/contracts';
+import type { AocConfig, AuthContext, IngestPrincipal, Permission } from '@aoc/contracts';
+import { hasPermission, INGEST_PATHS } from '@aoc/contracts';
 import { EventValidationError } from '../store/event-store';
 import type { AppEnv } from './module';
 
@@ -70,6 +70,24 @@ export function errorResponse(err: unknown, c: Ctx): Response {
     return c.json({ error: { code: 'invalid_event', message: err.message, details: err.problems } }, 422);
   }
   return c.json({ error: { code: 'internal', message: 'Internal error' } }, 500);
+}
+
+const MiB = 1024 * 1024;
+/** Request-body caps (bytes). The spool carries batches of hook bodies; hook bodies carry tool input/output. */
+export const MAX_BODY_BYTES = { spool: 64 * MiB, ingest: 16 * MiB, api: 4 * MiB, formOverhead: MiB } as const;
+
+/**
+ * Cap for a request path, enforced before authentication or any parsing so an anonymous client cannot make the
+ * sole-writer daemon buffer an unbounded body. Intake uploads get the configured attachment allowance (§7).
+ */
+export function bodyLimitFor(path: string, config: AocConfig): number {
+  if (path === INGEST_PATHS.spool) return MAX_BODY_BYTES.spool;
+  if (path.startsWith('/ingest/')) return MAX_BODY_BYTES.ingest;
+  if (path.startsWith('/portal/')) {
+    const i = config.intake;
+    return i.maxAttachments * Math.max(i.maxImageBytes, i.maxVideoBytes) + MAX_BODY_BYTES.formOverhead;
+  }
+  return MAX_BODY_BYTES.api;
 }
 
 /** Extract the bearer token from Authorization or the aoc_session cookie. */

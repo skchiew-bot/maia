@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { EventStore, EventValidationError, FakeClock, silentLogger } from '../src';
+import { createTestRuntime, EventStore, EventValidationError, FakeClock, MAX_BODY_BYTES, silentLogger, type AocModule } from '../src';
 
 const mk = (dataDir = ':memory:', key = randomBytes(32)) =>
   new EventStore({ dataDir, clock: new FakeClock(), log: silentLogger, masterKey: key });
@@ -30,5 +30,55 @@ describe('chained header fields are bounded like meta', () => {
     expect(() => s.append({ ...nudge('ses_a', 'x'), idempotencyKey: 'key\nwith-newline' })).toThrow(EventValidationError);
     expect(s.head().seq).toBe(0);
     expect(s.append({ ...nudge('ses_a', 'x'), idempotencyKey: 'crd:cap:["2026-10","ses_a",null,0]' }).idempotencyKey).toBe('crd:cap:["2026-10","ses_a",null,0]');
+  });
+});
+
+describe('request bodies are capped before any route reads them', () => {
+  async function setup() {
+    let reads = 0;
+    const mod: AocModule = {
+      name: 'echo',
+      routes(app) {
+        for (const path of ['/ingest/echo', '/api/echo', '/portal/api/echo']) {
+          app.post(path, async (c) => {
+            reads++;
+            return c.json({ bytes: (await c.req.text()).length });
+          });
+        }
+      },
+    };
+    const t = await createTestRuntime({ modules: [mod], config: { intake: { maxAttachments: 2, maxImageBytes: 1024, maxVideoBytes: 4096 } } });
+    return { t, reads: () => reads };
+  }
+
+  it('rejects oversized unauthenticated bodies with 413, chunked or with a Content-Length', async () => {
+    const { t, reads } = await setup();
+    const chunked = await t.app.request('/api/echo', { method: 'POST', body: 'x'.repeat(MAX_BODY_BYTES.api + 1) });
+    expect(chunked.status).toBe(413);
+    const declared = await t.app.request('/api/echo', { method: 'POST', body: 'x', headers: { 'content-length': String(MAX_BODY_BYTES.api + 1) } });
+    expect(declared.status).toBe(413);
+    const ingest = await t.app.request('/ingest/echo', { method: 'POST', body: 'x'.repeat(MAX_BODY_BYTES.ingest + 1) });
+    expect(ingest.status).toBe(413);
+    expect(reads()).toBe(0);
+    expect((await t.app.request('/api/echo', { method: 'POST', body: 'small' })).status).toBe(200);
+    await t.close();
+  });
+
+  it('refuses anonymous ingest calls before a route reads the body', async () => {
+    const { t, reads } = await setup();
+    expect((await t.app.request('/ingest/echo', { method: 'POST', body: '{"partial": ' })).status).toBe(401);
+    expect((await t.app.request('/ingest/echo', { method: 'POST', body: '{}', headers: { authorization: 'Bearer not-a-token' } })).status).toBe(401);
+    expect(reads()).toBe(0);
+    expect((await t.app.request('/ingest/echo', { method: 'POST', body: '{}', headers: t.ingestHeaders('observer') })).status).toBe(200);
+    await t.close();
+  });
+
+  it('caps the intake portal at the configured attachment limits', async () => {
+    const { t, reads } = await setup();
+    const over = await t.app.request('/portal/api/echo', { method: 'POST', body: 'x'.repeat(2 * 4096 + MAX_BODY_BYTES.formOverhead + 1) });
+    expect(over.status).toBe(413);
+    expect(reads()).toBe(0);
+    expect((await t.app.request('/portal/api/echo', { method: 'POST', body: 'x'.repeat(4096) })).status).toBe(200);
+    await t.close();
   });
 });
