@@ -1,0 +1,137 @@
+{
+  "//": "aocd configuration. Copy to aoc.config.json where you start aocd, or point --config <file> / AOC_CONFIG at it. Every key is optional and the values below are the built-in defaults. Relative paths resolve against this file's directory (~ is your home). Keys starting with // are comments; a //key shows an optional setting without enabling it. Env overrides: AOC_PORT, AOC_HOST, AOC_DATA_DIR, AOC_PUBLIC_URL. Secrets never go here: see .env.example.",
+
+  "dataDir": ".aoc/data",
+  "host": "127.0.0.1",
+  "port": 7420,
+  "//publicUrl": "https://aoc.example.com — the origin browsers use (links, WebAuthn). Defaults to http://localhost:<port>; set it when aocd sits behind a proxy or TLS.",
+  "timezone": "Asia/Kuala_Lumpur",
+
+  "keys": {
+    "//": "Key-encryption key for the per-scope body keys (crypto-shred, §13). Order: AOC_MASTER_KEY env, then masterKeyFile, else <dataDir>/master.key is generated (0600). Production: store it apart from the data dir and its backups, per docs/runbooks/key-custody.md (R6).",
+    "//masterKeyFile": "/etc/aoc/master.key"
+  },
+
+  "liveness": {
+    "workingWindowMs": 30000,
+    "stallAfterMs": 300000,
+    "toolStallAfterMs": 1200000,
+    "deadAfterMs": 45000
+  },
+
+  "registryFile": "config/process-types.json",
+
+  "supervisor": {
+    "//": "Managed claude sessions. sidecar/hook/mcp commands are filled in by aocd: dist/bin/aoc-*.mjs next to the aocd bundle, else the package sources via tsx. Only envAllowlist variables reach a session; deploy credentials live solely in the credential profiles file (§3).",
+    "claudeBin": "claude",
+    "claudeArgsPrefix": [],
+    "sidecarCommand": [],
+    "hookCommand": [],
+    "mcpCommand": [],
+    "workspacesDir": ".aoc/workspaces",
+    "maxConcurrentSessions": 8,
+    "autoContinueLimit": 1,
+    "envAllowlist": [
+      "PATH",
+      "HOME",
+      "LANG",
+      "LC_ALL",
+      "TERM",
+      "TZ",
+      "TMPDIR",
+      "SHELL",
+      "USER",
+      "CLAUDE_CONFIG_DIR",
+      "ANTHROPIC_API_KEY",
+      "ANTHROPIC_AUTH_TOKEN",
+      "CLAUDE_CODE_OAUTH_TOKEN",
+      "HTTPS_PROXY",
+      "HTTP_PROXY",
+      "NO_PROXY",
+      "NODE_EXTRA_CA_CERTS",
+      "SSL_CERT_FILE"
+    ],
+    "//credentialProfilesFile": "/etc/aoc/credential-profiles.json — { \"profiles\": { \"<name>\": { \"env\": { … } } } }, readable only by the user aocd runs as; never on developer machines."
+  },
+
+  "decisions": {
+    "remindAfterMinutes": 30,
+    "//webhookUrl": "https://hooks.example.com/aoc — opt-in notification for new and aging decisions (R15)."
+  },
+
+  "credits": {
+    "defaultMonthlyAllocationUsd": 300,
+    "autoGrantPct": 25,
+    "exemptUserIds": []
+  },
+
+  "metering": {
+    "rateCardFile": "config/rate-card.json",
+    "closeDayAfterLocalTime": "00:15"
+  },
+
+  "fx": {
+    "//": "Daily USD→MYR from BNM: extract with Haiku, escalate once to Sonnet, else carry forward (flagged). extractor: claude-cli | anthropic-sdk (needs ANTHROPIC_API_KEY) | fake.",
+    "enabled": true,
+    "runAtLocalTime": "12:30",
+    "pageUrl": "https://www.bnm.gov.my/exchange-rates",
+    "apiUrl": "https://api.bnm.gov.my/public/exchange-rate/USD",
+    "extractor": "claude-cli",
+    "sanity": { "min": 3.5, "max": 5.5, "maxDailyChangePct": 3 },
+    "reconcileTolerance": 0.005,
+    "carryForwardAlertDays": 4
+  },
+
+  "audit": {
+    "//": "Nightly off-host anchor of the chain head (§13, R2). git: one signed commit per anchor in a separate repo, ideally pushed off-host via anchorRemote; rfc3161: a timestamp from tsaUrl.",
+    "anchorProvider": "git",
+    "anchorRepoPath": ".aoc/anchor-repo",
+    "//anchorRemote": "git@github.com:your-org/aoc-anchors.git",
+    "tsaUrl": "https://freetsa.org/tsr",
+    "anchorAtLocalTime": "02:00"
+  },
+
+  "intake": {
+    "//": "End-user portal uploads (§7, R4). aocd accepts intake request bodies up to maxVideoBytes + 1 MiB; every other request body is capped at 1 MiB.",
+    "maxImageBytes": 10485760,
+    "maxVideoBytes": 209715200,
+    "maxAttachments": 6,
+    "scanner": "builtin",
+    "requireScan": true,
+    "triageAgents": 2,
+    "diagnosisBudget": { "tokens": 400000, "minutes": 30 },
+    "lowConfidenceThreshold": 0.6,
+    "triageProcessType": "bug-triage",
+    "buildProcessType": "bug-fix"
+  },
+
+  "selfModification": {
+    "//": "Repos that are AOC itself; changes under protectedPaths (governance, audit, credit core) are refused to agents and logged outside AOC (§13).",
+    "aocRepoPaths": [],
+    "protectedPaths": [
+      "packages/kernel/",
+      "packages/contracts/",
+      "packages/mod-audit/",
+      "packages/mod-credits/",
+      "packages/mod-decisions/",
+      "packages/mod-identity/",
+      "packages/hooks/",
+      "config/"
+    ],
+    "externalAuditLog": ".aoc/selfmod-audit.log"
+  },
+
+  "learning": {
+    "retireAfterUnusedRuns": 20,
+    "verifyWindowDays": 14
+  },
+
+  "identity": {
+    "//": "WebAuthn relying party. origin and rpId default to publicUrl's origin and hostname.",
+    "rpName": "AOC — Agent Ops Console",
+    "sessionTtlHours": 12,
+    "//origin": "https://aoc.example.com",
+    "//rpId": "aoc.example.com",
+    "//bootstrapTokenFile": ".aoc/bootstrap.token — one-time token for the first Approver (printed once by `aoc init`); AOC_BOOTSTRAP_TOKEN works too."
+  }
+}
