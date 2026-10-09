@@ -1,7 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { AuditHealthDTO, BackupListDTO, BackupRunDTO } from '@aoc/contracts';
+import { idKindOf, type AuditHealthDTO, type BackupListDTO, type BackupRunDTO } from '@aoc/contracts';
 import { backupFileName, isArchivePath, pruneBackups } from '../src';
 import { boot, makeSite, nudge, sha256, SYSTEM, type Booted, type Site } from './backup-helpers';
 
@@ -118,6 +118,8 @@ describe('the daily backup job', () => {
     expect(await b.rt.tickJobs()).toEqual([]);
     const done = b.rt.store.list({ types: ['backup.completed'] });
     expect(done).toHaveLength(1);
+    expect(idKindOf(done[0]!.meta.backupId as string)).toBe('backup'); // the contract's bkp_ prefix
+    expect(done[0]!.meta.backupId).toMatch(/^bkp_[0-9A-Z]{26}$/);
     expect(done[0]).toMatchObject({ actor: { kind: 'system', id: 'scheduler:audit' }, source: 'scheduler' });
     expect(backupFiles(s)).toEqual([done[0]!.meta.file]);
 
@@ -200,16 +202,25 @@ describe('the daily backup job', () => {
     expect(health.warnings).toEqual(expect.arrayContaining(['backup_failed', 'backup_not_copied']));
   });
 
-  it('on demand: Builders and the Approver may run one, Requesters may not, and back-to-back runs are refused', async () => {
-    const { b, builder, requester } = await setup();
+  it('on demand: only the Approver (audit.backup) may run one, Builders may list them, and back-to-back runs are refused', async () => {
+    const { s, b, approver, builder, requester } = await setup();
     expect((await b.request('POST', '/api/audit/backup')).status).toBe(401);
     expect((await b.request('POST', '/api/audit/backup', requester.headers)).status).toBe(403);
+    // A full copy of the audit state is the Approver's call: verify/anchor rights do not carry it.
+    const refused = await b.request('POST', '/api/audit/backup', builder.headers);
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toMatchObject({
+      error: { code: 'forbidden', message: 'Missing permission audit.backup' },
+    });
+    expect(backupFiles(s)).toEqual([]);
     expect((await b.request('GET', '/api/audit/backups', requester.headers)).status).toBe(403);
-    await b.json<BackupRunDTO>('POST', '/api/audit/backup', builder.headers);
-    const again = await b.request('POST', '/api/audit/backup', builder.headers);
+    expect((await b.request('GET', '/api/audit/backups', builder.headers)).status).toBe(200);
+
+    await b.json<BackupRunDTO>('POST', '/api/audit/backup', approver.headers);
+    const again = await b.request('POST', '/api/audit/backup', approver.headers);
     expect(again.status).toBe(429);
     b.clock.advance(11 * 60_000);
-    await b.json<BackupRunDTO>('POST', '/api/audit/backup', builder.headers);
+    await b.json<BackupRunDTO>('POST', '/api/audit/backup', approver.headers);
   });
 });
 

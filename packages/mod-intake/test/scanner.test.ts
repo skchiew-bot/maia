@@ -1,10 +1,16 @@
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { AocConfig } from '@aoc/contracts';
-import { createTestRuntime, type AocModule, type TestRuntime } from '@aoc/kernel';
-import { builtinScanner, createIntakeModule, resolveScanner, type IntakeModuleOptions } from '../src';
+import { CHILD_ENV_ALLOWLIST, createTestRuntime, type AocModule, type TestRuntime } from '@aoc/kernel';
+import {
+  builtinScanner,
+  clamavScanner,
+  createIntakeModule,
+  resolveScanner,
+  type IntakeModuleOptions,
+} from '../src';
 
 const PNG = Buffer.concat([
   Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
@@ -187,5 +193,45 @@ describe('intake uploads against the resolved scanner', () => {
   it('an injected builtin scanner follows the same production rule', async () => {
     await setup({ mode: 'production', intake: { requireScan: true } }, { scanner: builtinScanner });
     expect((await submit([PNG])).status).toBe(503);
+  });
+});
+
+describe('the ClamAV client is an aocd child (G-46, O-13)', () => {
+  it('starts with the kernel allowlist, never with aocd’s AOC_* secrets, API keys or tokens', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'aoc-clamav-env-'));
+    const dump = join(dir, 'env.dump');
+    const bin = join(dir, 'clamscan');
+    writeFileSync(bin, `#!/bin/sh\nenv > '${dump}'\ncat > /dev/null\nexit 0\n`);
+    chmodSync(bin, 0o755);
+    const planted = {
+      AOC_MASTER_KEY: 'kek-SECRET-1',
+      AOC_BOOTSTRAP_TOKEN: 'bootstrap-SECRET-2',
+      ANTHROPIC_API_KEY: 'sk-ant-SECRET-3',
+      CLAUDE_CODE_OAUTH_TOKEN: 'oauth-SECRET-4',
+      GITHUB_TOKEN: 'ghp_SECRET-5',
+      AWS_SECRET_ACCESS_KEY: 'aws-SECRET-6',
+      DEPLOY_KEY: 'deploy-SECRET-7',
+    };
+    const saved = Object.fromEntries(Object.keys(planted).map((k) => [k, process.env[k]]));
+    Object.assign(process.env, planted);
+    try {
+      expect(clamavScanner(bin).scan(PNG)).toEqual({ verdict: 'clean', scanner: 'clamscan' });
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+    const seen = readFileSync(dump, 'utf8');
+    rmSync(dir, { recursive: true, force: true });
+    const fromTheShell = new Set(['PWD', 'OLDPWD', 'SHLVL', '_']); // what sh itself adds to its environment
+    const names = seen
+      .split('\n')
+      .filter((l) => l.includes('='))
+      .map((l) => l.slice(0, l.indexOf('=')))
+      .filter((k) => !fromTheShell.has(k));
+    expect(names.filter((k) => !CHILD_ENV_ALLOWLIST.includes(k))).toEqual([]);
+    expect(seen).not.toContain('SECRET');
+    expect(names).toContain('PATH');
   });
 });

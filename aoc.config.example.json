@@ -11,7 +11,7 @@
   "timezone": "Asia/Kuala_Lumpur",
 
   "keys": {
-    "//": "Key-encryption key for the per-scope body keys (crypto-shred, §13). Development order: AOC_MASTER_KEY env, then masterKeyFile, else <dataDir>/master.key is generated (0600). Production mode accepts only an existing masterKeyFile outside the data dir, per docs/runbooks/key-custody.md (R6).",
+    "//": "Key-encryption key for the per-scope body keys (crypto-shred, §13). Development order: AOC_MASTER_KEY env (warned about at every start), then masterKeyFile, else <dataDir>/master.key is generated (0600) - only while the data dir holds no data; beside existing data aocd refuses to start instead. Production mode accepts only an existing masterKeyFile outside the data dir, per docs/runbooks/key-custody.md (R6).",
     "//masterKeyFile": "/etc/aoc/master.key"
   },
 
@@ -79,6 +79,11 @@
   "metering": {
     "rateCardFile": "config/rate-card.json",
     "closeDayAfterLocalTime": "00:15"
+  },
+
+  "compliance": {
+    "//": "ISO/IEC 42001 control mapping (provisional until the compliance lead stamps it). Like registryFile and metering.rateCardFile, the default falls back to the copy packaged with aocd (dist/config next to dist/bin, or the checkout's config/) when it is not next to this file; the startup banner names the file in use, or says the built-in default is.",
+    "mappingFile": "config/iso42001-mapping.json"
   },
 
   "fx": {

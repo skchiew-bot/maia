@@ -351,7 +351,7 @@ What stays open is concentrated in four places:
 | R3 | ISO clause mapping wrong in ≥5 rows → compliance lead corrects first | Process-only | S13-g, S13-h | P-05. |
 | R4 | Uploads / untrusted input → encrypted store, hashes-only, scan + limits, read-only triage, no deploy creds | Partial | S7-i…S7-m | G-12, G-45, G-01. |
 | R5 | Scope sprawl → resequencing, identity first, per-stage sign-off | Process-only | S15-* | P-08, P-10. |
-| R6 | Log / keys single point of loss → off-host backup; key custody before real data lands | Partial | `docs/runbooks/key-custody.md`, `docs/runbooks/operations.md` §6 (manual procedure) | Automated backup + restore drill G-21 (assigned); KEK from a file and env stripping O-13 (G-46); KEK rotation O-23 (G-47); adoption P-03. |
+| R6 | Log / keys single point of loss → off-host backup; key custody before real data lands | Partial | `docs/runbooks/key-custody.md`, `docs/runbooks/operations.md` §6 (manual procedure) | Automated backup + restore drill G-21 (assigned); KEK from a file and env stripping O-13 (G-46, done: development warns about `AOC_MASTER_KEY`, every helper gets an allowlisted environment); KEK rotation O-23 (G-47); adoption P-03. |
 | R7 | Credit cap kills a session mid-task → task boundaries only; 25%-once buffer | Implemented | S10.3-a, S10.3-b | |
 | R8 | Credits push to the cheap model → credits never route | Implemented | S10.3-h | |
 | R9 | Shared timeline inflates → evidence per task; flag no-file-change closes | Implemented | S4-h, S4-i | |
