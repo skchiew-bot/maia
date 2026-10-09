@@ -124,6 +124,28 @@ describe('observed mode: report-only, never blocks', () => {
     expect(readSpool(spoolDir)).toEqual([]);
   });
 
+  it("stands down for AOC's own LLM calls (AOC_INTERNAL_LLM=1): no report, no spool, no state", async () => {
+    daemon = await startFakeDaemon(accepting);
+    const home = writeClientConfig(tmp(), daemon.url);
+    const transcript = join(home, 't.jsonl');
+    writeFileSync(
+      transcript,
+      assistantMessage('msg_A', 'claude-haiku-5-5', { input: 3, output: 4 }, '2026-10-09T01:00:00.000Z').join(
+        '\n',
+      ) + '\n',
+    );
+    for (const [event, input] of [
+      ['UserPromptSubmit', userPromptSubmit()],
+      ['Stop', stop(transcript)],
+    ] as const) {
+      const run = await runHookBinary(event, input, { HOME: home, AOC_INTERNAL_LLM: '1' });
+      expect(run).toMatchObject({ code: 0, stdout: '', stderr: '' });
+    }
+    expect(daemon.requests).toEqual([]);
+    expect(existsSync(join(home, '.aoc', 'spool'))).toBe(false);
+    expect(existsSync(join(home, '.aoc', 'state'))).toBe(false);
+  });
+
   it('never replays spool-rejected.jsonl, which is kept for inspection', async () => {
     daemon = await startFakeDaemon(accepting);
     const home = writeClientConfig(tmp(), daemon.url);
