@@ -137,7 +137,6 @@ export function history(): AuditEventHeaderDTO[] {
       ticketId: t,
       sessionId: 'ses_tri_a',
       confidence: 0.82,
-      rootCauseClass: 'unit-mismatch',
     }),
     event('decision.requested', NOW - 35 * MIN, { decisionId: 'dec_fix', kind: 'fix_plan' }),
     event('ticket.fix_plan_submitted', NOW - 35 * MIN, {

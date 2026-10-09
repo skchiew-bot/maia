@@ -49,7 +49,8 @@ export interface ModuleHealth {
 
 /**
  * A domain module. Lifecycle: projectors registered → init (provide services) → routes mounted →
- * start (all services available) → jobs scheduled. Export a factory `createXModule(opts)`.
+ * start (all services available) → jobs scheduled; on the way out quiesce (the API still serves), then stop.
+ * Export a factory `createXModule(opts)`.
  */
 export interface AocModule {
   name: string;
@@ -60,6 +61,12 @@ export interface AocModule {
   init?(ctx: ModuleContext): void | Promise<void>;
   routes?(app: App, ctx: ModuleContext): void;
   start?(ctx: ModuleContext): void | Promise<void>;
+  /**
+   * First phase of a stop, before the HTTP server stops accepting: wind down whatever still reports to this process
+   * through its API (the supervisor lets its sidecars send their last usage). Bounded by the module; once, last
+   * module first.
+   */
+  quiesce?(): void | Promise<void>;
   stop?(): void | Promise<void>;
   /** Status of something the module depends on outside the log (e.g. the intake malware scanner), after init. */
   health?(): ModuleHealth;

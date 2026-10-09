@@ -5,7 +5,7 @@
 import { z } from 'zod';
 import { DECISION_KINDS, LIVENESS_STATES, ROLES, SESSION_LIFECYCLE } from '../domain';
 import { DECISION_TESTS } from '../mcp';
-import { defineEvent, meta, payload, zId, zIso, zLabel, zNonNeg } from './define';
+import { defineEvent, meta, payload, zId, zIso, zLabel, zNonNeg, zSha } from './define';
 
 const liveness = z.enum(LIVENESS_STATES).nullable();
 
@@ -160,6 +160,14 @@ export const SESSION_EVENTS = [
         }),
       ),
     }),
+  }),
+  defineEvent({
+    type: 'session.head_recorded',
+    owner: 'supervisor',
+    description:
+      "The HEAD of a build session's project repository when one of its turns ended, read by the supervisor service as the repository's owner (never supplied by the session). Provenance counts a commit as the session's work only when it is reachable from a HEAD recorded this way or at a task close (G-25).",
+    meta: meta({ sessionId: zId, projectId: zId, sha: zSha, turn: z.number().int().min(1) }),
+    payload: null,
   }),
   defineEvent({
     type: 'session.ended',

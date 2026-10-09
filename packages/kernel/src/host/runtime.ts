@@ -74,6 +74,7 @@ export class AocRuntime {
   /** stop() was called: no job starts from then on. */
   private stopRequested = false;
   private stopRun: Promise<void> | null = null;
+  private quiesceRun: Promise<void> | null = null;
   /** Reactors are off: the modules are stopping. */
   private stopped = false;
   /** The store is closed: nothing may be written any more. */
@@ -304,9 +305,28 @@ export class AocRuntime {
   }
 
   /**
-   * Orderly shutdown, idempotent: stop scheduling, let the reactors finish what is queued, switch them off, stop the
-   * modules (which abort what they can), wait for job ticks still running, then close the store. Nothing may write
-   * to the store after it is closed, so a job that is still running is awaited rather than left behind.
+   * The modules' quiesce hooks, last module first, once. aocd runs this before its HTTP server stops accepting, so
+   * what still reports through the API (the supervisor's sidecars) can finish; stop() runs it too if nobody did.
+   * A module that fails to quiesce is logged and does not hold the others up.
+   */
+  quiesce(): Promise<void> {
+    this.quiesceRun ??= (async () => {
+      for (const m of [...this.opts.modules].reverse()) {
+        try {
+          await m.quiesce?.();
+        } catch (err) {
+          this.opts.log.error('module failed to quiesce', { module: m.name, err: String(err) });
+        }
+      }
+    })();
+    return this.quiesceRun;
+  }
+
+  /**
+   * Orderly shutdown, idempotent: stop scheduling, quiesce the modules, let the reactors finish what is queued,
+   * switch them off, stop the modules (which abort what they can), wait for job ticks still running, then close the
+   * store. Nothing may write to the store after it is closed, so a job that is still running is awaited rather than
+   * left behind.
    */
   stop(): Promise<void> {
     this.stopRequested = true;
@@ -317,6 +337,7 @@ export class AocRuntime {
   private async runShutdown(): Promise<void> {
     if (this.jobTimer) clearInterval(this.jobTimer);
     this.jobTimer = null;
+    await this.quiesce();
     await this.drain();
     this.stopped = true;
     try {

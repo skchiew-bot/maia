@@ -40,6 +40,11 @@ export interface AocServer {
   runtime: AocRuntime;
   config: AocConfig;
   webDir: string | null;
+  /**
+   * First phase of a stop, while the HTTP server still serves: the modules wind down what reports through the API
+   * (the supervisor's sidecars send their last usage). Idempotent; close() does it too if nobody did.
+   */
+  quiesce(): Promise<void>;
   /** End all open event streams so an HTTP server can finish closing. */
   closeStreams(): void;
   /** closeStreams, then runtime.stop(): drain reactors, stop modules, wait for running jobs, close the DB. Idempotent. */
@@ -129,6 +134,7 @@ export async function createAocServer(config: AocConfig, opts: AocServerOptions 
     runtime,
     config,
     webDir,
+    quiesce: () => runtime.quiesce(),
     closeStreams: () => streams.closeAll(),
     close() {
       closing ??= (async () => {
