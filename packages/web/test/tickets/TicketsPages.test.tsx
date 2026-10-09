@@ -168,7 +168,6 @@ describe('Tickets list', { timeout: 15_000 }, () => {
       title: 'Claim totals round down to the nearest ringgit',
       projectId: 'prj_claims',
       stage: 'go_live_gate',
-      publicStatus: 'ready_for_testing',
       buildSessionId: 'ses_build_2',
       openDecisionIds: [],
     });
@@ -307,7 +306,6 @@ describe('Ticket page', { timeout: 15_000 }, () => {
     const passedUat = ticket({
       ticketId: ID,
       stage: 'uat',
-      publicStatus: 'ready_for_testing',
       buildSessionId: 'ses_build',
       uatRef: `uat/${ID}`,
       openDecisionIds: [],
