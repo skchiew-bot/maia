@@ -74,11 +74,12 @@ export class AocRuntime {
   static async create(opts: RuntimeOptions): Promise<AocRuntime> {
     const rt = new AocRuntime(opts);
     for (const m of opts.modules) for (const p of m.projectors ?? []) rt.store.registerProjector(p);
-    // Modules added to an existing install (or whose projection schema changed) back-fill from the log first.
-    const rebuilt = rt.store.rebuildStaleProjections();
-    if (rebuilt.length) opts.log.info('projections rebuilt from the log', { projectors: rebuilt });
     for (const m of opts.modules) for (const g of m.guards ?? []) rt.policy.register(g);
     for (const m of opts.modules) await m.init?.(rt.ctx);
+    // Modules added to an existing install (or whose projection schema changed) back-fill from the log — after
+    // init, so projectors that read module settings (e.g. the configured timezone) replay with them.
+    const rebuilt = rt.store.rebuildStaleProjections();
+    if (rebuilt.length) opts.log.info('projections rebuilt from the log', { projectors: rebuilt });
     rt.wireBus();
     for (const m of opts.modules) await m.start?.(rt.ctx);
     await rt.catchUpReactors();
