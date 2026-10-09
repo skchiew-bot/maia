@@ -212,7 +212,9 @@ export class StubCredits implements CreditService {
 
 export class StubLiveness implements LivenessService {
   readonly activity: string[] = [];
-  readonly processes: { sessionId: string; alive: boolean; pid: number | null }[] = [];
+  readonly processes: { sessionId: string; alive: boolean; pid: number | null; lifecycle?: string }[] = [];
+  /** Set by the harness: the session's lifecycle at the moment a process change is reported. */
+  lifecycleOf: (sessionId: string) => string | undefined = () => undefined;
   get() {
     return null;
   }
@@ -221,7 +223,7 @@ export class StubLiveness implements LivenessService {
     this.activity.push(sessionId);
   }
   recordProcess(sessionId: string, alive: boolean, pid: number | null): void {
-    this.processes.push({ sessionId, alive, pid });
+    this.processes.push({ sessionId, alive, pid, lifecycle: this.lifecycleOf(sessionId) });
   }
 }
 
@@ -330,6 +332,7 @@ export async function createHarness(o: HarnessOptions = {}) {
     log: o.log,
   });
   const sup = t.rt.services.get('supervisor') as Supervisor;
+  liveness.lifecycleOf = (sessionId) => sup.session(sessionId)?.lifecycle;
   const owner = t.user('builder', 'Owner');
   const ownerActor: Actor = { kind: 'human', id: owner.user.id };
 

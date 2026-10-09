@@ -1120,7 +1120,6 @@ export class Supervisor implements SupervisorService {
     if (sidecar) this.later(() => sidecar.exitCode === null && sidecar.kill('SIGTERM'), SIDECAR_GRACE_MS);
     live.markClosed();
     if (this.stopping) return;
-    this.liveness()?.recordProcess(live.sessionId, false, null);
     try {
       this.finishTurn(live);
     } catch (err) {
@@ -1131,6 +1130,9 @@ export class Supervisor implements SupervisorService {
         // The store is unusable; the next start marks the session Dead.
       }
     }
+    // Only once the turn's outcome is recorded: a session that now waits, idles, is throttled or has ended was never
+    // Dead in between. A follow-up turn already holds the session and reports its own process when it spawns.
+    if (!this.busy(live.sessionId)) this.liveness()?.recordProcess(live.sessionId, false, null);
     this.pump();
   }
 

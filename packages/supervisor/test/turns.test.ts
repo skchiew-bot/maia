@@ -31,6 +31,9 @@ const decisionFor = (
   ...over,
 });
 
+const processesOf = (h: Harness, sessionId: string) =>
+  h.liveness.processes.filter((p) => p.sessionId === sessionId).map((p) => [p.alive, p.lifecycle]);
+
 describe('turn end: decisions (§2.3)', () => {
   it('waits on an open decision with no process alive, then resumes with the injected answer', async () => {
     h = await createHarness();
@@ -64,6 +67,14 @@ describe('turn end: decisions (§2.3)', () => {
     // idempotent: redelivering the reaction does not start another turn
     await h.sup.onDecisionSettled(h.events('decision.resolved')[0]!);
     expect(h.callsFor(id).length).toBe(2);
+    // each exit is reported only once the turn's outcome is recorded: liveness never sees a running session without
+    // a process, which it would chain as a transient Dead
+    expect(processesOf(h, id)).toEqual([
+      [true, 'running'],
+      [false, 'waiting_decision'],
+      [true, 'running'],
+      [false, 'idle'],
+    ]);
   });
 
   it('waits for every open decision, and resumes on a withdrawal too', async () => {
@@ -221,6 +232,13 @@ describe('turn end: crash, auto-continue, completion, credit cap', () => {
       to: 'idle',
       reason: 'turn_ended',
     });
+    // a follow-up turn already holds the session, so its predecessor's exit is not reported over it
+    expect(processesOf(h, id)).toEqual([
+      [true, 'running'],
+      [true, 'running'],
+      [true, 'running'],
+      [false, 'idle'],
+    ]);
 
     await h.sup.resume(id, 'Also add a logout button', 'operator_prompt', h.ownerActor);
     await h.waitFor(() => h!.callsFor(id).length === 6, 'operator turn and two more continues');
