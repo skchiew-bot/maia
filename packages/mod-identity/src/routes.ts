@@ -114,14 +114,14 @@ export function mountIdentityRoutes(app: App, ctx: ModuleContext, deps: Identity
       if (origin !== undefined && !allowedOrigins.has(origin))
         throw new HttpError(403, 'bad_origin', 'Cross-origin request refused');
     }
-    const tok = isLogin ? null : tokenFrom(c);
-    if (tok && !auth && !c.get('ingest')) {
-      // Count only guesses (no such token). Stale cookies or revoked hook tokens are not attacks and must
-      // not lock a shared address out. While locked, guesses get 429; valid credentials still pass, since
-      // blocking them would hand any co-located attacker a lockout of everyone behind the same IP.
-      const check = c.req.path.startsWith('/ingest/')
-        ? service.checkIngestCredential(tok.token)
-        : service.checkUserCredential(tok.token);
+    // /ingest/* never reaches this middleware with an unknown token: the kernel refuses it (401) before any module
+    // middleware or body parsing. Ingest tokens carry ~208 secret bits, so online guessing needs no backoff.
+    const tok = isLogin || c.req.path.startsWith('/ingest/') ? null : tokenFrom(c);
+    if (tok && !auth) {
+      // Count only guesses (no such token). Stale cookies or revoked tokens are not attacks and must not lock a
+      // shared address out. While locked, guesses get 429; valid credentials still pass, since blocking them
+      // would hand any co-located attacker a lockout of everyone behind the same IP.
+      const check = service.checkUserCredential(tok.token);
       if (!check.ok && (check.reason === 'unknown' || check.reason === 'malformed')) {
         const keys = throttleKeys(c, check.prefix);
         const wait = retryAfterMs(keys);

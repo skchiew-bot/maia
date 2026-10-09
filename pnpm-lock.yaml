@@ -110,6 +110,9 @@ importers:
       '@aoc/mod-sessions':
         specifier: workspace:*
         version: link:../mod-sessions
+      '@aoc/mod-tower':
+        specifier: workspace:*
+        version: link:../mod-tower
       '@aoc/supervisor':
         specifier: workspace:*
         version: link:../supervisor
@@ -170,9 +173,28 @@ importers:
       '@aoc/mod-sessions':
         specifier: workspace:*
         version: link:../mod-sessions
+      '@aoc/mod-tower':
+        specifier: workspace:*
+        version: link:../mod-tower
       hono:
         specifier: 4.13.13
         version: 4.13.13
+
+  packages/distill:
+    dependencies:
+      '@aoc/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@aoc/llm':
+        specifier: workspace:*
+        version: link:../llm
+      zod:
+        specifier: 3.25.76
+        version: 3.25.76
+    devDependencies:
+      '@aoc/kernel':
+        specifier: workspace:*
+        version: link:../kernel
 
   packages/hooks:
     dependencies:
@@ -365,6 +387,9 @@ importers:
       '@aoc/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@aoc/distill':
+        specifier: workspace:*
+        version: link:../distill
       '@aoc/kernel':
         specifier: workspace:*
         version: link:../kernel
@@ -392,6 +417,10 @@ importers:
       zod:
         specifier: 3.25.76
         version: 3.25.76
+    devDependencies:
+      '@aoc/mod-credits':
+        specifier: workspace:*
+        version: link:../mod-credits
 
   packages/mod-metering:
     dependencies:
@@ -413,6 +442,9 @@ importers:
       '@aoc/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@aoc/distill':
+        specifier: workspace:*
+        version: link:../distill
       '@aoc/kernel':
         specifier: workspace:*
         version: link:../kernel

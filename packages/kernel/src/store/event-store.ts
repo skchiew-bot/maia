@@ -183,7 +183,8 @@ export class EventStore {
     const mem = opts.dataDir === ':memory:';
     if (!mem) mkdirSync(opts.dataDir, { recursive: true });
     this.db = new DatabaseSync(mem ? ':memory:' : join(opts.dataDir, 'aoc.db'));
-    this.db.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON;');
+    // secure_delete: projection text scrubbed on erasure (§13) is zeroed on disk, not left in freed pages.
+    this.db.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON; PRAGMA secure_delete = ON;');
     this.db.exec(SCHEMA);
     const blobDir = mem ? mkdtempSync(join(tmpdir(), 'aoc-blobs-')) : join(opts.dataDir, 'blobs');
     this.bodies = new BodyStore(mem ? ':memory:' : join(opts.dataDir, 'bodies.db'), opts.masterKey, blobDir);
@@ -544,12 +545,15 @@ export class EventStore {
       this.db.exec('ROLLBACK');
       throw err;
     }
-    return this.append({
+    const erased = this.append({
       type: 'body.erased',
       actor: input.actor,
       meta: { scopeId, reason: input.reason, erasedBy: input.actor.id, bodyCount: n, decisionId: input.decisionId ?? null },
       source: 'api',
     });
+    // The WAL still holds page images from before the scrub: fold it into the main file and truncate it.
+    this.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+    return erased;
   }
 
   /** Drop and rebuild projections from the log (payloads decrypted; null where erased). */

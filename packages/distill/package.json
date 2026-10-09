@@ -1,0 +1,22 @@
+{
+  "name": "@aoc/distill",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The one distillation core shared by playbooks and lessons: validated model call, deterministic fallback, Approver gate",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@aoc/contracts": "workspace:*",
+    "@aoc/llm": "workspace:*",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@aoc/kernel": "workspace:*"
+  }
+}
