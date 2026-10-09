@@ -42,7 +42,7 @@ function stubs(repoDir: string | null = null) {
   const launches: (LaunchRequest & { sessionId: string })[] = [];
   const stops: string[] = [];
   const errors: Parameters<LearningService['recordError']>[0][] = [];
-  const promotions: { ticketId?: string | null; promotionId: string }[] = [];
+  const promotions: { ticketId?: string | null; promotionId: string; title?: string | null }[] = [];
   const supervisor: Partial<SupervisorService> = {
     async launch(req: LaunchRequest, actor: Actor) {
       const sessionId = newId('session');
@@ -68,7 +68,7 @@ function stubs(repoDir: string | null = null) {
       if (repoDir && !git.revParse(repoDir, input.fromRef)) throw new HttpError(422, 'unknown_ref', `${input.fromRef} does not resolve to a commit`);
       const promotionId = newId('promotion');
       if (ctl.refuse) return { promotionId, decisionId: null, refused: ctl.refuse };
-      promotions.push({ ticketId: input.ticketId, promotionId });
+      promotions.push({ ticketId: input.ticketId, promotionId, title: input.title });
       t.rt.store.append({
         type: 'promotion.requested',
         actor: { kind: 'system', id: 'change' },
@@ -810,6 +810,8 @@ describe('after the requester signs UAT off', () => {
     expect(waiting).toMatchObject({ status: 'being_worked_on', statusLabel: 'Being worked on', canSignOffUat: false, fixConfirmed: true });
     expect(JSON.stringify(waiting)).not.toMatch(gateWords);
     expect(t.decisions!.list({ kind: ['go_live'], status: ['open'] })).toHaveLength(1);
+    // The Approver's queue names the release by what it fixes, the ticket id only as context.
+    expect(s.promotions[0]!.title).toBe('Claim form crashes on upload — go live');
     expect(statuses(ticketId)).toEqual(['being_worked_on', 'ready_for_testing', 'being_worked_on']);
 
     t.rt.store.append({

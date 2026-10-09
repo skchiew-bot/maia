@@ -413,7 +413,7 @@ export class IntakeFlow {
     if (!change || !t.project_id) return this.escalateGoLive(t, 'change control is not available', causationId);
     let r: Awaited<ReturnType<typeof change.requestPromotion>>;
     try {
-      r = await change.requestPromotion({ projectId: t.project_id, fromRef: t.uat_ref ?? `uat/${t.ticket_id}`, ticketId: t.ticket_id }, INTAKE_ACTOR);
+      r = await change.requestPromotion({ projectId: t.project_id, fromRef: t.uat_ref ?? `uat/${t.ticket_id}`, ticketId: t.ticket_id, title: cardTitle(t, 'go live') }, INTAKE_ACTOR);
     } catch (err) {
       return this.escalateGoLive(t, err instanceof Error ? err.message : String(err), causationId);
     }

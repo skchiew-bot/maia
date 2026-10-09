@@ -412,7 +412,10 @@ describe('provenance guarantee and promotion (§14)', () => {
     recordHead('ses_fix', tip);
     const svc = h.t.rt.services.get('change') as ChangeService;
     const request = () =>
-      svc.requestPromotion({ projectId: PROJECT, fromRef: 'fix/tkt-9', ticketId: 'tkt_9' }, SYSTEM);
+      svc.requestPromotion(
+        { projectId: PROJECT, fromRef: 'fix/tkt-9', ticketId: 'tkt_9', title: 'Receipts upload again — go live' },
+        SYSTEM,
+      );
 
     expect(await request()).toMatchObject({
       decisionId: null,
@@ -428,6 +431,8 @@ describe('provenance guarantee and promotion (§14)', () => {
     const ok = await request();
     expect(ok).toMatchObject({ refused: null, decisionId: expect.any(String) });
     expect(h.requested.get(ok.decisionId!)).toMatchObject({ bodyScope: PROJECT }); // no change record: the project
+    // A caller that knows what the release is names it; otherwise the card says which ref goes where.
+    expect(h.t.decisions!.get(ok.decisionId!)!.title).toBe('Receipts upload again — go live');
     await h.t.decisions!.resolve(ok.decisionId!, { optionId: 'approve', ...PASSKEY }, h.approver.user);
     await h.settle();
     expect(repo.head('main')).toBe(tip);
