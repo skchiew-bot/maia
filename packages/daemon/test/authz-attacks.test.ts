@@ -105,7 +105,7 @@ describe('dead credentials authenticate nothing', () => {
   it('credential kinds do not cross surfaces: ingest tokens never open /api, cookies and user tokens never open /ingest', async () => {
     const approver = p.user('approver', 'Cross');
     const cookie = p.ids.cookieHeaders(approver.token);
-    const ingest = [p.ids.ingestHeaders('ses_cross'), p.ids.ingestHeaders('observer'), p.ids.ingestHeaders('system')];
+    const ingest = [p.ids.ingestHeaders('ses_cross'), p.ids.sidecarHeaders('ses_cross'), p.ids.ingestHeaders('observer'), p.ids.ingestHeaders('system')];
     for (const headers of ingest) {
       for (const path of ['/api/auth/me', '/api/users', '/api/audit/events', '/api/stream', '/portal/api/tickets']) {
         expect((await p.request('GET', path, { headers })).status, `${path} with an ingest token`).toBe(401);
@@ -115,9 +115,10 @@ describe('dead credentials authenticate nothing', () => {
       expect((await p.request('GET', '/api/auth/me', { headers: { cookie: `aoc_session=${token}` } })).status).toBe(401);
     }
     for (const headers of [approver.headers, cookie]) {
-      for (const path of ['/ingest/heartbeat', '/ingest/usage', '/ingest/mcp/get_status']) {
+      for (const path of ['/ingest/heartbeat', '/ingest/usage', '/ingest/mcp/get_status', '/ingest/git/prj_x.git/git-receive-pack']) {
         expect((await p.request('POST', path, { headers, body: {} })).status, `${path} with a person's credential`).toBe(401);
       }
+      expect((await p.request('GET', '/ingest/git/prj_x.git/info/refs?service=git-receive-pack', { headers })).status, 'gateway with a person\'s credential').toBe(401);
     }
   });
 });
@@ -212,6 +213,7 @@ describe('an agent can write only as itself (§2, §3)', () => {
       ['a builder', owner.headers],
       ['the observer token', p.ids.ingestHeaders('observer')],
       ['the token of session A', p.ids.ingestHeaders(a.sessionId)],
+      ['the sidecar token of session A', p.ids.sidecarHeaders(a.sessionId)],
     ];
     const problems: string[] = [];
     let n = 0;
@@ -231,30 +233,41 @@ describe('an agent can write only as itself (§2, §3)', () => {
     const items = bodies(b, ++n)
       .filter(([path]) => !path.startsWith('/ingest/mcp/'))
       .map(([path, body]) => ({ path, body, queuedAt: iso() }));
-    const tokenA = p.ids.ingestHeaders(a.sessionId);
-    await settle();
-    const before = p.store.head().seq;
-    const res = await p.request('POST', '/ingest/spool', { headers: tokenA, body: { items } });
-    expect(res.status).toBe(200);
-    expect(await json(res)).toMatchObject({ accepted: 0, rejected: items.length });
-    await settle();
-    expect(p.store.list({ fromSeq: before + 1 }).map((e) => `${e.seq} ${e.type}`)).toEqual([]);
+    for (const tokenA of [p.ids.ingestHeaders(a.sessionId), p.ids.sidecarHeaders(a.sessionId)]) {
+      await settle();
+      const before = p.store.head().seq;
+      const res = await p.request('POST', '/ingest/spool', { headers: tokenA, body: { items } });
+      expect(res.status).toBe(200);
+      expect(await json(res)).toMatchObject({ accepted: 0, rejected: items.length });
+      await settle();
+      expect(p.store.list({ fromSeq: before + 1 }).map((e) => `${e.seq} ${e.type}`)).toEqual([]);
+    }
   });
 
   it('the same writes are accepted for the session\'s own token (so the checks above can fail)', async () => {
     const owner = p.user('builder', 'Owner2');
     const c = seedSession(p, { sessionId: 'ses_iso_C', ownerId: owner.user.id });
+    // The model's session token relays hooks and calls the MCP tools; the sidecar's own token reports telemetry (G-44).
+    const telemetry = new Set(['/ingest/heartbeat', '/ingest/activity', '/ingest/usage', '/ingest/throttle', '/ingest/process']);
     const own = p.ids.ingestHeaders(c.sessionId);
+    const sidecar = p.ids.sidecarHeaders(c.sessionId);
     let wrote = 0;
     let n = 100;
     for (const [path, body] of bodies(c, ++n)) {
       if (!['/ingest/hook', '/ingest/usage', '/ingest/throttle', '/ingest/mcp/declare_plan'].includes(path)) continue;
       const before = p.store.head().seq;
-      const res = await p.request('POST', path, { headers: own, body });
+      const res = await p.request('POST', path, { headers: telemetry.has(path) ? sidecar : own, body });
       expect(res.status, path).toBeLessThan(400);
       wrote += p.store.head().seq - before;
     }
     expect(wrote).toBeGreaterThanOrEqual(4);
+    // ... and the session token, which sits in the model's environment, is refused on the telemetry the model could forge
+    const forged = p.store.head().seq;
+    for (const [path, body] of bodies(c, ++n)) {
+      if (!telemetry.has(path)) continue;
+      expect((await p.request('POST', path, { headers: own, body })).status, `${path} with the session token`).toBe(403);
+    }
+    expect(p.store.head().seq, 'a refused telemetry report must not write anything').toBe(forged);
   });
 
   it('a client idempotency key cannot swallow, or be swallowed by, another session\'s event', async () => {
@@ -275,12 +288,12 @@ describe('an agent can write only as itself (§2, §3)', () => {
     });
     // X claims the keys first; Y uses the same ones afterwards.
     await p.request('POST', '/ingest/hook', { headers: p.ids.ingestHeaders(x.sessionId), body: hook(x, 'shared-key-0001') });
-    await p.request('POST', '/ingest/usage', { headers: p.ids.ingestHeaders(x.sessionId), body: usage(x, 'shared-key-0002', 'm_x') });
+    await p.request('POST', '/ingest/usage', { headers: p.ids.sidecarHeaders(x.sessionId), body: usage(x, 'shared-key-0002', 'm_x') });
     await p.request('POST', '/ingest/mcp/report_error', { headers: p.ids.ingestHeaders(x.sessionId), body: { sessionId: x.sessionId, input: { summary: 'x hit an error' }, idempotencyKey: 'shared-key-0003' } });
     const sawY = () => p.store.list({ sessionId: y.sessionId, types: ['prompt.submitted', 'usage.recorded', 'error.observed'] }).map((e) => e.type).sort();
     expect(sawY()).toEqual([]);
     await p.request('POST', '/ingest/hook', { headers: p.ids.ingestHeaders(y.sessionId), body: hook(y, 'shared-key-0001') });
-    await p.request('POST', '/ingest/usage', { headers: p.ids.ingestHeaders(y.sessionId), body: usage(y, 'shared-key-0002', 'm_y') });
+    await p.request('POST', '/ingest/usage', { headers: p.ids.sidecarHeaders(y.sessionId), body: usage(y, 'shared-key-0002', 'm_y') });
     await p.request('POST', '/ingest/mcp/report_error', { headers: p.ids.ingestHeaders(y.sessionId), body: { sessionId: y.sessionId, input: { summary: 'y hit an error' }, idempotencyKey: 'shared-key-0003' } });
     expect(sawY()).toEqual(['error.observed', 'prompt.submitted', 'usage.recorded']);
   });

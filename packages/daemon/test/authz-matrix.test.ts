@@ -17,6 +17,7 @@ import { bootProd, type Prod } from './support/prod';
 
 /** What only the Approver (the CEO, who holds the gates) may do. */
 const APPROVER_ONLY: Permission[] = [
+  'audit.backup',
   'audit.erase',
   'credit.allocate',
   'credit.topup_approve',
@@ -24,6 +25,7 @@ const APPROVER_ONLY: Permission[] = [
   'gate.approve',
   'ratecard.edit',
   'session.drive_any',
+  'ticket.close_any',
   'ticket.media_view',
   'users.manage',
 ];
@@ -118,6 +120,9 @@ const ROUTES: Record<string, Aud> = {
   'POST /ingest/usage': 'ingest',
   'POST /ingest/throttle': 'ingest',
   'POST /ingest/process': 'ingest',
+  // the push gateway: git smart HTTP, a managed session's own token only (the finer rules: authz-surface.test.ts)
+  'GET /ingest/git/:repo/info/refs': 'ingest',
+  'POST /ingest/git/:repo/git-receive-pack': 'ingest',
   'GET /api/console': 'session.view',
   'GET /api/sessions': 'session.view',
   'GET /api/sessions/:id': 'session.view',
@@ -207,7 +212,7 @@ const ROUTES: Record<string, Aud> = {
   'GET /api/audit/verify': 'audit.verify',
   'POST /api/audit/anchor': 'audit.verify',
   'GET /api/audit/backups': 'audit.view',
-  'POST /api/audit/backup': 'audit.verify',
+  'POST /api/audit/backup': 'audit.backup',
   'POST /api/audit/erase': 'audit.erase',
   'GET /api/compliance/mapping': 'audit.view',
   'POST /api/compliance/mapping/stamp': 'mapping.stamp',
@@ -215,6 +220,7 @@ const ROUTES: Record<string, Aud> = {
   'GET /api/evidence/packs': 'audit.view',
   'GET /api/evidence/packs/:id': 'audit.view',
   'GET /api/evidence/packs/:id/download': 'audit.view',
+  'GET /api/evidence/jobs/:id': 'audit.view',
   // intake portal and the operator's ticket views
   'GET /portal/api/limits': 'intake.submit',
   'POST /portal/api/intakes': 'intake.submit',
@@ -249,6 +255,7 @@ function allowed(aud: Aud, p: Principal): boolean {
 
 const fill = (path: string): string =>
   path
+    .replace(':repo', 'prj_missing.git')
     .replace(':attachmentId', 'att_missing')
     .replace(':seq', '999999')
     .replace(':date', '2026-10-01')
@@ -278,6 +285,7 @@ describe('authorization matrix (§3, §6, §7)', () => {
       { name: 'approver', headers: approver.headers, kind: 'human', role: 'approver' },
       { name: 'observer', headers: p.ids.ingestHeaders('observer'), kind: 'ingest' },
       { name: 'session', headers: p.ids.ingestHeaders('ses_A'), kind: 'ingest' },
+      { name: 'sidecar', headers: p.ids.sidecarHeaders('ses_A'), kind: 'ingest' },
       { name: 'system', headers: p.ids.ingestHeaders('system'), kind: 'ingest' },
       { name: 'revoked', headers: retired.headers, kind: 'anon' },
     ];

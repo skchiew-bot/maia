@@ -79,8 +79,12 @@ function mutate<T>(rng: Rng, base: T, n: number): T {
   return clone;
 }
 
-/** Valid bodies for every ingest route, addressed to session A (or to an observed session). */
-function bases(a: SeededSession, now: string): { path: string; body: unknown; observer?: boolean }[] {
+/**
+ * Valid bodies for every ingest route, addressed to session A (or to an observed session), with the principal that
+ * route accepts: the model's session token, the session's sidecar (telemetry, G-44) or the observer token.
+ */
+type Base = { path: string; body: unknown; as?: 'sidecar' | 'observer' };
+function bases(a: SeededSession, now: string): Base[] {
   const batch = (n: number) => ({
     model: 'claude-opus-5-5',
     inputTokens: 10,
@@ -109,18 +113,18 @@ function bases(a: SeededSession, now: string): { path: string; body: unknown; ob
     { path: '/ingest/hook', body: hook('PostToolUseFailure', { ...tool, error: 'boom' }) },
     { path: '/ingest/hook', body: hook('StopFailure', { error: 'rate_limit', last_assistant_message: 'limit reached' }) },
     { path: '/ingest/hook', body: hook('Stop') },
-    { path: '/ingest/heartbeat', body: { sessionId: a.sessionId, pid: 4242, alive: true, at: now, transcriptBytes: 100, lastTranscriptWriteAt: now } },
-    { path: '/ingest/activity', body: { sessionId: a.sessionId, kind: 'stream', at: now } },
-    { path: '/ingest/usage', body: { sessionId: a.sessionId, idempotencyKey: 'usage-key-0001', batches: [batch(1), batch(2)] } },
-    { path: '/ingest/throttle', body: { sessionId: a.sessionId, resetAt: now, message: 'You have hit your limit', source: 'stream' } },
-    { path: '/ingest/process', body: { sessionId: a.sessionId, event: 'exited', exitCode: 0, signal: null, at: now, pid: 4242 } },
-    { path: '/ingest/spool', body: { items: [{ path: '/ingest/usage', body: { sessionId: a.sessionId, idempotencyKey: 'usage-key-0002', batches: [batch(3)] }, queuedAt: now }] } },
+    { path: '/ingest/heartbeat', as: 'sidecar', body: { sessionId: a.sessionId, pid: 4242, alive: true, at: now, transcriptBytes: 100, lastTranscriptWriteAt: now } },
+    { path: '/ingest/activity', as: 'sidecar', body: { sessionId: a.sessionId, kind: 'stream', at: now } },
+    { path: '/ingest/usage', as: 'sidecar', body: { sessionId: a.sessionId, idempotencyKey: 'usage-key-0001', batches: [batch(1), batch(2)] } },
+    { path: '/ingest/throttle', as: 'sidecar', body: { sessionId: a.sessionId, resetAt: now, message: 'You have hit your limit', source: 'stream' } },
+    { path: '/ingest/process', as: 'sidecar', body: { sessionId: a.sessionId, event: 'exited', exitCode: 0, signal: null, at: now, pid: 4242 } },
+    { path: '/ingest/spool', as: 'sidecar', body: { items: [{ path: '/ingest/usage', body: { sessionId: a.sessionId, idempotencyKey: 'usage-key-0002', batches: [batch(3)] }, queuedAt: now }] } },
     {
       path: '/ingest/hook',
-      observer: true,
+      as: 'observer',
       body: { mode: 'observed', aocSessionId: null, hook: { session_id: observedClaudeId, hook_event_name: 'SessionStart', cwd: '/home/dev/project', transcript_path: '/home/dev/.claude/t.jsonl' }, sentAt: now, idempotencyKey: 'observed-key-0001' },
     },
-    { path: '/ingest/usage', observer: true, body: { sessionId: observedClaudeId, idempotencyKey: 'observed-usage-01', batches: [batch(4)] } },
+    { path: '/ingest/usage', as: 'observer', body: { sessionId: observedClaudeId, idempotencyKey: 'observed-usage-01', batches: [batch(4)] } },
     { path: '/ingest/mcp/declare_plan', body: { sessionId: a.sessionId, input: { summary: 'plan', phases: [{ id: 'p1', name: 'One', tasks: [{ id: 't1', title: 'first', size: 's' }] }] } } },
     { path: '/ingest/mcp/amend_plan', body: { sessionId: a.sessionId, input: { reason: 'more', add: [{ id: 't2', title: 'second', size: 'm', phaseId: 'p1' }], resize: [{ task_id: 't1', size: 'l' }] } } },
     { path: '/ingest/mcp/task_done', body: { sessionId: a.sessionId, input: { task_id: 't1', evidence: { kind: 'test', ref: 'src/a.test.ts > works' } } } },
@@ -143,8 +147,11 @@ describe('hostile ingest bodies never poison the log (§2, §3)', () => {
           const owner = p.user('builder', 'Fuzzed owner');
           const a = seedSession(p, { sessionId: 'ses_fuzz_A', ownerId: owner.user.id });
           const now = p.clock.iso();
-          const own = p.ids.ingestHeaders(a.sessionId);
-          const observer = p.ids.ingestHeaders('observer');
+          const headersOf = {
+            session: p.ids.ingestHeaders(a.sessionId),
+            sidecar: p.ids.sidecarHeaders(a.sessionId),
+            observer: p.ids.ingestHeaders('observer'),
+          };
           const table = bases(a, now);
           const projectors = p.aoc.runtime.modules.flatMap((m) => m.projectors ?? []);
           const seedProblems: string[] = [];
@@ -152,7 +159,7 @@ describe('hostile ingest bodies never poison the log (§2, §3)', () => {
             p.clock.advance(rng.int(1, 4000));
             const base = rng.pick(table);
             const sent = rng.chance(0.15) ? base.body : mutate(rng, base.body, rng.int(1, 3));
-            const res = await p.request('POST', base.path, { headers: base.observer ? observer : own, body: sent });
+            const res = await p.request('POST', base.path, { headers: headersOf[base.as ?? 'session'], body: sent });
             const text = await res.text();
             const label = `${base.path} ${JSON.stringify(sent).slice(0, 260)}`;
             if (res.status >= 500) {
