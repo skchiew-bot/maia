@@ -1,0 +1,296 @@
+/* Control Tower kit: SmallMultiples, FunnelBar, LatencyBars, StackedBar. */
+
+/* ---- Small multiples ---- */
+.aoc-smallmult__caption {
+  margin-bottom: 8px;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+}
+.aoc-smallmult__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(var(--panel-min, 150px), 100%), 1fr));
+  gap: var(--sp-2);
+  list-style: none;
+}
+.aoc-smallmult__panel {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.aoc-smallmult__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.aoc-smallmult__title {
+  min-width: 0;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.aoc-smallmult__title a {
+  color: var(--text);
+  text-decoration: none;
+}
+.aoc-smallmult__title a:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+.aoc-smallmult__value {
+  flex-shrink: 0;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+.aoc-smallmult__note {
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+}
+
+/* ---- Funnel: stage columns in flow order ---- */
+.aoc-funnel__stages {
+  display: grid;
+  gap: 8px;
+  list-style: none;
+}
+.aoc-funnel__stage {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 8px 10px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+/* Flow chevron between stages. */
+.aoc-funnel__stage:not(:last-child)::after {
+  content: '' / '';
+  position: absolute;
+  top: 50%;
+  right: -8px;
+  z-index: 1;
+  width: 7px;
+  height: 7px;
+  border-top: 1.5px solid var(--text-3);
+  border-right: 1.5px solid var(--text-3);
+  transform: translate(-1px, -50%) rotate(45deg);
+}
+.aoc-funnel__stage.is-bottleneck {
+  border-color: color-mix(in srgb, var(--warn) 55%, transparent);
+  background: var(--warn-soft);
+}
+.aoc-funnel__stage.is-terminal {
+  background: var(--surface-2);
+}
+.aoc-funnel__name {
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.aoc-funnel__count {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+.aoc-funnel__count strong {
+  font-size: var(--fs-xl);
+  font-weight: 600;
+  line-height: 1.1;
+}
+.aoc-funnel__unit {
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+}
+.aoc-funnel__bar {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--surface-3);
+}
+.aoc-funnel__fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--series-1);
+}
+.aoc-funnel__stage.is-bottleneck .aoc-funnel__fill {
+  background: var(--warn);
+}
+.aoc-funnel__bar--none {
+  background: none;
+}
+.aoc-funnel__age {
+  min-height: 1.2em;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+}
+.aoc-funnel__flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+.aoc-funnel__flag .aoc-icon {
+  color: var(--warn);
+}
+@container wgrid (max-width: 760px) {
+  .aoc-funnel__stages {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+  .aoc-funnel__stage::after {
+    display: none;
+  }
+}
+@media (max-width: 640px) {
+  .aoc-funnel__stages {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+  .aoc-funnel__stage::after {
+    display: none;
+  }
+}
+
+/* ---- Latency bullet bars ---- */
+.aoc-latency__legend {
+  margin: 0 0 6px;
+}
+.aoc-latency__swatch-p50 {
+  background: var(--series-1);
+}
+.aoc-latency__swatch-p90 {
+  background: color-mix(in srgb, var(--series-1) 35%, var(--surface));
+}
+.aoc-latency__swatch-over {
+  background: color-mix(in srgb, var(--danger) 45%, var(--surface));
+}
+.aoc-latency__swatch-sla {
+  display: inline-block;
+  width: 2px;
+  height: 12px;
+  background: var(--text);
+}
+.aoc-latency__rows {
+  display: flex;
+  flex-direction: column;
+}
+.aoc-latency__row {
+  display: grid;
+  align-items: center;
+  gap: 2px 12px;
+  padding: 4px 0 6px;
+  border-bottom: 1px solid var(--border);
+}
+.aoc-latency__row:last-child {
+  border-bottom: 0;
+}
+.aoc-latency__label {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.25;
+}
+.aoc-latency__name {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.aoc-latency__total {
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+}
+.aoc-latency__svg {
+  display: block;
+  overflow: visible;
+}
+.aoc-latency__p90 {
+  fill: color-mix(in srgb, var(--series-1) 35%, var(--surface));
+}
+.aoc-latency__over {
+  fill: color-mix(in srgb, var(--danger) 45%, var(--surface));
+}
+.aoc-latency__p50 {
+  fill: var(--series-1);
+}
+.aoc-latency__sla {
+  stroke: var(--text);
+  stroke-width: 2;
+}
+.aoc-latency__stats {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+}
+.aoc-latency__stats strong {
+  color: var(--text);
+  font-weight: 600;
+}
+.aoc-latency__breach {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 600;
+}
+.aoc-latency__breach.is-breached {
+  color: var(--text);
+}
+.aoc-latency__breach.is-breached .aoc-icon {
+  color: var(--danger);
+}
+.aoc-latency__breach.is-clear .aoc-icon {
+  color: var(--ok);
+}
+.aoc-latency.is-narrow .aoc-latency__stats {
+  flex-direction: row;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 2px 10px;
+}
+
+/* ---- Stacked bars ---- */
+.aoc-stacked__legend {
+  margin: 0 0 6px;
+}
+.aoc-stacked__grand {
+  margin-left: auto;
+}
+.aoc-stacked__rows {
+  display: flex;
+  flex-direction: column;
+}
+.aoc-stacked__row {
+  display: grid;
+  align-items: center;
+  gap: 2px 12px;
+  min-height: 30px;
+  padding: 3px 0;
+}
+.aoc-stacked__label {
+  min-width: 0;
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+}
+.aoc-stacked__svg {
+  display: block;
+}
+.aoc-stacked__total {
+  color: var(--text);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  text-align: right;
+}
+.aoc-stacked.is-narrow .aoc-stacked__label {
+  grid-column: 1 / -1;
+}

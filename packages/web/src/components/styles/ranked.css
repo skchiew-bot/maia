@@ -1,0 +1,128 @@
+/* ---- RankedList: one scannable attention row per item ---- */
+.aoc-ranked {
+  display: flex;
+  flex-direction: column;
+  list-style: none;
+}
+.aoc-ranked__item {
+  display: grid;
+  grid-template-columns: 22px 18px minmax(0, 1fr) 64px 132px auto;
+  grid-template-areas: 'rank sev main age score action';
+  align-items: center;
+  gap: 4px 10px;
+  min-height: 44px;
+  padding: 6px 12px 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.aoc-ranked__item:last-child {
+  border-bottom: 0;
+}
+.aoc-ranked__item[data-severity='critical'],
+.aoc-ranked__item[data-severity='high'] {
+  box-shadow: inset 3px 0 0 var(--sev);
+}
+.aoc-ranked--no-rank .aoc-ranked__item {
+  grid-template-columns: 18px minmax(0, 1fr) 64px 132px auto;
+  grid-template-areas: 'sev main age score action';
+}
+.aoc-ranked__rank {
+  grid-area: rank;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  text-align: right;
+}
+.aoc-ranked__sev {
+  display: inline-flex;
+  grid-area: sev;
+  color: var(--sev);
+}
+.aoc-ranked__main {
+  display: flex;
+  flex-direction: column;
+  grid-area: main;
+  min-width: 0;
+  line-height: 1.3;
+}
+.aoc-ranked__title {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.aoc-ranked__link {
+  color: var(--text);
+  text-decoration: none;
+}
+.aoc-ranked__link:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+.aoc-ranked__meta {
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+}
+.aoc-ranked__age {
+  grid-area: age;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  text-align: right;
+}
+.aoc-ranked__score {
+  display: flex;
+  grid-area: score;
+  align-items: center;
+  gap: 8px;
+}
+.aoc-ranked__bar {
+  flex: 1;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface-2));
+}
+.aoc-ranked__fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+.aoc-ranked__score-num {
+  min-width: 3ch;
+  color: var(--text);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  text-align: right;
+}
+.aoc-ranked__action {
+  display: flex;
+  grid-area: action;
+  justify-content: flex-end;
+}
+
+/* Narrow containers (phones, small widgets): title on top, age + action, then the score bar. */
+@container wgrid (max-width: 620px) {
+  .aoc-ranked__item,
+  .aoc-ranked--no-rank .aoc-ranked__item {
+    grid-template-columns: 22px 18px minmax(0, 1fr) auto;
+    grid-template-areas:
+      'rank sev main main'
+      '. . age action'
+      '. . score score';
+  }
+  .aoc-ranked__age {
+    text-align: left;
+  }
+}
+@media (max-width: 640px) {
+  .aoc-ranked__item,
+  .aoc-ranked--no-rank .aoc-ranked__item {
+    grid-template-columns: 22px 18px minmax(0, 1fr) auto;
+    grid-template-areas:
+      'rank sev main main'
+      '. . age action'
+      '. . score score';
+  }
+  .aoc-ranked__age {
+    text-align: left;
+  }
+}
