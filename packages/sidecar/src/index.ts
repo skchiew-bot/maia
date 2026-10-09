@@ -1,2 +1,2 @@
-// @aoc/sidecar — Per-session sidecar: heartbeats, transcript tail, usage extraction, throttle detection
-export {};
+export * from './transcript';
+export { Sidecar, pidAlive, type SidecarOptions } from './sidecar';
