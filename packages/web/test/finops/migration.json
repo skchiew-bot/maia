@@ -1,0 +1,336 @@
+{
+ "costBasis": "notional_api_equivalent",
+ "costLabel": "Notional API-equivalent cost (decision support, not a bill)",
+ "asOf": "2026-10-09",
+ "inputs": {
+  "notionalUsd30d": {
+   "windowDays": 30,
+   "coveredDays": 14,
+   "total": 45.78,
+   "monthly": 99.52
+  },
+  "notionalUsd90d": {
+   "windowDays": 90,
+   "coveredDays": 14,
+   "total": 45.78,
+   "monthly": 99.52
+  },
+  "throttleIdleHours30d": {
+   "windowDays": 30,
+   "coveredDays": 14,
+   "total": 0,
+   "monthly": 0
+  },
+  "throttleIdleHours90d": {
+   "windowDays": 90,
+   "coveredDays": 14,
+   "total": 0,
+   "monthly": 0
+  },
+  "subscriptionMonthlyUsd": 1000,
+  "subscriptionSeats": 5
+ },
+ "fx": {
+  "rate": 4.2294,
+  "status": "live",
+  "sourceDate": "2026-10-09"
+ },
+ "question": "Would Claude Enterprise cost less per month than staying on the current plan, once productivity lost to throttling is counted?",
+ "method": "current = subscription + throttle idle hours × idleToLostHoursFactor × loadedHourlyCost; enterprise = seats × seat price + max(0, notional spend − seats × included usage) × overage multiplier + current throttle loss × (1 − recovery%); net benefit = current − enterprise (positive favours migrating). Run-rates are trailing 30/90 complete local days scaled to 30.4375 days.",
+ "assumptions": [
+  {
+   "key": "seatPriceLow",
+   "label": "Enterprise seat price (low)",
+   "unit": "USD/seat/month",
+   "description": "Placeholder assumption, not a quote: lower bound of the Enterprise per-seat price.",
+   "value": 50,
+   "source": "default"
+  },
+  {
+   "key": "seatPriceHigh",
+   "label": "Enterprise seat price (high)",
+   "unit": "USD/seat/month",
+   "description": "Placeholder assumption, not a quote: upper bound of the Enterprise per-seat price.",
+   "value": 150,
+   "source": "default"
+  },
+  {
+   "key": "seats",
+   "label": "Enterprise seats",
+   "unit": "seats",
+   "description": "Seats bought on Enterprise; defaults to the seats on the current subscription.",
+   "value": 5,
+   "source": "data"
+  },
+  {
+   "key": "includedUsagePerSeatUsd",
+   "label": "Usage included per seat",
+   "unit": "USD notional/seat/month",
+   "description": "Notional API-equivalent usage covered by each seat before usage-based overage applies (0 = all usage is billed).",
+   "value": 0,
+   "source": "default"
+  },
+  {
+   "key": "overagePriceMultiplier",
+   "label": "Overage price multiplier",
+   "unit": "× rate-card list price",
+   "description": "Usage beyond the included allowance is billed at this multiple of the rate-card list price (1 = list, 0.8 = 20% discount).",
+   "value": 1,
+   "source": "default"
+  },
+  {
+   "key": "loadedHourlyCostUsd",
+   "label": "Loaded hourly cost",
+   "unit": "USD/hour",
+   "description": "Fully loaded cost of one developer hour, used to value productivity lost to throttling.",
+   "value": 30,
+   "source": "default"
+  },
+  {
+   "key": "idleToLostHoursFactor",
+   "label": "Idle-to-lost-hours factor",
+   "unit": "ratio",
+   "description": "Share of throttle-idle session hours that become lost developer hours (people switch to other work while an agent waits).",
+   "value": 0.5,
+   "source": "default"
+  },
+  {
+   "key": "throttleRecoveryLowPct",
+   "label": "Throttle loss recovered on Enterprise (low)",
+   "unit": "%",
+   "description": "Share of current throttle loss that Enterprise limits would remove — pessimistic case.",
+   "value": 50,
+   "source": "default"
+  },
+  {
+   "key": "throttleRecoveryBasePct",
+   "label": "Throttle loss recovered on Enterprise (base)",
+   "unit": "%",
+   "description": "Share of current throttle loss that Enterprise limits would remove — base case.",
+   "value": 75,
+   "source": "default"
+  },
+  {
+   "key": "throttleRecoveryHighPct",
+   "label": "Throttle loss recovered on Enterprise (high)",
+   "unit": "%",
+   "description": "Share of current throttle loss that Enterprise limits would remove — optimistic case.",
+   "value": 100,
+   "source": "default"
+  }
+ ],
+ "range": {
+  "low": {
+   "scenario": "low",
+   "description": "Least favourable to migrating: high seat price, the heavier of the 30/90-day usage run-rates, the lighter throttling run-rate, low throttle recovery.",
+   "drivers": {
+    "seatPriceUsd": 150,
+    "seats": 5,
+    "notionalMonthlyUsd": 99.52,
+    "throttleIdleHoursMonthly": 0,
+    "throttleRecoveryPct": 50,
+    "loadedHourlyCostUsd": 30,
+    "idleToLostHoursFactor": 0.5,
+    "includedUsagePerSeatUsd": 0,
+    "overagePriceMultiplier": 1,
+    "subscriptionMonthlyUsd": 1000
+   },
+   "current": {
+    "subscriptionUsd": 1000,
+    "throttleLossUsd": 0,
+    "totalUsd": 1000
+   },
+   "enterprise": {
+    "seatsUsd": 750,
+    "usageOverageUsd": 99.52,
+    "residualThrottleLossUsd": 0,
+    "totalUsd": 849.52
+   },
+   "netMonthlyBenefitUsd": 150.48,
+   "netAnnualBenefitUsd": 1805.76,
+   "netMonthlyBenefitRm": 636.44
+  },
+  "base": {
+   "scenario": "base",
+   "description": "Mid seat price, 30-day run-rates, base throttle recovery.",
+   "drivers": {
+    "seatPriceUsd": 100,
+    "seats": 5,
+    "notionalMonthlyUsd": 99.52,
+    "throttleIdleHoursMonthly": 0,
+    "throttleRecoveryPct": 75,
+    "loadedHourlyCostUsd": 30,
+    "idleToLostHoursFactor": 0.5,
+    "includedUsagePerSeatUsd": 0,
+    "overagePriceMultiplier": 1,
+    "subscriptionMonthlyUsd": 1000
+   },
+   "current": {
+    "subscriptionUsd": 1000,
+    "throttleLossUsd": 0,
+    "totalUsd": 1000
+   },
+   "enterprise": {
+    "seatsUsd": 500,
+    "usageOverageUsd": 99.52,
+    "residualThrottleLossUsd": 0,
+    "totalUsd": 599.52
+   },
+   "netMonthlyBenefitUsd": 400.48,
+   "netAnnualBenefitUsd": 4805.76,
+   "netMonthlyBenefitRm": 1693.79
+  },
+  "high": {
+   "scenario": "high",
+   "description": "Most favourable to migrating: low seat price, the lighter usage run-rate, the heavier throttling run-rate, high throttle recovery.",
+   "drivers": {
+    "seatPriceUsd": 50,
+    "seats": 5,
+    "notionalMonthlyUsd": 99.52,
+    "throttleIdleHoursMonthly": 0,
+    "throttleRecoveryPct": 100,
+    "loadedHourlyCostUsd": 30,
+    "idleToLostHoursFactor": 0.5,
+    "includedUsagePerSeatUsd": 0,
+    "overagePriceMultiplier": 1,
+    "subscriptionMonthlyUsd": 1000
+   },
+   "current": {
+    "subscriptionUsd": 1000,
+    "throttleLossUsd": 0,
+    "totalUsd": 1000
+   },
+   "enterprise": {
+    "seatsUsd": 250,
+    "usageOverageUsd": 99.52,
+    "residualThrottleLossUsd": 0,
+    "totalUsd": 349.52
+   },
+   "netMonthlyBenefitUsd": 650.48,
+   "netAnnualBenefitUsd": 7805.76,
+   "netMonthlyBenefitRm": 2751.14
+  }
+ },
+ "verdict": "enterprise_favoured_across_range",
+ "sensitivity": [
+  {
+   "driver": "subscriptionMonthlyUsd",
+   "label": "Current subscription",
+   "unit": "USD/month",
+   "baseValue": 1000,
+   "minus20Value": 800,
+   "plus20Value": 1200,
+   "netMonthlyAtMinus20Usd": 200.48,
+   "netMonthlyAtPlus20Usd": 600.48,
+   "swingUsd": 400
+  },
+  {
+   "driver": "seatPriceUsd",
+   "label": "Enterprise seat price",
+   "unit": "USD/seat/month",
+   "baseValue": 100,
+   "minus20Value": 80,
+   "plus20Value": 120,
+   "netMonthlyAtMinus20Usd": 500.48,
+   "netMonthlyAtPlus20Usd": 300.48,
+   "swingUsd": 200
+  },
+  {
+   "driver": "seats",
+   "label": "Enterprise seats",
+   "unit": "seats",
+   "baseValue": 5,
+   "minus20Value": 4,
+   "plus20Value": 6,
+   "netMonthlyAtMinus20Usd": 500.48,
+   "netMonthlyAtPlus20Usd": 300.48,
+   "swingUsd": 200
+  },
+  {
+   "driver": "notionalMonthlyUsd",
+   "label": "Notional API-equivalent spend",
+   "unit": "USD/month",
+   "baseValue": 99.52,
+   "minus20Value": 79.62,
+   "plus20Value": 119.42,
+   "netMonthlyAtMinus20Usd": 420.38,
+   "netMonthlyAtPlus20Usd": 380.58,
+   "swingUsd": 39.81
+  },
+  {
+   "driver": "overagePriceMultiplier",
+   "label": "Overage price multiplier",
+   "unit": "× list price",
+   "baseValue": 1,
+   "minus20Value": 0.8,
+   "plus20Value": 1.2,
+   "netMonthlyAtMinus20Usd": 420.38,
+   "netMonthlyAtPlus20Usd": 380.58,
+   "swingUsd": 39.81
+  },
+  {
+   "driver": "idleToLostHoursFactor",
+   "label": "Idle-to-lost-hours factor",
+   "unit": "ratio",
+   "baseValue": 0.5,
+   "minus20Value": 0.4,
+   "plus20Value": 0.6,
+   "netMonthlyAtMinus20Usd": 400.48,
+   "netMonthlyAtPlus20Usd": 400.48,
+   "swingUsd": 0
+  },
+  {
+   "driver": "includedUsagePerSeatUsd",
+   "label": "Usage included per seat",
+   "unit": "USD notional/seat/month",
+   "baseValue": 0,
+   "minus20Value": 0,
+   "plus20Value": 0,
+   "netMonthlyAtMinus20Usd": 400.48,
+   "netMonthlyAtPlus20Usd": 400.48,
+   "swingUsd": 0
+  },
+  {
+   "driver": "loadedHourlyCostUsd",
+   "label": "Loaded hourly cost",
+   "unit": "USD/hour",
+   "baseValue": 30,
+   "minus20Value": 24,
+   "plus20Value": 36,
+   "netMonthlyAtMinus20Usd": 400.48,
+   "netMonthlyAtPlus20Usd": 400.48,
+   "swingUsd": 0
+  },
+  {
+   "driver": "throttleIdleHoursMonthly",
+   "label": "Throttle idle hours",
+   "unit": "hours/month",
+   "baseValue": 0,
+   "minus20Value": 0,
+   "plus20Value": 0,
+   "netMonthlyAtMinus20Usd": 400.48,
+   "netMonthlyAtPlus20Usd": 400.48,
+   "swingUsd": 0
+  },
+  {
+   "driver": "throttleRecoveryPct",
+   "label": "Throttle loss recovered on Enterprise",
+   "unit": "%",
+   "baseValue": 75,
+   "minus20Value": 60,
+   "plus20Value": 90,
+   "netMonthlyAtMinus20Usd": 400.48,
+   "netMonthlyAtPlus20Usd": 400.48,
+   "swingUsd": 0
+  }
+ ],
+ "caveats": [
+  "Notional API-equivalent spend prices metered tokens at rate-card list prices; the current plan has no per-token bill.",
+  "Enterprise prices are assumptions, not quotes: override seatPriceLow, seatPriceHigh, includedUsagePerSeatUsd and overagePriceMultiplier with the vendor quote.",
+  "Throttle loss values session idle hours at the loaded hourly cost scaled by idleToLostHoursFactor; an agent waiting on a limit does not always idle a person.",
+  "No crossover or break-even figure is produced by design: read the low–high range and the sensitivity table together.",
+  "Only 14 of 30 days are metered: the 30-day run-rate is extrapolated from them.",
+  "Only 14 of 90 days are metered: the 90-day run-rate is extrapolated from them."
+ ],
+ "generatedAt": "2026-10-09T07:26:22.166Z"
+}

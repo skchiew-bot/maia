@@ -2,7 +2,7 @@
  * FinOps test fixtures, shaped like the daemon's real responses (captured from a seeded demo daemon) and cut down
  * to what each test needs.
  */
-import { render, type RenderResult } from '@testing-library/react';
+import { configure, render, type RenderResult } from '@testing-library/react';
 import type { ReactElement } from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import type {
@@ -12,31 +12,49 @@ import type {
   FxRateDTO,
   FxStatusDTO,
   MeteringDayDTO,
+  MeteringSubscriptionDTO,
+  MeteringSummaryRow,
+  MeteringThrottleDTO,
   PlaybookDTO,
   ProcessTypeView,
+  ProjectSummary,
   RateCardVersionDTO,
   RegistryEntry,
   RegistryRunDTO,
   RegistryTrendPoint,
+  SessionSummary,
 } from '@aoc/contracts';
-import { AuthProvider, type AuthUser } from '../../src/api';
+import { AuthProvider, EventStreamProvider, type AuthUser } from '../../src/api';
 import { ClockProvider, ToastProvider, fixedClock } from '../../src/components';
-import { jsonResponse, mockFetch } from '../helpers';
+import { FakeEventSource, FakeEventSourceCtor, jsonResponse, mockFetch } from '../helpers';
 
 export const NOW = Date.parse('2026-10-09T06:00:00.000Z');
 export const APPROVER: AuthUser = { id: 'usr_ceo', name: 'Chiew Sin Kwang', role: 'approver', flags: {} };
 export const BUILDER: AuthUser = { id: 'usr_weijie', name: 'Tan Wei Jie', role: 'builder', flags: {} };
 
+// A full page renders charts and tables from several resources; on a loaded machine the default 1s wait for
+// it to settle is too tight, which would make these tests fail for reasons unrelated to the page.
+configure({ asyncUtilTimeout: 5_000 });
+
+/** Renders a page as the shell does: router, signed-in user, toasts, a fixed clock and a fake event stream. */
 export function renderPage(ui: ReactElement, user: AuthUser): RenderResult {
+  FakeEventSource.reset();
   return render(
     <MemoryRouter initialEntries={['/']}>
       <AuthProvider initialUser={user}>
-        <ToastProvider>
-          <ClockProvider clock={fixedClock(NOW)}>{ui}</ClockProvider>
-        </ToastProvider>
+        <EventStreamProvider eventSource={FakeEventSourceCtor}>
+          <ToastProvider>
+            <ClockProvider clock={fixedClock(NOW)}>{ui}</ClockProvider>
+          </ToastProvider>
+        </EventStreamProvider>
       </AuthProvider>
     </MemoryRouter>,
   );
+}
+
+/** Pushes one chained event down the fake `/api/stream`, as the daemon does after a commit. */
+export function streamEvent(type: string, seq = 1): void {
+  FakeEventSource.last.emit('aoc', { seq, type, ts: new Date(NOW).toISOString(), scope: {}, meta: {} });
 }
 
 export interface Call {
@@ -46,7 +64,10 @@ export interface Call {
   body: unknown;
 }
 
-/** Routes `METHOD /path` (query ignored) to JSON bodies; unknown routes answer 404. Records every call. */
+/**
+ * Routes `METHOD /path` (query ignored) to JSON bodies or ready-made Responses; unknown routes answer 404.
+ * Records every call.
+ */
 export function routeFetch(routes: Record<string, unknown | ((call: Call) => unknown)>) {
   const calls: Call[] = [];
   const fn = mockFetch((url, init) => {
@@ -60,10 +81,17 @@ export function routeFetch(routes: Record<string, unknown | ((call: Call) => unk
     };
     calls.push(call);
     const route = routes[`${method} ${u.pathname}`];
-    if (route === undefined) return jsonResponse({ error: { code: 'not_found', message: 'No route' } }, { status: 404 });
-    return jsonResponse(typeof route === 'function' ? (route as (c: Call) => unknown)(call) : route);
+    if (route === undefined) return failure(404, 'not_found', 'No route');
+    const value = typeof route === 'function' ? (route as (c: Call) => unknown)(call) : route;
+    return value instanceof Response ? value : jsonResponse(value);
   });
-  return { fn, calls };
+  const count = (method: string, path: string) => calls.filter((c) => c.method === method && c.path === path).length;
+  return { fn, calls, count };
+}
+
+/** A daemon error response (`{ error: { code, message } }`). */
+export function failure(status: number, code: string, message: string): Response {
+  return jsonResponse({ error: { code, message } }, { status });
 }
 
 // ── registry ───────────────────────────────────────────────────────────────
@@ -458,6 +486,103 @@ export const FX_STATUS: FxStatusDTO = {
   openDiscrepancyCount: 0,
 };
 
+export function costRow(over: Partial<MeteringSummaryRow> & Pick<MeteringSummaryRow, 'key'>): MeteringSummaryRow {
+  return {
+    label: null,
+    inputTokens: 1000,
+    outputTokens: 40_000,
+    cacheReadTokens: 900_000,
+    cacheWriteTokens: 50_000,
+    cacheWrite5mTokens: 10_000,
+    cacheWrite1hTokens: 40_000,
+    totalTokens: 991_000,
+    messages: 40,
+    notionalUsd: 10,
+    notionalRm: 42.29,
+    rmComplete: true,
+    unpriced: false,
+    unpricedTokens: 0,
+    unpricedModels: [],
+    tierPricedModels: [],
+    ...over,
+  };
+}
+
+/** `/api/metering/summary` for one grouping; rows arrive largest first, as the daemon sends them. */
+export function summary(groupBy: string, rows: MeteringSummaryRow[]) {
+  return {
+    costBasis: 'notional_api_equivalent',
+    costLabel: DAILY.costLabel,
+    scope: 'org',
+    groupBy,
+    from: DAILY.from,
+    to: DAILY.to,
+    rows,
+    totals: { ...DAILY.totals },
+    closedDays: 4,
+    openDays: 1,
+    fxMissingDays: [],
+    subscription: { usd: 161.290325, rm: 682.13 },
+    generatedAt: DAILY.generatedAt,
+  };
+}
+
+export const SUMMARIES: Record<string, ReturnType<typeof summary>> = {
+  project: summary('project', [
+    costRow({ key: 'prj_aoc', notionalUsd: 18.4, unpriced: true, unpricedTokens: 12_000_000, unpricedModels: ['claude-opus-5-5'] }),
+    costRow({ key: 'prj_claims', notionalUsd: 12.756855 }),
+  ]),
+  actor: summary('actor', [
+    costRow({ key: 'usr_weijie', label: 'Tan Wei Jie', notionalUsd: 21 }),
+    costRow({ key: 'usr_aisyah', label: 'Aisyah Rahman', notionalUsd: 10.156855 }),
+  ]),
+};
+
+export const THROTTLE: MeteringThrottleDTO = {
+  scope: 'org',
+  from: DAILY.from,
+  to: DAILY.to,
+  days: DAYS.map((d) => ({ date: d.date, status: d.status, hits: d.throttleHits, idleMs: d.throttleIdleMs, idleHours: d.throttleIdleMs / 3_600_000 })),
+  bySession: [{ sessionId: 'ses_cx1', ownerId: 'usr_weijie', projectId: 'prj_cxcopilot', hits: 1, idleMs: 7_020_000, idleHours: 1.95, throttledNow: false }],
+  byOwner: [{ ownerId: 'usr_weijie', ownerName: 'Tan Wei Jie', hits: 1, idleMs: 7_020_000, idleHours: 1.95 }],
+  totals: { hits: 1, idleMs: 7_020_000, idleHours: 1.95, throttledNow: 0 },
+  generatedAt: DAILY.generatedAt,
+};
+
+const SUBSCRIPTION_V1 = {
+  plan: 'max',
+  seats: 5,
+  monthlyUsdPerSeat: 200,
+  monthlyUsd: 1000,
+  effectiveFrom: '2026-10-01',
+  status: 'active' as const,
+  updatedAt: '2026-09-25T04:04:56.019Z',
+  updatedBy: 'metering',
+};
+export const SUBSCRIPTION: MeteringSubscriptionDTO = {
+  basis: 'actual_subscription',
+  note: 'Actual plan spend (prorated per day), shown separately from the notional API-equivalent cost.',
+  today: '2026-10-09',
+  active: SUBSCRIPTION_V1,
+  dailyUsdToday: 32.258065,
+  scheduled: [],
+  history: [SUBSCRIPTION_V1],
+};
+
+export function project(projectId: string, name: string): ProjectSummary {
+  return {
+    projectId,
+    name,
+    slug: projectId.replace('prj_', ''),
+    repoPath: null,
+    progress: { doneTasks: 0, totalTasks: 0, doneWeight: 0, totalWeight: 0, pct: 0, flaggedTasks: 0, etaMs: null, etaHiddenReason: null },
+    activeSessions: 0,
+    openDecisions: 0,
+    lastActivityAt: null,
+  };
+}
+export const PROJECTS = [project('prj_aoc', 'AOC Platform'), project('prj_claims', 'Claims Intake Bot'), project('prj_cxcopilot', 'CX Copilot')];
+
 // ── credits ────────────────────────────────────────────────────────────────
 export function account(over: Partial<CreditAccount> & Pick<CreditAccount, 'userId' | 'userName'>): CreditAccount {
   return {
@@ -496,3 +621,92 @@ export function topup(over: Partial<CreditTopupRequest> & Pick<CreditTopupReques
     ...over,
   };
 }
+
+export function session(over: Partial<SessionSummary> & Pick<SessionSummary, 'sessionId'>): SessionSummary {
+  return {
+    mode: 'managed',
+    title: 'Session',
+    projectId: 'prj_cxcopilot',
+    projectName: 'CX Copilot',
+    threadId: null,
+    phaseId: null,
+    phaseName: null,
+    processType: 'feature-build',
+    model: 'claude-sonnet-5-5',
+    ownerId: BUILDER.id,
+    ownerName: BUILDER.name,
+    lifecycle: 'running',
+    liveness: null,
+    apm: { windowMinutes: 30, points: [], current: 0 },
+    progress: null,
+    contextTokens: null,
+    contextPct: null,
+    costTodayUsd: 0,
+    openDecision: null,
+    throttledUntil: null,
+    lastActivityAt: null,
+    startedAt: '2026-10-09T03:00:00.000Z',
+    ticketId: null,
+    ...over,
+  };
+}
+
+const grant = (over: Partial<CreditAccount['grants'][number]> & Pick<CreditAccount['grants'][number], 'kind' | 'amountUsd' | 'at' | 'balanceBefore'>) => ({
+  approverId: null,
+  requestId: null,
+  decisionId: null,
+  sessionId: null,
+  taskId: null,
+  balanceAfter: over.balanceBefore + over.amountUsd,
+  ...over,
+});
+
+/** The team for October, as the daemon lists it: by name. One capped and waiting, one on pace to cap. */
+export const ACCOUNTS: CreditAccount[] = [
+  account({ userId: 'usr_aisyah', userName: 'Aisyah Rahman', usedUsd: 135, balanceUsd: 165 }),
+  account({ userId: APPROVER.id, userName: APPROVER.name, allocationUsd: 500, usedUsd: 40, balanceUsd: 460, autoGrantAvailableUsd: 125 }),
+  account({
+    userId: 'usr_priya',
+    userName: 'Priya Nair',
+    usedUsd: 375,
+    grantedUsd: 75,
+    balanceUsd: 0,
+    autoGrantUsed: true,
+    autoGrantAvailableUsd: 0,
+    capped: true,
+    pendingTopup: { requestId: 'ctu_priya', decisionId: 'dec_ctu_priya', amountUsd: 50, createdAt: '2026-10-09T03:00:00.000Z', ageMs: 3 * 3_600_000 },
+    grants: [grant({ kind: 'auto', amountUsd: 75, at: '2026-10-07T02:00:00.000Z', balanceBefore: 0, decisionId: 'dec_auto_priya', sessionId: 'ses_pr1', taskId: 'T3' })],
+  }),
+  account({
+    userId: BUILDER.id,
+    userName: BUILDER.name,
+    usedUsd: 105.33,
+    grantedUsd: 125,
+    balanceUsd: 319.67,
+    autoGrantUsed: true,
+    autoGrantAvailableUsd: 0,
+    grants: [
+      grant({ kind: 'auto', amountUsd: 75, at: '2026-10-05T02:00:00.000Z', balanceBefore: 0, decisionId: 'dec_auto_wj' }),
+      grant({ kind: 'topup', amountUsd: 50, at: '2026-10-08T09:00:00.000Z', balanceBefore: 269.67, approverId: APPROVER.id, requestId: 'ctu_wj', decisionId: 'dec_ctu_wj', sessionId: 'ses_cx1', taskId: 'T7' }),
+    ],
+  }),
+];
+
+export const TOPUPS: CreditTopupRequest[] = [
+  topup({ requestId: 'ctu_priya', userId: 'usr_priya', userName: 'Priya Nair', sessionId: 'ses_pr1', taskId: 'T3' }),
+  topup({
+    requestId: 'ctu_wj',
+    userId: BUILDER.id,
+    userName: BUILDER.name,
+    reason: 'Second evaluation pass on the sentiment overlay.',
+    sessionId: 'ses_cx1',
+    taskId: 'T7',
+    status: 'granted',
+    createdAt: '2026-10-08T08:30:00.000Z',
+    ageMs: 1_800_000,
+    resolvedAt: '2026-10-08T09:00:00.000Z',
+    resolvedBy: APPROVER.id,
+    balanceBefore: 269.67,
+    balanceAfter: 319.67,
+  }),
+];

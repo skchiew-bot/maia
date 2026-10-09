@@ -33,7 +33,7 @@ export function rangeFor(today: string, days: number): { from: string; to: strin
 }
 
 const WEEKDAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-/** `Fri 9 Oct` for a calendar day (no timezone shift). */
+/** `Fri Oct 9` for a calendar day (no timezone shift). */
 export function dayLabel(date: string): string {
   const [y, m, d] = date.split('-').map(Number) as [number, number, number];
   return `${WEEKDAY[new Date(Date.UTC(y, m - 1, d)).getUTCDay()]} ${formatShortDate(date)}`;
@@ -194,5 +194,6 @@ export function formatIdle(ms: number): string {
   if (!(ms > 0)) return '0 min';
   const min = ms / 60_000;
   if (min < 60) return `${Math.round(min)} min`;
-  return `${(min / 60).toFixed(1)} h`;
+  // Round in tenths of an hour: (117 / 60).toFixed(1) would read 1.9 h through binary rounding.
+  return `${(Math.round(min / 6) / 10).toFixed(1)} h`;
 }
