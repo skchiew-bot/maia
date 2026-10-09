@@ -66,10 +66,11 @@ describe('(a) managed happy path', () => {
     expect(plan.isError).toBe(false);
     expect(plan.data).toMatchObject({ ok: true, manifestVersion: 1, totalTasks: 3, totalWeight: 3 + 2 + 5 });
 
-    // t1: an Edit, then a real commit made through Bash.
+    // t1: an Edit, then a real commit made through Bash. It goes on a branch: the protected-op guard bounces a commit
+    // while main is checked out, which would move main outside the promotion gate.
     const edit = await claude.edit('src/claims.ts', 'export const claims = [];', 'export const parse = (csv: string) => csv.split("\\n");');
     expect(edit.decision).toBe('allow');
-    expect((await claude.bash('git add -A && git commit -q -m "Parse claim rows"')).decision).toBe('allow');
+    expect((await claude.bash('git switch -c feature/claims-parser && git add -A && git commit -q -m "Parse claim rows"')).decision).toBe('allow');
     const sha = git(repo, 'rev-parse', 'HEAD');
     const t1 = await claude.aoc('task_done', { task_id: 't1', evidence: { kind: 'commit', ref: sha } });
     expect(t1.isError).toBe(false);

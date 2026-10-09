@@ -1,9 +1,9 @@
 /**
  * What a managed build may do with git, as the shipped process types grant it (config/process-types.json), judged by
  * claude-sim's permission engine (which models Claude Code's) and by mod-change's protected-operation guard. Builds
- * branch, stage and commit for real. They push only through the supervisor's gateway (remote `aoc`, R-02: the
- * credential never enters the session and the credential profile's push.refs decide the branch); they never merge,
- * rewrite history or touch main.
+ * branch, stage and commit for real, and commit only off main: the guard bounces a commit while a protected branch is
+ * checked out. They push only through the supervisor's gateway (remote `aoc`, R-02: the credential never enters the
+ * session and the credential profile's push.refs decide the branch); they never merge, rewrite history or touch main.
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -116,9 +116,22 @@ describe('everything else stays as it was', () => {
     ]) {
       expect(matchProtectedOperation(command), command).toMatchObject({ test: 'main' });
     }
-    // A UAT branch push through the gateway, a commit and a branch switch are not the guard's business.
+    // A UAT branch push through the gateway and a branch switch are not the guard's business. A commit is, but only on
+    // a protected branch, which the guard learns from aocd (`currentBranch`): given no branch it cannot tell.
     for (const command of ['git push aoc HEAD:refs/heads/uat/tkt_1', 'git commit -m x', 'git switch -c uat/tkt_1']) {
       expect(matchProtectedOperation(command), command).toBeNull();
+    }
+  });
+
+  it('bounces a commit while main is checked out, not on a UAT branch or in a detached workspace', () => {
+    const on = (branch: string | null) => ({ currentBranch: () => branch });
+    expect(matchProtectedOperation('git commit -m x', on('main'))).toMatchObject({ test: 'main' });
+    for (const branch of ['uat/tkt_1', 'feature/whisper', null]) {
+      expect(matchProtectedOperation('git commit -m x', on(branch)), String(branch)).toBeNull();
+    }
+    // Branching, staging and reading are free on main.
+    for (const command of ['git switch -c uat/tkt_1', 'git checkout -b feature/whisper', 'git add -A', 'git status']) {
+      expect(matchProtectedOperation(command, on('main')), command).toBeNull();
     }
   });
 });
@@ -138,5 +151,17 @@ describe('the git steps the demo scenarios run', () => {
   it('never include a push, a merge or a move onto main', () => {
     const all = [...execSteps(defaultScenario({ receipts: 'tkt_1', transferBlank: 'tkt_2' }).steps as never), ...execSteps(builtInScenario('demo-dedupe-resume')!.steps as never)];
     for (const command of all) expect(command, command).not.toMatch(/\bgit (push|merge|rebase|reset)\b|\b(switch|checkout) main\b/);
+  });
+
+  it('commit only after branching, so the protected-operation guard never bounces a build', () => {
+    const all = [...execSteps(defaultScenario({ receipts: 'tkt_1', transferBlank: 'tkt_2' }).steps as never), ...execSteps(builtInScenario('demo-dedupe-resume')!.steps as never)];
+    // An intake build starts in the project's own checkout, which is on main; each step is judged before it runs.
+    let branch = 'main';
+    for (const command of all) {
+      expect(matchProtectedOperation(command, { currentBranch: () => branch }), `${command} (on ${branch})`).toBeNull();
+      const created = /^git switch -c (uat\/\S+)/.exec(command);
+      if (created) branch = created[1]!;
+      else if (command === 'git switch -') branch = 'main';
+    }
   });
 });

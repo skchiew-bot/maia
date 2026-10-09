@@ -6,7 +6,7 @@
  * protected-branch push rights, only supervisor-controlled environments do. This guard's job is to turn a visible
  * attempt into a decision card for a human.
  */
-import { resolve } from 'node:path';
+import { isAbsolute, join, normalize, resolve } from 'node:path';
 import {
   DECISION_TEST_INFO,
   type DecisionTest,
@@ -25,7 +25,10 @@ export const DEFAULT_PROTECTED_BRANCHES = ['main', 'master', 'production', 'rele
 
 export interface MatchOptions {
   protectedBranches?: string[];
-  /** Current branch of a directory (`git -C <dir>`, null = the session cwd), for bare `git push` and `HEAD`. */
+  /**
+   * Current branch of a directory (`git -C <dir>`, a `cd <dir>` before it; null = the session cwd), for bare
+   * `git push`, `HEAD` and the commits a command adds. Null back means detached or unknown, never protected.
+   */
   currentBranch?: (dir: string | null) => string | null;
 }
 
@@ -320,19 +323,88 @@ const GIT_GLOBAL_VALUED = new Set([
   '--super-prefix',
 ]);
 
-function matchGitPush(w: string[], opts: MatchOptions): ProtectedHit | null {
+/**
+ * Where the rest of a command line runs, as far as the line says: a `cd` moves the directory, a `git switch` or
+ * `git checkout -b` the branch. The guard looks at the checkout before the line runs, so without this
+ * `git switch -c uat/x && git commit` would be judged on the branch it is about to leave.
+ */
+interface ShellState {
+  /** Where a `cd` moved to, relative to the session cwd (null = not moved). */
+  dir: string | null;
+  /** The branch an earlier command left a checkout on, by directory (null = detached or not told). */
+  moved: Map<string, string | null>;
+}
+
+const NO_VALUES: ReadonlySet<string> = new Set();
+
+/**
+ * `to` as seen from `from` (null = the session cwd; the guard resolves what stays relative). A path the line does not
+ * spell out (`cd`, `cd -`, `~/x`, `"$(git rev-parse --show-toplevel)"`) leaves things where they were: most of them
+ * stay in the same repository.
+ */
+function within(from: string | null, to: string): string | null {
+  if (/^[-~]|[$`]/.test(to)) return from;
+  const dir = isAbsolute(to) ? normalize(to) : join(from ?? '', to);
+  return dir === '.' ? null : dir;
+}
+
+interface GitCall {
+  /** The directory it runs in: a `cd`, then `-C` (null = the session cwd). */
+  dir: string | null;
+  sub: string | undefined;
+  args: string[];
+}
+
+/** `git [-C <dir>] [options] <subcommand> <args…>` run from `from`; null for any other program. */
+function parseGit(w: string[], from: string | null): GitCall | null {
   if (base(w[0]) !== 'git') return null;
   let i = 1;
-  let dir: string | null = null;
+  let dir = from;
   while (i < w.length && w[i]!.startsWith('-')) {
     const t = w[i]!;
     if (t === '-C') {
-      dir = w[i + 1] ?? null;
+      if (w[i + 1] !== undefined) dir = within(dir, w[i + 1]!);
       i += 2;
     } else i += GIT_GLOBAL_VALUED.has(t) ? 2 : 1;
   }
-  if (w[i] !== 'push') return null;
-  const args = w.slice(i + 1);
+  return { dir, sub: w[i], args: w.slice(i + 1) };
+}
+
+const BRANCH_CREATING = new Set(['-b', '-B', '-c', '-C', '--create', '--force-create', '--orphan']);
+
+/** What a command does to the rest of its line. Subshells and groups are not modelled: splitShell flattens them. */
+function advance(w: string[], shell: ShellState): void {
+  if (base(w[0]) === 'cd') {
+    shell.dir = within(shell.dir, positionals(w.slice(1), NO_VALUES)[0] ?? '~');
+    return;
+  }
+  const git = parseGit(w, shell.dir);
+  if (!git || (git.sub !== 'switch' && git.sub !== 'checkout')) return;
+  const key = git.dir ?? '';
+  const create = git.args.findIndex((t) => BRANCH_CREATING.has(t));
+  const target = positionals(git.args, NO_VALUES)[0];
+  if (create >= 0) shell.moved.set(key, git.args[create + 1] ?? null);
+  else if (git.args.includes('--detach') || git.args.includes('-d')) shell.moved.set(key, null);
+  else if (git.sub === 'switch') shell.moved.set(key, target && target !== '-' ? target : null);
+  // `checkout <x>` is a branch or a path, and a `--` makes it a path: when nobody can tell, forget what the line knew.
+  else if (target && !git.args.includes('--')) shell.moved.delete(key);
+}
+
+const protectedBy = (opts: MatchOptions) => {
+  const patterns = (opts.protectedBranches ?? DEFAULT_PROTECTED_BRANCHES).map(globToRegExp);
+  return (branch: string) => patterns.some((re) => re.test(branch));
+};
+
+/** The branch checked out in `dir` when the command at hand runs. */
+function branchIn(dir: string | null, opts: MatchOptions, shell: ShellState): string | null {
+  const moved = shell.moved.get(dir ?? '');
+  return moved !== undefined ? moved : (opts.currentBranch?.(dir) ?? null);
+}
+
+function matchGitPush(w: string[], opts: MatchOptions, shell: ShellState): ProtectedHit | null {
+  const git = parseGit(w, shell.dir);
+  if (git?.sub !== 'push') return null;
+  const { dir, args } = git;
   let force = false;
   let mirror = false;
   let all = false;
@@ -380,9 +452,8 @@ function matchGitPush(w: string[], opts: MatchOptions): ProtectedHit | null {
   if (mirror) return { test: 'main', label: 'git push --mirror' };
   if (all) return { test: 'main', label: 'git push --all' };
   if (force) return { test: 'main', label: 'git push --force' };
-  const patterns = (opts.protectedBranches ?? DEFAULT_PROTECTED_BRANCHES).map(globToRegExp);
-  const isProtected = (branch: string) => patterns.some((re) => re.test(branch));
-  const current = () => opts.currentBranch?.(dir) ?? null;
+  const isProtected = protectedBy(opts);
+  const current = () => branchIn(dir, opts, shell);
   const refspecs = repoFlag ? positional : positional.slice(1);
   if (!refspecs.length) {
     if (tagsOnly) return null;
@@ -401,6 +472,26 @@ function matchGitPush(w: string[], opts: MatchOptions): ProtectedHit | null {
       return { test: 'main', label: `git push ${del || spec.startsWith(':') ? '--delete ' : ''}to ${dst}` };
   }
   return null;
+}
+
+/**
+ * Subcommands that add commits to the branch HEAD is on. No option makes one harmless: an option can be spelled as a
+ * value (`commit -m --dry-run`), and a bounced dry run costs a card where a missed commit costs the promotion gate.
+ */
+const COMMIT_ADDING = new Set(['commit', 'cherry-pick', 'revert', 'am', 'pull']);
+
+/**
+ * A commit made while a protected branch is checked out moves it outside the promotion gate (§8, §14: a local-target
+ * promotion compares against the project's own main, and with a remote the work is left unpromoted on the local one).
+ * A detached HEAD (the demo's workspaces), a branch that is not protected and a branch nobody can name all pass.
+ */
+function matchGitCommit(w: string[], opts: MatchOptions, shell: ShellState): ProtectedHit | null {
+  const git = parseGit(w, shell.dir);
+  if (!git?.sub || !COMMIT_ADDING.has(git.sub)) return null;
+  const branch = branchIn(git.dir, opts, shell);
+  return branch && protectedBy(opts)(branch)
+    ? { test: 'main', label: `git ${git.sub} (current branch ${branch})` }
+    : null;
 }
 
 const VALUED = new Set([
@@ -568,10 +659,11 @@ export function matchProtectedOperation(command: string, opts: MatchOptions = {}
   const cmds = splitShell(command)
     .map(stripWrappers)
     .filter((w) => w.length);
+  const shell: ShellState = { dir: null, moved: new Map() };
   for (const words of cmds) {
     for (const cand of candidates(words)) {
-      const push = matchGitPush(cand, opts);
-      if (push) return push;
+      const git = matchGitPush(cand, opts, shell) ?? matchGitCommit(cand, opts, shell);
+      if (git) return git;
       const prog = base(cand[0]).startsWith('typeorm') ? 'typeorm' : base(cand[0]);
       const args = cand.slice(1);
       const pos = positionals(args, VALUED);
@@ -580,6 +672,7 @@ export function matchProtectedOperation(command: string, opts: MatchOptions = {}
       const data = DATA_RULES[prog]?.(pos, args, prog);
       if (data) return { test: 'data', label: data };
     }
+    advance(words, shell);
   }
   if (DESTRUCTIVE_SQL.test(command) && usesProgram(cmds, SQL_CLIENTS))
     return { test: 'data', label: 'destructive SQL (DROP / TRUNCATE / DELETE FROM)' };
