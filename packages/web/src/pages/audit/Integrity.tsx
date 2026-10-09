@@ -28,7 +28,12 @@ export function ChainBar({ coverage }: { coverage: ChainCoverage }) {
           <span className="audit-chainbar__tail" style={{ width: `${(1 - c.ratio) * 100}%` }} />
         </div>
         {c.ticks.map((t) => (
-          <span key={t.seq} className="audit-chainbar__tick" style={{ left: `${t.at * 100}%` }} aria-hidden="true">
+          <span
+            key={t.seq}
+            className="audit-chainbar__tick"
+            style={{ left: `${t.at * 100}%` }}
+            aria-hidden="true"
+          >
             <Icon name="key" size={10} />
           </span>
         ))}
@@ -61,7 +66,17 @@ export function ChainBar({ coverage }: { coverage: ChainCoverage }) {
   );
 }
 
-function YesNo({ value, yes = 'yes', no = 'no', unknown = 'not checked' }: { value: boolean | null; yes?: string; no?: string; unknown?: string }) {
+function YesNo({
+  value,
+  yes = 'yes',
+  no = 'no',
+  unknown = 'not checked',
+}: {
+  value: boolean | null;
+  yes?: string;
+  no?: string;
+  unknown?: string;
+}) {
   if (value === null) return <span className="audit-muted">{unknown}</span>;
   return (
     <span className={cx('audit-yesno', value ? 'is-yes' : 'is-no')}>
@@ -92,7 +107,10 @@ export function AnchorProofs({ anchors }: { anchors: readonly AnchorCheckDTO[] }
           {anchors.map((a) => {
             const proof = a.proofRef ? parseProofRef(a.proofRef) : null;
             return (
-              <tr key={`${a.provider}:${a.seq}:${a.anchorId ?? ''}`} className={a.matched && a.proofOk ? undefined : 'is-bad'}>
+              <tr
+                key={`${a.provider}:${a.seq}:${a.anchorId ?? ''}`}
+                className={a.matched && a.proofOk ? undefined : 'is-bad'}
+              >
                 <th scope="row">
                   <span className="audit-proofs__anchor">
                     {a.provider === 'git' ? 'Git commit' : 'RFC 3161 timestamp'}
@@ -211,7 +229,9 @@ export function VerifyResult({
             <dt>Verified</dt>
             <dd>
               <RelativeTime value={report.verifiedAt} suffix=" ago" />
-              {report.eventSeq !== null && <span className="audit-muted"> · recorded as #{formatInteger(report.eventSeq)}</span>}
+              {report.eventSeq !== null && (
+                <span className="audit-muted"> · recorded as #{formatInteger(report.eventSeq)}</span>
+              )}
             </dd>
           </div>
         </dl>
@@ -251,14 +271,17 @@ export function VerifyResult({
           {last && last.anchorsChecked !== null && (
             <>
               {' '}
-              · {formatInteger(last.anchorsMatched ?? 0)} of {formatInteger(last.anchorsChecked)} anchors matched
+              · {formatInteger(last.anchorsMatched ?? 0)} of {formatInteger(last.anchorsChecked)} anchors
+              matched
             </>
           )}
-          {lv.firstBadSeq !== null && <> · first bad event #{formatInteger(lv.firstBadSeq)}</>}
-          . Run Verify to see each anchor's proof.
+          {lv.firstBadSeq !== null && <> · first bad event #{formatInteger(lv.firstBadSeq)}</>}. Run Verify to
+          see each anchor's proof.
         </p>
       ) : (
-        <p className="audit-verdict__last">The chain has never been verified. Run Verify to check it against every anchor.</p>
+        <p className="audit-verdict__last">
+          The chain has never been verified. Run Verify to check it against every anchor.
+        </p>
       )}
     </div>
   );

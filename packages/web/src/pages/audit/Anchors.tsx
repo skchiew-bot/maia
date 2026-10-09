@@ -13,7 +13,15 @@ import {
 import { formatDateTime, formatDuration, formatInteger } from '../../lib/format';
 import { anchorAge, parseProofRef } from './model';
 
-export function AnchorsPanel({ anchors, health, now }: { anchors: AnchorListDTO; health: AuditHealthDTO; now: number }) {
+export function AnchorsPanel({
+  anchors,
+  health,
+  now,
+}: {
+  anchors: AnchorListDTO;
+  health: AuditHealthDTO;
+  now: number;
+}) {
   const last = health.lastAnchor;
   const age = anchorAge(last?.at, now, health.staleAfterMs);
   const rows = useMemo(() => [...anchors.anchors].sort((a, b) => b.eventSeq - a.eventSeq), [anchors.anchors]);
@@ -86,7 +94,9 @@ export function AnchorsPanel({ anchors, health, now }: { anchors: AnchorListDTO;
       <div className="audit-anchors__status">
         <p className="audit-anchors__age">
           <span className="audit-muted">Last anchor</span>
-          <strong className="aoc-num">{age.ageMs === null ? 'never' : `${formatDuration(age.ageMs)} ago`}</strong>
+          <strong className="aoc-num">
+            {age.ageMs === null ? 'never' : `${formatDuration(age.ageMs)} ago`}
+          </strong>
           {age.stale ? (
             <Badge tone="warn" icon="warn">
               older than {formatDuration(health.staleAfterMs)}
@@ -108,17 +118,21 @@ export function AnchorsPanel({ anchors, health, now }: { anchors: AnchorListDTO;
               <Icon name="warn" size={12} /> local only
             </span>
           )}{' '}
-          · <span className="aoc-num">{formatInteger(health.unanchoredTail)}</span> events since the last anchor
+          · <span className="aoc-num">{formatInteger(health.unanchoredTail)}</span> events since the last
+          anchor
         </p>
       </div>
       {!anchors.offHost && anchors.provider !== 'none' && (
         <InlineAlert tone="warn" title="Anchors are not off-host">
-          They are committed to a repository on this host, so a host-level attacker could rewrite them too (R2). Set
-          audit.anchorRemote, or use RFC 3161, before production.
+          They are committed to a repository on this host, so a host-level attacker could rewrite them too
+          (R2). Set audit.anchorRemote, or use RFC 3161, before production.
         </InlineAlert>
       )}
       {health.lastAnchorFailure && (
-        <InlineAlert tone="danger" title={`Anchoring failed ${formatDuration(now - Date.parse(health.lastAnchorFailure.at))} ago`}>
+        <InlineAlert
+          tone="danger"
+          title={`Anchoring failed ${formatDuration(now - Date.parse(health.lastAnchorFailure.at))} ago`}
+        >
           {health.lastAnchorFailure.provider}: {health.lastAnchorFailure.reason}
         </InlineAlert>
       )}

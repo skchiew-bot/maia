@@ -61,19 +61,22 @@ export function verifyVerdict(r: VerifyReportDTO, offHost: boolean): VerifyVerdi
     return {
       tone: 'danger',
       title: `Chain broken${r.firstBadSeq !== null ? ` at #${r.firstBadSeq}` : ''}`,
-      detail: 'Recomputing the hashes does not reproduce the log. Freeze gates and follow the anchoring runbook (Sev-1).',
+      detail:
+        'Recomputing the hashes does not reproduce the log. Freeze gates and follow the anchoring runbook (Sev-1).',
     };
   if (r.anchors.length === 0)
     return {
       tone: 'warn',
       title: 'Not proven: no anchor to verify against',
-      detail: 'The in-file chain recomputes, but that alone is defeatable. Anchor the head off-host, then verify again.',
+      detail:
+        'The in-file chain recomputes, but that alone is defeatable. Anchor the head off-host, then verify again.',
     };
   if (matched < r.anchors.length)
     return {
       tone: 'danger',
       title: `${r.anchors.length - matched} of ${r.anchors.length} anchors do not match`,
-      detail: 'The recomputed chain differs from an external anchor or its proof failed: history before that anchor changed.',
+      detail:
+        'The recomputed chain differs from an external anchor or its proof failed: history before that anchor changed.',
     };
   if (!r.ok)
     return {
@@ -85,7 +88,8 @@ export function verifyVerdict(r: VerifyReportDTO, offHost: boolean): VerifyVerdi
     return {
       tone: 'warn',
       title: `Matches ${matched} ${matched === 1 ? 'anchor' : 'anchors'}, but they are local only`,
-      detail: 'The anchors live on this host, so they do not yet defend against a host-level rewrite (R2). Configure an off-host remote or RFC 3161.',
+      detail:
+        'The anchors live on this host, so they do not yet defend against a host-level rewrite (R2). Configure an off-host remote or RFC 3161.',
     };
   return {
     tone: 'ok',
@@ -95,7 +99,9 @@ export function verifyVerdict(r: VerifyReportDTO, offHost: boolean): VerifyVerdi
 }
 
 /** `git:<commit>:<path>` → the commit and file the anchor lives in; RFC 3161 → the token reference. */
-export function parseProofRef(proofRef: string): { kind: 'git'; commit: string; path: string } | { kind: 'other'; ref: string } {
+export function parseProofRef(
+  proofRef: string,
+): { kind: 'git'; commit: string; path: string } | { kind: 'other'; ref: string } {
   const m = /^git:([0-9a-f]{7,64}):(.+)$/i.exec(proofRef);
   return m ? { kind: 'git', commit: m[1]!, path: m[2]! } : { kind: 'other', ref: proofRef };
 }
@@ -168,13 +174,22 @@ export function parseTypeFilter(input: string): { type?: string; typePrefix?: st
   const v = input.trim().toLowerCase();
   if (!v) return {};
   if (/^[a-z0-9_]+(\.[a-z0-9_]+)+(,\s*[a-z0-9_]+(\.[a-z0-9_]+)+)*$/.test(v))
-    return { type: v.split(',').map((t) => t.trim()).join(',') };
+    return {
+      type: v
+        .split(',')
+        .map((t) => t.trim())
+        .join(','),
+    };
   if (/^[a-z0-9_.]+$/.test(v)) return { typePrefix: v.endsWith('.') ? v : `${v}.` };
   return {};
 }
 
 /** Scope ids typed into the explorer go to the matching filter by their prefix. */
-export function parseScopeFilter(input: string): { sessionId?: string; ticketId?: string; projectId?: string } {
+export function parseScopeFilter(input: string): {
+  sessionId?: string;
+  ticketId?: string;
+  projectId?: string;
+} {
   const v = input.trim();
   if (!v) return {};
   if (v.startsWith('ses_')) return { sessionId: v };
@@ -184,7 +199,10 @@ export function parseScopeFilter(input: string): { sessionId?: string; ticketId?
 }
 
 /** Events at or after the cutoff (the page arrives newest first). */
-export function withinRange(events: readonly AuditEventHeaderDTO[], cutoff: number | null): AuditEventHeaderDTO[] {
+export function withinRange(
+  events: readonly AuditEventHeaderDTO[],
+  cutoff: number | null,
+): AuditEventHeaderDTO[] {
   return cutoff === null ? [...events] : events.filter((e) => toEpoch(e.ts) >= cutoff);
 }
 
