@@ -42,11 +42,8 @@ export function governedSources(
   const sources: GovernedSource[] = [
     fileSource('registry_file', resolve(baseDir, config.registryFile)),
     fileSource('rate_card_file', resolve(baseDir, config.metering.rateCardFile)),
-    fileSource(
-      'iso42001_mapping',
-      resolve(baseDir, opts.mappingFile ?? 'config/iso42001-mapping.json'),
-      true,
-    ),
+    // The file the evidence module loads: aocd resolves compliance.mappingFile (to the packaged copy when relocated).
+    fileSource('iso42001_mapping', resolve(baseDir, opts.mappingFile ?? config.compliance.mappingFile), true),
     { key: 'audit_config', optional: false, current: () => sha256hex(canonicalJson(config.audit)) },
     {
       key: 'selfmod_config',

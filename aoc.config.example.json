@@ -81,6 +81,11 @@
     "closeDayAfterLocalTime": "00:15"
   },
 
+  "compliance": {
+    "//": "ISO/IEC 42001 control mapping (provisional until the compliance lead stamps it). Like registryFile and metering.rateCardFile, the default falls back to the copy packaged with aocd (dist/config next to dist/bin, or the checkout's config/) when it is not next to this file; the startup banner names the file in use, or says the built-in default is.",
+    "mappingFile": "config/iso42001-mapping.json"
+  },
+
   "fx": {
     "//": "Daily USD→MYR = BNM Kuala Lumpur interbank middle rate for `session`, RM per 1 USD, for the local date (docs/research/bnm-fx.md). Session 1700: the page (its default view) is extracted with Haiku, escalating once to Sonnet, else carried forward (flagged), then cross-checked with the BNM Open API at <apiUrl>/date/<date>?session=<session>. BNM publishes a session about 40 minutes after its time; each retry time is another attempt while the day's rate is unpublished or the page unreadable, and the last attempt decides (holiday or flagged carry-forward). Rate changes apply forward only. extractor: claude-cli | anthropic-sdk (needs ANTHROPIC_API_KEY) | fake.",
     "//session": "0900 | 1200 | 1700. For the noon rate set session 1200, runAtLocalTime 13:00 and retryAtLocalTimes [\"13:30\", \"15:00\"]: the page cannot show 1200 without a form POST, so the rate is the API figure alone (extractor api, no page cross-check).",

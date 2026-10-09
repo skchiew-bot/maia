@@ -22,7 +22,11 @@
 built-in defaults. Then the environment overrides `AOC_PORT`, `AOC_HOST`, `AOC_DATA_DIR` and `AOC_PUBLIC_URL`.
 Relative paths resolve against the config file's directory, or against the working directory when there is no
 file. Unknown keys are reported as warnings and ignored, so read the startup log after every config change. In
-production, use absolute paths. A minimal production configuration (`/etc/aoc/aoc.config.json`):
+production, use absolute paths. The registry, the rate card and the ISO 42001 mapping (`config/*.json`) fall back to
+the copies packaged with aocd (`dist/config` next to `dist/bin`, or the checkout's `config/`) when they are not next
+to the config file; the startup banner shows the mapping in use (`mapping  <file> (version …)`) or says that the
+built-in default is, which is not a governed mapping. A minimal production configuration
+(`/etc/aoc/aoc.config.json`):
 
 ```json
 {
@@ -31,6 +35,7 @@ production, use absolute paths. A minimal production configuration (`/etc/aoc/ao
   "publicUrl": "https://aoc.example.internal",
   "keys": { "masterKeyFile": "/run/credentials/aocd.service/aoc-kek" },
   "registryFile": "/opt/aoc/config/process-types.json",
+  "compliance": { "mappingFile": "/opt/aoc/config/iso42001-mapping.json" },
   "supervisor": {
     "workspacesDir": "/var/lib/aoc/workspaces",
     "credentialProfilesFile": "/etc/aoc/credential-profiles.json",

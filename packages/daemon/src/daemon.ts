@@ -5,6 +5,7 @@ import { sessionIsolationOf, type AocConfig } from '@aoc/contracts';
 import { createLogger } from '@aoc/kernel';
 import pkg from '../package.json' with { type: 'json' };
 import { ConfigError, loadConfig, parseDaemonArgs, type LoadedConfig } from './config';
+import { describeMapping } from './mapping';
 import { runRestoreCommand } from './restore';
 import { createAocServer, type AocServer } from './server';
 
@@ -142,6 +143,7 @@ function banner(aoc: AocServer, loaded: LoadedConfig, port: number, env: NodeJS.
     `  console  ${config.port === 0 ? `http://localhost:${port}` : config.publicUrl}/`,
     `  config   ${loaded.file ?? 'built-in defaults (no aoc.config.json)'}`,
     `  data     ${config.dataDir}`,
+    `  mapping  ${describeMapping(config.compliance.mappingFile)}`,
     `  sessions ${sessionsLine(config)}`,
   ];
   if (!aoc.webDir) lines.push('  ui       not built (run `pnpm build`); serving the API only');
