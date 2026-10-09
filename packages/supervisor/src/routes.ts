@@ -53,6 +53,7 @@ export function registerSupervisorRoutes(app: App, sup: Supervisor): void {
   });
 
   app.post('/api/threads/:id/rollover', async (c) => {
+    requireDriverRole(c);
     const threadId = c.req.param('id');
     const writer = sup.writerOf(threadId);
     if (!writer) throw new HttpError(404, 'not_found', 'No managed writer session on this thread');
@@ -64,7 +65,18 @@ export function registerSupervisorRoutes(app: App, sup: Supervisor): void {
   });
 }
 
+/**
+ * Who may drive sessions at all, decided before any lookup: anonymous callers get 401 and people without the
+ * permission 403 whether or not the id exists, so these routes are no oracle for which sessions and threads there are.
+ */
+function requireDriverRole(c: Ctx): void {
+  const { user } = requireUser(c);
+  if (!hasPermission(user.role, 'session.drive_any', user.flags) && !hasPermission(user.role, 'session.drive_own', user.flags))
+    throw new HttpError(403, 'forbidden', 'Missing permission session.drive_own');
+}
+
 function driver(c: Ctx, sup: Supervisor): { sessionId: string; actor: Actor } {
+  requireDriverRole(c);
   const sessionId = c.req.param('id') ?? '';
   const s = sup.session(sessionId);
   if (!s) throw new HttpError(404, 'not_found', 'Not a managed session');
