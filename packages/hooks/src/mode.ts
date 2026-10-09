@@ -26,7 +26,7 @@ export type HookMode = ManagedMode | ObservedMode | OffMode;
 
 /**
  * - `AOC_MODE=managed` → managed (enforce; fail loudly). The supervisor also sets AOC_SESSION_ID, AOC_DAEMON_URL,
- *   AOC_INGEST_TOKEN and optionally AOC_SPOOL_DIR.
+ *   AOC_INGEST_TOKEN and optionally AOC_SPOOL_DIR (default ~/.aoc/spool/managed/<AOC_SESSION_ID>).
  * - otherwise observed, configured by ~/.aoc/client.json (or $AOC_CLIENT_CONFIG); no usable config → off (silent).
  * - The globally installed observed entries carry AOC_HOOK_SCOPE=observed; inside a managed session (which inherits
  *   the user's global settings) they stand down so each event is relayed once, by the managed registration.
@@ -36,12 +36,17 @@ export function resolveMode(env: Env, homeDir: string): HookMode {
   if (env[ENV.mode] === 'managed') {
     if (env[HOOKS_ENV.hookScope] === 'observed')
       return { kind: 'off', reason: 'managed-registration-owns-session' };
+    const aocSessionId = nonEmpty(env[ENV.sessionId]);
     return {
       kind: 'managed',
-      aocSessionId: nonEmpty(env[ENV.sessionId]),
+      aocSessionId,
       daemonUrl: nonEmpty(env[ENV.daemonUrl]),
       token: nonEmpty(env[ENV.ingestToken]),
-      spoolDir: nonEmpty(env[ENV.spoolDir]) ?? join(aocDir, 'spool', 'managed'),
+      // Per session: a replay carries one session's token, so the daemon rejects (and the client then drops)
+      // any other session's events found in a shared spool.
+      spoolDir:
+        nonEmpty(env[ENV.spoolDir]) ??
+        join(aocDir, 'spool', 'managed', (aocSessionId ?? 'unknown').replace(/[^A-Za-z0-9_-]/g, '_')),
     };
   }
   const config = readObserverConfig(nonEmpty(env[HOOKS_ENV.clientConfig]) ?? join(aocDir, 'client.json'));
