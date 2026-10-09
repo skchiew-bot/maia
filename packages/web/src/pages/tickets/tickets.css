@@ -83,8 +83,13 @@
   color: var(--text);
   font-weight: 600;
 }
-.tkt-gate--blocked .aoc-icon {
+.tkt-gate--blocked .aoc-icon,
+.tkt-gate--failed .aoc-icon {
   color: var(--danger);
+}
+.tkt-gate--failed {
+  color: var(--text);
+  font-weight: 600;
 }
 .tkt-gate--not_reached,
 .tkt-gate--skipped {

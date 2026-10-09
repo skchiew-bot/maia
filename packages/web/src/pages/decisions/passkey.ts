@@ -71,10 +71,12 @@ export interface PasskeyProblem {
   needsRegistration: boolean;
 }
 
+/** The user dismissed the prompt or it timed out (raw DOMException, or wrapped by @simplewebauthn/browser). */
 function isCancelled(err: unknown): boolean {
-  if (err instanceof WebAuthnError)
-    return err.code === 'ERROR_CEREMONY_ABORTED' || err.name === 'NotAllowedError';
-  return err instanceof Error && (err.name === 'NotAllowedError' || err.name === 'AbortError');
+  if (err instanceof WebAuthnError && err.code === 'ERROR_CEREMONY_ABORTED') return true;
+  const name =
+    typeof err === 'object' && err !== null && 'name' in err ? (err as { name: unknown }).name : null;
+  return name === 'NotAllowedError' || name === 'AbortError';
 }
 
 /** Plain-language explanation of a failed registration or signing attempt. */

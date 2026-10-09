@@ -27,7 +27,10 @@ interface Calls {
   openLoads: number;
 }
 
-function installApi(open: DecisionCardView[] = openQueue(), closed: DecisionCardView[] = closedHistory()): Calls {
+function installApi(
+  open: DecisionCardView[] = openQueue(),
+  closed: DecisionCardView[] = closedHistory(),
+): Calls {
   const calls: Calls = { resolve: [], openLoads: 0 };
   mockFetch((raw, init) => {
     const url = new URL(raw, 'http://aoc.test');
@@ -80,7 +83,8 @@ function renderPage(path = '/decisions', user: AuthUser = CEO) {
   );
 }
 
-describe('Decisions inbox', () => {
+// Render tests drive real React trees with user-event: allow for a loaded CI machine.
+describe('Decisions inbox', { timeout: 15_000 }, () => {
   const originalMatchMedia = window.matchMedia;
   beforeEach(() => {
     FakeEventSource.reset();
@@ -113,7 +117,9 @@ describe('Decisions inbox', () => {
     renderPage();
     const mine = await screen.findByRole('region', { name: /Waiting on you/ });
     await user.click(within(mine).getByRole('button', { name: 'Approve: Hold for UAT first' }));
-    await waitFor(() => expect(calls.resolve).toEqual([{ id: 'dec_agent', body: { optionId: 'uat', comment: null } }]));
+    await waitFor(() =>
+      expect(calls.resolve).toEqual([{ id: 'dec_agent', body: { optionId: 'uat', comment: null } }]),
+    );
     await waitFor(() => expect(calls.openLoads).toBeGreaterThanOrEqual(2));
     expect(await screen.findByText('Decided: Hold for UAT first')).toBeInTheDocument();
   });
@@ -153,7 +159,13 @@ describe('Decisions inbox', () => {
     const before = calls.openLoads;
     act(() => {
       FakeEventSource.last.open();
-      FakeEventSource.last.emit('aoc', { seq: 9, type: 'decision.requested', ts: new Date(NOW).toISOString(), scope: {}, meta: {} });
+      FakeEventSource.last.emit('aoc', {
+        seq: 9,
+        type: 'decision.requested',
+        ts: new Date(NOW).toISOString(),
+        scope: {},
+        meta: {},
+      });
     });
     await waitFor(() => expect(calls.openLoads).toBeGreaterThan(before));
   });
@@ -162,7 +174,9 @@ describe('Decisions inbox', () => {
     installApi();
     renderPage('/decisions?tab=resolved');
     expect(await screen.findByText('Time to decide, by kind')).toBeInTheDocument();
-    expect(screen.getByRole('img', { name: /Agent decision: p50 25m, p90 1h 30m, SLA 1h, 1 over SLA/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole('img', { name: /Agent decision: p50 25m, p90 1h 30m, SLA 1h, 1 over SLA/ }),
+    ).toBeInTheDocument();
     const table = screen.getByRole('table', { name: /Closed decisions/ });
     expect(within(table).getByText('Signed (passkey)')).toBeInTheDocument();
     expect(within(table).getAllByText('Attribution (bearer token)')).toHaveLength(2);

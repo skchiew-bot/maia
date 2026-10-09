@@ -50,9 +50,12 @@ import {
   buildSessionEnv,
   readCredentialProfile,
   redactArgv,
+  redactSecrets,
+  secretsToRedact,
   toolPolicy,
+  workspaceSettingsProblems,
 } from './launch-config';
-import { processMatches, runCommand, signalProcess, signalTree } from './process-utils';
+import { killProcessGroup, processMatches, runCommand, signalProcess, signalTree } from './process-utils';
 import { SupervisorView, TERMINAL_LIFECYCLES, type SupervisedSession } from './projection';
 import {
   CONTINUE_TEXT,
@@ -196,6 +199,8 @@ export class Supervisor implements SupervisorService {
   private readonly queue: TurnRequest[] = [];
   private readonly outputs = new Map<string, RingBuffer<SessionOutputItem>>();
   private readonly tokens = new Map<string, string>();
+  /** Per session: values that must never appear verbatim in its builder-visible output (§3). */
+  private readonly secrets = new Map<string, string[]>();
   private readonly claudeIds = new Map<string, string>();
   private readonly conversations = new Set<string>();
   private readonly lastContext = new Map<string, number>();
@@ -930,6 +935,14 @@ export class Supervisor implements SupervisorService {
       );
     const sup = this.ctx.config.supervisor;
     const cwd = s.cwd ?? this.resolveCwd(null, s.projectId);
+    const overrides = workspaceSettingsProblems(cwd);
+    if (overrides.length)
+      throw new HttpError(
+        409,
+        'workspace_settings_override',
+        `The workspace's Claude Code settings would bypass AOC (${overrides.join('; ')}). Remove them, then restart the session.`,
+        { problems: overrides },
+      );
     const token = this.tokenFor(s.sessionId, req.actor);
     const dir = this.ensureSessionDir(s.sessionId);
     const aoc: Record<string, string> = {
@@ -944,6 +957,8 @@ export class Supervisor implements SupervisorService {
     };
     const credentials =
       s.readOnly || !type.credentialProfile ? null : this.credentialsFor(type.credentialProfile);
+    // The model can print anything in its env, and every builder can read a session's output.
+    this.secrets.set(s.sessionId, secretsToRedact([token, ...Object.values(credentials ?? {})]));
     const env = buildSessionEnv({
       source: this.sourceEnv(),
       allowlist: sup.envAllowlist,
@@ -1052,7 +1067,7 @@ export class Supervisor implements SupervisorService {
     const id = live.sessionId;
     // While the model generates, stdout is the only activity signal (stream deltas, thinking tokens, status).
     this.liveness()?.recordActivity(id, 'stream', this.ctx.clock.now());
-    const f = readStreamLine(line);
+    const f = readStreamLine(redactSecrets(line, this.secrets.get(id) ?? []));
     for (const item of f.items) this.pushOutput(id, item);
     if (f.conversation) this.conversations.add(id);
     if (f.contextTokens !== null) {
@@ -1085,8 +1100,9 @@ export class Supervisor implements SupervisorService {
       live.signals.push({ rank: 4, resetAt: this.resetAt(f.cliText), message: f.cliText, source: 'stream' });
   }
 
-  private onStderrLine(live: LiveTurn, line: string): void {
-    if (!line.trim()) return;
+  private onStderrLine(live: LiveTurn, raw: string): void {
+    if (!raw.trim()) return;
+    const line = redactSecrets(raw, this.secrets.get(live.sessionId) ?? []);
     this.pushOutput(live.sessionId, { kind: 'system', text: clip(`stderr: ${line}`) });
     if (isLimitNotice(line))
       live.signals.push({ rank: 4, resetAt: this.resetAt(line), message: line, source: 'exit' });
@@ -1120,6 +1136,9 @@ export class Supervisor implements SupervisorService {
     if (live.settled) return;
     live.settled = true;
     if (live.killTimer) clearTimeout(live.killTimer);
+    // claude has exited. Anything the turn backgrounded (`cmd &`, nohup) still holds the session env, credentials
+    // included, and would act outside any hook: it ends with the turn.
+    if (live.pid !== null) killProcessGroup(live.pid);
     if (live.stdoutRest) this.onStdoutLine(live, live.stdoutRest);
     if (live.stderrRest) this.onStderrLine(live, live.stderrRest);
     live.stdoutRest = live.stderrRest = '';
@@ -1713,6 +1732,7 @@ export class Supervisor implements SupervisorService {
    */
   private revokeToken(sessionId: string, actor: Actor): void {
     this.tokens.delete(sessionId);
+    this.secrets.delete(sessionId);
     let done = false;
     const revoke = () => {
       if (done) return;
