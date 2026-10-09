@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -8,6 +8,9 @@ import { createTestRuntime, EventStore, EventValidationError, FakeClock, MAX_BOD
 
 const mk = (dataDir = ':memory:', key = randomBytes(32)) =>
   new EventStore({ dataDir, clock: new FakeClock(), log: silentLogger, masterKey: key });
+
+const erase = (s: EventStore, scopeId: string) =>
+  s.eraseScope(scopeId, { actor: { kind: 'human', id: 'usr_approver' }, reason: 'pdpa_request' });
 
 const nudge = (sessionId: string, text: string) => ({
   type: 'session.nudged' as const,
@@ -59,8 +62,37 @@ describe('chain verification', () => {
   });
 });
 
+describe('erasure leaves no residue on disk', () => {
+  it('scrubbed projection text is gone from aoc.db and its WAL, not just from the table', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'aoc-residue-'));
+    const s = mk(dir);
+    const secret = `Nur Aisyah NRIC 850101-14-5555 ${'pdpa-residue-probe '.repeat(400)}`; // spills to overflow pages
+    s.registerProjector({
+      name: 'notes',
+      tables: ['notes'],
+      ddl: ['CREATE TABLE IF NOT EXISTS notes (session_id TEXT PRIMARY KEY, text TEXT)'],
+      handles: ['session.nudged'],
+      apply({ db }, e, payload) {
+        db.prepare('INSERT OR REPLACE INTO notes VALUES (?, ?)').run(e.scope.sessionId ?? null, (payload as { text: string } | null)?.text ?? '[erased]');
+      },
+      onErase(db, scopeId) {
+        db.prepare('DELETE FROM notes WHERE session_id = ?').run(scopeId);
+      },
+    });
+    s.append(nudge('ses_a', secret));
+    s.db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); // the text has reached the main file
+    erase(s, 'ses_a');
+    const onDisk = ['aoc.db', 'aoc.db-wal']
+      .map((f) => join(dir, f))
+      .filter((p) => existsSync(p))
+      .map((p) => readFileSync(p));
+    expect(onDisk.some((b) => b.includes(Buffer.from('850101-14-5555')))).toBe(false);
+    s.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+});
+
 describe('blob storage paths', () => {
-  const erase = (s: EventStore, scopeId: string) => s.eraseScope(scopeId, { actor: { kind: 'human', id: 'usr_approver' }, reason: 'pdpa_request' });
 
   it('never lets an erasure scope id escape the blob directory', () => {
     const dir = mkdtempSync(join(tmpdir(), 'aoc-blobs-'));
