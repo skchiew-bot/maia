@@ -132,6 +132,8 @@ describe('Sidecar end to end', () => {
     expect(paths).toContain('/ingest/heartbeat');
     expect(paths).toContain('/ingest/throttle');
     expect(paths.at(-1)).toBe('/ingest/process');
+    // The exit names the watched pid, so a report that arrives after the next turn started cannot be mistaken for it.
+    expect(posts.at(-1)!.body).toMatchObject({ sessionId: 'ses_X', event: 'exited', pid: child.pid });
     const usage = posts.filter((p) => p.path === '/ingest/usage');
     const totalOut = usage.flatMap((p) => p.body.batches as { outputTokens: number }[]).reduce((n, b) => n + b.outputTokens, 0);
     expect(totalOut).toBe(111); // msg_1 counted once + the subagent transcript

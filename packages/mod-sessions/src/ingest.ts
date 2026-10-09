@@ -67,7 +67,15 @@ const UsageSchema = z.object({
     .max(200),
 });
 const ThrottleSchema = z.object({ sessionId: z.string(), resetAt: z.string().nullable(), message: z.string().max(2000), source: z.enum(['stream', 'transcript', 'exit']) });
-const ProcessSchema = z.object({ sessionId: z.string(), event: z.literal('exited'), exitCode: z.number().int().nullable(), signal: z.string().nullable(), at: z.string() });
+/** `pid` (sent by the sidecar, not yet in ProcessEventRequest) lets a stale sidecar's report be told apart. */
+const ProcessSchema = z.object({
+  sessionId: z.string(),
+  event: z.literal('exited'),
+  exitCode: z.number().int().nullable(),
+  signal: z.string().nullable(),
+  at: z.string(),
+  pid: z.number().int().nullable().optional(),
+});
 const SpoolSchema = z.object({ items: z.array(z.object({ path: z.string(), body: z.unknown(), queuedAt: z.string() })).max(500) });
 
 const READ_ONLY_PREFIX = /^\s*(ls|cat|head|tail|wc|grep|rg|pwd|echo|which|file|stat|du|df|tree|git\s+(log|show|diff|status|blame|branch|rev-parse))\b/;
@@ -455,7 +463,7 @@ export function registerIngestRoutes(app: App, d: IngestDeps): void {
       }
       case INGEST_PATHS.process: {
         const b = ProcessSchema.parse(item.body);
-        engine.recordProcess(sessionOf(p, b.sessionId), false, null);
+        engine.processExited(sessionOf(p, b.sessionId), b.pid ?? null);
         return 'accepted';
       }
       default:
@@ -512,7 +520,7 @@ export function registerIngestRoutes(app: App, d: IngestDeps): void {
 
   app.post(INGEST_PATHS.process, async (c) => {
     const b = await readJson(c, ProcessSchema);
-    engine.recordProcess(sessionFor(c, b.sessionId), false, null);
+    engine.processExited(sessionFor(c, b.sessionId), b.pid ?? null);
     return c.json({ ok: true });
   });
 }

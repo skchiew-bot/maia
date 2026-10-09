@@ -236,6 +236,39 @@ describe('hook ingest', () => {
   });
 });
 
+describe('per-turn sidecars', () => {
+  it("ignores heartbeats and exit reports about an earlier turn's process", async () => {
+    // Regression (found by e2e): the supervisor starts a sidecar per turn and stops the old one after a grace;
+    // the previous turn's sidecar noticed its pid had died seconds into the next turn, and its report marked the
+    // running session Dead.
+    await setup();
+    const owner = t.user('builder');
+    launch(owner); // turn 1: pid 4242
+    const headers = t.ingestHeaders('ses_A');
+    const heartbeat = (pid: number, alive: boolean) =>
+      t.json('POST', '/ingest/heartbeat', { headers, body: { sessionId: 'ses_A', pid, alive, at: t.clock.iso(), transcriptBytes: 0, lastTranscriptWriteAt: null } });
+    const exited = (pid?: number) =>
+      t.json('POST', '/ingest/process', { headers, body: { sessionId: 'ses_A', event: 'exited', exitCode: 0, signal: null, at: t.clock.iso(), ...(pid ? { pid } : {}) } });
+    await heartbeat(4242, true);
+    expect(engine().row('ses_A')!.liveness).toBe('thinking');
+    t.rt.store.append({
+      type: 'session.launched',
+      actor: { kind: 'system', id: 'supervisor' },
+      scope: { sessionId: 'ses_A' },
+      meta: { sessionId: 'ses_A', claudeSessionId: CLAUDE_A, pid: 5151, model: 'claude-opus-5-5', turn: 2 },
+      payload: { cwd: '/tmp/repo', argv: [], transcriptPath: '/tmp/t.jsonl' },
+      source: 'supervisor',
+    });
+    await heartbeat(4242, false);
+    await exited(4242);
+    expect(engine().row('ses_A')!.liveness).toBe('thinking');
+    // The current process's own sidecar still counts; so does a report that names no pid.
+    await heartbeat(5151, true);
+    await exited(5151);
+    expect(engine().row('ses_A')!.liveness).toBe('dead');
+  });
+});
+
 describe('usage + throttle ingest', () => {
   it('dedupes usage by message id across batches and tracks context', async () => {
     await setup();
