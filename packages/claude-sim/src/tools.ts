@@ -13,6 +13,8 @@ export interface ToolOutcome {
   toolUseResult: unknown;
   /** What PostToolUse hooks get as `tool_response` when it is not `toolUseResult` (MCP results with structuredContent). */
   hookResponse?: unknown;
+  /** Printed with the stream's user line as `tool_result_meta` (why the call did not run, for a rejected one). */
+  resultMeta?: Record<string, unknown>;
   /** Value stored under the step's `saveAs`. */
   saveValue?: unknown;
   /** Line counts of a file change (the cost-state ledger tracks them). */

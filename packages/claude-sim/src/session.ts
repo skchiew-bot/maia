@@ -313,7 +313,7 @@ export class SimSession {
       type: 'result',
       subtype: result.subtype,
       is_error: result.isError,
-      ...(result.apiErrorStatus !== undefined && { api_error_status: result.apiErrorStatus }),
+      api_error_status: result.apiErrorStatus ?? null,
       duration_ms: Math.max(0, this.deps.now() - this.startedAt),
       duration_api_ms: this.ledger.invocationApiMs,
       num_turns: this.numTurns,
@@ -357,6 +357,7 @@ export class SimSession {
         content: REJECTED_TOOL_USE_TEXT,
         isError: true,
         toolUseResult: 'User rejected tool use',
+        resultMeta: { non_execution_kind: 'user-rejected' },
       });
     }
     const message = {
@@ -373,7 +374,6 @@ export class SimSession {
       session_id: this.deps.sessionId,
       uuid,
       timestamp,
-      tool_use_result: '',
     });
     const result: TurnResult = {
       kind: 'result',
@@ -637,7 +637,20 @@ export class SimSession {
       const resetsAt = Math.ceil((this.deps.now() + FIVE_HOURS_MS) / 3_600_000) * 3600;
       this.deps.out.emit({
         type: 'rate_limit_event',
-        rate_limit_info: { status: 'allowed', resetsAt, rateLimitType: 'five_hour' },
+        rate_limit_info: {
+          status: 'allowed',
+          resetsAt,
+          rateLimitType: 'five_hour',
+          // The plan windows as the unified rate-limit headers report them (observed on 2.1.295 for a subscription login).
+          utilization: 0.16,
+          overageStatus: 'rejected',
+          overageDisabledReason: 'org_level_disabled',
+          isUsingOverage: false,
+          unifiedWindows: {
+            five_hour: { utilization: 0.16, resetsAt },
+            seven_day: { utilization: 0.35, resetsAt: resetsAt + 4 * 24 * 3600 },
+          },
+        },
         uuid: this.deps.streamIds.uuid(),
         session_id: this.deps.sessionId,
       });
@@ -1069,6 +1082,7 @@ export class SimSession {
       uuid,
       timestamp,
       tool_use_result: outcome.toolUseResult,
+      ...(outcome.resultMeta && { tool_result_meta: [{ id: toolUseId, ...outcome.resultMeta }] }),
     });
     this.deps.state.context.uncached += estimateTokens(contentText(outcome.content));
   }
