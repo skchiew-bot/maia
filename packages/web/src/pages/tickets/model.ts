@@ -306,6 +306,7 @@ const TIMELINE_TYPES: ReadonlySet<string> = new Set([
   'promotion.requested',
   'promotion.completed',
   'promotion.refused',
+  'promotion.failed',
   'session.ended',
 ]);
 
@@ -316,4 +317,25 @@ export function timelineEvents(events: readonly AuditEventHeaderDTO[]): AuditEve
 export function shortTicketId(id: string): string {
   const rest = id.slice(id.indexOf('_') + 1);
   return rest.length > 8 ? `tkt_…${rest.slice(-6)}` : id;
+}
+
+export interface PromotionOutcome {
+  promotionId: string;
+  status: 'requested' | 'completed' | 'refused' | 'failed';
+  reason: string | null;
+  at: string;
+}
+
+/** The latest promotion on the ticket (go-live): requested, then completed, refused or failed. */
+export function latestPromotion(events: readonly AuditEventHeaderDTO[]): PromotionOutcome | null {
+  let out: PromotionOutcome | null = null;
+  for (const e of [...events].sort((a, b) => a.seq - b.seq)) {
+    const m = e.meta as { promotionId?: string; reason?: string };
+    if (!m.promotionId || !e.type.startsWith('promotion.')) continue;
+    const status = e.type.slice('promotion.'.length);
+    if (status !== 'requested' && status !== 'completed' && status !== 'refused' && status !== 'failed')
+      continue;
+    out = { promotionId: m.promotionId, status, reason: m.reason ?? null, at: e.ts };
+  }
+  return out;
 }
