@@ -29,12 +29,15 @@
 1. **Create a dedicated anchor repository**, for example `aoc-anchors`. Ideally it lives under a different GitHub
    organisation or owner than the product repositories, with different admins (the CEO and one other person).
 2. **Protect its default branch** with a ruleset that has no bypass actors: block force pushes, restrict deletions.
-   Even the AOC host must not be able to rewrite history.
+   Even the AOC host must not be able to rewrite history. Nobody else commits to it: AOC pushes its local branch
+   and never merges remote changes, so any other commit on the remote makes every later push fail
+   (`push_failed`).
 3. **Give the AOC host a write deploy key for this repository only**, stored with the service user (mode 0600).
    It is not a credential profile. But until sessions run as their own OS user (threat model O-1), an agent can
    read it: it could push extra anchor files, which makes anchoring and Verify fail (a false alarm and a
-   denial of service), though it cannot rewrite or delete history on a protected remote. Recover by committing
-   the removal of the bogus file; the history keeps both.
+   denial of service), though it cannot rewrite or delete history on a protected remote. Recovery needs an
+   operator: remove the bogus file with a new commit on the remote, then bring the local anchor repository level
+   with the remote (fetch and fast-forward) so that pushes succeed again. The history keeps both.
 4. **Commit signing.** `mod-audit` signs anchor commits with OpenPGP when it is given a key id (the module
    option `gpgKeyId`, with an optional `GNUPGHOME`); Verify then rejects unsigned commits and commits signed by
    another key. **`aocd` cannot pass that option yet** (threat model O-11), so anchor commits are unsigned in the
@@ -158,7 +161,9 @@ Rules that make Verify meaningful:
 tables are enough; bodies are not needed) and read access to the anchor remote. The auditor recomputes every hash
 following [architecture §5.1](../architecture.md#51-the-chain-row) (canonical JSON of the header fields, SHA-256,
 genesis `SHA-256("aoc-genesis:" + chainId)`), and compares them with the anchors. The evidence pack
-(`evidence_pack.generated {chainOk, …}`) records the same check for its date range.
+(`evidence_pack.generated {chainOk, …}`) records a chain check for its date range, but it compares anchors with the
+chain's own `anchor.created` events, not with the off-host records (threat model O-29, gap G-42). A pack does not
+replace Verify: run `aoc verify` when you generate one, and attach its output.
 
 ## 7. When Verify fails (Sev-1)
 

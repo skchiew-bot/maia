@@ -14,7 +14,7 @@
 | Listen | `127.0.0.1:7420` | Loopback, behind a TLS reverse proxy; `publicUrl` and `identity.origin` set to the public HTTPS origin (WebAuthn requires it) |
 | Data | `.aoc/data/`: `aoc.db` (chain and read models), `bodies.db` (encrypted bodies), `blobs/`, and `master.key` (dev only) | `/var/lib/aoc/data`, on a disk with monitoring; the KEK elsewhere ([key custody](key-custody.md)) |
 | Config | `AocConfigSchema.parse({})` gives a complete, safe local default (`packages/contracts/src/config.ts`) | See the example below |
-| Sessions | Up to `supervisor.maxConcurrentSessions` (8) `claude -p` children, plus one sidecar each | Today they run as the service user and share its `HOME` (the default `envAllowlist` passes it), so keep that home free of SSH keys, git and `gh` credentials. Target: a separate sandbox user with its own home (threat model O-1) |
+| Sessions | Up to `supervisor.maxConcurrentSessions` (8) `claude -p` children, plus one sidecar each | Today they run as the service user and share its `HOME` (the default `envAllowlist` passes it), so every session can read whatever that user can: its home (SSH keys, git and `gh` credentials), the KEK, the databases and the credential profiles. Keep that home directory free of anything a session must not have. Target: a separate sandbox user with its own home (threat model O-1, gap G-01) |
 | Request limits | Body caps, checked before authentication or parsing: 4 MiB for the API, 16 MiB for `/ingest/*`, 64 MiB for a spool flush, and for the portal the attachment allowance plus 1 MiB (6 × 200 MB + 1 MiB with the defaults); 413 above them. A request to `/ingest/*` without a valid token gets 401 before its body is read | Set the reverse proxy's body limit to at least the portal allowance, or lower `intake.maxVideoBytes` and `intake.maxAttachments`; a proxy default of 1 MB breaks uploads |
 | Time zone | `Asia/Kuala_Lumpur`. Daily jobs, rollups and FX days use local dates | Keep it unless the business moves |
 
@@ -162,7 +162,8 @@ projector that is new on an existing log, whose fingerprint changed, or that is 
    answer and fail closed.
 2. Take a backup ([key custody](key-custody.md#4-backups-off-host-nightly)).
 3. **Make sure the right KEK is configured.** A rebuild reads every body; with a wrong KEK it fails and rolls
-   back. Never let aocd start with a generated key ([key custody §3](key-custody.md#3-store-the-kek-options-weakest-to-strongest)).
+   back. Never let aocd start with a generated key
+   ([key custody §3](key-custody.md#3-store-the-kek-options-weakest-to-strongest)).
 4. Force the rebuild of the named projectors only (for example `sessions`, `decisions`). No admin command exists
    for it (threat model O-26). With aocd **stopped**, delete their `projection_state` rows; at the next start aocd
    treats them as new and rebuilds them from the log:
@@ -177,7 +178,9 @@ projector that is new on an existing log, whose fingerprint changed, or that is 
 5. Check: the log line `projections rebuilt from the log`; no `degraded` rows; spot-check counts against the event
    log (for example open decisions against `decision.requested` minus resolved, withdrawn and expired); run Verify.
 
-A rebuild never changes the chain. If it fails, the transaction rolls back and the old tables remain.
+A rebuild never changes the chain. If it fails, its transaction rolls back. At startup that means aocd does not
+start (read the journal: usually a wrong KEK or a projector bug), and the projector's tables stay empty until a
+start succeeds. `projection_state` is updated only after a successful rebuild, so the next start tries again.
 
 ## 5. Reactor failures
 

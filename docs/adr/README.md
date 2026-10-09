@@ -22,7 +22,8 @@ which alternatives were rejected and why. The binding requirements are in
 
 - **File name:** `NNNN-short-title.md`. Numbers are never reused.
 - **Status:** `Proposed`, `Accepted`, `Superseded by NNNN` or `Rejected`. An accepted ADR is not edited for
-  substance; a new ADR supersedes it. Typos and links may be fixed.
+  substance; a new ADR supersedes it. Typos and links may be fixed, implementation-status notes may be added,
+  and a decision the ADR left open may be recorded with its date and decider (ADR-0009, item 8).
 - **Sections:** Context, Decision, Consequences, Alternatives rejected, References.
 - **Governance core:** ADRs 0001, 0003, 0004, 0007, 0009 and 0010 describe the governance, audit and credit core.
   Superseding any of them is a change to the core and needs human review

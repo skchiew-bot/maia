@@ -42,9 +42,11 @@
    gate-latency KPI.
 8. **A single Approver gets no exception** (CEO decision, 2026-10-09). The sole-Approver fallback is **off**
    (`decisions.soleApproverFallback: false`). With one active Approver, an Approver-level request raised by that
-   Approver, including one from their own session, waits until a second Approver exists. The flag exists so that
-   any exception is explicit and audited: if it is ever turned on, the only active Approver may resolve their own
-   request, recorded `selfApproved: true`, but never a credit top-up, and only while no second Approver is active.
+   Approver, including one from their own session, waits until a second Approver exists. If the flag is ever
+   turned on, the only active Approver may resolve their own request, recorded `selfApproved: true`, but never a
+   credit top-up, and only while no second Approver is active. Each such resolution is chained; the switch itself
+   is not yet, because `decisions` is not among the governed settings that produce `config.changed` (threat
+   model O-8).
 
 ## Consequences
 

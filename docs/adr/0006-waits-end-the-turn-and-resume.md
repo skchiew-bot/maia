@@ -44,7 +44,10 @@
   with a reason. Waiting on you is unambiguous because no process is alive. Decision age is meaningful (R15).
 - **Bad: cooperation.** "End your turn" depends on the agent complying. If it carries on, it can only do work that
   is not blocked, and the decision stays open. Guards still stop protected operations, and `defer` removes the
-  dependency where it applies.
+  dependency where it applies. Gap G-48 proposes answering `defer` for every guard denial that raises a card, so
+  that those turns end without relying on the agent. That needs a rule for the deferred call when the session
+  resumes (a resume without a prompt re-runs it): right for item 4, but wrong where the supervisor performs the
+  approved action itself (a promotion), where the guard must deny the re-run.
 - **Bad: cache cost.** A resume after a long wait re-reads the context, and the prompt cache has probably expired
   (`prompt_cache_likely_expired`). Metering shows the resulting cache writes.
 - **Bad: turns are not tasks.** A turn can end mid-task (waiting for a decision), so turn boundaries are not task

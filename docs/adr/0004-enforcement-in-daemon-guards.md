@@ -26,9 +26,9 @@
 1. **The hook is a relay.** It sends `{mode, aocSessionId, hook stdin, sentAt, idempotencyKey}` to `/ingest/hook` and
    applies the `HookIngestResponse` (exit code, stdout JSON, stderr) unchanged. It holds no policy.
 2. **Guards live in the daemon.** Modules register `PreToolGuard`s with the kernel's `GuardPolicy`. Guards run in
-   `order`, the first non-allow result wins, and **a guard that throws counts as a deny** (it fails closed). Current
-   and contracted guards: `read-only` (`mod-sessions`), `no-manifest` (`mod-ledger`), `protected-op`
-   (`mod-change`), all built, and `self-modification` (`mod-audit`, contracted).
+   `order`, the first non-allow result wins, and **a guard that throws counts as a deny** (it fails closed). The
+   guards, all built, in order: `self-modification` (`mod-audit`, 5), `no-manifest` (`mod-ledger`, 10),
+   `read-only` (`mod-sessions`, 20) and `protected-op` (`mod-change`, 30).
 3. **Denials become decision cards.** A guard can return `raiseDecision`. The daemon then raises the card
    (`protected_operation`), appends `tool.denied` and `session.blocked`, and returns a JSON deny whose reason tells
    the agent which card was raised and to end its turn.

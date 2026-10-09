@@ -17,10 +17,11 @@ Related documents:
 - Verified Claude Code behaviour: [docs/research/claude-code-integration.md](research/claude-code-integration.md)
 - Spec coverage: [traceability matrix](compliance/traceability.md) and [gap list](compliance/gaps.md)
 
-**Status legend.** This document was written on 2026-10-09 and last brought up to date at integration commit `a1c8a0c`. **Built** means implemented and
-tested in the repository at that commit (not yet independently reviewed; see §17). **Contracted** means the
-events, configuration and service interfaces are fixed in `packages/contracts`, and the implementation is being
-built in parallel. Treat every Contracted behaviour as a requirement until its module lands.
+**Status legend.** This document was written on 2026-10-09 and last brought up to date at integration commit
+`a1c8a0c`. **Built** means implemented and tested in the repository at that commit (not yet independently
+reviewed; see §17). **Contracted** means the events, configuration and service interfaces are fixed in
+`packages/contracts`, and the implementation is being built in parallel. Treat every Contracted behaviour as a
+requirement until its module lands.
 
 ---
 
@@ -265,7 +266,9 @@ idempotencyKey}` to `/ingest/hook` and applies the daemon's `HookIngestResponse`
   2 shows the hook's command line to the model. The hook command line never carries a secret.
 - **Git hooks for managed workspaces.** The hooks package also ships a `pre-push` guard (it refuses pushes to `main`,
   `master`, `production` and `release/*` unless `AOC_SUPERVISOR_PUSH=1`, which only the promotion executor sets)
-  and a `prepare-commit-msg` hook. Like every client-side hook, they are speed bumps.
+  and a `prepare-commit-msg` hook that adds the `AOC-Session`, `AOC-Change` and `AOC-Ticket` trailers. Like every
+  client-side hook, they are speed bumps. The supervisor does not install them in managed workspaces yet (gap
+  G-37): today the system prompt asks the agent to add the trailers.
 - **Observed mode** (global hooks on developer machines, observer token). It never blocks: the ingest does not
   run guards for observed sessions, and the kernel policy would turn any denial into an allow with a "would deny"
   note anyway. When aocd is down, events are buffered in the local spool and replayed later (§2,
@@ -303,7 +306,7 @@ attempt into a decision card (§2.4).
 | `mod-learning` (Built) | `error.observed`, `rootcause.*`, `offence.transitioned`, `lesson.*` | `learning` |
 | `mod-registry` (Built) | `registry.changed`, `playbook.proposed` / `approved` / `rejected` / `retired` | `registry` (`modelFor`); playbook distillation; registry economics; the team knowledge layer (SQLite FTS5, erasure-aware, never indexes requester text) |
 | `mod-tower` | none (read-only aggregation) | The Control Tower snapshot |
-| `mod-audit` (Built) | `anchor.*`, `chain.verified`, `body.erased`, `selfmod.blocked`, `config.changed` | Off-host anchoring (git, RFC 3161), Verify against the off-host records, governed erasure, the `self-modification` guard and its external log, governed-config change detection |
+| `mod-audit` (Built) | `anchor.*`, `chain.verified`, `body.erased`, `selfmod.blocked`, `config.changed` | Off-host anchoring (git, RFC 3161), Verify against the off-host records, erasure (Approver only), the `self-modification` guard and its external log, governed-config change detection |
 | `mod-evidence` (Built) | `evidence_pack.generated`, `mapping.published`, `mapping.stamped` | evidence packs |
 | `mod-intake` (Built) | `intake.*`, `ticket.*` | requester portal, triage orchestration |
 
@@ -484,7 +487,10 @@ can never share a directory.
 
 ### 5.5 Crypto-shred
 
-`EventStore.eraseScope(scopeId)` (exposed through `mod-audit`, permission `audit.erase`):
+`EventStore.eraseScope(scopeId)`, exposed through `mod-audit`'s erase API with a scope id, a reason and a decision
+id (permission `audit.erase`, Approver only). The decision id is optional and is only checked to be a resolved
+decision, so the procedure in the [key custody runbook](runbooks/key-custody.md#6-crypto-shred) ties each erasure to
+an approved change request (threat model O-28). The erasure:
 
 1. Destroys every wrapped DEK generation of the scope and deletes the scope's body rows, blob rows and blob
    files. It then runs `wal_checkpoint(TRUNCATE)` on `bodies.db`.
@@ -696,9 +702,10 @@ the Requester-only UAT sign-off.
   requester (§6).
 - **A single Approver** (CEO decision, 2026-10-09). The sole-Approver fallback is **off**
   (`decisions.soleApproverFallback: false`). With one Approver, an Approver-level card raised from the Approver's
-  own session waits until a second Approver exists; separation of duties is never relaxed silently. If the flag is
+  own session waits until a second Approver exists; separation of duties is not relaxed. If the flag is
   turned on, the only active Approver may resolve their own request, recorded `selfApproved`, but never a credit
-  top-up, and the fallback stops applying as soon as a second Approver is active.
+  top-up, and the fallback stops applying as soon as a second Approver is active. The switch itself is not chained
+  yet: `decisions` is not among the governed settings behind `config.changed` (threat model O-8).
 - **Policy resolution** is allowed for exactly one kind: the `credit_topup` auto-grant, once per requester per
   period. Every other kind needs a human.
 - **Expiry.** The catalog has a dedicated `decision.expired {decisionId, ageMs}` event. At this commit,
@@ -766,7 +773,8 @@ dollars.
 
 ## 11. FX state machine
 
-The daily USD/MYR rate for each local date `D` (§10, R13). Implemented by `mod-fx`. Contracted.
+The daily USD/MYR rate for each local date `D` (§10, R13). Implemented by `mod-fx` (Built; its defaults are
+being aligned with the BNM research, gap G-36).
 
 ```mermaid
 stateDiagram-v2
@@ -810,7 +818,7 @@ the lead.
 
 ## 12. Error learning and repeat-offence detection
 
-A distilled lessons registry, not a raw error log (§11). Implemented by `mod-learning`. Contracted.
+A distilled lessons registry, not a raw error log (§11). Implemented by `mod-learning` (Built).
 
 - **Occurrences.** `error.observed` comes from tools, tests, UAT, rollbacks, hooks, agent reports
   (`report_error`) and CI. It carries a signature, code area, process type, model and cost. Transient errors are
@@ -913,9 +921,10 @@ flowchart LR
 - **Provenance guarantee** (§14). `ChangeService.provenance(projectId, sha)` checks that every commit between main
   and the candidate traces through an approved change record, a UAT sign-off and a gate. Otherwise the promotion is
   refused (`promotion.refused {reason, orphanShas}`). Break-glass is the sole exception, and it is marked as such.
-  Today a commit is "traced" by its `AOC-Session` or `AOC-Change` message trailer (written by the
-  `prepare-commit-msg` hook in managed workspaces). Trailers are plain text that anyone can copy, so they must be
-  cross-checked against commits AOC itself recorded (threat model T-22).
+  Today a commit is "traced" by its `AOC-Session` or `AOC-Change` message trailer, which the system prompt asks
+  managed agents to add (the `prepare-commit-msg` hook is not installed in managed workspaces yet, gap G-37).
+  Trailers are plain text that anyone can copy, so they must be cross-checked against commits AOC itself
+  recorded (threat model T-22, gap G-25).
 - Only the supervisor's machine identity can move `main` and `release/*`. That is enforced by GitHub, not by AOC
   ([credential isolation runbook](runbooks/credential-isolation.md)).
 
@@ -1045,7 +1054,8 @@ CEO decisions recorded on 2026-10-09:
 - The stall threshold is **10 minutes** (`liveness.stallAfterMs: 600000`, §6).
 - The sole-Approver fallback is **off** (`decisions.soleApproverFallback: false`, §8).
 
-Open items found while writing this document. Owners and details are in the [threat model](security/threat-model.md#6-requested-changes-and-open-decisions):
+Open items found while writing this document. Owners and details are in the
+[threat model](security/threat-model.md#6-requested-changes-and-open-decisions):
 
 1. Agents can get code execution as a privileged user through git configuration and hooks in their own workspace,
    whenever aocd or the supervisor runs git or repository code there (threat model T-2). Today the ledger
@@ -1064,9 +1074,14 @@ Open items found while writing this document. Owners and details are in the [thr
    once `selfModification.aocRepoPaths` is set (the default is empty), and the default `protectedPaths` list omits
    governance-relevant packages (see the [self-modification boundary](compliance/self-modification-boundary.md)).
 6. Default anchoring (`anchorProvider: git` with no `anchorRemote`) is local only and does not mitigate R2 until a
-   remote is configured. Anchor-commit signing and TSA certificate checks are module options that the aocd
-   configuration does not expose yet.
-7. FX defaults differ from the BNM research recommendations (§11).
+   remote is configured, and it runs nightly only (gap G-40). Anchor-commit signing and TSA certificate checks
+   are module options that the aocd configuration does not expose yet. Evidence packs compare anchors with the
+   chain's own `anchor.created` events, not with the off-host records, so a pack cannot detect a full-chain
+   forgery; `aoc verify` can (threat model O-29, gap G-42).
+7. FX defaults differ from the BNM research recommendations (§11, gap G-36).
+8. The supervisor does not install the `pre-push` and `prepare-commit-msg` hooks in managed workspaces (gap
+   G-37), and guard denials that raise a card answer `deny`, so ending the turn still depends on the agent (gap
+   G-48, ADR-0006).
 
 ## Glossary
 

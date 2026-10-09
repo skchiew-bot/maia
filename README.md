@@ -9,11 +9,14 @@ progress, decisions with separation of duties and passkeys, change control with 
 cost and throttle loss, credit caps that act only at task boundaries, error learning, and an intake portal where end
 users file bugs. The binding requirements are in [docs/spec/AOC-SPEC-003.md](docs/spec/AOC-SPEC-003.md).
 
-> **Status: under construction** (AOC-SPEC-003 §15, stage 1). The daemon, CLI, hooks, sidecar, MCP server,
-> `claude-sim` and most domain modules are built and tested. The launcher/supervisor, the audit module (anchoring,
-> Verify, erasure, the self-modification guard), the Control Tower and the web UI are in progress; `git log` shows
-> what has landed. **This repository was written by AI agents. Its governance, audit and credit core needs a human
-> code review before go-live** ([self-modification boundary](docs/compliance/self-modification-boundary.md)).
+> **Status: under construction** (AOC-SPEC-003 §15). Built and tested at integration commit `a1c8a0c` (1173 tests
+> pass): the daemon, CLI, hooks, sidecar, MCP server, `claude-sim`, the launcher/supervisor, the audit module
+> (anchoring, Verify, erasure, the self-modification guard), the demo seeder and every domain module except the
+> Control Tower. In progress: the Control Tower and the web UI, built to the static mock the CEO approved on
+> 2026-10-09. Coverage of the spec is in the [traceability matrix](docs/compliance/traceability.md) and open work
+> in the [gap list](docs/compliance/gaps.md). **This repository was written by AI agents. Its governance, audit
+> and credit core needs a human code review before go-live**
+> ([self-modification boundary](docs/compliance/self-modification-boundary.md)).
 
 ## Three roles, two surfaces
 
@@ -62,7 +65,8 @@ aoc token create --label laptop # a personal token; then revoke the bootstrap to
 # 4. Create a project that points at a git repository
 aoc project create --name "Demo" --repo /path/to/repo
 
-# 5. Launch a managed session. The process type (and so the model) is fixed here, from config/process-types.json
+# 5. Launch a managed session. The process type (and so the model) is fixed here, from config/process-types.json.
+#    This runs the real `claude` CLI on your plan; for a dry run, point the supervisor at claude-sim (below)
 aoc run --type discovery --project <prj_id> --follow "Add a /health endpoint with a test"
 
 # 6. Optional: observe Claude Code sessions you start yourself (read-only; never blocks).
@@ -76,17 +80,28 @@ Then open <http://localhost:7420>. The full command list is in `aoc --help`. Obs
 
 Also useful:
 
-- **Static UI mock** (for CEO approval before UI code, §12): open [`mocks/aoc-mock.html`](mocks/README.md) in a
-  browser.
-- **Demo history** (in progress): `pnpm --filter @aoc/demo seed -- --data-dir .aoc/demo`.
+- **Static UI mock**, approved by the CEO on 2026-10-09 with its proposed defaults (§12): open
+  [`mocks/aoc-mock.html`](mocks/README.md) in a browser.
+- **Demo**: a deterministic 14-day history, served by a daemon whose managed sessions run on `claude-sim`:
+
+  ```bash
+  pnpm --filter @aoc/demo seed -- --data-dir "$PWD/.aoc/demo"     # add --reset to rebuild it
+  AOC_CONFIG="$PWD/.aoc/demo/aoc.config.json" node --import tsx packages/daemon/src/main.ts
+  ```
+
+  The seeder writes `aoc.config.json` into the demo directory, so Nudge and Restart in a demo never reach the real
+  `claude` CLI. **Never run a demo with the real CLI, and never seed into a production data directory.** The demo
+  users' tokens, including an Approver's, are in `.aoc/demo/demo-tokens.json`
+  ([operations §11](docs/runbooks/operations.md#11-demo-and-test-data-directories)).
 - **Without a real `claude`**: point `supervisor.claudeBin` and `supervisor.claudeArgsPrefix` at
-  `@aoc/claude-sim` (see `packages/contracts/src/config.ts`).
+  `@aoc/claude-sim` (see `packages/contracts/src/config.ts`, or the demo's `aoc.config.json`).
 
 > **The defaults are for a laptop, not for production.** Before real work or real data: complete
 > [credential isolation](docs/runbooks/credential-isolation.md) (R1), move the KEK into proper
 > [key custody](docs/runbooks/key-custody.md) (R6), configure an off-host [anchor](docs/runbooks/anchoring.md)
 > (R2), run agents as a separate OS user, set the
-> [self-modification boundary](docs/compliance/self-modification-boundary.md), and finish the human code review.
+> [self-modification boundary](docs/compliance/self-modification-boundary.md), appoint a second Approver (with one
+> Approver, the Approver's own gates wait, by the CEO's decision), and finish the human code review.
 
 ## Repository layout
 
@@ -104,7 +119,7 @@ packages/hooks       Claude Code hook binary
 packages/cli         aoc CLI
 packages/daemon      aocd composition root
 packages/claude-sim  deterministic fake claude CLI for tests and demos
-packages/demo        deterministic demo-history seeder
+packages/demo        deterministic demo-history seeder and live demo driver
 packages/web         operator console and intake portal (React; design tokens in src/design/tokens.css)
 config/              process-type registry, rate card (governed: changes are audited)
 mocks/               static design mock of the Console, Session and Registry views
@@ -138,5 +153,6 @@ for module tests.
 | [ADRs](docs/adr/README.md) | Eleven architecture decisions with their trade-offs |
 | [Threat model](docs/security/threat-model.md) | STRIDE per component, abuse and gaming scenarios, the risk register R1 to R17, open items |
 | [Self-modification boundary](docs/compliance/self-modification-boundary.md) | What the governance core is, how it is protected, the human-review requirement |
+| [Traceability](docs/compliance/traceability.md) and [gaps](docs/compliance/gaps.md) | Every requirement of the spec mapped to code and tests; the open gaps, owners and the CEO's process items |
 | Runbooks | [Credential isolation (R1)](docs/runbooks/credential-isolation.md) · [Key custody, backups, crypto-shred (R6)](docs/runbooks/key-custody.md) · [Anchoring (R2)](docs/runbooks/anchoring.md) · [Observed sessions](docs/runbooks/observed-sessions.md) · [Operations](docs/runbooks/operations.md) · [Incidents and break-glass](docs/runbooks/incident-break-glass.md) |
 | [Claude Code facts](docs/research/claude-code-integration.md) | Verified hook, stream-json, transcript and flag behaviour that AOC relies on |
