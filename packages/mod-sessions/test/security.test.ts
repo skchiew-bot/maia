@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createTestRuntime, type TestRuntime, type TestUser } from '@aoc/kernel';
-import { createSessionsModule } from '../src';
+import { createSessionsModule, isReadOnlyBash } from '../src';
 
 const CLAUDE_A = '11111111-1111-4111-8111-111111111111';
 let t: TestRuntime;
@@ -38,6 +38,16 @@ const hook = (sid: string | null, claudeId: string, event: string, extra: Record
   hook: { session_id: claudeId, transcript_path: '/tmp/t.jsonl', cwd: '/tmp/repo', hook_event_name: event, ...extra },
   sentAt: '2026-10-09T02:00:00.000Z',
   idempotencyKey: `key-${randomUUID()}`,
+});
+
+describe('read-only guard on agent-controlled commands', () => {
+  it('classifies a command built to backtrack in linear time (it runs on the daemon thread)', () => {
+    const started = performance.now();
+    expect(isReadOnlyBash('find -'.repeat(20_000))).toBe(false);
+    expect(performance.now() - started).toBeLessThan(500);
+    expect(isReadOnlyBash('find . -name x -exec rm {} +')).toBe(false);
+    expect(isReadOnlyBash('rg -n TODO src')).toBe(true);
+  });
 });
 
 describe('ingest authentication comes before body parsing', () => {
