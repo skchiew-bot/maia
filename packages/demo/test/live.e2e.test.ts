@@ -3,7 +3,7 @@
  * POST /api/sessions → Ctrl-C. A small fleet for a shared host: the launcher runs only the decision slot
  * (--slots decision), next to the seeded Working, Thinking and Stalled sessions that aocd's startup recovery launches.
  */
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -57,6 +57,14 @@ describe('pnpm --filter @aoc/demo live', () => {
     const daemonPid = Number(/aocd pid (\d+)/.exec(out)?.[1]);
     expect(daemonPid).toBeGreaterThan(0);
     expect(groupAlive(daemonPid)).toBe(false);
+
+    // The decision slot's session edits files in a workspace of its own: the checkout that promotions and rollbacks
+    // fast-forward was never dirtied, so the gates the seed leaves open still execute while the fleet runs.
+    const tokens = JSON.parse(readFileSync(layout.tokens, 'utf8')) as DemoTokens;
+    const claims = join(layout.repos, 'claims-bot');
+    expect(existsSync(join(layout.workspaces, tokens.projects.claims, 'decision'))).toBe(true);
+    expect(spawnSync('git', ['status', '--porcelain'], { cwd: claims, encoding: 'utf8' }).stdout.trim()).toBe('');
+    expect(spawnSync('git', ['branch', '--show-current'], { cwd: claims, encoding: 'utf8' }).stdout.trim()).toBe('main');
 
     const events = eventsAfter(layout.aocData, seededHead);
     const decision = events.find((e) => e.type === 'decision.requested');
