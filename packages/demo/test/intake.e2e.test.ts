@@ -74,6 +74,9 @@ describe('intake on a seeded demo', () => {
       expect(signoff.status, JSON.stringify(signoff.data)).toBe(200);
       const golive = await waitFor('ticket.golive_requested', () => ticketEvent('ticket.golive_requested'), 120_000);
       expect(golive.meta.decisionId).not.toBe('none');
+      // The requester has nothing left to test, and what holds the change now is not theirs to see.
+      const mine = await call<Record<string, unknown>>(base, 'GET', `/portal/api/tickets/${ticketId}`, tokens.tokens.daniel.token);
+      expect(mine.data).toMatchObject({ status: 'being_worked_on', statusLabel: 'Being worked on', canSignOffUat: false });
       const events = eventsAfter(layout.aocData, tokens.head.seq);
       expect(events.some((e) => e.type === 'promotion.requested' && e.meta.ticketId === ticketId)).toBe(true);
       expect(events.filter((e) => e.type === 'promotion.refused')).toEqual([]);

@@ -534,6 +534,9 @@ export class IntakeFlow {
         }
         // Review before any build turn: read-only triage re-diagnoses with the feedback, then the fix-plan gate.
         if (verdict === 'fail') return this.caused(e.id, 'ticket.triage_started') ? undefined : this.startTriage(t.ticket_id, e.id);
+        // The requester's part is done and what follows is the team's: "Ready for your testing" would keep offering a
+        // test with nothing left to answer. Nothing about the go-live gate reaches the requester.
+        this.setPublicStatus(t.ticket_id, 'being_worked_on', e.id);
         return this.requestGoLive(this.ticket(t.ticket_id)!, e.id);
       }
     }

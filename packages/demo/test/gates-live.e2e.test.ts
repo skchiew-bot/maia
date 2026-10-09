@@ -89,11 +89,15 @@ describe('the seeded gates on a running console', () => {
       const golive = seededEvents().find((e) => e.type === 'ticket.golive_requested' && e.meta.ticketId === gateTicket);
       expect(golive, 'the seed requested go-live for the ticket').toBeDefined();
       const uatSha = git(cx, 'rev-parse', `uat/${gateTicket}`);
+      const portal = () => call<Record<string, unknown>>(base, 'GET', `/portal/api/tickets/${gateTicket}`, tokens.tokens.nur.token);
+      // The requester passed UAT: nothing is left for them to test while the gate decides.
+      expect((await portal()).data).toMatchObject({ status: 'being_worked_on', canSignOffUat: false });
       await approve(await openCard('go_live', (c) => c.id === String(golive!.meta.decisionId)));
       const promoted = await waitFor('promotion.completed', () => events().find((e) => e.type === 'promotion.completed' && e.meta.promotionId === golive!.meta.promotionId) ?? null, 120_000, 500);
       expect(promoted.meta).toMatchObject({ mainShaAfter: uatSha, breakglass: false });
       const closed = await waitFor('the ticket closing as fixed', () => events().find((e) => e.type === 'ticket.closed' && e.meta.ticketId === gateTicket) ?? null, 60_000, 500);
       expect(closed.meta).toMatchObject({ resolution: 'fixed' });
+      expect((await portal()).data).toMatchObject({ status: 'completed', statusLabel: 'Completed' });
       expect(git(cx, 'rev-parse', 'main')).toBe(uatSha);
       expect(git(cx, 'status', '--porcelain')).toBe('');
       expect(git(cx, 'branch', '--show-current')).toBe('main');
@@ -114,7 +118,7 @@ describe('the seeded gates on a running console', () => {
       throw err;
     } finally {
       stopped = await stopChild(aocd, 'SIGTERM', 60_000);
-      // aocd's sidecars outlive it for a final flush that writes a spool file into the data directory.
+      // A clean stop leaves nothing in its process group (it waits for its sidecars); this keeps a failed run from leaking.
       await groupExited(aocd.pid!, 20_000);
     }
     expect(stopped, log).toEqual({ code: 0, signal: null });

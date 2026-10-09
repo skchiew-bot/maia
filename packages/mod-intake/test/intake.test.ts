@@ -719,27 +719,27 @@ describe('closing a ticket withdraws the gates it left open', () => {
   });
 });
 
-describe('a go-live the Approver rejects', () => {
-  /** A ticket whose requester signed UAT off: its go-live card waits for the Approver. */
-  async function atGoLive() {
-    const repo = projectRepo();
-    const s = await setup({}, repo.dir, [rejectsGoLive]);
-    s.ctl.gate = true;
-    const approver = t.user('approver', 'CEO');
-    const { ticketId, req, build } = await toBuild(s, approver);
-    repo.pushUat(ticketId);
-    endBuild(build.sessionId);
-    await t.drain();
-    await t.json('POST', `/portal/api/tickets/${ticketId}/uat`, { headers: req.headers, body: { verdict: 'pass' } });
-    await t.drain();
-    const gate = t.decisions!.list({ kind: ['go_live'], status: ['open'] })[0]!;
-    return { s, approver, ticketId, req, gate };
-  }
-  const reject = (gate: { id: string }, approver: { user: Parameters<NonNullable<TestRuntime['decisions']>['resolve']>[2] }, comment?: string) =>
-    t.decisions!.resolve(gate.id, { optionId: 'reject', comment: comment ?? null, passkeyAssertion: {} }, approver.user);
-  const stageOf = async (ticketId: string, approver: { headers: Record<string, string> }) =>
-    (await t.json<InternalTicket>('GET', `/api/tickets/${ticketId}`, { headers: approver.headers })).stage;
+/** A ticket whose requester signed UAT off: its go-live card waits for the Approver. */
+async function atGoLive() {
+  const repo = projectRepo();
+  const s = await setup({}, repo.dir, [rejectsGoLive]);
+  s.ctl.gate = true;
+  const approver = t.user('approver', 'CEO');
+  const { ticketId, req, build } = await toBuild(s, approver);
+  repo.pushUat(ticketId);
+  endBuild(build.sessionId);
+  await t.drain();
+  await t.json('POST', `/portal/api/tickets/${ticketId}/uat`, { headers: req.headers, body: { verdict: 'pass' } });
+  await t.drain();
+  const gate = t.decisions!.list({ kind: ['go_live'], status: ['open'] })[0]!;
+  return { s, approver, ticketId, req, gate };
+}
+const reject = (gate: { id: string }, approver: { user: Parameters<NonNullable<TestRuntime['decisions']>['resolve']>[2] }, comment?: string) =>
+  t.decisions!.resolve(gate.id, { optionId: 'reject', comment: comment ?? null, passkeyAssertion: {} }, approver.user);
+const stageOf = async (ticketId: string, approver: { headers: Record<string, string> }) =>
+  (await t.json<InternalTicket>('GET', `/api/tickets/${ticketId}`, { headers: approver.headers })).stage;
 
+describe('a go-live the Approver rejects', () => {
   it('is escalated to a human like a refused go-live, and the requester still reads "Being worked on"', async () => {
     const { approver, ticketId, req, gate } = await atGoLive();
     expect(await stageOf(ticketId, approver)).toBe('go_live_gate');
@@ -792,5 +792,76 @@ describe('a go-live the Approver rejects', () => {
     await t.drain();
     expect((await t.json<InternalTicket>('GET', `/api/tickets/${ticketId}`, { headers: approver.headers })).resolution).toBe('wont_fix');
     expect(t.decisions!.list({ status: ['open'] })).toEqual([]);
+  });
+});
+
+describe('after the requester signs UAT off', () => {
+  const publicOf = (ticketId: string, as: { headers: Record<string, string> }) =>
+    t.json<PublicTicket>('GET', `/portal/api/tickets/${ticketId}`, { headers: as.headers });
+  /** Every public status the ticket was moved to, in order (the first, "received", is how a ticket starts). */
+  const statuses = (ticketId: string) =>
+    t.rt.store.list({ types: ['ticket.public_status_changed'] }).filter((e) => e.meta.ticketId === ticketId).map((e) => e.meta.publicStatus);
+  const gateWords = /go.?live|promotion|reject|approver|gate|decision|queue|dec_|prm_/i;
+
+  it('reads "Being worked on" while go-live waits at its gate, and "Completed" once it is live', async () => {
+    const { s, ticketId, req } = await atGoLive();
+    // The requester has nothing left to test, and nothing about the next step reaches them.
+    const waiting = await publicOf(ticketId, req);
+    expect(waiting).toMatchObject({ status: 'being_worked_on', statusLabel: 'Being worked on', canSignOffUat: false });
+    expect(JSON.stringify(waiting)).not.toMatch(gateWords);
+    expect(t.decisions!.list({ kind: ['go_live'], status: ['open'] })).toHaveLength(1);
+    expect(statuses(ticketId)).toEqual(['being_worked_on', 'ready_for_testing', 'being_worked_on']);
+
+    t.rt.store.append({
+      type: 'promotion.completed',
+      actor: { kind: 'system', id: 'change' },
+      scope: { projectId: 'prj_1' },
+      meta: { promotionId: s.promotions[0]!.promotionId, mainShaBefore: 'aaaaaaa', mainShaAfter: 'bbbbbbb', breakglass: false, decisionId: null },
+      source: 'api',
+    });
+    await t.drain();
+    expect(await publicOf(ticketId, req)).toMatchObject({ status: 'completed', statusLabel: 'Completed' });
+    expect(statuses(ticketId)).toEqual(['being_worked_on', 'ready_for_testing', 'being_worked_on', 'completed']);
+  });
+
+  it('is not offered the test again when go-live is rejected or requested again', async () => {
+    const { approver, ticketId, req, gate } = await atGoLive();
+    expect((await publicOf(ticketId, req)).status).toBe('being_worked_on');
+
+    await reject(gate, approver, 'Not before the freeze');
+    await t.drain();
+    const escalation = t.decisions!.list({ subjectId: ticketId, status: ['open'] })[0]!;
+    expect(escalation.kind).toBe('fix_plan');
+    expect(await publicOf(ticketId, req)).toMatchObject({ status: 'being_worked_on', canSignOffUat: false });
+
+    await t.decisions!.resolve(escalation.id, { optionId: 'retry_golive' }, approver.user);
+    await t.drain();
+    expect(t.decisions!.list({ kind: ['go_live'], status: ['open'] })).toHaveLength(1);
+    expect(await publicOf(ticketId, req)).toMatchObject({ status: 'being_worked_on', canSignOffUat: false });
+    expect(statuses(ticketId)).toEqual(['being_worked_on', 'ready_for_testing', 'being_worked_on']);
+  });
+
+  it('is asked to test again only when there is a new build to test', async () => {
+    const { approver, ticketId, req, gate, s } = await atGoLive();
+    await reject(gate, approver);
+    await t.drain();
+    const escalation = t.decisions!.list({ subjectId: ticketId, status: ['open'] })[0]!;
+    await t.decisions!.resolve(escalation.id, { optionId: 'rebuild' }, approver.user);
+    await t.drain();
+    expect(await publicOf(ticketId, req)).toMatchObject({ status: 'being_worked_on', canSignOffUat: false });
+
+    endBuild(s.launches.filter((l) => l.ticketId === ticketId && l.processType === 'bug-fix')[1]!.sessionId);
+    await t.drain();
+    expect(await publicOf(ticketId, req)).toMatchObject({ status: 'ready_for_testing', canSignOffUat: true });
+  });
+
+  it('delivered again, the answer changes nothing', async () => {
+    const { s, ticketId } = await atGoLive();
+    const answered = t.rt.store.list({ types: ['decision.resolved'] }).find((e) => e.meta.kind === 'uat_signoff')!;
+    const head = t.rt.store.head().seq;
+    await mod.reactors!.find((r) => r.name === 'intake.decisions')!.react(answered, t.rt.store.readPayload(answered), t.rt.ctx);
+    expect(t.rt.store.head().seq).toBe(head);
+    expect(s.promotions).toHaveLength(1);
+    expect(statuses(ticketId)).toEqual(['being_worked_on', 'ready_for_testing', 'being_worked_on']);
   });
 });
