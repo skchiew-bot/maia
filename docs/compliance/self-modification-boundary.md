@@ -64,7 +64,8 @@ sessions.
 The default `selfModification.protectedPaths` (`DEFAULT_PROTECTED_PATHS` in `packages/contracts/src/config.ts`)
 lists every row above, plus `packages/*/package.json` so that a feature package cannot add a dependency unseen.
 The production list remains a **CEO decision** (threat model O-10, gap P-18): remove nothing without a recorded
-decision, and add any path the CEO classes as core. None of it protects anything until `aocRepoPaths` is set.
+decision, and add any path the CEO classes as core. None of it protects anything until `aocRepoPaths` is set
+(production refuses to start from a source checkout of AOC while it is empty; §2, Layer 1).
 
 **AOC's audit state** is protected separately, for every managed session, whatever repository it works in: the
 data directory, the anchor repository, the RFC 3161 token directory, the external audit log, the KEK file and the
@@ -102,7 +103,11 @@ There are four layers. Each one makes up for the weakness of the layer before it
 - **Two caveats:**
   - **`aocRepoPaths` defaults to an empty list, and with it the guard protects no core code** (the audit state
     stays protected). Production must set it to every clone of the AOC repository that managed sessions can
-    reach (gap P-18).
+    reach (gap P-18). aocd enforces what it can see: in `"mode": "production"` it **refuses to start** from a
+    source checkout of AOC (the tree it runs from has a `.git` and `packages/kernel`) while the list is empty, and
+    the message names `selfModification.aocRepoPaths` and this document. A dist install carries no checkout,
+    so aocd cannot tell where its operator keeps clones: listing them stays the operator's duty. Development is
+    not asked.
   - Bash can change files without naming them (a script, a Make target, an interpreter reading its program from
     a file), so this layer is a speed bump (§2.4 of the spec makes the same point about command matching). And
     while sessions run as the aocd OS user (threat model O-1), nothing at the file-system level backs it up.

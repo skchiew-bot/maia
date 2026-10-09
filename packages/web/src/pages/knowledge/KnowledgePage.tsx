@@ -7,7 +7,7 @@ import type {
   RegistryTypesResponse,
   RootCauseClassDTO,
 } from '@aoc/contracts';
-import { apiPost, useAuth, useResource, type StreamMessage } from '../../api';
+import { apiPost, combine, useAuth, useResource, type StreamMessage } from '../../api';
 import { Meter } from '../../charts';
 import {
   Badge,
@@ -37,7 +37,8 @@ import {
   useToast,
   type DataTableColumn,
 } from '../../components';
-import { combine, useSectionScroll } from '../learning/resources';
+import { decisionHref } from '../../lib/links';
+import { useSectionScroll } from '../../lib/sectionScroll';
 import { KnowledgeSearch } from './KnowledgeSearch';
 import { LessonDrawer } from './LessonDrawer';
 import { PayoffChart } from './PayoffChart';
@@ -46,7 +47,6 @@ import {
   SCOPE_LABEL,
   STATUS_META,
   blockedReason,
-  decisionHref,
   filterLessons,
   isKnowledgeEvent,
   payoffRows,

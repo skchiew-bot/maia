@@ -95,6 +95,7 @@ export function createChangeModule(opts: ChangeModuleOptions = {}): ChangeModule
     },
     start() {
       engine.resumePending();
+      engine.warnUnknownPromotionProjects();
     },
     async stop() {
       let timer: NodeJS.Timeout | undefined;

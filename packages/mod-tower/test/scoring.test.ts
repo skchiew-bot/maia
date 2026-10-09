@@ -137,10 +137,11 @@ describe('cost of delay (pure)', () => {
     expect(TICKET_SLA_MS).toEqual({ critical: 4 * HOUR, high: 2 * DAY, medium: 5 * DAY, low: 10 * DAY });
   });
 
-  it('decision SLAs as approved (rollback 30m, agent decision 1h, top-up 1h, go-live 2h, fix plan 4h, lesson 2d); reference scales elsewhere', () => {
+  it('decision SLAs as approved (rollback 30m, agent decision 1h, top-up 1h, go-live 2h, fix plan 4h, lesson 2d), a protected operation on the agent decision’s; reference scales elsewhere', () => {
     expect(DECISION_SLA_MS).toEqual({
       rollback: 30 * MIN,
       agent_decision: HOUR,
+      protected_operation: HOUR,
       credit_topup: HOUR,
       go_live: 2 * HOUR,
       fix_plan: 4 * HOUR,
@@ -154,6 +155,7 @@ describe('cost of delay (pure)', () => {
     // Due: the card's own due time, else the approved SLA; kinds without either are never late.
     expect(decisionDueMs('go_live', 1_000, null)).toBe(1_000 + 2 * HOUR);
     expect(decisionDueMs('go_live', 1_000, 5_000)).toBe(5_000);
+    expect(decisionDueMs('protected_operation', 1_000, null)).toBe(1_000 + HOUR);
     expect(decisionDueMs('break_glass', 1_000, null)).toBeNull();
     expect(decisionDueMs('break_glass', 1_000, 9_000)).toBe(9_000);
   });
@@ -170,8 +172,8 @@ describe('cost of delay (pure)', () => {
   });
 
   it('titles are PII-scrubbed and capped at 120 chars', () => {
-    expect(cleanTitle('Fix plan for tkt_1: login fails for jane.doe@example.com, call +60 12-345 6789')).toBe(
-      'Fix plan for tkt_1: login fails for [email], call [number]',
+    expect(cleanTitle('Login fails for jane.doe@example.com, call +60 12-345 6789 — fix plan')).toBe(
+      'Login fails for [email], call [number] — fix plan',
     );
     expect(cleanTitle('Fix 404 on page 12 (v2.3)\nsecond line')).toBe(
       'Fix 404 on page 12 (v2.3) second line',

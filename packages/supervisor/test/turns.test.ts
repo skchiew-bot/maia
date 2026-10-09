@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import type { DecisionRequestInput, SessionOutputItem } from '@aoc/contracts';
+import { ProcessTypeSchema, type DecisionRequestInput, type SessionOutputItem } from '@aoc/contracts';
 import { CONTINUE_TEXT, RESTART_TEXT, THROTTLE_RESET_TEXT } from '../src/prompts';
 import { createHarness, type Harness } from './harness';
 
@@ -76,6 +76,36 @@ describe('turn end: decisions (§2.3)', () => {
       [false, 'idle'],
     ]);
   });
+
+  it.each(['protected_operation', 'agent_decision'] as const)(
+    'resumes a session on the answer to a card its protected-op guard raised as %s (the second is how earlier logs recorded it)',
+    async (kind) => {
+      h = await createHarness();
+      const gate = h.gate();
+      const id = await h.launch(`[[fake:gated,normal|gate=${gate.path}]] Push it`);
+      const card = h.t.decisions!.request(
+        decisionFor(h, id, {
+          kind,
+          test: 'main',
+          title: 'Protected operation: push to main',
+          question: 'The agent attempted a protected operation. Allow it to run?',
+          options: [
+            { id: 'approve', label: 'Approve' },
+            { id: 'reject', label: 'Reject' },
+          ],
+          recommendation: null,
+          requesterId: `session:${id}`,
+        }),
+        { kind: 'agent', id },
+      );
+      gate.open();
+      await h.waitLifecycle(id, 'waiting_decision');
+      await h.t.decisions!.resolve(card.id, { optionId: 'reject', comment: 'Not today.' }, h.t.user('approver').user);
+      await h.waitLifecycle(id, 'idle');
+      expect(h.events('session.turn_started', id)[1]!.meta).toMatchObject({ reason: 'decision_answered' });
+      expect(h.callsFor(id)[1]!.prompt).toContain(`Decision ${card.id} answered: Reject. Not today.`);
+    },
+  );
 
   it('waits for every open decision, and resumes on a withdrawal too', async () => {
     h = await createHarness();
@@ -280,6 +310,7 @@ describe('turn end: crash, auto-continue, completion, credit cap', () => {
     await h.waitLifecycle(id, 'ended');
     // The session token is in the model's environment: it dies with the session (G-44).
     expect(h.t.identity!.verifyIngestToken(h.callsFor(id)[0]!.env.AOC_INGEST_TOKEN!)).toBeNull();
+    await h.waitFor(() => h!.sidecarCalls().length > 0, 'the fake sidecar to record its start');
     const token = h.sidecarCalls()[0]!.env.AOC_INGEST_TOKEN!;
     // The sidecar reports the last turn's usage only after claude has exited: refusing it would lose that usage.
     expect(h.t.identity!.verifyIngestToken(token)).toMatchObject({ kind: 'sidecar', sessionId: id });
@@ -340,6 +371,95 @@ describe('turn end: crash, auto-continue, completion, credit cap', () => {
     });
     expect(h.events('session.turn_ended', id)[0]!.meta.outcome).toBe('error');
     expect(h.sup.output(id)!.some((i) => i.text.includes('AOC MCP server failed'))).toBe(true);
+  });
+});
+
+describe('turn end: read-only triage ends at its diagnosis', () => {
+  /** What mod-intake records when the session calls report_diagnosis. */
+  const reportDiagnosis = (h: Harness, sessionId: string, ticketId = 'tkt_1') =>
+    h.t.rt.store.append({
+      type: 'ticket.diagnosis_reported',
+      actor: { kind: 'agent', id: sessionId },
+      scope: { ticketId, sessionId },
+      meta: { ticketId, sessionId, confidence: 0.82 },
+      payload: { rootCause: 'Seconds compared with milliseconds', fixPlan: 'Normalise both values' },
+      source: 'mcp',
+      bodyScope: ticketId,
+    });
+
+  // The stub ledger reports the plan half done and never complete, like a triage plan nobody closes with task_done.
+  it('ends the session as completed once its diagnosis is on record, instead of auto-continuing it', async () => {
+    h = await createHarness({ supervisor: { autoContinueLimit: 2 } });
+    const gate = h.gate();
+    const id = await h.launch(`[[fake:gated,normal|gate=${gate.path}]] Diagnose ticket tkt_1`, {
+      processType: 'bug-triage',
+      ticketId: 'tkt_1',
+    });
+    reportDiagnosis(h, id);
+    gate.open();
+    await h.waitLifecycle(id, 'ended');
+    expect(h.events('session.ended', id)[0]!.meta).toEqual({ sessionId: id, outcome: 'completed' });
+    expect(h.events('session.lifecycle_changed', id).at(-1)!.meta).toMatchObject({
+      to: 'ended',
+      reason: 'diagnosis_reported',
+    });
+    // One turn, and it ended normally: no "continue" turn was started for it.
+    expect(h.events('session.turn_started', id).map((e) => e.meta.reason)).toEqual(['launch']);
+    expect(h.events('session.turn_ended', id).map((e) => e.meta.outcome)).toEqual(['end_turn']);
+    expect(h.callsFor(id)).toHaveLength(1);
+    await h.waitRevoked(h.callsFor(id)[0]!.env.AOC_INGEST_TOKEN!);
+  });
+
+  it('also ends it when the diagnosis was reported in an earlier turn of the same session', async () => {
+    h = await createHarness({ supervisor: { autoContinueLimit: 2 } });
+    const gate = h.gate();
+    // Turn 1 ends with nothing reported (auto-continued); the diagnosis arrives during turn 2.
+    const id = await h.launch(`[[fake:normal,gated,normal|gate=${gate.path}]] Diagnose ticket tkt_1`, {
+      processType: 'bug-triage',
+      ticketId: 'tkt_1',
+    });
+    await h.waitFor(() => h!.callsFor(id).length === 2, 'the continue turn');
+    reportDiagnosis(h, id);
+    gate.open();
+    await h.waitLifecycle(id, 'ended');
+    expect(h.events('session.turn_started', id).map((e) => e.meta.reason)).toEqual(['launch', 'continue']);
+    expect(h.events('session.turn_ended', id).map((e) => e.meta.outcome)).toEqual(['end_turn', 'end_turn']);
+    expect(h.events('session.ended', id)[0]!.meta).toMatchObject({ outcome: 'completed' });
+  });
+
+  it('keeps today’s behaviour for a turn that ends without a diagnosis: auto-continue, then wait on the operator', async () => {
+    h = await createHarness({ supervisor: { autoContinueLimit: 1 } });
+    const id = await h.launch('Diagnose ticket tkt_2', { processType: 'bug-triage', ticketId: 'tkt_2' });
+    await h.waitLifecycle(id, 'idle');
+    expect(h.events('session.turn_started', id).map((e) => e.meta.reason)).toEqual(['launch', 'continue']);
+    expect(h.events('session.ended', id)).toEqual([]);
+    // Another ticket's diagnosis is not this session's.
+    reportDiagnosis(h, 'ses_someone_else', 'tkt_2');
+    await h.sup.resume(id, 'Look again', 'operator_prompt', h.ownerActor);
+    await h.waitFor(() => h!.callsFor(id).length === 4, 'the operator turn and one continue');
+    await h.waitLifecycle(id, 'idle');
+    expect(h.events('session.ended', id)).toEqual([]);
+  });
+
+  it('applies to read-only triage types only: a diagnosis on record does not end other types', async () => {
+    const audit = ProcessTypeSchema.parse({
+      id: 'audit-readonly',
+      name: 'Read-only audit',
+      class: 'maintenance',
+      model: 'sonnet',
+      readOnly: true,
+    });
+    h = await createHarness({ supervisor: { autoContinueLimit: 0 }, types: [audit] });
+    const gate = h.gate();
+    const audited = await h.launch(`[[fake:gated|gate=${gate.path}]] Audit`, {
+      processType: 'audit-readonly',
+    });
+    const built = await h.launch(`[[fake:gated|gate=${gate.path}]] Build`, { threadId: 'thr_build' });
+    reportDiagnosis(h, audited);
+    reportDiagnosis(h, built);
+    gate.open();
+    await h.waitLifecycle(audited, 'idle');
+    await h.waitLifecycle(built, 'idle');
   });
 });
 

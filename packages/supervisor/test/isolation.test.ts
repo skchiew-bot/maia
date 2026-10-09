@@ -23,6 +23,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { AocConfigSchema, ProcessRegistrySchema, defaultConfig, type AocConfig } from '@aoc/contracts';
 import { AocRuntime, FakeClock, createLogger, silentLogger } from '@aoc/kernel';
 import { createSupervisorModule } from '../src';
+import { PromotionProfileError } from '../src/promotion-profiles';
 import {
   IsolationError,
   NO_ISOLATION_WARNING,
@@ -412,6 +413,45 @@ describe('credential profiles with key files', () => {
     const relative = write({ p: { env: {}, files: { key: 'keys/p' } } });
     expect(() => readCredentialProfileSpec(relative, 'p')).toThrow(/file "key" needs an absolute path/);
   });
+
+  it('splits a profile into the credential aocd holds, the branches it may push and what sessions get (R-02)', () => {
+    const f = write({
+      'git-feature': {
+        env: { GIT_SSH_COMMAND: 'ssh -i {{file:ssh-key}} -o IdentitiesOnly=yes' },
+        files: { 'ssh-key': '/etc/aoc/keys/git-feature' },
+        push: { refs: ['refs/heads/feature/**', 'refs/heads/aoc/{threadId}/**'] },
+        session: { env: { READ_KEY: '{{file:read}}', GIT_AUTHOR_NAME: 'AOC agent' }, files: { read: '/etc/aoc/keys/read' } },
+      },
+      held: { env: { DEPLOY_TOKEN: 'd' } },
+    });
+    const spec = readCredentialProfileSpec(f, 'git-feature');
+    expect(spec.push).toEqual({ refs: ['refs/heads/feature/**', 'refs/heads/aoc/{threadId}/**'] });
+    expect(spec.session).toEqual({
+      env: { READ_KEY: '{{file:read}}', GIT_AUTHOR_NAME: 'AOC agent' },
+      files: { read: '/etc/aoc/keys/read' },
+    });
+    // What aocd runs with is the credential alone: nothing of the session part, and the other way round.
+    expect(readCredentialProfile(f, 'git-feature')).toEqual({
+      GIT_SSH_COMMAND: 'ssh -i /etc/aoc/keys/git-feature -o IdentitiesOnly=yes',
+    });
+    expect(resolveFileRefs(spec.session.env, { read: '/h/ses_1/credentials/read' })).toEqual({
+      READ_KEY: '/h/ses_1/credentials/read',
+      GIT_AUTHOR_NAME: 'AOC agent',
+    });
+    // A profile that names no push refs pushes nothing, and hands its sessions nothing.
+    const held = readCredentialProfileSpec(f, 'held');
+    expect(held.push).toBeNull();
+    expect(held.session).toEqual({ env: {}, files: {} });
+  });
+
+  it('refuses push refs that are not branches, and session references to undeclared files', () => {
+    expect(() => readCredentialProfileSpec(write({ p: { env: {}, push: { refs: ['refs/tags/v*'] } } }), 'p')).toThrow(
+      'credential profile "p": push.refs name branches (refs/heads/...), not refs/tags/v*',
+    );
+    expect(() =>
+      readCredentialProfileSpec(write({ p: { env: {}, session: { env: { K: '{{file:nope}}' } } } }), 'p'),
+    ).toThrow('credential profile "p": session.K refers to a file that "session.files" does not declare');
+  });
 });
 
 // ── end to end, as real OS users (root only) ────────────────────────────────
@@ -434,7 +474,10 @@ interface World {
   root: string;
   secret: string;
   aocdHome: string;
+  /** The key aocd holds to push upstream (R-02): no session ever gets it or a copy of it. */
   keyFile: string;
+  /** A read-only key the profile hands to its sessions (`session.files`): they get a private copy per turn. */
+  readKeyFile: string;
   kek: string;
   profiles: string;
   shared: string;
@@ -458,6 +501,8 @@ function world(): World {
   writeFileSync(join(aocdHome, '.ssh', 'id_ed25519'), 'AOCD-SSH-PRIVATE-KEY\n', { mode: 0o600 });
   const keyFile = join(secret, 'git-feature.key');
   writeFileSync(keyFile, 'TEST-KEY-git-feature\n', { mode: 0o600 });
+  const readKeyFile = join(secret, 'session-read.key');
+  writeFileSync(readKeyFile, 'TEST-KEY-session-read\n', { mode: 0o600 });
   const kek = join(secret, 'kek');
   writeFileSync(kek, `${randomBytes(32).toString('hex')}\n`, { mode: 0o600 });
   const profiles = join(secret, 'credential-profiles.json');
@@ -466,12 +511,18 @@ function world(): World {
     JSON.stringify({
       profiles: {
         'git-feature': {
+          // The credential: held by aocd, used by the push gateway's upstream push. Never in a session (R-02).
           env: {
             GIT_SSH_COMMAND: 'ssh -i {{file:ssh-key}} -o IdentitiesOnly=yes',
             GIT_PUSH_TOKEN: 'ghp_feature_E2E',
           },
           files: { 'ssh-key': keyFile },
+          push: { refs: ['refs/heads/feature/**'] },
+          // What the session itself gets: a read-only key, as a private per-turn copy.
+          session: { env: { READ_KEY_FILE: '{{file:read-key}}' }, files: { 'read-key': readKeyFile } },
         },
+        // The promotion credential: only aocd's own push holds it, and no process type names it.
+        'prod-promote': { env: {} },
       },
     }),
     { mode: 0o600 },
@@ -487,6 +538,7 @@ function world(): World {
     secret,
     aocdHome,
     keyFile,
+    readKeyFile,
     kek,
     profiles,
     shared,
@@ -632,15 +684,18 @@ describe.skipIf(!canCreateUsers)('OS-level isolation end to end (needs root to c
       bash(`cat ${join(w.aocdHome, '.ssh', 'id_ed25519')}`),
       bash('ls -a ~/.ssh'),
       bash(`cat ${w.keyFile}`),
-      // Its own profile's key works: a private copy, named in GIT_SSH_COMMAND. Printing it reaches no builder.
-      bash('set -- $GIT_SSH_COMMAND; printf "%s\\n" "$3"; wc -c < "$3"; cat "$3"'),
+      // The key its profile hands to sessions works: a private copy, named in READ_KEY_FILE. Printing it reaches no builder.
+      bash('printf "%s\\n" "$READ_KEY_FILE"; wc -c < "$READ_KEY_FILE"; cat "$READ_KEY_FILE"'),
+      // R-02: the credential aocd pushes with is nowhere in the session: not in its environment, not among its key copies.
+      bash('env | grep -c -E "GIT_SSH_COMMAND|GIT_PUSH_TOKEN|ghp_feature_E2E|git-feature.key" || true'),
+      bash('ls "$(dirname "$READ_KEY_FILE")"'),
       endTurn,
     ]);
     const id = await h.launch(`${marker} probe the sandbox`, { processType: 'iso-build' });
     await h.waitLifecycle(id, 'idle', 60_000);
     const dirs = sessionDirs(w.homes, id);
     const r = toolResults(id);
-    expect(r).toHaveLength(10);
+    expect(r).toHaveLength(12);
 
     expect(r[0]).toBe(String(writer.uid));
     expect(r[1]!.split('\n')).toEqual([dirs.home, dirs.claudeConfigDir, dirs.tmp]);
@@ -655,7 +710,10 @@ describe.skipIf(!canCreateUsers)('OS-level isolation end to end (needs root to c
     ] as const)
       expect(r[i], what).toMatch(/^Exit code \d+[\s\S]*Permission denied/);
     expect(r[7]).toMatch(/No such file or directory/);
-    expect(r[9]!.split('\n')).toEqual([join(dirs.credentials, 'ssh-key'), '21', '[redacted]']);
+    // The copy's path is itself a session env value, so it is redacted like the key: 22 bytes were read from it.
+    expect(r[9]!.split('\n')).toEqual(['[redacted]', '22', '[redacted]']);
+    expect(r[10]).toBe('0'); // no GIT_SSH_COMMAND, GIT_PUSH_TOKEN or held key path in the session's environment
+    expect(r[11]).toBe('read-key'); // the only key copy: the session's own, never the one aocd pushes with
     const all = r.join('\n');
     for (const secret of [
       'AOCD-SSH-PRIVATE-KEY',
@@ -663,6 +721,7 @@ describe.skipIf(!canCreateUsers)('OS-level isolation end to end (needs root to c
       'ghp_feature_E2E',
       'SQLite format',
       'TEST-KEY-git-feature',
+      'TEST-KEY-session-read',
     ])
       expect(all).not.toContain(secret);
 
@@ -699,7 +758,7 @@ describe.skipIf(!canCreateUsers)('OS-level isolation end to end (needs root to c
       processType: 'iso-build',
       threadId: 'thr_build',
     });
-    const copy = join(sessionDirs(w.homes, build).credentials, 'ssh-key');
+    const copy = join(sessionDirs(w.homes, build).credentials, 'read-key');
     await h.waitFor(() => existsSync(copy), 'the build turn’s key copy', 60_000);
     expect(statSync(copy)).toMatchObject({ uid: writer.uid, gid: writer.gid });
     expect(statSync(copy).mode & 0o777).toBe(0o400);
@@ -722,7 +781,13 @@ describe.skipIf(!canCreateUsers)('OS-level isolation end to end (needs root to c
     // claude-sim reports any stat failure as "does not exist"; the files do exist (checked as root above/below).
     expect(r.slice(0, 3).every((t) => /does not exist/.test(t))).toBe(true);
     expect(r[3]).toMatch(/EACCES: permission denied/);
-    for (const leaked of ['TEST-KEY-git-feature', 'GIT_SSH_COMMAND', 'ghp_feature_E2E', 'AOC_INGEST_TOKEN'])
+    for (const leaked of [
+      'TEST-KEY-git-feature',
+      'TEST-KEY-session-read',
+      'GIT_SSH_COMMAND',
+      'ghp_feature_E2E',
+      'AOC_INGEST_TOKEN',
+    ])
       expect(r.join('\n')).not.toContain(leaked);
     expect(existsSync(w.keyFile) && existsSync(copy)).toBe(true);
     expect(h.payload(h.events('session.launched', triage)[0]!)).toMatchObject({ runAs: READER });
@@ -794,12 +859,18 @@ describe.skipIf(!canCreateUsers)('OS-level isolation end to end (needs root to c
   );
 
   describe('startup self-check', () => {
-    const start = (w: World, dataDir: string, supervisor: Record<string, unknown> = {}) =>
+    const start = (
+      w: World,
+      dataDir: string,
+      supervisor: Record<string, unknown> = {},
+      config: Record<string, unknown> = {},
+    ) =>
       AocRuntime.create({
         config: AocConfigSchema.parse({
           dataDir,
           keys: { masterKeyFile: w.kek },
           supervisor: { ...isolationSettings(w, WRITER, READER), ...supervisor },
+          ...config,
         }),
         modules: [
           createSupervisorModule({
@@ -830,13 +901,32 @@ describe.skipIf(!canCreateUsers)('OS-level isolation end to end (needs root to c
     it('refuses to start while a session user can read the KEK, the profiles file or a key file it names', async () => {
       const w = world();
       chmodSync(w.secret, 0o755);
-      for (const f of [w.kek, w.profiles, w.keyFile]) chmodSync(f, 0o644);
+      for (const f of [w.kek, w.profiles, w.keyFile, w.readKeyFile]) chmodSync(f, 0o644);
       const dataDir = join(w.root, 'data');
       mkdirSync(dataDir, { mode: 0o700 });
       const err = await start(w, dataDir).catch((e: unknown) => e);
       expect(err).toBeInstanceOf(IsolationError);
-      for (const f of [w.kek, w.profiles, w.keyFile])
+      // Held or handed to sessions as a copy: the original of either must stay unreadable.
+      for (const f of [w.kek, w.profiles, w.keyFile, w.readKeyFile])
         expect(String(err)).toContain(`session user ${WRITER} can read ${f}`);
+    }, 60_000);
+
+    it('refuses to start in production while a promotion credential profile is undefined, and starts once it is', async () => {
+      const w = world();
+      const dataDir = join(w.root, 'data');
+      mkdirSync(dataDir, { mode: 0o700 });
+      const bare = join(w.secret, 'profiles-without-promotion.json');
+      writeFileSync(bare, JSON.stringify({ profiles: { 'git-feature': { env: {} } } }), { mode: 0o600 });
+      const err = await start(w, dataDir, { credentialProfilesFile: bare }, { mode: 'production' }).catch(
+        (e: unknown) => e,
+      );
+      expect(err).toBeInstanceOf(PromotionProfileError);
+      expect(String(err)).toContain(
+        'production mode: promotion credential profile "prod-promote" (promotion.promoteCredentialProfile) is unusable',
+      );
+      // Development only warns, and the world's own profiles file defines it.
+      await (await start(w, dataDir, { credentialProfilesFile: bare })).stop();
+      await (await start(w, dataDir, {}, { mode: 'production' })).stop();
     }, 60_000);
 
     it('refuses a runner that does not switch to the session user', async () => {

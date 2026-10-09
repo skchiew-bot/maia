@@ -11,7 +11,7 @@ import type {
   MeteringFxStamp,
   MigrationRecommendationDTO,
 } from '@aoc/contracts';
-import { formatShortDate } from '../../lib/format';
+import { formatShortDate, formatUsd } from '../../lib/format';
 
 export const RANGE_OPTIONS = [
   { value: '7', label: '7 days' },
@@ -188,6 +188,17 @@ export const VERDICT_TEXT: Record<MigrationRecommendationDTO['verdict'], string>
   current_plan_favoured_across_range: 'The current plan is cheaper across the whole range',
   depends_on_assumptions: 'It depends on the assumptions: the range crosses zero',
 };
+
+/** An axis tick in US$: whole dollars when round or large, else cents. */
+export const axisUsd = (v: number): string => formatUsd(v, { decimals: Number.isInteger(v) || v >= 100 ? 0 : 2 });
+
+/** A round axis top and step (at most four steps) for values up to `max`: 22.9 → 0…30 in tens. */
+export function niceAxis(max: number): { top: number; step: number } {
+  if (!(max > 0)) return { top: 1, step: 0.5 };
+  const exp = 10 ** Math.floor(Math.log10(max));
+  const step = [0.2, 0.25, 0.5, 1, 2, 2.5, 5, 10].map((s) => s * exp).find((s) => max / s <= 4) ?? 10 * exp;
+  return { top: Math.ceil(max / step - 1e-9) * step, step };
+}
 
 /** Hours with one decimal ("0.4 h"), minutes below an hour ("23 min"). */
 export function formatIdle(ms: number): string {

@@ -295,7 +295,7 @@ describe('attention queue: ranked by cost of delay', () => {
       expect(byId(s.attention, `decision:${id}`).action).toEqual({
         kind: 'resolve_decision',
         label: 'Approve with passkey',
-        href: `/decisions?id=${id}`,
+        href: `/decisions?focus=${id}`,
         decisionId: id,
         requiresPasskey: true,
         recommendedOptionId: 'approve',
@@ -313,7 +313,7 @@ describe('attention queue: ranked by cost of delay', () => {
     expect(byId(s.attention, 'decision:dec_go_open').action).toEqual({
       kind: 'resolve_decision',
       label: 'Review',
-      href: '/decisions?id=dec_go_open',
+      href: '/decisions?focus=dec_go_open',
       decisionId: 'dec_go_open',
       requiresPasskey: true,
       recommendedOptionId: null,
@@ -352,6 +352,23 @@ describe('attention queue: ranked by cost of delay', () => {
       costOfDelay: { basis: 'Plan limit · idle 20m · resets 15:30' },
       action: { kind: 'open', label: 'Open', href: '/sessions/ses_thr' },
       chips: ['Resets 15:30'],
+    });
+  });
+
+  it('reads a protected operation like an agent decision: the test it tripped, and the 1h SLA those cards always had', async () => {
+    h = await setup();
+    decide(h, 'dec_po', 'protected_operation', { at: ago(h, minutes(90)), test: 'production' });
+    decide(h, 'dec_po_ok', 'protected_operation', { at: ago(h, minutes(10)), test: 'main' });
+    const s = await h.snap();
+    expect(byId(s.attention, 'decision:dec_po')).toMatchObject({
+      detail: 'Touches production / deploy',
+      costOfDelay: { basis: 'Protected operation (test 2: production) · 1h 30m · past the 1h SLA' },
+      chips: ['test production', 'Past SLA'],
+    });
+    expect(byId(s.attention, 'decision:dec_po_ok')).toMatchObject({
+      detail: 'Touches main / protected branch',
+      costOfDelay: { basis: 'Protected operation (test 1: main) · 10m' },
+      chips: ['test main'],
     });
   });
 
@@ -588,7 +605,7 @@ describe('attention queue: ranked by cost of delay', () => {
       action: {
         kind: 'resolve_decision',
         label: 'Approve top-up',
-        href: '/decisions?id=dec_top',
+        href: '/decisions?focus=dec_top',
         decisionId: 'dec_top',
         requiresPasskey: false,
         recommendedOptionId: 'approve',
@@ -626,7 +643,7 @@ describe('attention queue: ranked by cost of delay', () => {
     h.t.decisions!.request(
       {
         kind: 'fix_plan',
-        title: `Fix plan for tkt_9: Login broken for jane.doe@example.com, call 0123456789 ${'and more '.repeat(20)}`,
+        title: `Login broken for jane.doe@example.com, call 0123456789 ${'and more '.repeat(20)}— fix plan`,
         question: 'Approve?',
         options: [{ id: 'approve', label: 'Approve' }],
         subjectType: 'ticket',
@@ -638,10 +655,8 @@ describe('attention queue: ranked by cost of delay', () => {
     );
     decide(h, 'dec_unknown_to_service', 'rollback');
     const s = await h.snap();
-    const fix = s.attention.find((a) => a.title.startsWith('Fix plan'))!;
-    expect(fix.title.startsWith('Fix plan for tkt_9: Login broken for [email], call [number] and more')).toBe(
-      true,
-    );
+    const fix = s.attention.find((a) => a.title.startsWith('Login broken'))!;
+    expect(fix.title.startsWith('Login broken for [email], call [number] and more')).toBe(true);
     expect(fix.title.length).toBeLessThanOrEqual(120);
     expect(byId(s.attention, 'decision:dec_unknown_to_service').title).toBe('Rollback gate');
   });

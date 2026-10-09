@@ -72,6 +72,16 @@ describe('(i) intake portal', () => {
     ]);
     const reported = h.events({ types: ['ticket.diagnosis_reported'] })[0]!;
     expect(reported).toMatchObject({ source: 'mcp', actor: { kind: 'agent', id: triage.sessionId } });
+    // The diagnosis is where triage ends: this scenario declares no plan, and the session still completes on its own
+    // turn end instead of being auto-continued and parked as Waiting on you.
+    const ended = await waitFor(
+      () => h.events({ types: ['session.ended'], sessionId: triage.sessionId })[0],
+      { what: 'the triage session to end' },
+    );
+    expect(ended.meta).toEqual({ sessionId: triage.sessionId, outcome: 'completed' });
+    expect(
+      h.events({ types: ['session.turn_started'], sessionId: triage.sessionId }).map((e) => e.meta.reason),
+    ).toEqual(['launch']);
 
     // The fix-plan gate is an Approver decision; the requester only ever sees abstracted status.
     expect(gated.openDecisionIds).toHaveLength(1);

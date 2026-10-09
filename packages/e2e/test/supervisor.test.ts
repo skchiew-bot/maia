@@ -4,7 +4,8 @@
  * through the API, operator nudge / stop / restart, plan-limit throttles resumed by the throttle job, and context
  * rollover to a successor session on the same thread.
  */
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -66,8 +67,24 @@ const SUCCESSOR = {
   ],
 };
 
+/** A writer that commits through Bash and closes its task with that commit, as the real model does (real-CLI check). */
+const COMMIT = {
+  name: 'e2e-commit',
+  steps: [
+    { kind: 'think', ms: 300, outputTokens: 100 },
+    { kind: 'mcp', server: 'aoc', tool: 'declare_plan', args: { phases: [{ id: 'p1', name: 'Hello', tasks: [{ id: 't1', title: 'Create hello.txt and commit it', size: 'xs' }] }] } },
+    { kind: 'tool', name: 'Write', input: { file_path: 'hello.txt', content: 'hi\n' } },
+    { kind: 'bash', command: 'git add hello.txt && git commit -q -m "Add hello.txt" && git rev-parse HEAD', stdout: '', saveAs: 'sha', exec: true },
+    { kind: 'mcp', server: 'aoc', tool: 'task_done', args: { task_id: 't1', evidence: { kind: 'commit', ref: '{{sha.stdout}}' } } },
+    { kind: 'text', text: 'Committed.' },
+    { kind: 'endTurn', final: true },
+  ],
+};
+
 const scenarioDir = mkdtempSync(join(tmpdir(), 'aoc-e2e-scenarios-'));
 const ROLLOVER_FILE = join(scenarioDir, 'rollover.json');
+const COMMIT_FILE = join(scenarioDir, 'commit.json');
+writeFileSync(COMMIT_FILE, JSON.stringify(COMMIT));
 const SUCCESSOR_FILE = join(scenarioDir, 'successor.json');
 writeFileSync(ROLLOVER_FILE, JSON.stringify(ROLLOVER));
 writeFileSync(SUCCESSOR_FILE, JSON.stringify(SUCCESSOR));
@@ -91,6 +108,14 @@ const payload = (e: StoredEvent) => h.store.readPayload(e) as Record<string, unk
 const turnsOf = (sessionId: string) => simTurnsOf(h, sessionId);
 const outcomesOf = (sessionId: string) => simOutcomesOf(h, sessionId);
 const typesOf = (sessionId: string) => h.events({ sessionId }).map((e) => e.type);
+/** The tool results the model was shown (Claude Code's transcript, as claude-sim writes it): [tool_use_id, content]. */
+const shownToModel = (sessionId: string): [string, unknown][] => {
+  const launched = h.events({ types: ['session.launched'], sessionId })[0]!;
+  const lines = readFileSync(payload(launched)!.transcriptPath as string, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l) as Record<string, any>);
+  return lines
+    .filter((l) => l.type === 'user' && Array.isArray(l.message?.content))
+    .flatMap((l) => l.message.content.filter((b: Record<string, unknown>) => b.type === 'tool_result').map((b: Record<string, any>) => [b.tool_use_id, b.content] as [string, unknown]));
+};
 
 // ── scenarios ───────────────────────────────────────────────────────────────
 
@@ -110,6 +135,13 @@ describe('supervisor + claude-sim: a managed session end to end', () => {
     expect(argv).toEqual(expect.arrayContaining(['--allowedTools', 'mcp__aoc', '--strict-mcp-config', '--include-partial-messages']));
     const output = await h.api<{ items: { kind: string; text: string }[] }>('GET', `/api/sessions/${sessionId}/output`, { as: dev });
     expect(output.items.map((i) => i.text)).toContain('Session started · model claude-opus-5-5 · MCP aoc:connected');
+
+    // Claude Code shows the model the structured data of an MCP result and drops its text, so the order to end the
+    // turn must be in the data itself — first (real-CLI check).
+    const shown = shownToModel(sessionId).map(([, content]) => content).find((c) => typeof c === 'string' && c.includes('decision_id'))!;
+    const seen = JSON.parse(shown as string) as Record<string, unknown>;
+    expect(Object.keys(seen)[0]).toBe('notice');
+    expect(seen).toMatchObject({ ok: true, notice: 'END YOUR TURN NOW. The supervisor will resume this session with the human answer.' });
 
     const open = await h.api<DecisionListResponse>('GET', `/api/decisions?sessionId=${sessionId}&status=open`, { as: ceo });
     expect(open.decisions).toHaveLength(1);
@@ -154,6 +186,102 @@ describe('supervisor + claude-sim: a managed session end to end', () => {
     expect(typesOf(sessionId)).toEqual(expect.arrayContaining(['thread.writer_released', 'token.revoked', 'usage.recorded', 'prompt.submitted']));
     expect(h.store.verifyChain().ok).toBe(true);
   });
+
+  it('a launch into a project that does not exist is a 404 and conjures nothing; an unknown process type is a 422', async () => {
+    const dev = await h.user('builder', 'Dev');
+    const { projectId } = await h.project(dev, 'Real Project');
+    const projectIds = async () =>
+      (await h.api<{ projectId: string }[]>('GET', '/api/projects', { as: dev })).map((p) => p.projectId);
+    const before = await projectIds();
+    const records = () =>
+      ['session.launch_requested', 'thread.created', 'project.created'].map(
+        (type) => h.events({ types: [type] }).length,
+      );
+    const recordsBefore = records();
+
+    const typo = await h.request('POST', '/api/sessions', {
+      as: dev,
+      body: { processType: 'feature-build', projectId: 'prj_typo', prompt: 'Work. [[scenario:happy-path]]' },
+    });
+    expect(typo.status).toBe(404);
+    expect(((await typo.json()) as { error: { code: string } }).error.code).toBe('unknown_project');
+    const badType = await h.request('POST', '/api/sessions', {
+      as: dev,
+      body: { processType: 'opus-please', projectId, prompt: 'Work.' },
+    });
+    expect(badType.status).toBe(422);
+    expect(((await badType.json()) as { error: { code: string } }).error.code).toBe('unknown_process_type');
+
+    // Nothing was recorded for either: no project appeared (in the API or the log), no thread, no launch.
+    expect(await projectIds()).toEqual(before);
+    expect(records()).toEqual(recordsBefore);
+    expect(h.events({ types: ['project.created'] }).some((e) => e.meta.projectId === 'prj_typo')).toBe(false);
+  });
+});
+
+describe('supervisor + claude-sim: what a writer may run (print mode cannot prompt)', () => {
+  // Real Claude Code 2.1.295 answered `git add` / `git commit` / `npm test` with "This command requires approval" under
+  // -p acceptEdits, so a managed writer could not commit. A writer type the registry says nothing about Bash for is
+  // granted it; claude-sim refuses exactly like the real CLI without it, so this fails if the grant is lost.
+  it('a writer type that says nothing about Bash commits through it and closes its task with that commit', async () => {
+    const dev = await h.user('builder', 'Committer');
+    const { projectId, repo } = await h.project(dev, 'Hello');
+    const sessionId = await launch(dev, projectId, COMMIT_FILE, 'rollback-verify');
+    await until(sessionId, dev, (d) => d.lifecycle === 'ended', 'the committing session to complete');
+
+    const argv = payload(h.events({ types: ['session.launched'], sessionId })[0]!)!.argv as string[];
+    const grants = argv.slice(argv.indexOf('--allowedTools') + 1, argv.indexOf('--disallowedTools') > 0 ? argv.indexOf('--disallowedTools') : argv.indexOf('--session-id'));
+    expect(grants).toEqual(['mcp__aoc', 'Bash']);
+    const done = h.events({ types: ['task.done'], sessionId });
+    expect(done.map((e) => [e.meta.evidenceKind, e.meta.evidenceVerified, e.meta.flag])).toEqual([['commit', true, null]]);
+    const bashResult = shownToModel(sessionId).map(([, content]) => String(content)).find((c) => /^[0-9a-f]{40}/.test(c));
+    expect(bashResult).toBeTruthy();
+    expect(done[0]!.meta.headSha).toBe(bashResult!.trim());
+    expect(readFileSync(join(repo, 'hello.txt'), 'utf8')).toBe('hi\n');
+  });
+
+  // The shipped feature-build type names its Bash rules (a few git verbs; merge, rebase and reset denied). They are the
+  // whole policy: the same commit goes through, and what they leave out is refused rather than widened by a blanket Bash.
+  it('the shipped feature-build type commits through its scoped git grants and nothing beyond them', async () => {
+    const dev = await h.user('builder', 'Scoped');
+    const { projectId, repo } = await h.project(dev, 'Scoped');
+    const scenario = join(scenarioDir, 'scoped.json');
+    writeFileSync(
+      scenario,
+      JSON.stringify({
+        name: 'e2e-scoped',
+        steps: [
+          { kind: 'mcp', server: 'aoc', tool: 'declare_plan', args: { phases: [{ id: 'p1', name: 'Hello', tasks: [{ id: 't1', title: 'Create hello.txt and commit it', size: 'xs' }] }] } },
+          { kind: 'tool', name: 'Write', input: { file_path: 'hello.txt', content: 'hi\n' } },
+          { kind: 'bash', command: 'git add hello.txt && git commit -q -m "Add hello.txt" && git rev-parse HEAD', stdout: '', saveAs: 'sha', exec: true },
+          { kind: 'bash', command: 'git switch main && git branch -D scratch', stdout: '', saveAs: 'widened', exec: true },
+          { kind: 'bash', command: 'git reset --hard HEAD~1', stdout: '', saveAs: 'reset', exec: true },
+          { kind: 'mcp', server: 'aoc', tool: 'task_done', args: { task_id: 't1', evidence: { kind: 'commit', ref: '{{sha.stdout}}' } } },
+          { kind: 'text', text: 'Committed.' },
+          { kind: 'endTurn', final: true },
+        ],
+      }),
+    );
+    const sessionId = await launch(dev, projectId, scenario);
+    await until(sessionId, dev, (d) => d.lifecycle === 'ended', 'the scoped session to complete');
+
+    const argv = payload(h.events({ types: ['session.launched'], sessionId })[0]!)!.argv as string[];
+    const allowed = argv.slice(argv.indexOf('--allowedTools') + 1, argv.indexOf('--disallowedTools'));
+    expect(allowed[0]).toBe('mcp__aoc');
+    expect(allowed).toContain('Bash(git commit:*)');
+    expect(allowed).not.toContain('Bash');
+    expect(argv.slice(argv.indexOf('--disallowedTools') + 1)).toEqual(expect.arrayContaining(['Bash(git reset:*)']));
+
+    // The commit went through and its evidence was verified ...
+    const done = h.events({ types: ['task.done'], sessionId });
+    expect(done.map((e) => [e.meta.evidenceKind, e.meta.evidenceVerified])).toEqual([['commit', true]]);
+    expect(readFileSync(join(repo, 'hello.txt'), 'utf8')).toBe('hi\n');
+    // ... and what the grants leave out was refused: the model was told so, and nothing moved.
+    const shown = shownToModel(sessionId).map(([, content]) => String(content));
+    expect(shown.some((c) => /require approval: git switch main, git branch -D scratch$/.test(c))).toBe(true);
+    expect(shown).toContain('Permission to use Bash with command git reset --hard HEAD~1 has been denied.');
+    expect(execFileSync('git', ['log', '--format=%s'], { cwd: repo, encoding: 'utf8', env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' } }).split('\n')[0]).toBe('Add hello.txt');
+  });
 });
 
 describe('supervisor + claude-sim: operator controls', () => {
@@ -170,6 +298,8 @@ describe('supervisor + claude-sim: operator controls', () => {
     expect(turns[1]).toMatchObject({ turn: 2, reason: 'nudge' });
     expect(turns[1]!.text).toContain('Skip the importer polish; write the tests first.');
     expect(outcomesOf(sessionId)[0]).toBe('interrupted');
+    // Real claude ends a SIGINTed turn cleanly: a result line (error_during_execution) and exit 0 — not a crash.
+    expect(h.events({ types: ['session.turn_ended'], sessionId })[0]!.meta.exitCode).toBe(0);
     expect(h.events({ types: ['session.nudged'], sessionId })).toHaveLength(1);
 
     await h.api('POST', `/api/sessions/${sessionId}/stop`, { as: dev, body: { immediate: true, reason: 'Superseded' } });

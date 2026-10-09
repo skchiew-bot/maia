@@ -6,6 +6,7 @@ import { ButtonLink } from '../../components/Button';
 import { Icon, type IconName } from '../../components/Icon';
 import { RelativeTime } from '../../components/RelativeTime';
 import { cx } from '../../lib/dom';
+import { decisionHref } from '../../lib/links';
 import { shortId } from '../audit/ids';
 import { PersonName } from '../audit/people';
 import { RefValue } from '../changes/bits';
@@ -59,7 +60,7 @@ export interface RollbackItemProps {
 export function RollbackItem({ rollback: r, projectName, canApprove }: RollbackItemProps) {
   const meta = ROLLBACK_STATUS_META[r.status];
   const steps = rollbackTrack(r);
-  const focus = r.decisionId ? `/decisions?focus=${encodeURIComponent(r.decisionId)}` : null;
+  const focus = r.decisionId ? decisionHref(r.decisionId) : null;
   return (
     <li className={cx('rollbacks-item', `is-${r.status}`)} id={`rollback-${r.rollbackId}`}>
       <div className="rollbacks-item__head">

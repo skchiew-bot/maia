@@ -38,7 +38,7 @@ function projectRepo(): { dir: string; pushUat(ticketId: string): string; dropUa
 
 /** Change-control stand-in: like mod-change, a fromRef that does not resolve in the project repo throws. */
 function stubs(repoDir: string | null = null) {
-  const ctl = { refuse: null as string[] | null };
+  const ctl = { refuse: null as string[] | null, gate: false };
   const launches: (LaunchRequest & { sessionId: string })[] = [];
   const stops: string[] = [];
   const errors: Parameters<LearningService['recordError']>[0][] = [];
@@ -64,7 +64,7 @@ function stubs(repoDir: string | null = null) {
   };
   const learning: Partial<LearningService> = { recordError: (e) => void errors.push(e), lessonsForScope: () => [], recordLessonsApplied: () => undefined };
   const change: Partial<ChangeService> = {
-    async requestPromotion(input) {
+    async requestPromotion(input, actor) {
       if (repoDir && !git.revParse(repoDir, input.fromRef)) throw new HttpError(422, 'unknown_ref', `${input.fromRef} does not resolve to a commit`);
       const promotionId = newId('promotion');
       if (ctl.refuse) return { promotionId, decisionId: null, refused: ctl.refuse };
@@ -76,7 +76,22 @@ function stubs(repoDir: string | null = null) {
         meta: { promotionId, projectId: input.projectId, fromRef: input.fromRef, fromSha: 'abcdef1', targetBranch: 'main', ticketId: input.ticketId ?? null, changeId: null },
         source: 'api',
       });
-      return { promotionId, decisionId: 'dec_x', refused: null };
+      if (!ctl.gate) return { promotionId, decisionId: 'dec_x', refused: null };
+      // As mod-change does: the Approver's go_live card is about the promotion, not the ticket.
+      const card = t.decisions!.request(
+        {
+          kind: 'go_live',
+          title: `Go live: promote ${input.fromRef} to main in ${input.projectId}`,
+          question: 'Promote it to main?',
+          options: [{ id: 'approve', label: 'Approve' }, { id: 'reject', label: 'Reject' }],
+          subjectType: 'promotion',
+          subjectId: promotionId,
+          projectId: input.projectId,
+          requesterId: actor.id,
+        },
+        actor,
+      );
+      return { promotionId, decisionId: card.id, refused: null };
     },
   };
   return { supervisor, learning, change, launches, stops, errors, promotions, ctl };
@@ -136,6 +151,35 @@ const reactsFirstTo = (...types: string[]): AocModule => ({
     },
   ],
 });
+
+/**
+ * Change control's answer to the Approver, registered ahead of intake as in aocd: anything but "approve" on a go-live
+ * card is `promotion.rejected` for that promotion (what mod-change appends), carrying the Approver's comment.
+ */
+const rejectsGoLive: AocModule = {
+  name: 'rejects-go-live',
+  reactors: [
+    {
+      name: 'rejects-go-live.rejected',
+      handles: ['decision.resolved'],
+      react: (e, payload, ctx) => {
+        const m = e.meta as { decisionId: string; kind: string; optionId: string; resolvedBy: string };
+        if (m.kind !== 'go_live' || m.optionId === 'approve') return;
+        const card = ctx.services.get('decisions').get(m.decisionId)!;
+        const comment = (payload as { comment?: string } | null)?.comment;
+        ctx.store.append({
+          type: 'promotion.rejected',
+          actor: e.actor,
+          scope: { projectId: 'prj_1' },
+          meta: { promotionId: card.subjectId, decisionId: m.decisionId, approverId: m.resolvedBy },
+          payload: comment ? { comment } : {},
+          source: 'api',
+          causationId: e.id,
+        });
+      },
+    },
+  ],
+};
 
 /** Submit a ticket, let both triage agents agree and approve the fix plan: the first build session is running. */
 async function toBuild(s: ReturnType<typeof stubs>, approver: { user: Parameters<NonNullable<TestRuntime['decisions']>['resolve']>[2] }) {
@@ -210,6 +254,8 @@ describe('ticket lifecycle', () => {
     await t.drain();
     const build = s.launches.find((l) => l.processType === 'bug-fix')!;
     expect(build.prompt).toMatch(/APPROVED fix plan/);
+    // pushed through the supervisor's gateway (R-02): the build session is not given the UAT credential
+    expect(build.prompt).toContain(`git push aoc HEAD:refs/heads/uat/${ticketId}`);
     const uatSha = repo.pushUat(ticketId);
     endBuild(build.sessionId);
     await t.drain();
@@ -484,5 +530,338 @@ describe('ticket lifecycle', () => {
     expect(ok.status).toBe(200);
     expect(Buffer.from(await ok.arrayBuffer()).equals(PNG)).toBe(true);
     expect(t.rt.store.list({ types: ['intake.media_accessed'] })[0]!.meta).toMatchObject({ userId: approver.user.id, basis: 'media_permission' });
+  });
+});
+
+describe('decision cards the flow raises', () => {
+  const TITLE = 'Claim form crashes on upload';
+  const cards = (ticketId: string) => t.decisions!.list({ subjectId: ticketId });
+  /** Every card is about the ticket (its subject) and reads as the ticket's own summary plus the step it asks for. */
+  const expectSummaryFirst = (ticketId: string, titles: string[]) => {
+    expect(cards(ticketId).map((c) => c.title)).toEqual(titles);
+    for (const c of cards(ticketId)) {
+      expect(c).toMatchObject({ subjectType: 'ticket', subjectId: ticketId });
+      expect(c.title).not.toContain(ticketId);
+    }
+  };
+
+  it('triage escalations: low confidence, disagreement and an exhausted diagnosis budget', async () => {
+    const s = await setup({ intake: { diagnosisBudget: { tokens: 1000, minutes: 5 } } });
+    const req = t.user('requester', 'Nur');
+    const open = async () => ((await (await submit(req.headers)).json()) as PublicTicket).ticketId;
+
+    const lowConfidence = await open();
+    await t.drain();
+    await report(s.launches[0]!.sessionId, 0.3, 'a');
+    await report(s.launches[1]!.sessionId, 0.9, 'a');
+    await t.drain();
+    expectSummaryFirst(lowConfidence, [`${TITLE} — low-confidence diagnosis`]);
+
+    const disagreement = await open();
+    await t.drain();
+    await report(s.launches[2]!.sessionId, 0.9, 'cache-invalidation');
+    await report(s.launches[3]!.sessionId, 0.9, 'race-condition');
+    await t.drain();
+    expectSummaryFirst(disagreement, [`${TITLE} — triage agents disagree`]);
+
+    const exhausted = await open();
+    await t.drain();
+    t.clock.advance(6 * 60_000);
+    await t.rt.runJob('intake.diagnosis-budget');
+    await t.drain();
+    expectSummaryFirst(exhausted, [`${TITLE} — no diagnosis`]);
+  });
+
+  it('the fix-plan gate, the UAT request and a blocked go-live', async () => {
+    const repo = projectRepo();
+    const s = await setup({}, repo.dir);
+    const approver = t.user('approver', 'CEO');
+    const { ticketId, req, build } = await toBuild(s, approver);
+    expectSummaryFirst(ticketId, [`${TITLE} — fix plan`]);
+
+    repo.pushUat(ticketId);
+    endBuild(build.sessionId);
+    await t.drain();
+    s.ctl.refuse = ['abc1234: no AOC-Session / AOC-Change trailer'];
+    await t.json('POST', `/portal/api/tickets/${ticketId}/uat`, { headers: req.headers, body: { verdict: 'pass' } });
+    await t.drain();
+    expectSummaryFirst(ticketId, [`${TITLE} — fix plan`, `${TITLE} — please test your fix`, `${TITLE} — go-live blocked`]);
+  });
+
+  it('a build with nothing to test', async () => {
+    const s = await setup({}, null);
+    const { ticketId, build } = await toBuild(s, t.user('approver', 'CEO'));
+    endBuild(build.sessionId);
+    await t.drain();
+    expectSummaryFirst(ticketId, [`${TITLE} — fix plan`, `${TITLE} — no UAT build`]);
+  });
+
+  it('keeps the step visible when the requester wrote a long or multi-line title', async () => {
+    const s = await setup();
+    const req = t.user('requester', 'Nur');
+    const long = `${'Receipts upload sideways\n'.repeat(5)}and then the page goes blank`;
+    const { ticketId } = (await (await submit(req.headers, [], { title: long })).json()) as PublicTicket;
+    await t.drain();
+    await report(s.launches[0]!.sessionId, 0.9, 'exif');
+    await report(s.launches[1]!.sessionId, 0.9, 'exif');
+    await t.drain();
+    const [card] = cards(ticketId);
+    expect(card!.title).toMatch(/^Receipts upload sideways Receipts upload sideways .*… — fix plan$/);
+    expect(card!.title.length).toBeLessThanOrEqual(80 + ' — fix plan'.length);
+    expect(card!.title).not.toContain('\n');
+  });
+});
+
+describe('closing a ticket withdraws the gates it left open', () => {
+  const close = (ticketId: string, as: { headers: Record<string, string> }, resolution = 'duplicate') =>
+    t.json<InternalTicket>('POST', `/api/tickets/${ticketId}/close`, { headers: as.headers, body: { resolution } });
+  const withdrawals = () => t.rt.store.list({ types: ['decision.withdrawn'] });
+  const statusOf = (ticketId: string) => Object.fromEntries(t.decisions!.list({ subjectId: ticketId }).map((c) => [c.kind, c.status]));
+
+  it('the fix-plan card goes, once, however often the close is repeated', async () => {
+    const s = await setup();
+    const approver = t.user('approver', 'CEO');
+    const req = t.user('requester', 'Nur');
+    const { ticketId } = (await (await submit(req.headers)).json()) as PublicTicket;
+    await t.drain();
+    await report(s.launches[0]!.sessionId, 0.9, 'a');
+    await report(s.launches[1]!.sessionId, 0.9, 'a');
+    await t.drain();
+    expect(statusOf(ticketId)).toEqual({ fix_plan: 'open' });
+
+    await close(ticketId, approver);
+    await t.drain();
+    expect(statusOf(ticketId)).toEqual({ fix_plan: 'withdrawn' });
+    expect(withdrawals().map((e) => e.meta)).toEqual([expect.objectContaining({ reason: 'ticket_closed' })]);
+    expect(t.decisions!.summary(approver.user).open).toBe(0);
+
+    await close(ticketId, approver, 'wont_fix'); // the same request again
+    await t.drain();
+    expect(withdrawals()).toHaveLength(1);
+    expect(t.rt.store.list({ types: ['ticket.closed'] }).map((e) => e.meta.resolution)).toEqual(['duplicate']);
+  });
+
+  it('the UAT request goes: the requester can no longer sign off a closed ticket', async () => {
+    const repo = projectRepo();
+    const s = await setup({}, repo.dir);
+    const approver = t.user('approver', 'CEO');
+    const { ticketId, req, build } = await toBuild(s, approver);
+    repo.pushUat(ticketId);
+    endBuild(build.sessionId);
+    await t.drain();
+    expect(statusOf(ticketId)).toMatchObject({ uat_signoff: 'open' });
+
+    await close(ticketId, approver, 'wont_fix');
+    await t.drain();
+    expect(statusOf(ticketId)).toEqual({ fix_plan: 'resolved', uat_signoff: 'withdrawn' });
+    const pub = await t.json<PublicTicket>('GET', `/portal/api/tickets/${ticketId}`, { headers: req.headers });
+    expect(pub).toMatchObject({ statusLabel: 'Closed', canSignOffUat: false });
+    const late = await t.request('POST', `/portal/api/tickets/${ticketId}/uat`, { headers: req.headers, body: { verdict: 'pass' } });
+    expect(late.status).toBe(409);
+    expect(s.promotions).toHaveLength(0);
+  });
+
+  it('the go-live card goes, although change control raised it about the promotion', async () => {
+    const repo = projectRepo();
+    const s = await setup({}, repo.dir, [rejectsGoLive]);
+    s.ctl.gate = true;
+    const approver = t.user('approver', 'CEO');
+    const { ticketId, req, build } = await toBuild(s, approver);
+    repo.pushUat(ticketId);
+    endBuild(build.sessionId);
+    await t.drain();
+    await t.json('POST', `/portal/api/tickets/${ticketId}/uat`, { headers: req.headers, body: { verdict: 'pass' } });
+    await t.drain();
+    const goLive = t.decisions!.list({ kind: ['go_live'] });
+    expect(goLive.map((c) => c.status)).toEqual(['open']);
+
+    await close(ticketId, approver, 'wont_fix');
+    await t.drain();
+    expect(t.decisions!.get(goLive[0]!.id)!.status).toBe('withdrawn');
+    expect(t.decisions!.list({ status: ['open'] })).toEqual([]);
+  });
+
+  it('a close that failed half way is finished when it is delivered again', async () => {
+    const repo = projectRepo();
+    const s = await setup({}, repo.dir, [rejectsGoLive]);
+    s.ctl.gate = true;
+    const approver = t.user('approver', 'CEO');
+    const { ticketId, req, build } = await toBuild(s, approver);
+    repo.pushUat(ticketId);
+    endBuild(build.sessionId);
+    await t.drain();
+    await t.json('POST', `/portal/api/tickets/${ticketId}/uat`, { headers: req.headers, body: { verdict: 'pass' } });
+    await t.drain();
+    // The decisions service fails once as the promotion completes: the ticket closes, the go-live card stays open.
+    const realWithdraw = t.decisions!.withdraw.bind(t.decisions!);
+    let failures = 1;
+    t.decisions!.withdraw = (id, reason, actor) => {
+      if (failures-- > 0) throw new Error('database is locked');
+      return realWithdraw(id, reason, actor);
+    };
+    const completed = t.rt.store.append({
+      type: 'promotion.completed',
+      actor: { kind: 'system', id: 'change' },
+      scope: { projectId: 'prj_1' },
+      meta: { promotionId: s.promotions[0]!.promotionId, mainShaBefore: 'aaaaaaa', mainShaAfter: 'bbbbbbb', breakglass: false, decisionId: null },
+      source: 'api',
+    });
+    await t.drain();
+    expect(t.rt.store.list({ types: ['ticket.closed'] })).toHaveLength(1);
+    expect(t.decisions!.list({ kind: ['go_live'] }).map((c) => c.status)).toEqual(['open']);
+
+    // The runtime hands the reactor the same event again.
+    await mod.reactors!.find((r) => r.name === 'intake.promotion')!.react(completed, null, t.rt.ctx);
+    expect(t.decisions!.list({ kind: ['go_live'] }).map((c) => c.status)).toEqual(['withdrawn']);
+    expect(t.rt.store.list({ types: ['ticket.closed'] })).toHaveLength(1);
+    await mod.reactors!.find((r) => r.name === 'intake.promotion')!.react(completed, null, t.rt.ctx);
+    expect(withdrawals()).toHaveLength(1);
+  });
+});
+
+/** A ticket whose requester signed UAT off: its go-live card waits for the Approver. */
+async function atGoLive() {
+  const repo = projectRepo();
+  const s = await setup({}, repo.dir, [rejectsGoLive]);
+  s.ctl.gate = true;
+  const approver = t.user('approver', 'CEO');
+  const { ticketId, req, build } = await toBuild(s, approver);
+  repo.pushUat(ticketId);
+  endBuild(build.sessionId);
+  await t.drain();
+  await t.json('POST', `/portal/api/tickets/${ticketId}/uat`, { headers: req.headers, body: { verdict: 'pass' } });
+  await t.drain();
+  const gate = t.decisions!.list({ kind: ['go_live'], status: ['open'] })[0]!;
+  return { s, approver, ticketId, req, gate };
+}
+const reject = (gate: { id: string }, approver: { user: Parameters<NonNullable<TestRuntime['decisions']>['resolve']>[2] }, comment?: string) =>
+  t.decisions!.resolve(gate.id, { optionId: 'reject', comment: comment ?? null, passkeyAssertion: {} }, approver.user);
+const stageOf = async (ticketId: string, approver: { headers: Record<string, string> }) =>
+  (await t.json<InternalTicket>('GET', `/api/tickets/${ticketId}`, { headers: approver.headers })).stage;
+
+describe('a go-live the Approver rejects', () => {
+  it('is escalated to a human like a refused go-live, and the requester still reads "Being worked on"', async () => {
+    const { approver, ticketId, req, gate } = await atGoLive();
+    expect(await stageOf(ticketId, approver)).toBe('go_live_gate');
+
+    await reject(gate, approver, 'Not before the freeze');
+    await t.drain();
+    expect(t.rt.store.list({ types: ['promotion.rejected'] })).toHaveLength(1);
+    expect(t.rt.store.list({ types: ['ticket.escalated_to_human'] }).map((e) => e.meta)).toEqual([expect.objectContaining({ ticketId, reason: 'golive_blocked' })]);
+    expect(await stageOf(ticketId, approver)).toBe('awaiting_human');
+    const card = t.decisions!.list({ subjectId: ticketId, status: ['open'] })[0]!;
+    expect(card).toMatchObject({ kind: 'fix_plan', requiredRole: 'approver', title: 'Claim form crashes on upload — go-live blocked' });
+    expect(card.question).toContain('the Approver rejected promotion');
+    expect(card.question).toContain('Not before the freeze');
+    expect(card.options.map((o) => o.id)).toEqual(['retry_golive', 'rebuild', 'close']);
+
+    const pub = await t.json<PublicTicket>('GET', `/portal/api/tickets/${ticketId}`, { headers: req.headers });
+    expect(pub).toMatchObject({ status: 'being_worked_on', statusLabel: 'Being worked on', canSignOffUat: false });
+    expect(JSON.stringify(pub)).not.toMatch(/reject|approver|gate|decision|promotion|dec_|prm_/i);
+  });
+
+  it('is escalated once, however often the rejection is delivered', async () => {
+    const { approver, ticketId, gate } = await atGoLive();
+    await reject(gate, approver);
+    await t.drain();
+    expect(t.rt.store.list({ types: ['ticket.escalated_to_human'] })).toHaveLength(1);
+    const rejected = t.rt.store.list({ types: ['promotion.rejected'] })[0]!;
+    await mod.reactors!.find((r) => r.name === 'intake.promotion')!.react(rejected, null, t.rt.ctx);
+    expect(t.rt.store.list({ types: ['ticket.escalated_to_human'] })).toHaveLength(1);
+    expect(t.decisions!.list({ subjectId: ticketId, status: ['open'] })).toHaveLength(1);
+  });
+
+  it('can be requested again: go-live goes back to the gate with a new card', async () => {
+    const { s, approver, ticketId, gate } = await atGoLive();
+    await reject(gate, approver);
+    await t.drain();
+    const escalation = t.decisions!.list({ subjectId: ticketId, status: ['open'] })[0]!;
+    await t.decisions!.resolve(escalation.id, { optionId: 'retry_golive' }, approver.user);
+    await t.drain();
+    expect(s.promotions).toHaveLength(2);
+    expect(await stageOf(ticketId, approver)).toBe('go_live_gate');
+    expect(t.decisions!.list({ kind: ['go_live'], status: ['open'] })).toHaveLength(1);
+  });
+
+  it('can be given up on: the ticket closes and nothing is left open', async () => {
+    const { approver, ticketId, gate } = await atGoLive();
+    await reject(gate, approver);
+    await t.drain();
+    const escalation = t.decisions!.list({ subjectId: ticketId, status: ['open'] })[0]!;
+    await t.decisions!.resolve(escalation.id, { optionId: 'close' }, approver.user);
+    await t.drain();
+    expect((await t.json<InternalTicket>('GET', `/api/tickets/${ticketId}`, { headers: approver.headers })).resolution).toBe('wont_fix');
+    expect(t.decisions!.list({ status: ['open'] })).toEqual([]);
+  });
+});
+
+describe('after the requester signs UAT off', () => {
+  const publicOf = (ticketId: string, as: { headers: Record<string, string> }) =>
+    t.json<PublicTicket>('GET', `/portal/api/tickets/${ticketId}`, { headers: as.headers });
+  /** Every public status the ticket was moved to, in order (the first, "received", is how a ticket starts). */
+  const statuses = (ticketId: string) =>
+    t.rt.store.list({ types: ['ticket.public_status_changed'] }).filter((e) => e.meta.ticketId === ticketId).map((e) => e.meta.publicStatus);
+  const gateWords = /go.?live|promotion|reject|approver|gate|decision|queue|dec_|prm_/i;
+
+  it('reads "Being worked on" while go-live waits at its gate, and "Completed" once it is live', async () => {
+    const { s, ticketId, req } = await atGoLive();
+    // The requester has nothing left to test, and nothing about the next step reaches them.
+    const waiting = await publicOf(ticketId, req);
+    expect(waiting).toMatchObject({ status: 'being_worked_on', statusLabel: 'Being worked on', canSignOffUat: false });
+    expect(JSON.stringify(waiting)).not.toMatch(gateWords);
+    expect(t.decisions!.list({ kind: ['go_live'], status: ['open'] })).toHaveLength(1);
+    expect(statuses(ticketId)).toEqual(['being_worked_on', 'ready_for_testing', 'being_worked_on']);
+
+    t.rt.store.append({
+      type: 'promotion.completed',
+      actor: { kind: 'system', id: 'change' },
+      scope: { projectId: 'prj_1' },
+      meta: { promotionId: s.promotions[0]!.promotionId, mainShaBefore: 'aaaaaaa', mainShaAfter: 'bbbbbbb', breakglass: false, decisionId: null },
+      source: 'api',
+    });
+    await t.drain();
+    expect(await publicOf(ticketId, req)).toMatchObject({ status: 'completed', statusLabel: 'Completed' });
+    expect(statuses(ticketId)).toEqual(['being_worked_on', 'ready_for_testing', 'being_worked_on', 'completed']);
+  });
+
+  it('is not offered the test again when go-live is rejected or requested again', async () => {
+    const { approver, ticketId, req, gate } = await atGoLive();
+    expect((await publicOf(ticketId, req)).status).toBe('being_worked_on');
+
+    await reject(gate, approver, 'Not before the freeze');
+    await t.drain();
+    const escalation = t.decisions!.list({ subjectId: ticketId, status: ['open'] })[0]!;
+    expect(escalation.kind).toBe('fix_plan');
+    expect(await publicOf(ticketId, req)).toMatchObject({ status: 'being_worked_on', canSignOffUat: false });
+
+    await t.decisions!.resolve(escalation.id, { optionId: 'retry_golive' }, approver.user);
+    await t.drain();
+    expect(t.decisions!.list({ kind: ['go_live'], status: ['open'] })).toHaveLength(1);
+    expect(await publicOf(ticketId, req)).toMatchObject({ status: 'being_worked_on', canSignOffUat: false });
+    expect(statuses(ticketId)).toEqual(['being_worked_on', 'ready_for_testing', 'being_worked_on']);
+  });
+
+  it('is asked to test again only when there is a new build to test', async () => {
+    const { approver, ticketId, req, gate, s } = await atGoLive();
+    await reject(gate, approver);
+    await t.drain();
+    const escalation = t.decisions!.list({ subjectId: ticketId, status: ['open'] })[0]!;
+    await t.decisions!.resolve(escalation.id, { optionId: 'rebuild' }, approver.user);
+    await t.drain();
+    expect(await publicOf(ticketId, req)).toMatchObject({ status: 'being_worked_on', canSignOffUat: false });
+
+    endBuild(s.launches.filter((l) => l.ticketId === ticketId && l.processType === 'bug-fix')[1]!.sessionId);
+    await t.drain();
+    expect(await publicOf(ticketId, req)).toMatchObject({ status: 'ready_for_testing', canSignOffUat: true });
+  });
+
+  it('delivered again, the answer changes nothing', async () => {
+    const { s, ticketId } = await atGoLive();
+    const answered = t.rt.store.list({ types: ['decision.resolved'] }).find((e) => e.meta.kind === 'uat_signoff')!;
+    const head = t.rt.store.head().seq;
+    await mod.reactors!.find((r) => r.name === 'intake.decisions')!.react(answered, t.rt.store.readPayload(answered), t.rt.ctx);
+    expect(t.rt.store.head().seq).toBe(head);
+    expect(s.promotions).toHaveLength(1);
+    expect(statuses(ticketId)).toEqual(['being_worked_on', 'ready_for_testing', 'being_worked_on']);
   });
 });

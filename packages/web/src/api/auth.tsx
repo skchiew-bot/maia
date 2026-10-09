@@ -10,6 +10,7 @@ import {
 } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { EmptyState, ErrorState } from '../components/EmptyState';
+import { PageHeader } from '../components/PageHeader';
 import { ApiError, apiGet, apiPost, loginPathFor } from './client';
 
 /** The three roles of §6. Approver (CEO) holds the gates; Builder drives the operator surface; Requester files tickets. */
@@ -193,12 +194,16 @@ export function RequireRole({ roles, children }: RequireRoleProps) {
   if (!roles.includes(user.role)) {
     if (user.role === 'requester' && !location.pathname.startsWith('/portal'))
       return <Navigate to="/portal" replace />;
+    // A page of its own, so it has the h1 every page needs and the tab title says why the area is empty.
     return (
-      <EmptyState
-        icon="compliance"
-        title="Not available for your role"
-        body={`This area needs the ${roles.map((r) => ROLE_LABEL[r]).join(' or ')} role. You are signed in as ${ROLE_LABEL[user.role]}.`}
-      />
+      <>
+        <PageHeader title="Not available for your role" subtitle={`You are signed in as ${ROLE_LABEL[user.role]}.`} />
+        <EmptyState
+          icon="compliance"
+          title={`This area needs the ${roles.map((r) => ROLE_LABEL[r]).join(' or ')} role`}
+          body="Ask an Approver if you need to work here, or pick another area from the navigation."
+        />
+      </>
     );
   }
   return <>{children}</>;

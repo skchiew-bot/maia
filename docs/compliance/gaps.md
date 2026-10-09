@@ -21,7 +21,7 @@ Threat-model items are cited as O-n (`docs/security/threat-model.md` §6).
 | G-10 | Spool replay dropped usage, throttle and exit reports | integration `0de1f65` | `packages/mod-sessions/test/sessions.test.ts` › "replays everything clients spool: observed usage, and the sidecar’s usage, throttle and process exit"; `packages/client/test/spool.test.ts` › "moves the items reported rejected (per-item results) to spool-rejected.jsonl"; `packages/e2e/test/failure.test.ts` › "managed fails closed and spools, observed never blocks; after a restart both spools flush exactly once" |
 | G-12 | Default malware scanner was a heuristic | mod-intake `7f41aa7` | `packages/mod-intake/test/scanner.test.ts` › "production mode refuses attachments when only the heuristic is available", › "auto prefers ClamAV when a client is installed, else falls back to the builtin heuristic"; `packages/daemon/test/server.test.ts` › "GET /api/health reports a missing malware scanner…". Development mode still accepts the heuristic; provisioning is P-12 |
 | G-21 | No automated off-host backup / restore | mod-audit `1160c0c` | `packages/mod-audit/test/restore.test.ts` › "restores into an empty data dir; the chain verifies in-file and against the off-host anchor, bodies decrypt with the escrowed KEK"; `backup.test.ts` › "runs at backupAtLocalTime once per local day, after the anchor job, and health tracks its age". Off until `audit.backupKeyFile` is set; the drill is the manual quarterly procedure (`docs/runbooks/backup-restore.md` §6) |
-| G-25 | Provenance trusted agent-written trailers | mod-change `8964a30`, `89a0e95` | `packages/mod-change/test/promotion.test.ts` › "a valid trailer for an unrelated approved change is an orphan: trailers are corroborated, never trusted (G-25)"; `pure.test.ts` › "never trusts a trailer the platform cannot corroborate (G-25)". The UAT rule for non-ticket promotions is **narrowed** to a CEO decision: row G-25 below |
+| G-25 | Provenance trusted agent-written trailers | mod-change `8964a30`, `89a0e95`; supervisor `3b6c198` (the HEAD is recorded at the end of every build turn, `session.head_recorded`, so work after the last task close traces too) | `packages/mod-change/test/promotion.test.ts` › "a valid trailer for an unrelated approved change is an orphan: trailers are corroborated, never trusted (G-25)"; `pure.test.ts` › "never trusts a trailer the platform cannot corroborate (G-25)". The UAT rule for non-ticket promotions is **narrowed** to a CEO decision: row G-25 below |
 | G-26 | No test wired real modules across the main contracts | `53e0852`, e2e `4084012` | `packages/mod-ledger/test/credits-boundary.test.ts` › "first cap auto-grants 25% once; the second cap stops work at the boundary, and keeps stopping it"; `packages/e2e/test/intake.test.ts` › "upload → read-only triage on claude-sim → report_diagnosis via the MCP server → fix-plan gate → build" |
 | G-27 | Untested structural properties | `77b882d` | `packages/mod-ledger/test/prompts.test.ts` › "prompt.submitted from any origin leaves session and project progress, status and timelines unchanged"; `packages/mod-metering/test/observes-only.test.ts` › "registers no PreToolUse guard and no reactor"; `packages/kernel/test/journal.test.ts` › "aoc.db and bodies.db are in WAL mode, recorded in the files themselves" |
 | G-28 | Only `aoc run` was statically checked | cli `4dd41b2` | `packages/cli/test/isolation.test.ts` › "covers every command module and finds the deps boundary", › "enumerates every leaf command" |
@@ -109,10 +109,13 @@ repositories belong to the session user and root's git refuses them (dubious own
 walk, fingerprints, commit evidence, ledger phase pins) run as the repository's owner (supplementary groups dropped,
 no home, no system or global config); root never parses agent-written config. Provenance (G-25's recorded session
 heads, unchanged) and the fast-forward checks run in the clone against where AOC last moved the branch, and again at
-execution; governance-core changes (G-41) are read from the clone too. The push target is AOC's configuration (the
-clone's `origin`, or mod-change's `promotionRemote` option when embedded), never the project's `.git/config`; remotes
-there with none configured → `promotion_remote_unconfigured`, already when the promotion or rollback is requested. The
-`prod-promote` profile reaches one process: `git push --no-verify` from the clone, a compare-and-swap of a verified
+execution; governance-core changes (G-41) are read from the clone too. The push target is AOC's configuration
+(`promotion.projects.<projectId>.promotionRemote` in aocd's config, else the clone's `origin`), never the project's
+`.git/config`; remotes there with none configured → `promotion_remote_unconfigured`, already when the promotion or
+rollback is requested. The credential profile is `promotion.promoteCredentialProfile` (default `prod-promote`) or the
+project's own: production refuses to start unless `supervisor.credentialProfilesFile` defines each one (development
+warns), and no process type may name one (a launch is refused with `promotion_profile_forbidden`, whatever the registry
+says). The `prod-promote` profile reaches one process: `git push --no-verify` from the clone, a compare-and-swap of a verified
 fast-forward (`--force-with-lease=<branch>:<base>`; `default_branch_moved` when the remote moved outside AOC).
 Rollback verification checks out of the clone into a fresh standalone checkout, hands it to the session user, and
 runs the acceptance tests through `runIsolated` sandboxed: as the session user, never with a credential, with nothing
@@ -128,11 +131,11 @@ AOC's push only; an acceptance test that writes outside its checkout fails as th
 follows the rollback, written by its owner; skipped with the reason when aocd is not root or there is no `nobody`
 user); `packages/kernel/test/git.test.ts` › "runs git there as its owner: no dubious-ownership refusal…", › "fetches
 from it into a repository of aocd's through an upload-pack run as the owner…" (same skip rule) and the planted-config
-tests; `packages/supervisor/test/isolated.test.ts`.
+tests; `packages/supervisor/test/isolated.test.ts`; the promotion settings: `packages/contracts/test/contracts.test.ts`
+› "promotion configuration…", `packages/daemon/test/config.test.ts` › "reads the promotion section…",
+`packages/mod-change/test/promotion-config.test.ts`, `packages/supervisor/test/promotion-profiles.test.ts`,
+`packages/mod-audit/test/config-watch.test.ts` › "records a change of where promotions push…".
 **Still open:**
-- `SupervisorService.runIsolated` needs the `sandbox` field in the contract (`services.ts`, lead-owned; used through a
-  local type today), and `promotionRemote` / `promoteCredentialProfile` need a config section (the daemon passes
-  mod-change no options, so the clone's `origin` and the `prod-promote` default are the only operator interface).
 - Nothing fetches the protected remote: the clone learns a branch from AOC's own pushes and, for the first promotion,
   from the project repository's view. The push lease turns a wrong guess into `default_branch_moved`, never into an
   unchecked push.
@@ -176,12 +179,12 @@ tests; `packages/supervisor/test/isolated.test.ts`.
 | P-10 | **Enablement gates** (O-21): keep the intake portal and Builder surfaces off in production until the identity stage is signed off — the portal API was merged before identity | §6, §15, R5 | CEO | Open |
 | P-11 | **Separation of duties with one Approver** (O-8): the fallback is now off (CEO, 2026-10-09), so the only Approver's own requests have no eligible resolver — appoint a deputy Approver with a passkey | §6 | CEO | Decision made; deputy Approver open |
 | P-12 | **Malware scanning in production**: provision ClamAV on the portal host | §7, R4 | CEO / CX lead | Open |
-| P-13 | **Credential profiles file and OS users**: least-privilege `git-feature`, `uat-deploy`, `prod-promote` profiles, key files declared under `files` (`{{file:<name>}}`); aocd run as root (reduced capability set) with two session users, `aoc-agent` and `aoc-reader`, each with its own group; `"mode": "production"`; file ownership per `docs/runbooks/credential-isolation.md` §4; no process type may name `prod-promote`; each project's service clone given its protected remote (`git --git-dir=<dataDir>/git/<project>.git remote add origin …`, §4 item 9) | §3, R1 | Platform Architect | Open (G-01 and G-04 software done; host setup outstanding) |
+| P-13 | **Credential profiles file and OS users**: least-privilege `git-feature`, `uat-deploy`, `prod-promote` profiles, key files declared under `files` (`{{file:<name>}}`); aocd run as root (reduced capability set) with two session users, `aoc-agent` and `aoc-reader`, each with its own group; `"mode": "production"`; file ownership per `docs/runbooks/credential-isolation.md` §4; no process type may name a promotion profile (`prod-promote`, or what `promotion.promoteCredentialProfile` and `promotion.projects.<id>.promoteCredentialProfile` name: aocd refuses such a launch, and production refuses to start unless the profiles file defines each one); each project's protected remote set in aocd's `promotion.projects.<id>.promotionRemote`, or on its service clone (`git --git-dir=<dataDir>/git/<project>.git remote add origin …`), §4 item 9 | §3, R1 | Platform Architect | Open (G-01 and G-04 software done; host setup outstanding) |
 | P-14 | **Observed-session coverage**: observed hooks with each developer's own observer token, quarterly `aoc doctor` checklist (`docs/runbooks/credential-isolation.md` §5) | §2, R1 | CEO / DevEx | Open |
 | P-15 | Discovery-class build stages on Opus | §15 | CEO | Process |
 | P-16 | Credit policy: allocations, exemptions, top-up approvers | §10 | CEO / FinOps | Open |
 | P-17 | Decision webhook (R15): endpoint and on-call owner | R15 | CEO | Open |
-| P-18 | **Set `selfModification.aocRepoPaths`** (default `[]`, so the core of the AOC repo is not yet protected) and review `protectedPaths` in production config (O-10; the default now covers all of Tier 1) | §13, R14 | CEO / lead | Open |
+| P-18 | **Set `selfModification.aocRepoPaths`** (default `[]`, so the core of the AOC repo is not yet protected) to every clone of the AOC repository that managed sessions can reach, and review `protectedPaths` in production config (O-10; the default now covers all of Tier 1). Production mode now refuses to start from a source checkout of AOC while the list is empty (`packages/daemon/test/production.test.ts`, `config.test.ts` › "checkSelfModificationBoundary"); a dist install is not asked, so its clones still have to be listed by hand | §13, R14 | CEO / lead | Open (software refusal done; the list itself is host setup) |
 | P-19 | **FX policy** (O-18): session 1700 or 1200, run time, tolerance, carried-forward alert after 3 weekdays (`docs/research/bnm-fx.md` §0) | §10, R13 | FinOps | Open (feeds G-36) |
 | P-20 | **Threat-model decisions**: O-14 (Claude credentials readable by every session; egress), O-19 (passkeys on every Approver gate, not only go-live / rollback / break-glass), O-20 (`synchronous = NORMAL` vs `FULL`), O-25 (observed sessions outside projects, PDPA) | §3, §6, §13 | CEO / architect | Open |
 | P-21 | **HTTPS `publicUrl` in production** (cookie `Secure` flag, WebAuthn origin) — O-22 | §6 | Ops | Open |

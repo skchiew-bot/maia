@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Link, useLocation, useParams, useSearchParams } from 'react-router-dom';
+import { useMemo, useState } from 'react';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { ApiError } from '../../api';
 import {
   Button,
@@ -23,6 +23,7 @@ import {
   useNow,
   useToast,
 } from '../../components';
+import { useSectionScroll } from '../../lib/sectionScroll';
 import { useProjectData } from './data';
 import { EditProjectDialog, EnhancementDialog, NewThreadDialog } from './dialogs';
 import { MasterTimeline } from './MasterTimeline';
@@ -59,7 +60,6 @@ export default function ProjectPage() {
   const { id = '' } = useParams();
   const now = useNow();
   const toast = useToast();
-  const location = useLocation();
   const [params, setParams] = useSearchParams();
   const [dialog, setDialog] = useState<DialogKind>(null);
   const data = useProjectData(id);
@@ -106,11 +106,7 @@ export default function ProjectPage() {
   }, [project, history.data, timeline.data, now]);
 
   // In-page links (#timeline, #drift…) and deep links from the list scroll once the target has rendered.
-  const ready = Boolean(project && timeline.data);
-  useEffect(() => {
-    if (!ready || !location.hash) return;
-    document.getElementById(decodeURIComponent(location.hash.slice(1)))?.scrollIntoView?.({ block: 'start' });
-  }, [ready, location.hash, location.key]);
+  useSectionScroll(detail, timeline);
 
   if (!project) {
     const notFound = detail.error instanceof ApiError && detail.error.status === 404;

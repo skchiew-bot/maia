@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import type { DecisionCardView } from '@aoc/contracts';
+import type { DecisionCardView, ResolutionAssurance } from '@aoc/contracts';
 import { Badge } from '../../components/Badge';
 import { DataTable, type DataTableColumn } from '../../components/DataTable';
 import { EmptyState } from '../../components/EmptyState';
@@ -8,8 +8,22 @@ import { RelativeTime } from '../../components/RelativeTime';
 import { Widget, WidgetGrid } from '../../components/Widget';
 import { formatAge, formatInteger } from '../../lib/format';
 import type { Directory } from './directory';
-import { KIND_LABEL, closedWithinSla, latencyByKind, methodLabel, outcomeLabel, requesterOf } from './model';
+import {
+  KIND_LABEL,
+  assuranceLabel,
+  assuranceOf,
+  closedWithinSla,
+  latencyByKind,
+  outcomeLabel,
+  requesterOf,
+} from './model';
 import { SlaLatency } from './SlaLatency';
+
+const ASSURANCE_ICON: Record<ResolutionAssurance, 'key' | 'registry' | 'user'> = {
+  signature: 'key',
+  policy: 'registry',
+  attribution: 'user',
+};
 
 function decidedBy(card: DecisionCardView, directory: Directory): string {
   if (card.resolution) return requesterOf(card.resolution.resolvedBy, directory).name;
@@ -75,21 +89,12 @@ export function ResolvedView({ cards, directory, selectedId, onSelect, busy }: R
         id: 'method',
         header: 'How',
         width: '210px',
-        sortValue: (c) => (c.resolution ? methodLabel(c.resolution) : ''),
+        sortValue: (c) => (c.resolution ? assuranceLabel(c.resolution) : ''),
         cell: (c) =>
           c.resolution ? (
             <span className="dec-method">
-              <Icon
-                name={
-                  c.resolution.method === 'passkey'
-                    ? 'key'
-                    : c.resolution.method === 'policy'
-                      ? 'registry'
-                      : 'user'
-                }
-                size={12}
-              />
-              {methodLabel(c.resolution)}
+              <Icon name={ASSURANCE_ICON[assuranceOf(c.resolution)]} size={12} />
+              {assuranceLabel(c.resolution)}
             </span>
           ) : (
             <span className="dec-muted">—</span>
@@ -122,7 +127,7 @@ export function ResolvedView({ cards, directory, selectedId, onSelect, busy }: R
   );
 
   const resolved = cards.filter((c) => c.status === 'resolved');
-  const signed = resolved.filter((c) => c.resolution?.method === 'passkey').length;
+  const signed = resolved.filter((c) => c.resolution && assuranceOf(c.resolution) === 'signature').length;
 
   return (
     <WidgetGrid>

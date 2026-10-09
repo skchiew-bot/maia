@@ -137,7 +137,7 @@ describe('request bodies are capped before any route reads them', () => {
     const mod: AocModule = {
       name: 'echo',
       routes(app) {
-        for (const path of ['/ingest/echo', '/api/echo', '/portal/api/echo']) {
+        for (const path of ['/ingest/echo', '/ingest/git/echo.git/git-receive-pack', '/api/echo', '/portal/api/echo']) {
           app.post(path, async (c) => {
             const bytes = (await c.req.text()).length;
             reads++; // counts bodies a route actually received
@@ -160,6 +160,17 @@ describe('request bodies are capped before any route reads them', () => {
     expect(ingest.status).toBe(413);
     expect(reads()).toBe(0);
     expect((await t.app.request('/api/echo', { method: 'POST', body: 'small' })).status).toBe(200);
+    await t.close();
+  });
+
+  it('gives a git push to the supervisor gateway room for a pack, and still a cap of its own (R-02)', async () => {
+    const { t, reads } = await setup();
+    const push = '/ingest/git/echo.git/git-receive-pack';
+    const declare = (n: number) => ({ method: 'POST', body: 'x', headers: { ...t.ingestHeaders('observer'), 'content-length': String(n) } });
+    expect((await t.app.request('/ingest/echo', declare(MAX_BODY_BYTES.ingest + 1))).status).toBe(413);
+    expect((await t.app.request(push, declare(MAX_BODY_BYTES.ingest + 1))).status).toBe(200);
+    expect((await t.app.request(push, declare(MAX_BODY_BYTES.push + 1))).status).toBe(413);
+    expect(reads()).toBe(1);
     await t.close();
   });
 

@@ -15,9 +15,10 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { AocConfigSchema } from '@aoc/contracts';
 import { daemonEnv } from './daemon-env';
 import { DEFAULT_TIMING, launchBody, loadFleet, nextAction, saveFleet, selectSlots, type FleetState, type KeeperTiming, type SessionStatus, type SlotSpec } from './fleet';
-import { demoLayout, isSeeded, readDemoTokens, resetDemoDir, type DemoLayout, type DemoTokens } from './layout';
+import { PROJECT_SLUGS, demoLayout, isSeeded, readDemoTokens, resetDemoDir, type DemoLayout, type DemoTokens } from './layout';
 import { groupExited } from './process-group';
 import { claudeSimProblem } from './sim-guard';
+import { ensureWorkspace, workspaceDir } from './workspaces';
 
 const REPO = fileURLToPath(new URL('../../..', import.meta.url));
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -71,7 +72,7 @@ function prepareDataDir(layout: DemoLayout, reset: boolean): void {
   if (existsSync(layout.root) && readdirSync(layout.root).length) {
     throw new Error(`${layout.root} is not empty but holds no complete demo; pass an empty directory or add --reset`);
   }
-  say(`Seeding ${layout.root} (14 days of history, about 10 s)…`);
+  say(`Seeding ${layout.root} (14 days of history, up to a minute)…`);
   const r = spawnSync(process.execPath, ['--import', tsxImport(), join(HERE, 'seed.ts'), '--data-dir', layout.root], { stdio: 'inherit', cwd: join(REPO, 'packages/demo') });
   if (r.status !== 0) throw new Error(`seeding failed (${r.signal ?? `exit ${r.status}`})`);
 }
@@ -181,7 +182,7 @@ class Keeper {
   constructor(
     private readonly api: Api,
     private readonly tokens: DemoTokens,
-    private readonly file: string,
+    private readonly layout: DemoLayout,
     private readonly timing: KeeperTiming,
     private readonly state: FleetState,
     private readonly slots: readonly SlotSpec[],
@@ -200,7 +201,7 @@ class Keeper {
       }
     }
     this.firstTick = false;
-    saveFleet(this.file, this.state);
+    saveFleet(this.layout.fleet, this.state);
   }
 
   private async step(slot: SlotSpec): Promise<void> {
@@ -237,7 +238,15 @@ class Keeper {
   }
 
   private async launch(slot: SlotSpec): Promise<void> {
-    const r = await this.api.call<{ sessionId: string }>('POST', '/api/sessions', this.tokens.tokens[slot.owner].token, launchBody(slot, this.tokens));
+    let cwd: string | undefined;
+    if (slot.workspace) {
+      try {
+        cwd = ensureWorkspace(join(this.layout.repos, PROJECT_SLUGS[slot.project]), workspaceDir(this.layout, this.tokens.projects[slot.project], slot.key));
+      } catch (err) {
+        return this.complain(slot, `no workspace for the next run: ${(err as Error).message}`);
+      }
+    }
+    const r = await this.api.call<{ sessionId: string }>('POST', '/api/sessions', this.tokens.tokens[slot.owner].token, launchBody(slot, this.tokens, cwd));
     if (r.status !== 201 || !r.data?.sessionId) {
       return this.complain(slot, `launch refused: HTTP ${r.status} ${JSON.stringify(r.data).slice(0, 300)}`);
     }
@@ -295,7 +304,9 @@ function banner(o: LiveOptions, layout: DemoLayout, tokens: DemoTokens, daemon: 
     '  Fleet (relaunched when a run finishes):',
     slots,
     '  Seeded too: a decision waiting on you (answer it and the session resumes), a throttled session,',
-    '  a dead docs session (press Restart), an observed developer terminal.',
+    '  a dead docs session (press Restart), an observed developer terminal, intake tickets in every stage',
+    '  (the one in triage is being diagnosed by two read-only agents on claude-sim right now), a verified',
+    '  rollback and a break-glass record waiting for you, and the change-control history behind them.',
     '',
     '  Ctrl-C stops the running sessions, then the daemon.',
     '',
@@ -340,8 +351,9 @@ async function main(): Promise<void> {
         await exited(daemon, 5_000);
       }
     }
-    // aocd's sidecars outlive it for a final flush that lands in the data directory: "Stopped." must mean nothing of
-    // this demo is left running or writing (a --reset or an rm -rf right after would race with it).
+    // A clean stop leaves nothing behind (aocd waits for its sidecars), but a killed aocd leaves them to spool a final
+    // flush into the data directory: "Stopped." must mean nothing of this demo is left running or writing (a --reset or
+    // an rm -rf right after would race with it).
     if (daemon.pid && !(await groupExited(daemon.pid, 15_000))) {
       say('aocd left processes behind; stopping its process group.');
       try {
@@ -362,7 +374,7 @@ async function main(): Promise<void> {
   });
 
   await waitHealthy(base, daemon, logFile);
-  const keeper = new Keeper(api, tokens, layout.fleet, o.timing, fleet, o.slots);
+  const keeper = new Keeper(api, tokens, layout, o.timing, fleet, o.slots);
   console.log(banner(o, layout, tokens, daemon));
   await keeper.tick();
   timer = setInterval(() => void keeper.tick(), TICK_MS);

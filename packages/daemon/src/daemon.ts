@@ -4,7 +4,7 @@ import { serve } from '@hono/node-server';
 import { sessionIsolationOf, type AocConfig } from '@aoc/contracts';
 import { createLogger } from '@aoc/kernel';
 import pkg from '../package.json' with { type: 'json' };
-import { ConfigError, loadConfig, parseDaemonArgs, type LoadedConfig } from './config';
+import { ConfigError, checkSelfModificationBoundary, loadConfig, parseDaemonArgs, type LoadedConfig } from './config';
 import { describeMapping } from './mapping';
 import { runRestoreCommand } from './restore';
 import { createAocServer, type AocServer } from './server';
@@ -47,6 +47,7 @@ export async function runDaemon(
       return;
     }
     loaded = loadConfig({ argv, env });
+    checkSelfModificationBoundary(loaded);
   } catch (err) {
     if (!(err instanceof ConfigError)) throw err;
     process.stderr.write(`aocd: ${err.message}\n`);
@@ -92,7 +93,7 @@ export async function runDaemon(
     }
     stopping = true;
     log.info('shutting down', { signal });
-    stop(server, aoc).then(
+    stopDaemon(server, aoc).then(
       () => {
         log.info('stopped');
         process.exit(0);
@@ -120,8 +121,12 @@ function listen(aoc: AocServer, host: string, port: number): Promise<Server> {
   });
 }
 
-/** Stop accepting, end the event streams, let in-flight requests finish (bounded), then stop the runtime. */
-async function stop(server: Server, aoc: AocServer): Promise<void> {
+/**
+ * Quiesce the modules while the server still answers (a session's sidecar sends its last usage through it), then stop
+ * accepting, end the event streams, let in-flight requests finish (bounded), then stop the runtime.
+ */
+export async function stopDaemon(server: Server, aoc: AocServer): Promise<void> {
+  await aoc.quiesce();
   const closed = new Promise<void>((resolve) => server.close(() => resolve()));
   aoc.closeStreams();
   server.closeIdleConnections();

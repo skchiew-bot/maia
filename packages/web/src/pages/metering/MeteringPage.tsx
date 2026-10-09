@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type {
+  CostPerOutcomeDTO,
   DecisionListResponse,
   FxRateDTO,
   FxStatusDTO,
@@ -32,6 +33,7 @@ import {
   useToast,
 } from '../../components';
 import { formatMyr, formatPercent, formatShortDate, formatTokens, formatUsd } from '../../lib/format';
+import { useSectionScroll } from '../../lib/sectionScroll';
 import { isEvent } from '../registry/streamEvents';
 import { useNames } from '../registry/useNames';
 import { BreakdownPanel, TokenTypesPanel, type BreakdownDim } from './BreakdownPanels';
@@ -50,14 +52,16 @@ import {
   type RangeValue,
 } from './meteringModel';
 import { MigrationPanel } from './MigrationPanel';
+import { OutcomePanel } from './OutcomePanel';
 import { RateCardPanel } from './RateCardPanel';
 import type { RateCardDraft } from './RateCardDialog';
 import { ThrottlePanel } from './ThrottlePanel';
-import { useHashScroll } from './useHashScroll';
 import './metering.css';
 
 const USAGE_EVENTS = ['usage.recorded', 'rollup.closed', 'ratecard.published', 'subscription.updated', 'fx.rate_recorded', 'throttle.'];
 const THROTTLE_EVENTS = ['throttle.', 'rollup.closed', 'session.ended'];
+/** What changes cost per outcome: spend arriving, and the outcomes themselves (ticket closed, change and phase completed). */
+const OUTCOME_EVENTS = ['usage.recorded', 'ticket.', 'change.completed', 'phase.completed'];
 const FX_EVENTS = ['fx.', 'rollup.closed'];
 const SCOPES = [
   { value: 'org', label: 'Team' },
@@ -80,6 +84,8 @@ export default function MeteringPage() {
   const team = scope === 'org';
 
   const daily = useResource<MeteringDailyDTO>('/api/metering/daily', { query: q, enabled: ready, refreshOn: (m) => isEvent(m, USAGE_EVENTS) });
+  // Cost per outcome is a portfolio lens: the daemon refuses a per-person view, so it never takes the scope.
+  const outcomes = useResource<CostPerOutcomeDTO>('/api/metering/cost-per-outcome', { query: span, enabled: ready, refreshOn: (m) => isEvent(m, OUTCOME_EVENTS) });
   const summary = useResource<MeteringSummaryDTO>('/api/metering/summary', {
     query: q ? { ...q, groupBy: dim } : undefined,
     enabled: ready,
@@ -104,7 +110,7 @@ export default function MeteringPage() {
     refreshOn: (m) => isEvent(m, ['decision.', 'fx.discrepancy_raised', 'fx.discrepancy_resolved']),
   });
   const projects = useResource<ProjectSummary[]>('/api/projects', { refreshOn: (m) => isEvent(m, ['project.']) });
-  useHashScroll(daily.data !== undefined);
+  useSectionScroll(daily);
 
   const fxByDate = useMemo(() => new Map((fxRates.data?.rates ?? []).map((r) => [r.date, r])), [fxRates.data]);
   const projectName = (id: string | null) => (id ? (projects.data?.find((p) => p.projectId === id)?.name ?? null) : null);
@@ -301,6 +307,10 @@ export default function MeteringPage() {
                 </ResourceView>
               </Widget>
             )}
+          </WidgetGrid>
+
+          <WidgetGrid>
+            <OutcomePanel resource={outcomes} projectName={projectName} />
           </WidgetGrid>
 
           <WidgetGrid>

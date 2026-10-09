@@ -17,13 +17,26 @@ export interface ToolPolicy {
   disallowedTools: string[];
 }
 
+/** True when the registry entry says anything about Bash: `Bash`, or a scoped rule such as `Bash(git commit:*)`. */
+const hasBashRule = (rules: readonly string[]) => rules.some((r) => r === 'Bash' || r.startsWith('Bash('));
+
 /**
- * MCP tools are denied in -p mode unless allowed, so the AOC server is always allowed (server-level rule).
- * Read-only types additionally deny every file-changing tool, whatever the registry says (defence in depth).
+ * Nobody can answer a permission prompt under -p, so whatever is not allowed up front is denied. Verified on 2.1.295
+ * (acceptEdits): MCP tools are denied unless allowed, so the AOC server is always allowed (server-level rule); and so
+ * is every Bash command beyond read-only ones (`ls`, `git status`, ...) and plain file commands (`touch`, `mv`, ...):
+ * `git add`, `git commit`, `npm test` all answer "This command requires approval". A writer that cannot commit or run
+ * its tests cannot do the work, so a writer type whose registry entry says nothing about Bash is granted it (the gate
+ * on its commands is AOC's own: PreToolUse guards, credential isolation; a hook deny still wins over an allow rule).
+ * An entry that does name Bash rules, such as the shipped types' few git verbs, is the type's whole Bash policy and is
+ * passed as written: widening it here would undo it. Read-only types never get Bash and additionally deny every
+ * file-changing tool, whatever the registry says (defence in depth).
  */
 export function toolPolicy(t: ProcessType): ToolPolicy {
-  const allowed = unique([`mcp__${AOC_MCP_SERVER_NAME}`, ...(t.tools.allow ?? [])]);
-  const disallowed = unique([...(t.tools.deny ?? []), ...(t.readOnly ? FILE_CHANGING_TOOLS : [])]);
+  const allow = t.tools.allow ?? [];
+  const deny = t.tools.deny ?? [];
+  const bash = !t.readOnly && !hasBashRule(allow) && !hasBashRule(deny) ? ['Bash'] : [];
+  const allowed = unique([`mcp__${AOC_MCP_SERVER_NAME}`, ...bash, ...allow]);
+  const disallowed = unique([...deny, ...(t.readOnly ? FILE_CHANGING_TOOLS : [])]);
   return {
     ...(t.builtinTools ? { builtinTools: t.builtinTools } : {}),
     allowedTools: allowed,
@@ -200,23 +213,59 @@ const FILE_REF = /\{\{file:([^}]*)\}\}/g;
 /** Key files are small; anything bigger is a mistake in the profile, not a key. */
 export const MAX_CREDENTIAL_FILE_BYTES = 1024 * 1024;
 
+const EnvAndFilesSchema = z.object({ env: z.record(z.string()).default({}), files: z.record(z.string()).optional() });
 const CredentialProfilesSchema = z.object({
-  profiles: z.record(z.object({ env: z.record(z.string()), files: z.record(z.string()).optional() })),
+  profiles: z.record(
+    EnvAndFilesSchema.extend({
+      env: z.record(z.string()),
+      push: z
+        .object({ refs: z.array(z.string().min(1).max(200)).max(50) })
+        .strict()
+        .optional(),
+      session: EnvAndFilesSchema.optional(),
+    }),
+  ),
 });
 
-/**
- * A credential profile: env for the session, plus the key files it needs. An env value refers to a key file as
- * `{{file:<name>}}`, so an isolated session can be handed a private per-session copy instead of the original.
- */
-export interface CredentialProfile {
+/** Env plus the key files it needs; an env value refers to a key file as `{{file:<name>}}`. */
+export interface ProfileCredentials {
   env: Record<string, string>;
   /** Absolute path of each key file, by name. */
   files: Record<string, string>;
 }
 
 /**
- * Every profile of a `{ profiles: { [name]: { env, files? } } }` file. Errors never echo file content (a JSON
- * parse error would quote the secret it choked on) and name env variables, never their values.
+ * A credential profile (R-02). Its `env` and `files` are the credential, held by aocd alone: the push gateway
+ * forwards a session's allowed branches upstream with it, and runIsolated uses it. A session never receives it.
+ * `push.refs` names the branches the profile's sessions may push (globs: `*` within a path segment, `**` across
+ * segments; `{sessionId}` `{ticketId}` `{projectId}` `{threadId}` stand for the session's own ids). `session` is
+ * what the session itself is given — readable by the model, and so by every builder through it: never a key that
+ * can push. Its key files reach an isolated session as private per-turn copies.
+ */
+export interface CredentialProfile extends ProfileCredentials {
+  push: { refs: string[] } | null;
+  session: ProfileCredentials;
+}
+
+function checkedCredentials(name: string, where: string, p: z.infer<typeof EnvAndFilesSchema>): ProfileCredentials {
+  const files = p.files ?? {};
+  for (const [key, path] of Object.entries(files)) {
+    if (!FILE_NAME.test(key))
+      throw new Error(`credential profile "${name}": ${where}file names are 1-64 letters, digits, . _ -`);
+    if (!isAbsolute(path)) throw new Error(`credential profile "${name}": ${where}file "${key}" needs an absolute path`);
+  }
+  for (const [k, v] of Object.entries(p.env)) {
+    for (const m of v.matchAll(FILE_REF)) {
+      if (!Object.hasOwn(files, m[1]!))
+        throw new Error(`credential profile "${name}": ${where}${k} refers to a file that "${where}files" does not declare`);
+    }
+  }
+  return { env: { ...p.env }, files: { ...files } };
+}
+
+/**
+ * Every profile of a `{ profiles: { [name]: { env, files?, push?, session? } } }` file. Errors never echo file
+ * content (a JSON parse error would quote the secret it choked on) and name env variables, never their values.
  */
 export function readCredentialProfiles(file: string): Record<string, CredentialProfile> {
   let raw: unknown;
@@ -233,26 +282,18 @@ export function readCredentialProfiles(file: string): Record<string, CredentialP
   const parsed = CredentialProfilesSchema.safeParse(raw);
   if (!parsed.success)
     throw new Error(
-      'credential profiles file must look like {"profiles":{"<name>":{"env":{...},"files":{"<key>":"/abs/path"}}}}',
+      'credential profiles file must look like {"profiles":{"<name>":{"env":{...},"files":{"<key>":"/abs/path"},"push":{"refs":["refs/heads/..."]},"session":{"env":{...}}}}}',
     );
   const out: Record<string, CredentialProfile> = {};
   for (const [name, p] of Object.entries(parsed.data.profiles)) {
-    const files = p.files ?? {};
-    for (const [key, path] of Object.entries(files)) {
-      if (!FILE_NAME.test(key))
-        throw new Error(`credential profile "${name}": file names are 1-64 letters, digits, . _ -`);
-      if (!isAbsolute(path))
-        throw new Error(`credential profile "${name}": file "${key}" needs an absolute path`);
-    }
-    for (const [k, v] of Object.entries(p.env)) {
-      for (const m of v.matchAll(FILE_REF)) {
-        if (!Object.hasOwn(files, m[1]!))
-          throw new Error(
-            `credential profile "${name}": ${k} refers to a file that "files" does not declare`,
-          );
-      }
-    }
-    out[name] = { env: { ...p.env }, files: { ...files } };
+    for (const ref of p.push?.refs ?? [])
+      if (!ref.startsWith('refs/heads/'))
+        throw new Error(`credential profile "${name}": push.refs name branches (refs/heads/...), not ${ref}`);
+    out[name] = {
+      ...checkedCredentials(name, '', p),
+      push: p.push ? { refs: [...p.push.refs] } : null,
+      session: checkedCredentials(name, 'session.', p.session ?? { env: {} }),
+    };
   }
   return out;
 }
@@ -274,10 +315,34 @@ export function resolveFileRefs(
   return out;
 }
 
-/** Env of a named profile with key files at their original paths (supervisor-run commands, dev sessions). */
+/**
+ * Env of a named profile's credential with key files at their original paths: for commands aocd runs itself
+ * (the push gateway's upstream push, promotion). It never goes into a session (R-02).
+ */
 export function readCredentialProfile(file: string, profile: string): Record<string, string> {
   const p = readCredentialProfileSpec(file, profile);
   return resolveFileRefs(p.env, p.files);
+}
+
+/** Name of the git remote that is the push gateway in a session's environment. */
+export const GATEWAY_REMOTE = 'aoc';
+
+/**
+ * Git config for a session's environment (GIT_CONFIG_COUNT/KEY_n/VALUE_n outranks every config file, so the workspace
+ * cannot redirect it): remote `aoc` is the supervisor's push gateway, authenticated by the session's ingest token.
+ * The token is already in the session's environment (hooks and the MCP server need it); it opens no door but the
+ * gateway's own checks, and only while one of the session's turns runs.
+ */
+export function gatewayGitEnv(gatewayUrl: string, token: string): Record<string, string> {
+  return {
+    GIT_CONFIG_COUNT: '2',
+    GIT_CONFIG_KEY_0: `remote.${GATEWAY_REMOTE}.url`,
+    GIT_CONFIG_VALUE_0: gatewayUrl,
+    GIT_CONFIG_KEY_1: `http.${gatewayUrl}.extraHeader`,
+    GIT_CONFIG_VALUE_1: `Authorization: Bearer ${token}`,
+    // A session has no terminal: a refused push must fail, never wait for a password.
+    GIT_TERMINAL_PROMPT: '0',
+  };
 }
 
 /**

@@ -104,8 +104,7 @@ export function diagnostics(aocData: string, afterSeq: number, log: string, subj
   const events = eventsAfter(aocData, afterSeq)
     .filter((e) => FLOW_EVENT.test(e.type) && e.type !== 'session.liveness_changed')
     .map((e) => `  #${e.seq} ${e.type} ${JSON.stringify(e.meta)}`);
-  // The demo's fake LLM answers nothing, so every learning pass logs one warning per unclassified error: skip that noise.
-  const tail = log.split('\n').filter((l) => !l.includes('learning.classify failed')).slice(-40).join('\n');
+  const tail = log.split('\n').slice(-40).join('\n');
   return [
     `--- daemon log (last 40 lines) ---`,
     tail,

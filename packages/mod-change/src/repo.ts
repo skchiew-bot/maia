@@ -28,17 +28,8 @@ export type PublishResult =
   | { ok: false; refused: 'not_fast_forward'; detail: string }
   | { ok: false; failed: string; detail: string };
 
-/** Transports a promotion remote may use. Plain http, git://, ext:: and helper URLs are refused. */
-export type Transport = 'ssh' | 'https' | 'file';
-
-export function transportOf(url: string): Transport | null {
-  if (!url || url.startsWith('-') || /[\s\0]/.test(url)) return null;
-  const scheme = /^([A-Za-z][A-Za-z0-9+.-]*):\/\//.exec(url)?.[1]?.toLowerCase();
-  if (scheme) return scheme === 'https' || scheme === 'ssh' || scheme === 'file' ? scheme : null;
-  if (url.startsWith('/')) return 'file';
-  // scp-like `[user@]host:path`: a colon before any slash (git's own rule), and no `<helper>::` syntax.
-  return /^(?:[A-Za-z0-9._-]+@)?[A-Za-z0-9.-]+:(?!:)/.test(url) ? 'ssh' : null;
-}
+/** The transports a promotion remote may use are the configuration's (@aoc/contracts): one rule for both. */
+export { transportOf, type GitTransport } from '@aoc/contracts';
 
 /** A remote URL without its user-info, where a token may hide: for messages and event payloads. */
 export function displayUrl(url: string): string {

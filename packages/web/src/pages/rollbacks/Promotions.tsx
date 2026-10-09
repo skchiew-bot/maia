@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { PromotionDTO, ProvenanceDTO } from '@aoc/contracts';
 import { useResource } from '../../api/useResource';
@@ -14,6 +14,7 @@ import {
   type DataTableColumn,
 } from '../../components';
 import { formatInteger } from '../../lib/format';
+import { decisionHref } from '../../lib/links';
 import { actorKindOf, shortId } from '../changes/model';
 import { ActorName, PersonName } from '../audit/people';
 import { LoadFailed, Skeleton } from '../audit/Skeleton';
@@ -80,11 +81,22 @@ function ProvenanceDetail({ projectId, sha }: { projectId: string; sha: string }
 export function PromotionsTable({
   promotions,
   projectName,
+  focusId,
 }: {
   promotions: readonly PromotionDTO[];
   projectName: (id: string) => string;
+  /** A promotion to open on arrival (a Control Tower link); opened once, then the reader is in charge. */
+  focusId?: string;
 }) {
   const [open, setOpen] = useState<PromotionDTO | null>(null);
+  const [focused, setFocused] = useState(false);
+  useEffect(() => {
+    if (!focusId || focused) return;
+    const target = promotions.find((p) => p.promotionId === focusId);
+    if (!target) return;
+    setOpen(target);
+    setFocused(true);
+  }, [focusId, focused, promotions]);
   const columns = useMemo<DataTableColumn<PromotionDTO>[]>(
     () => [
       {
@@ -178,9 +190,7 @@ export function PromotionsTable({
                 {
                   term: 'Gate',
                   value: open.decisionId ? (
-                    <Link to={`/decisions?focus=${encodeURIComponent(open.decisionId)}`}>
-                      go-live decision
-                    </Link>
+                    <Link to={decisionHref(open.decisionId)}>go-live decision</Link>
                   ) : open.breakglass ? (
                     'break-glass decision (provenance waived)'
                   ) : (

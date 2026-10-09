@@ -15,6 +15,7 @@ import {
   formatShortDate,
   type DataTableColumn,
 } from '../../components';
+import { decisionHref } from '../../lib/links';
 import { modelLabel } from './registryModel';
 
 export interface PlaybookActions {
@@ -164,7 +165,7 @@ export function PlaybooksPanel({ playbooks, entries, decisions, nameOf, actions,
           )}
           {p.retiredAt && <li>Retired {formatShortDate(p.retiredAt)}</li>}
           <li>
-            <Link to="/decisions">Decision</Link>
+            <Link to={decisionHref(p.decisionId)}>Decision</Link>
             {p.sourceSessionId && (
               <>
                 {' '}

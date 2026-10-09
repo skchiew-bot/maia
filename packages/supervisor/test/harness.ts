@@ -35,8 +35,14 @@ export const REPO_REGISTRY = fileURLToPath(new URL('../../../config/process-type
 export const SECRETS = {
   aocdDeployKey: 'aocd-deploy-key-SECRET-1',
   aocdMasterKey: 'aocd-master-key-SECRET-2',
+  /** Credentials aocd holds to push upstream (R-02): no session ever receives them. */
   gitFeature: 'ghp_feature_SECRET-3',
   uatDeploy: 'uat_deploy_SECRET-4',
+  /** The content of the key file the git-feature credential names. */
+  featureKey: 'feature-KEY-FILE-SECRET-6',
+  /** What a profile hands to its sessions (model-visible by construction: a read-only token). */
+  sessionRead: 'npm_read_SECRET-5',
+  heldOnly: 'held_only_SECRET-7',
 };
 
 const TYPES: ProcessType[] = ProcessRegistrySchema.parse({
@@ -56,6 +62,20 @@ const TYPES: ProcessType[] = ProcessRegistrySchema.parse({
       class: 'discovery',
       model: 'opus',
       credentialProfile: 'git-feature',
+    },
+    {
+      id: 'bug-fix',
+      name: 'Bug fix',
+      class: 'execution',
+      model: 'sonnet',
+      credentialProfile: 'uat-deploy',
+    },
+    {
+      id: 'held-only',
+      name: 'Credential held, nothing pushable',
+      class: 'execution',
+      model: 'sonnet',
+      credentialProfile: 'held-only',
     },
     {
       id: 'bug-triage',
@@ -121,6 +141,8 @@ export class StubLedger implements LedgerService {
   defaultPct = 50;
   briefProblems: string[] = [];
   readonly repoPaths = new Map<string, string>();
+  /** The projects that exist: the real ledger would conjure any other on a launch, the supervisor must not let it. */
+  readonly projects = new Set<string>(['prj_demo']);
   private n = 0;
 
   hasManifest(): boolean {
@@ -150,6 +172,9 @@ export class StubLedger implements LedgerService {
   getThread(threadId: string): ThreadInfo | null {
     return this.threads.get(threadId) ?? null;
   }
+  hasProject(projectId: string): boolean {
+    return this.projects.has(projectId);
+  }
   ensureThread(input: { projectId: string; threadId?: string | null; title?: string }): ThreadInfo {
     const threadId = input.threadId ?? `thr_test${++this.n}`;
     let t = this.threads.get(threadId);
@@ -171,13 +196,15 @@ export class StubLedger implements LedgerService {
     const t = this.threads.get(threadId);
     if (t?.activeWriterSessionId === sessionId) t.activeWriterSessionId = null;
   }
+  /** Appended to the brief text: agent-written records (task titles, decision context) feed the real brief. */
+  briefSuffix = '';
   buildHandoffBrief(threadId: string, fromSessionId: string): HandoffBrief {
     const t = this.threads.get(threadId)!;
     return {
       threadId,
       projectId: t.projectId,
       fromSessionId,
-      text: `HANDOFF ${threadId}: open tasks t3, t4; decision dec_x chose option B; see src/auth.ts`,
+      text: `HANDOFF ${threadId}: open tasks t3, t4; decision dec_x chose option B; see src/auth.ts${this.briefSuffix}`,
       openTaskIds: ['t3', 't4'],
       openDecisionIds: [],
       filePointers: ['src/auth.ts'],
@@ -274,6 +301,8 @@ export interface HarnessOptions {
   log?: Logger;
   /** The fake sidecar runs until SIGTERM, then holds its exit until `releaseSidecars()` (its last-report window). */
   sidecarHold?: boolean;
+  /** The fake sidecar ignores SIGTERM and never exits on its own (only SIGKILL ends it). */
+  sidecarStubborn?: boolean;
   /** Process types added to the stub registry. */
   types?: ProcessType[];
   /** aocd environment entries added to (or, with undefined, removed from) the default one (e.g. FAKE_SIDECAR_LINGER=1). */
@@ -296,12 +325,25 @@ export async function createHarness(o: HarnessOptions = {}) {
   const sidecarLog = join(root, 'sidecar-calls.jsonl');
   const sidecarHoldDir = dir('sidecar-hold');
   const profilesFile = join(root, 'credential-profiles.json');
+  const featureKeyFile = join(root, 'git-feature.key');
+  writeFileSync(featureKeyFile, `${SECRETS.featureKey}\n`, { mode: 0o600 });
   writeFileSync(
     profilesFile,
     JSON.stringify({
       profiles: {
-        'git-feature': { env: { GIT_PUSH_TOKEN: SECRETS.gitFeature } },
-        'uat-deploy': { env: { DEPLOY_TOKEN: SECRETS.uatDeploy } },
+        // `env` and `files` are the credential, held by aocd; `push` says which branches its sessions may push;
+        // `session` is all a session itself is given.
+        'git-feature': {
+          env: { GIT_PUSH_TOKEN: SECRETS.gitFeature, GIT_KEY_FILE: '{{file:key}}' },
+          files: { key: featureKeyFile },
+          push: { refs: ['refs/heads/feature/**', 'refs/heads/aoc/{threadId}/**'] },
+          session: { env: { NPM_READ_TOKEN: SECRETS.sessionRead, GIT_AUTHOR_NAME: 'AOC feature agent' } },
+        },
+        'uat-deploy': {
+          env: { DEPLOY_TOKEN: SECRETS.uatDeploy },
+          push: { refs: ['refs/heads/uat/{ticketId}'] },
+        },
+        'held-only': { env: { HELD_ONLY_TOKEN: SECRETS.heldOnly } },
       },
     }),
   );
@@ -334,7 +376,13 @@ export async function createHarness(o: HarnessOptions = {}) {
         claudeArgsPrefix: [FAKE_CLAUDE],
         mcpCommand: ['node', '/opt/aoc/mcp-server.js'],
         hookCommand: ['node', '/opt/aoc/aoc-hook.js'],
-        sidecarCommand: [process.execPath, FAKE_SIDECAR, sidecarLog, ...(o.sidecarHold ? ['--hold', sidecarHoldDir] : [])],
+        sidecarCommand: [
+          process.execPath,
+          FAKE_SIDECAR,
+          sidecarLog,
+          ...(o.sidecarHold ? ['--hold', sidecarHoldDir] : []),
+          ...(o.sidecarStubborn ? ['--stubborn'] : []),
+        ],
         envAllowlist: [...defaultConfig().supervisor.envAllowlist, 'FAKE_CLAUDE_LOG', 'FAKE_SIDECAR_LINGER'],
         credentialProfilesFile: profilesFile,
         maxConcurrentSessions: 4,

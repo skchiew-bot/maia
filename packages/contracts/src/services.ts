@@ -174,7 +174,9 @@ export interface LedgerService {
   sessionProgress(sessionId: string): Progress | null;
   projectProgress(projectId: string): Progress | null;
   getThread(threadId: string): ThreadInfo | null;
-  /** Create a project/thread if missing (used by the supervisor at launch). */
+  /** Does the project exist? A launch for an unknown project is refused, not turned into a project. */
+  hasProject(projectId: string): boolean;
+  /** Create the thread (and, for callers that did not check `hasProject`, the project) if missing. */
   ensureThread(input: { projectId: string; threadId?: string | null; title?: string }, actor: Actor): ThreadInfo;
   /** Single active writer per thread (§5). Returns false if another live writer holds it. */
   acquireWriter(threadId: string, sessionId: string, actor: Actor): boolean;
@@ -242,8 +244,27 @@ export interface LaunchRequest {
   /** Change record the session works under: exported as AOC_CHANGE_ID in that session's env only. */
   changeId?: string | null;
   parentSessionId?: string | null;
-  /** For rollover: brief injected as the opening context. */
+  /** For rollover: brief injected as the opening context (fenced untrusted data in the first turn, never the system prompt). */
   brief?: string | null;
+  /**
+   * Same key from the same actor → the same session, and no second process. Reactors derive it from the event they
+   * react to, so an at-least-once redelivery never launches twice. Internal callers only (not the HTTP launch body).
+   */
+  idempotencyKey?: string | null;
+}
+/** What `SupervisorService.runIsolated` runs. */
+export interface IsolatedRunInput {
+  cwd: string;
+  command: string[];
+  credentialProfile: string | null;
+  timeoutMs: number;
+  env?: Record<string, string>;
+  /**
+   * Code AOC does not trust (a rollback target's acceptance tests): it never gets a credential profile, and with
+   * session isolation on it runs as the session user. `handOver` lists fresh directories (a verification checkout)
+   * that user is given first.
+   */
+  sandbox?: { handOver?: string[] };
 }
 export interface SupervisorService {
   launch(req: LaunchRequest, actor: Actor): Promise<{ sessionId: string }>;
@@ -258,7 +279,7 @@ export interface SupervisorService {
   /** Operator asked for a stop at the next task boundary (task_done returns stop_requested). */
   stopRequested(sessionId: string): boolean;
   /** Run a command in a supervisor-controlled environment (rollback verification, promotion). Never exposed to agents. */
-  runIsolated(input: { cwd: string; command: string[]; credentialProfile: string | null; timeoutMs: number; env?: Record<string, string> }): Promise<{ exitCode: number; stdout: string; stderr: string }>;
+  runIsolated(input: IsolatedRunInput): Promise<{ exitCode: number; stdout: string; stderr: string }>;
 }
 
 // ── registry (mod-registry) ────────────────────────────────────────────────
@@ -339,6 +360,13 @@ export interface GitCommit {
   date: string;
   subject: string;
 }
+export interface GitAsyncResult {
+  code: number;
+  stdout: string;
+  stderr: string;
+  /** git was killed at `timeoutMs` (code 124, no stdout): the answer is unknown, not "no". */
+  timedOut: boolean;
+}
 export interface GitService {
   isRepo(dir: string): boolean;
   revParse(dir: string, ref: string): string | null;
@@ -352,6 +380,23 @@ export interface GitService {
   isAncestor(dir: string, ancestor: string, descendant: string): boolean;
   log(dir: string, range: string, limit?: number): GitCommit[];
   run(dir: string, args: string[], opts?: { env?: Record<string, string>; timeoutMs?: number }): { code: number; stdout: string; stderr: string };
+  /**
+   * `run` for code on aocd's single thread (every method above blocks it): same allowlisted environment, a timeout
+   * that kills git and what it started, and a result that says so. Never rejects.
+   */
+  runAsync(
+    dir: string,
+    args: string[],
+    opts?: { env?: Record<string, string>; timeoutMs?: number },
+  ): Promise<GitAsyncResult>;
+  /**
+   * `workingTreeFingerprint` for aocd's thread, with the same hash. `fingerprint` is null when git cannot describe
+   * the tree (not a repository, or one it will not read) and `timedOut` when it did not answer in time.
+   */
+  workingTreeFingerprintAsync(
+    dir: string,
+    opts?: { timeoutMs?: number },
+  ): Promise<{ fingerprint: string | null; timedOut: boolean }>;
 }
 
 // ── LLM (packages/llm) ─────────────────────────────────────────────────────

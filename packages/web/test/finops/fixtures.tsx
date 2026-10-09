@@ -6,6 +6,7 @@ import { configure, render, type RenderResult } from '@testing-library/react';
 import type { ReactElement } from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import type {
+  CostPerOutcomeDTO,
   CreditAccount,
   CreditTopupRequest,
   DecisionCardView,
@@ -585,6 +586,169 @@ export function project(projectId: string, name: string): ProjectSummary {
   };
 }
 export const PROJECTS = [project('prj_aoc', 'AOC Platform'), project('prj_claims', 'Claims Intake Bot'), project('prj_cxcopilot', 'CX Copilot')];
+
+// ── cost per outcome ───────────────────────────────────────────────────────
+const item = (
+  refId: string,
+  projectId: string | null,
+  completedAt: string,
+  notionalUsd: number,
+  notionalRm: number | null,
+  sessions: number,
+  processType: string | null,
+  unpriced = false,
+) => ({
+  refId,
+  projectId,
+  completedAt,
+  notionalUsd,
+  notionalRm,
+  rmComplete: true,
+  sessions,
+  unpriced,
+  processType,
+});
+
+const NO_STATS = {
+  count: 0,
+  totalUsd: 0,
+  meanUsd: null,
+  medianUsd: null,
+  p90Usd: null,
+  minUsd: null,
+  maxUsd: null,
+  totalRm: null,
+  meanRm: null,
+  medianRm: null,
+  p90Rm: null,
+  minRm: null,
+  maxRm: null,
+  rmComplete: true,
+};
+
+/**
+ * `GET /api/metering/cost-per-outcome` as the daemon serves it (stats by type-7 percentiles, six decimals; items by
+ * completion time). Two tickets fixed ($14, $20), two changes shipped ($20, and $1 spanning projects) and three phases,
+ * all with usage no rate priced. Each outcome's RM is its usage days at their own stamped rates (4.2200, 4.2294,
+ * 4.2427), so no single rate turns any outcome's US$ into its RM. Process types: bug-fix, feature-build, discovery,
+ * and one change whose spend is mixed (null).
+ */
+export const OUTCOMES: CostPerOutcomeDTO = {
+  costBasis: 'notional_api_equivalent',
+  costLabel: 'Notional API-equivalent cost (decision support, not a bill)',
+  lens: 'portfolio',
+  notice: 'Portfolio lens only — spend per outcome, never a ranking of individuals.',
+  from: '2026-09-10',
+  to: '2026-10-09',
+  ticketsFixed: {
+    kind: 'ticket_fixed',
+    stats: {
+      count: 2,
+      totalUsd: 34,
+      meanUsd: 17,
+      medianUsd: 17,
+      p90Usd: 19.4,
+      minUsd: 14,
+      maxUsd: 20,
+      totalRm: 143.7432,
+      meanRm: 71.8716,
+      medianRm: 71.8716,
+      p90Rm: 82.04472,
+      minRm: 59.1552,
+      maxRm: 84.588,
+      rmComplete: true,
+    },
+    items: [
+      item('tkt_01M4FC3GS5VXC370PY64VM0XE8', 'prj_claims', '2026-10-08T07:30:00.000Z', 14, 59.1552, 2, 'bug-fix'),
+      item('tkt_01M4FC3GS5VXC370PY64VM0XE9', 'prj_claims', '2026-10-09T01:10:00.000Z', 20, 84.588, 1, 'bug-fix'),
+    ],
+  },
+  changesShipped: {
+    kind: 'change_shipped',
+    stats: {
+      count: 2,
+      totalUsd: 21,
+      meanUsd: 10.5,
+      medianUsd: 10.5,
+      p90Usd: 18.1,
+      minUsd: 1,
+      maxUsd: 20,
+      totalRm: 89.0834,
+      meanRm: 44.5417,
+      medianRm: 44.5417,
+      p90Rm: 76.79154,
+      minRm: 4.2294,
+      maxRm: 84.854,
+      rmComplete: true,
+    },
+    items: [
+      item('chg_01M4FDBZYA4VBEQ8CKEK7FP42E', 'prj_claims', '2026-10-07T09:00:00.000Z', 20, 84.854, 1, 'feature-build'),
+      item('chg_01M4FDC0CVARB5BHJ5HX4BB3RC', null, '2026-10-09T03:00:00.000Z', 1, 4.2294, 2, null),
+    ],
+  },
+  phasesCompleted: {
+    kind: 'phase_completed',
+    stats: {
+      count: 3,
+      totalUsd: 34.819075,
+      meanUsd: 11.606358,
+      medianUsd: 8.800845,
+      p90Usd: 20.107528,
+      minUsd: 3.084031,
+      maxUsd: 22.934199,
+      totalRm: 147.437813,
+      meanRm: 49.145938,
+      medianRm: 37.222294,
+      p90Rm: 85.14918,
+      minRm: 13.084618,
+      maxRm: 97.130901,
+      rmComplete: true,
+    },
+    items: [
+      item('prj_claims/design', 'prj_claims', '2026-09-28T16:24:58.198Z', 3.084031, 13.084618, 4, 'discovery', true),
+      item('prj_claims/build', 'prj_claims', '2026-09-28T16:55:58.198Z', 8.800845, 37.222294, 4, 'feature-build', true),
+      item('prj_aoc/build', 'prj_aoc', '2026-09-29T16:47:51.143Z', 22.934199, 97.130901, 9, 'feature-build', true),
+    ],
+  },
+  method: {
+    attribution: 'Tickets: lifetime notional spend of sessions launched for, triaging or building the ticket.',
+    window: 'Outcomes completed on a local date within from..to; their spend may predate the window.',
+    percentile: 'Median and p90 by linear interpolation between closest ranks (type 7), for US$ and RM alike.',
+    fx: 'Ringgit is notional too. Each usage day’s US$ is converted at that day’s stamped BNM USD→MYR rate; never an average rate over a total.',
+    processType: 'Process type: the one with the largest share of the outcome’s notional spend.',
+  },
+  generatedAt: '2026-10-09T06:00:00.000Z',
+};
+
+/**
+ * The same range where the first ticket spent $8 on a day with no stamped FX rate: its RM is the partial $6 day and
+ * flagged incomplete, so it is left out of the tickets' RM figures (the daemon's own rule).
+ */
+export const OUTCOMES_RM_GAP: CostPerOutcomeDTO = {
+  ...OUTCOMES,
+  ticketsFixed: {
+    kind: 'ticket_fixed',
+    stats: {
+      ...OUTCOMES.ticketsFixed.stats,
+      totalRm: 84.588,
+      meanRm: 84.588,
+      medianRm: 84.588,
+      p90Rm: 84.588,
+      minRm: 84.588,
+      maxRm: 84.588,
+      rmComplete: false,
+    },
+    items: [{ ...OUTCOMES.ticketsFixed.items[0]!, notionalRm: 25.32, rmComplete: false }, OUTCOMES.ticketsFixed.items[1]!],
+  },
+};
+
+/** A range in which nothing was completed. */
+export const NO_OUTCOMES: CostPerOutcomeDTO = {
+  ...OUTCOMES,
+  ticketsFixed: { kind: 'ticket_fixed', stats: NO_STATS, items: [] },
+  changesShipped: { kind: 'change_shipped', stats: NO_STATS, items: [] },
+  phasesCompleted: { kind: 'phase_completed', stats: NO_STATS, items: [] },
+};
 
 // ── credits ────────────────────────────────────────────────────────────────
 export function account(over: Partial<CreditAccount> & Pick<CreditAccount, 'userId' | 'userName'>): CreditAccount {

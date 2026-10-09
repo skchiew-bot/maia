@@ -103,6 +103,24 @@ describe('reactor drain', () => {
   });
 });
 
+describe('drain', () => {
+  it('is a promise whether or not anything is queued, so callers can chain on it', async () => {
+    const t = await createTestRuntime({ modules: [] });
+    const idle = t.rt.drain();
+    expect(idle).toBeInstanceOf(Promise);
+    await expect(idle.then(() => 'drained')).resolves.toBe('drained');
+
+    let reacted = 0;
+    const busy = await createTestRuntime({
+      modules: [{ name: 'slow', reactors: [{ name: 'slow.react', handles: ['session.nudged'], async react() { await new Promise((r) => setTimeout(r, 10)); reacted++; } }] }],
+    });
+    busy.rt.store.append({ type: 'session.nudged', actor: { kind: 'human', id: 'usr_1' }, meta: { sessionId: 'ses_z' }, payload: { text: 'x' }, source: 'api' });
+    await busy.rt.drain().then(() => expect(reacted).toBe(1));
+    await expect(busy.rt.drain().then(() => 'idle again')).resolves.toBe('idle again');
+    await Promise.all([t.close(), busy.close()]);
+  });
+});
+
 describe('projection back-fill on an existing log', () => {
   it('replays after module init, so projectors see module settings such as the configured timezone', async () => {
     const { mkdtempSync } = await import('node:fs');
@@ -299,6 +317,61 @@ describe('AocRuntime.stop()', () => {
     await t.close();
   });
 
+  describe('quiesce', () => {
+    /** Modules that note their hooks; `inQuiesce` runs inside the second one's quiesce (the API still serves then). */
+    function hooked(calls: string[], opts: { failing?: string; inQuiesce?: (ctx: ModuleContext) => void } = {}) {
+      let ctx!: ModuleContext;
+      const mod = (name: string): AocModule => ({
+        name,
+        init: (c) => void (ctx = c),
+        async quiesce() {
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          calls.push(`quiesce ${name}`);
+          if (name === 'b') opts.inQuiesce?.(ctx);
+          if (name === opts.failing) throw new Error('would not wind down');
+        },
+        stop: () => void calls.push(`stop ${name}`),
+      });
+      return [mod('a'), mod('b'), mod('c')];
+    }
+
+    it('winds the modules down last first, once, before the reactors are switched off and the modules stop', async () => {
+      const calls: string[] = [];
+      const reacted: string[] = [];
+      const reactor: AocModule = {
+        name: 'reacts',
+        reactors: [{ name: 'reacts.nudged', handles: ['session.nudged'], react: (e) => void reacted.push(e.type) }],
+      };
+      const t = await createTestRuntime({
+        modules: [
+          ...hooked(calls, {
+            inQuiesce: (ctx) =>
+              ctx.store.append({ type: 'session.nudged', actor: { kind: 'human', id: 'usr_1' }, meta: { sessionId: 'ses_x' }, payload: { text: 'late' }, source: 'api' }),
+          }),
+          reactor,
+        ],
+      });
+      await t.rt.quiesce();
+      await t.rt.quiesce(); // asking again is the same wind-down
+      expect(calls).toEqual(['quiesce c', 'quiesce b', 'quiesce a']);
+      await t.rt.stop();
+      expect(calls).toEqual(['quiesce c', 'quiesce b', 'quiesce a', 'stop c', 'stop b', 'stop a']);
+      expect(reacted).toEqual(['session.nudged']); // what happened while the API still served was reacted to
+      await t.close();
+    });
+
+    it('stop() winds the modules down itself when nobody did, and a module that fails does not hold the others up', async () => {
+      const calls: string[] = [];
+      const errors: string[] = [];
+      const log: Logger = { ...silentLogger, error: (msg) => void errors.push(msg), child: () => log };
+      const t = await createTestRuntime({ modules: hooked(calls, { failing: 'b' }), log });
+      await t.rt.stop();
+      expect(calls).toEqual(['quiesce c', 'quiesce b', 'quiesce a', 'stop c', 'stop b', 'stop a']);
+      expect(errors).toContain('module failed to quiesce');
+      await t.close();
+    });
+  });
+
   it('delivers at the next start a reaction that the shutdown could not run', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'aoc-stop-'));
     dirs.push(dir);
@@ -320,6 +393,8 @@ describe('AocRuntime.stop()', () => {
           {
             name: 'late',
             jobs: [late.job],
+            // Released once the modules stop, which is after the reactors were switched off.
+            stop: () => late.release(),
             reactors: [
               { name: 'late.react', handles: ['session.nudged'], react: (e) => void reacted.push(e.seq) },
             ],
@@ -333,9 +408,7 @@ describe('AocRuntime.stop()', () => {
     const first = await boot();
     const tick = first.tickJobs();
     await late.running;
-    const stopping = first.stop();
-    late.release();
-    await stopping;
+    await first.stop();
     await tick;
     expect(reacted).toEqual([]); // reactions are switched off while the modules stop
 

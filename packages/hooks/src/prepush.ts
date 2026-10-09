@@ -8,15 +8,13 @@ import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync } from 'no
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { AOC_ENV } from '@aoc/contracts';
-import type { Env } from './constants';
 
-/** Env read by the git hooks. Only the supervisor's promotion executor sets supervisorPush (=1). */
+/** Env read by the git hooks (the commit trailers). No variable unlocks a push: AOC pushes from a service-owned clone. */
 export const GIT_HOOK_ENV = {
-  supervisorPush: 'AOC_SUPERVISOR_PUSH',
   sessionId: 'AOC_SESSION_ID',
   changeId: 'AOC_CHANGE_ID',
   ticketId: 'AOC_TICKET_ID',
-} as const satisfies Pick<typeof AOC_ENV, 'supervisorPush' | 'sessionId' | 'changeId' | 'ticketId'>;
+} as const satisfies Pick<typeof AOC_ENV, 'sessionId' | 'changeId' | 'ticketId'>;
 
 export const PROTECTED_BRANCHES = ['main', 'master', 'production', 'release/*'] as const;
 
@@ -34,7 +32,7 @@ export function isProtectedRef(ref: string): boolean {
 }
 
 /** Evaluates pre-push stdin ("<local ref> <local sha> <remote ref> <remote sha>" per line), deletions included. */
-export function evaluatePrePush(stdin: string, env: Env): { allowed: boolean; protectedRefs: string[] } {
+export function evaluatePrePush(stdin: string): { allowed: boolean; protectedRefs: string[] } {
   const protectedRefs = [
     ...new Set(
       stdin
@@ -43,7 +41,7 @@ export function evaluatePrePush(stdin: string, env: Env): { allowed: boolean; pr
         .filter((ref): ref is string => !!ref && isProtectedRef(ref)),
     ),
   ];
-  return { allowed: env[GIT_HOOK_ENV.supervisorPush] === '1' || protectedRefs.length === 0, protectedRefs };
+  return { allowed: protectedRefs.length === 0, protectedRefs };
 }
 
 export const GIT_HOOK_NAMES = ['pre-push', 'prepare-commit-msg'] as const;

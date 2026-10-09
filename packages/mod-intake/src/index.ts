@@ -129,7 +129,7 @@ export function createIntakeModule(opts: IntakeModuleOptions = {}): AocModule {
         async react(e, _p, ctx) {
           const ticketId = (e.meta as { ticketId: string }).ticketId;
           if (ctx.store.findByCausation(e.id, 'ticket.triage_started').length) return;
-          if (flow.sessions(ticketId, 'triage').length) return;
+          // Launches are keyed on this event, so a redelivery after a partial start completes it instead of stalling.
           await flow.startTriage(ticketId, e.id);
         },
       },
@@ -158,16 +158,22 @@ export function createIntakeModule(opts: IntakeModuleOptions = {}): AocModule {
       },
       {
         name: 'intake.promotion',
-        handles: ['promotion.completed', 'promotion.refused', 'promotion.failed'],
-        react(e, _p, ctx) {
+        handles: ['promotion.completed', 'promotion.refused', 'promotion.failed', 'promotion.rejected'],
+        react(e, payload, ctx) {
           const { promotionId, reason } = e.meta as { promotionId: string; reason?: string };
           const row = ctx.db.prepare('SELECT ticket_id FROM itk_promotions WHERE promotion_id = ?').get(promotionId) as { ticket_id: string } | undefined;
           if (!row) return;
           if (e.type === 'promotion.completed') return flow.close(row.ticket_id, 'fixed', INTAKE_ACTOR, 'Promoted to main', e.id);
-          // Approved but not executed (main moved on, push failed): the ticket must not sit at the gate with nothing open.
+          // The gate answered "no", or approved but could not execute (main moved on, push failed): either way the
+          // ticket must not sit at the gate with nothing open.
           const t = flow.ticket(row.ticket_id);
           if (!t || t.resolution || flow.reacted(e.id)) return;
-          flow.escalateGoLive(t, `promotion ${promotionId} ${e.type === 'promotion.refused' ? 'was refused' : 'failed'} at execution (${reason ?? 'unknown'})`, e.id);
+          const comment = (payload as { comment?: unknown } | null)?.comment;
+          const why =
+            e.type === 'promotion.rejected'
+              ? `the Approver rejected promotion ${promotionId}${typeof comment === 'string' && comment ? `: "${comment.slice(0, 500)}"` : ''}`
+              : `promotion ${promotionId} ${e.type === 'promotion.refused' ? 'was refused' : 'failed'} at execution (${reason ?? 'unknown'})`;
+          flow.escalateGoLive(t, why, e.id);
         },
       },
     ],
@@ -325,8 +331,8 @@ export function createIntakeModule(opts: IntakeModuleOptions = {}): AocModule {
           actor: { kind: 'agent', id: body.sessionId },
           scope: { ticketId: link.ticket_id, sessionId: body.sessionId },
           // The class is agent-written text from a session that reads untrusted ticket text: it goes in the erasable
-          // body with the rest of the diagnosis, never in the clear chain (meta keeps the contract's field null).
-          meta: { ticketId: link.ticket_id, sessionId: body.sessionId, confidence: input.data.confidence, rootCauseClass: null },
+          // body with the rest of the diagnosis, never in the clear chain.
+          meta: { ticketId: link.ticket_id, sessionId: body.sessionId, confidence: input.data.confidence },
           payload: {
             rootCause: input.data.root_cause,
             fixPlan: input.data.fix_plan,
@@ -393,7 +399,16 @@ export function createIntakeModule(opts: IntakeModuleOptions = {}): AocModule {
         const body = await readJson(c, z.object({ resolution: z.enum(['wont_fix', 'duplicate', 'cannot_reproduce', 'withdrawn']), note: z.string().max(2000).optional() }));
         const t = flow.ticket(c.req.param('id'));
         if (!t) throw new HttpError(404, 'not_found', 'Ticket not found');
-        flow.close(t.ticket_id, body.resolution, { kind: 'human', id: auth.user.id }, body.note);
+        const { user } = auth;
+        // "withdrawn" speaks for the requester: only an Approver records it. Otherwise the owner of linked work may close.
+        const ok =
+          hasPermission(user.role, 'ticket.close_any', user.flags) ||
+          (body.resolution !== 'withdrawn' &&
+            hasPermission(user.role, 'ticket.close_own', user.flags) &&
+            flow.sessions(t.ticket_id).some((s) => ctx.services.maybe('sessions')?.get(s.session_id)?.ownerId === user.id));
+        if (!ok)
+          throw new HttpError(403, 'forbidden', 'Only an Approver, or the owner of a session working on this ticket, may close it (only an Approver records a withdrawal)');
+        flow.close(t.ticket_id, body.resolution, { kind: 'human', id: user.id }, body.note);
         return c.json(internalView(ctx, flow, flow.ticket(t.ticket_id)!));
       });
     },

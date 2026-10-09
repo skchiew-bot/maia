@@ -141,7 +141,7 @@ describe('ConsolePage', () => {
 
     const waiting = within(tiles).getByRole('article', { name: 'Backfill status' });
     expect(within(waiting).getByText('Waiting on you')).toBeInTheDocument();
-    expect(within(waiting).getByRole('link', { name: 'decision 2h 14m' })).toHaveAttribute('href', '/decisions#dec_1');
+    expect(within(waiting).getByRole('link', { name: 'decision 2h 14m' })).toHaveAttribute('href', '/decisions?focus=dec_1');
     expect(within(waiting).getByText('APM now')).toBeInTheDocument();
 
     const working = within(tiles).getByRole('article', { name: 'Whisper suggestions' });
@@ -153,7 +153,11 @@ describe('ConsolePage', () => {
     expect(within(working).getByRole('img', { name: /actions per minute over the last 30 minutes/ })).toBeInTheDocument();
 
     expect(within(tiles).getByText('observed · read-only')).toBeInTheDocument();
-    expect(within(within(tiles).getByRole('article', { name: 'Flaky e2e' })).getByText('—')).toBeInTheDocument();
+    // A dead session has no "APM now"; its chart still draws the window, so the number beside it is the window's peak.
+    const dead = within(tiles).getByRole('article', { name: 'Flaky e2e' });
+    expect(within(dead).getByText('APM peak')).toBeInTheDocument();
+    expect(within(dead).queryByText('APM now')).not.toBeInTheDocument();
+    expect(dead.querySelector('.console-tile__apm-value')).toHaveTextContent('6');
 
     const ended = screen.getByRole('table', { name: 'Sessions that ended today' });
     expect(within(ended).getByRole('link', { name: 'QA export' })).toHaveAttribute('href', '/sessions/ses_done');
@@ -201,7 +205,7 @@ describe('ConsolePage', () => {
       'Promote CX Copilot v1.4.0?',
       'Top up Wei Jie’s credits?',
     ]);
-    expect(within(cards[1]!).getByRole('link', { name: /Approve with passkey/ })).toHaveAttribute('href', '/decisions#dec_gate');
+    expect(within(cards[1]!).getByRole('link', { name: /Approve with passkey/ })).toHaveAttribute('href', '/decisions?focus=dec_gate');
     expect(within(cards[2]!).getByText('An Approver decides')).toBeInTheDocument();
     expect(within(cards[0]!).getByText('Agent recommends')).toBeInTheDocument();
     // the headline and, under it, the question the agent actually asked

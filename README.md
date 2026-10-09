@@ -82,17 +82,21 @@ Also useful:
 
 - **Static UI mock**, approved by the CEO on 2026-10-09 with its proposed defaults (§12): open
   [`mocks/aoc-mock.html`](mocks/README.md) in a browser.
-- **Demo**: a deterministic 14-day history, served by a daemon whose managed sessions run on `claude-sim`:
+- **Demo**: a deterministic 14-day history (change control with a rollback and a break-glass waiting, intake tickets
+  in every stage of the funnel, sessions in all six liveness states), served by a daemon whose managed sessions run
+  on `claude-sim`:
 
   ```bash
+  pnpm --filter @aoc/demo live -- --data-dir "$PWD/.aoc/demo"     # seeds an empty directory, starts the console and keeps real sessions running; add --reset to rebuild
+  # or only the history (it prints the command that starts a daemon on it: AOC_CONFIG plus the claude-sim settings):
   pnpm --filter @aoc/demo seed -- --data-dir "$PWD/.aoc/demo"     # add --reset to rebuild it
-  AOC_CONFIG="$PWD/.aoc/demo/aoc.config.json" node --import tsx packages/daemon/src/main.ts
   ```
 
   The seeder writes `aoc.config.json` into the demo directory, so Nudge and Restart in a demo never reach the real
   `claude` CLI. **Never run a demo with the real CLI, and never seed into a production data directory.** The demo
   users' tokens, including an Approver's, are in `.aoc/demo/demo-tokens.json`
-  ([operations §11](docs/runbooks/operations.md#11-demo-and-test-data-directories)).
+  ([operations §11](docs/runbooks/operations.md#11-demo-and-test-data-directories); what the demo shows and how:
+  [packages/demo/README.md](packages/demo/README.md)).
 - **Without a real `claude`**: point `supervisor.claudeBin` and `supervisor.claudeArgsPrefix` at
   `@aoc/claude-sim` (see `packages/contracts/src/config.ts`, or the demo's `aoc.config.json`).
 
@@ -143,6 +147,11 @@ pnpm --filter @aoc/<package> typecheck
 Tests are deterministic. They use temporary directories, random ports, a fake clock, a fake LLM and `claude-sim`,
 with no network and no real `claude`. The kernel test kit (`createTestRuntime`) spins up a full in-memory runtime
 for module tests.
+
+The one exception is opt-in and never part of `pnpm test`: `AOC_REAL_CLI=1 pnpm --filter @aoc/e2e real-cli` drives the
+real `claude` CLI through the whole platform on Haiku (a few cents per scenario; `real-cli:full` runs every scenario).
+What it verified, and the captures the other tests replay, are in the
+[research note](docs/research/claude-code-integration.md#13-verified-against-the-real-cli-on-2026-10-09).
 
 ## Documentation
 

@@ -16,22 +16,25 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { z } from 'zod';
 import {
   AOC_ENV,
   AOC_MCP_SERVER_NAME,
+  INGEST_GIT_PREFIX,
   MODEL_CONTEXT_TOKENS,
   MODEL_ID_BY_TIER,
   SIDECAR_READY_LINE,
   claudeConfigDir,
   modelTierOf,
   newId,
+  promotionProfilesOf,
   transcriptPathFor,
   type Actor,
   type DecisionCard,
   type EventType,
   type HandoffBrief,
+  type IsolatedRunInput,
   type LaunchRequest,
   type LessonInfo,
   type MetaOf,
@@ -42,7 +45,7 @@ import {
   type StoredEvent,
   type SupervisorService,
 } from '@aoc/contracts';
-import { HttpError, type Logger, type ModuleContext, type NewEvent } from '@aoc/kernel';
+import { HttpError, sha256hex, type Logger, type ModuleContext, type NewEvent } from '@aoc/kernel';
 import {
   ensureDir,
   materializeKeyFiles,
@@ -67,9 +70,11 @@ import {
   buildHookSettings,
   buildMcpConfig,
   buildSessionEnv,
+  gatewayGitEnv,
   keyFileSecrets,
   readCredentialProfile,
   readCredentialProfileSpec,
+  readCredentialProfiles,
   redactArgv,
   redactSecrets,
   resolveFileRefs,
@@ -77,9 +82,13 @@ import {
   toolPolicy,
   userSettingsProblems,
   workspaceSettingsProblems,
+  GATEWAY_REMOTE,
   type CredentialProfile,
+  type ProfileCredentials,
 } from './launch-config';
 import { killProcessGroup, processMatches, runCommand, signalProcess, signalTree } from './process-utils';
+import { checkPromotionProfiles } from './promotion-profiles';
+import { PushGateway, expandPattern, type PushPrincipal, type PushRecord } from './push-gateway';
 import { handOver, isolatedRunEnv, secretValues } from './sandbox';
 import { SupervisorView, TERMINAL_LIFECYCLES, type SupervisedSession } from './projection';
 import {
@@ -93,6 +102,7 @@ import {
   decisionAnswersText,
   nudgeText,
   rolloverPrompt,
+  withHandoffBrief,
 } from './prompts';
 import { previousCheckOf, reconcileTurnUsage, sidecarTotals } from './reconcile';
 import { RegistryAccess } from './registry-access';
@@ -109,6 +119,13 @@ import {
 export interface SupervisorModuleOptions {
   /** Per-session directories (default `<dataDir>/sessions`; a temp dir when the store is in memory). */
   sessionsDir?: string;
+  /** Service-owned repositories behind the push gateway (default `<dataDir>/git`; a temp dir when in memory). */
+  gatewayDir?: string;
+  /** Pushes one session may make per window, and the window (defaults: 30 per 10 minutes). */
+  pushesPerWindow?: number;
+  pushWindowMs?: number;
+  /** Largest pack one push may carry (default MAX_PUSH_BYTES, 256 MiB). */
+  maxPackBytes?: number;
   /** Registry file used when mod-registry is not loaded (default `config.registryFile`). */
   registryFile?: string;
   /** SIGINT → SIGKILL grace when a turn is interrupted (default 10 s). */
@@ -118,6 +135,8 @@ export interface SupervisorModuleOptions {
    * one that never did gets it after this grace, and SIGKILL after twice the grace (default 5 s).
    */
   sidecarGraceMs?: number;
+  /** Time a sidecar that was told to stop gets for its last report, at a session's end and at shutdown (default 5 s). */
+  sidecarFlushMs?: number;
   /** Retry delay for a usage limit whose reset time is unknown (default 30 min). */
   throttleFallbackMs?: number;
   /** Output items kept per session for GET /api/sessions/:id/output (default 500). */
@@ -140,9 +159,19 @@ export const LaunchRequestSchema = z.object({
   changeId: zIdent.nullish(),
   parentSessionId: zIdent.nullish(),
   brief: z.string().max(200_000).nullish(),
+  idempotencyKey: z
+    .string()
+    .min(1)
+    .max(256)
+    .regex(/^[\x21-\x7e]+$/, 'a printable machine label')
+    .nullish(),
 });
-/** The HTTP launch body: briefs and lineage only come from the supervisor's own rollover. */
-export const LaunchBodySchema = LaunchRequestSchema.omit({ brief: true, parentSessionId: true }).strict();
+/** The HTTP launch body: briefs, lineage and idempotency keys only come from the supervisor and reactors. */
+export const LaunchBodySchema = LaunchRequestSchema.omit({
+  brief: true,
+  parentSessionId: true,
+  idempotencyKey: true,
+}).strict();
 
 type TurnReason = MetaOf<'session.turn_started'>['reason'];
 type TurnOutcome = MetaOf<'session.turn_ended'>['outcome'];
@@ -157,6 +186,16 @@ const CLOSE_GRACE_MS = 2_000;
 const SIDECAR_GRACE_MS = 5_000;
 /** After SIGTERM a sidecar makes its final usage flush (one request, 4 s client timeout) and exits. */
 const SIDECAR_FLUSH_MS = 5_000;
+/** How long the HEAD read at a turn's end may take, and what it drops from git's environment (as the ledger's reads do). */
+const HEAD_READ_MS = 4_000;
+const HEAD_READ_ENV: Record<string, string> = {
+  GIT_CONFIG_NOSYSTEM: '1',
+  GIT_CONFIG_SYSTEM: '/dev/null',
+  GIT_CONFIG_GLOBAL: '/dev/null',
+  GIT_OPTIONAL_LOCKS: '0',
+  GIT_NO_LAZY_FETCH: '1',
+  GIT_ALLOW_PROTOCOL: '',
+};
 const MAX_BUFFERED_SESSIONS = 256;
 /** Turn outcomes that prove the model answered, so the conversation exists even when its transcript is not found. */
 const ANSWERED_OUTCOMES = new Set(['end_turn', 'decision', 'credit_cap', 'stop_requested', 'rollover']);
@@ -259,7 +298,14 @@ export class Supervisor implements SupervisorService {
   private readonly ownsSessionsRoot: boolean;
   /** Session users and their directories (supervisor.isolation 'user'); null = sessions run as aocd (development). */
   private readonly isolation: SessionIsolation | null;
+  /** The push gateway (R-02): sessions push to a service-owned repository, the supervisor forwards upstream. */
+  readonly gateway: PushGateway;
+  private readonly gatewayRoot: string;
+  private readonly ownsGatewayRoot: boolean;
+  /** Credential profiles of the push to a protected remote: aocd's own, never handed to a session (R1). */
+  private readonly promotionProfiles: ReadonlySet<string>;
   private stopping = false;
+  private shutdownRun: Promise<void> | null = null;
 
   constructor(
     private readonly ctx: ModuleContext,
@@ -272,17 +318,56 @@ export class Supervisor implements SupervisorService {
     const { isolation, warnings } = resolveIsolation(ctx.config);
     this.isolation = isolation;
     for (const w of warnings) this.log.warn(w);
+    this.promotionProfiles = new Set(promotionProfilesOf(ctx.config));
+    checkPromotionProfiles(
+      ctx.config,
+      {
+        definedProfiles: (file) => Object.keys(readCredentialProfiles(resolve(file))),
+        types: () => {
+          try {
+            return this.registry.listTypes();
+          } catch {
+            return null;
+          }
+        },
+      },
+      this.log,
+    );
     this.ownsSessionsRoot = !opts.sessionsDir && ctx.dataDir === ':memory:';
     this.sessionsRoot = opts.sessionsDir
       ? resolve(opts.sessionsDir)
       : this.ownsSessionsRoot
         ? mkdtempSync(join(tmpdir(), 'aoc-sessions-'))
         : resolve(ctx.dataDir, 'sessions');
+    // The same directory mod-change's service-owned clone uses (G-04): one `origin` per project serves both.
+    this.ownsGatewayRoot = !opts.gatewayDir && ctx.dataDir === ':memory:';
+    this.gatewayRoot = opts.gatewayDir
+      ? resolve(opts.gatewayDir)
+      : this.ownsGatewayRoot
+        ? mkdtempSync(join(tmpdir(), 'aoc-git-'))
+        : resolve(ctx.dataDir, 'git');
+    this.gateway = new PushGateway(
+      {
+        principal: (sessionId, repoName) => this.pushPrincipal(sessionId, repoName),
+        forward: (input) => this.forwardPush(input),
+        record: (r) => this.recordPush(r),
+        env: () => this.sourceEnv(),
+        now: () => ctx.clock.now(),
+        log: this.log,
+      },
+      {
+        root: this.gatewayRoot,
+        pushesPerWindow: opts.pushesPerWindow,
+        windowMs: opts.pushWindowMs,
+        maxPackBytes: opts.maxPackBytes,
+      },
+    );
     if (isolation) {
       try {
         this.checkIsolation(isolation);
       } catch (err) {
         if (this.ownsSessionsRoot) rmSync(this.sessionsRoot, { recursive: true, force: true });
+        if (this.ownsGatewayRoot) rmSync(this.gatewayRoot, { recursive: true, force: true });
         throw err;
       }
     }
@@ -304,6 +389,7 @@ export class Supervisor implements SupervisorService {
       ...(kek ? [resolve(kek)] : []),
       ...(profiles ? [profiles, ...profileKeyFiles(profiles)] : []),
       this.sessionsRoot,
+      this.gatewayRoot,
     ];
     prepareHomesRoot(iso);
     const workspaces = resolve(sup.workspacesDir);
@@ -450,14 +536,7 @@ export class Supervisor implements SupervisorService {
    * caller's `env`, then the credential profile when one is named. A `sandbox` run is code AOC does not trust and
    * never gets a credential profile.
    */
-  async runIsolated(input: {
-    cwd: string;
-    command: string[];
-    credentialProfile: string | null;
-    timeoutMs: number;
-    env?: Record<string, string>;
-    sandbox?: { handOver?: string[] };
-  }): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  async runIsolated(input: IsolatedRunInput): Promise<{ exitCode: number; stdout: string; stderr: string }> {
     const sup = this.ctx.config.supervisor;
     if (input.sandbox && input.credentialProfile)
       throw new Error('runIsolated: a sandboxed run never gets a credential profile');
@@ -496,13 +575,7 @@ export class Supervisor implements SupervisorService {
    */
   private async runAsSessionUser(
     iso: SessionIsolation,
-    input: {
-      cwd: string;
-      command: string[];
-      timeoutMs: number;
-      env?: Record<string, string>;
-      sandbox?: { handOver?: string[] };
-    },
+    input: Omit<IsolatedRunInput, 'credentialProfile'>,
   ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
     const [bin, ...args] = input.command;
     if (!bin) throw new Error('runIsolated: command is required');
@@ -705,10 +778,17 @@ export class Supervisor implements SupervisorService {
     }
   }
 
-  /** Daemon shutdown: interrupt running turns; the next start marks them Dead. Nothing is appended. */
-  async shutdown(): Promise<void> {
-    // Ended sessions keep no valid token across a restart, even if their sidecars are still flushing.
-    for (const revoke of [...this.pendingRevocations.values()]) revoke();
+  /**
+   * Daemon shutdown: interrupt running turns (the next start marks them Dead), then let every sidecar send its last
+   * report. Nothing else is appended. aocd runs this while its HTTP server still answers (the module's quiesce), since
+   * a sidecar that cannot reach it only spools a report nobody replays; once, whichever of quiesce and stop comes first.
+   */
+  shutdown(): Promise<void> {
+    this.shutdownRun ??= this.runShutdown();
+    return this.shutdownRun;
+  }
+
+  private async runShutdown(): Promise<void> {
     this.stopping = true;
     this.queue.length = 0;
     for (const t of this.timers) clearTimeout(t);
@@ -717,8 +797,38 @@ export class Supervisor implements SupervisorService {
     await settleWithin(lives, 2_000);
     for (const l of lives) if (!l.exit) signalTree(l.pid!, 'SIGKILL');
     await settleWithin(lives, 1_000);
-    for (const sc of this.sidecars) sc.kill('SIGTERM');
+    await this.stopSidecars();
+    // Ended sessions keep no valid token across a restart: what a sidecar did not release by now is revoked.
+    for (const revoke of [...this.pendingRevocations.values()]) revoke();
     if (this.ownsSessionsRoot) rmSync(this.sessionsRoot, { recursive: true, force: true });
+    if (this.ownsGatewayRoot) rmSync(this.gatewayRoot, { recursive: true, force: true });
+  }
+
+  /** Every running sidecar reports what is left and exits; one that takes longer than the flush time is killed. */
+  private async stopSidecars(): Promise<void> {
+    const running = () => [...this.sidecars].filter((sc) => sc.exitCode === null && sc.signalCode === null);
+    const targets = running();
+    if (!targets.length) return;
+    const exited = Promise.all(
+      targets.map(
+        (sc) =>
+          new Promise<void>((done) => {
+            sc.once('exit', () => done());
+            sc.once('error', () => done());
+          }),
+      ),
+    );
+    for (const sc of targets) sc.kill('SIGTERM');
+    let timer: NodeJS.Timeout | undefined;
+    await Promise.race([
+      exited,
+      new Promise<void>((r) => {
+        timer = setTimeout(r, this.sidecarFlushMs());
+        timer.unref();
+      }),
+    ]);
+    clearTimeout(timer);
+    for (const sc of running()) sc.kill('SIGKILL');
   }
 
   // ── launch ────────────────────────────────────────────────────────────────
@@ -735,7 +845,18 @@ export class Supervisor implements SupervisorService {
       throw new HttpError(422, 'invalid', 'Invalid launch request', details);
     }
     const r = parsed.data;
-    checkText(r.prompt);
+    // A redelivered launch (reactor replay, retry) gets the session the key already started: never a second process.
+    // The chained key is bound to the actor, so one caller can never pre-claim another's.
+    const launchKey = r.idempotencyKey
+      ? `launch:${sha256hex([actor.kind, actor.id, r.idempotencyKey].join('\n'))}`
+      : undefined;
+    const prior = launchKey ? this.ctx.store.findByIdempotencyKey(launchKey) : null;
+    if (prior?.type === 'session.launch_requested')
+      return { sessionId: String(prior.meta.sessionId), started: Promise.resolve() };
+    // The first turn carries a rollover brief as fenced data (R-10); it is the launch prompt replayed on recovery.
+    const prompt = r.brief ? withHandoffBrief(r.prompt, r.brief, r.parentSessionId ?? null) : r.prompt;
+    checkText(prompt);
+    assertNotShuttingDown(this.stopping);
     this.assertConfigured();
     if (!this.ctx.services.maybe('identity')) {
       throw new HttpError(
@@ -751,9 +872,17 @@ export class Supervisor implements SupervisorService {
         'unknown_process_type',
         `Unknown process type "${r.processType}": types come from the fixed registry`,
       );
+    // A launch must not conjure a project: the ledger would create it on first use, and it would then show up in
+    // /api/projects (with a workspace directory and a thread) for anyone who typed a wrong id.
+    const ledger = this.ledger();
+    if (ledger && !ledger.hasProject(r.projectId))
+      throw new HttpError(
+        404,
+        'unknown_project',
+        `Unknown project "${r.projectId}": create it first (POST /api/projects), then launch into it`,
+      );
     const model = MODEL_ID_BY_TIER[this.registry.modelFor(type)];
     if (!type.readOnly && type.credentialProfile) this.credentialsFor(type.credentialProfile);
-    const ledger = this.ledger();
     const thread = ledger
       ? ledger.ensureThread(
           { projectId: r.projectId, threadId: r.threadId ?? null, title: firstLine(r.prompt) },
@@ -804,9 +933,10 @@ export class Supervisor implements SupervisorService {
             ownerId,
             changeId: r.changeId ?? null,
           },
-          payload: { prompt: r.prompt, cwd },
+          payload: { prompt, cwd },
           source: 'supervisor',
           causationId: o.causationId,
+          idempotencyKey: launchKey,
         }),
         ev({
           type: 'session.lifecycle_changed',
@@ -829,7 +959,7 @@ export class Supervisor implements SupervisorService {
       const s = this.mustGet(sessionId);
       this.claudeIds.set(sessionId, randomUUID());
       this.tokenFor(sessionId, actor);
-      this.writeSystemPrompt(s, type, r.brief ?? null, actor);
+      this.writeSystemPrompt(s, type, actor);
       const boundary = this.ctx.services.maybe('credits')?.checkBoundary(sessionId, null, actor);
       if (boundary && !boundary.continue && boundary.reason === 'credit_cap') {
         this.setLifecycle(sessionId, 'blocked', 'credit_cap', actor);
@@ -839,7 +969,7 @@ export class Supervisor implements SupervisorService {
       const started = this.requestTurn({
         sessionId,
         reason,
-        text: r.prompt,
+        text: prompt,
         actor,
         causationId: o.causationId,
         priority: o.priority,
@@ -870,7 +1000,10 @@ export class Supervisor implements SupervisorService {
     if (requested) {
       if (!isAbsolute(requested) || !isDirectory(requested))
         throw new HttpError(422, 'invalid_cwd', 'cwd must be an existing absolute directory');
-      return resolve(requested);
+      // The session keeps the physical path: a symlink swapped in along it later cannot move the session.
+      const physical = realpathSync(requested);
+      if (!this.withinProject(physical, projectId)) throw cwdOutsideProject(422, projectId);
+      return physical;
     }
     const repo = this.ledger()?.projectRepoPath(projectId);
     if (repo) {
@@ -894,19 +1027,35 @@ export class Supervisor implements SupervisorService {
     return dir;
   }
 
+  /**
+   * Where a session of the project may work (R-09): the project's repository, or the project's own directory
+   * under the workspaces dir — compared physically, so a symlink inside either cannot lead out of it.
+   */
+  private withinProject(cwd: string, projectId: string): boolean {
+    const roots = [this.ledger()?.projectRepoPath(projectId), resolve(this.ctx.config.supervisor.workspacesDir, projectId)]
+      .filter((r): r is string => !!r && isDirectory(r))
+      .map((r) => realpathSync(r));
+    const physical = realpathOr(cwd);
+    return roots.some((root) => isWithin(physical, root));
+  }
+
   /** The appended system prompt is fixed at launch (Claude Code snapshots it per conversation) and reused on resume. */
-  private writeSystemPrompt(
-    s: SupervisedSession,
-    type: ProcessType,
-    brief: string | null,
-    actor: Actor | null,
-  ): string {
+  private writeSystemPrompt(s: SupervisedSession, type: ProcessType, actor: Actor | null): string {
     const learning = this.ctx.services.maybe('learning');
     let lessons: LessonInfo[] = [];
     try {
       lessons = (learning?.lessonsForScope({ processType: type.id }) ?? []).slice(0, MAX_LESSONS);
     } catch (err) {
       this.log.warn('lessons unavailable', { sessionId: s.sessionId, err: String(err) });
+    }
+    let gitPush: { remote: string; refs: string[] } | null = null;
+    if (!s.readOnly && type.credentialProfile) {
+      try {
+        const profile = this.credentialsFor(type.credentialProfile);
+        if (profile?.push) gitPush = { remote: GATEWAY_REMOTE, refs: this.pushableRefs(s, profile) };
+      } catch (err) {
+        this.log.warn('credential profile unavailable for the system prompt', { sessionId: s.sessionId, err: String(err) });
+      }
     }
     const text = buildSystemPrompt({
       sessionId: s.sessionId,
@@ -917,7 +1066,7 @@ export class Supervisor implements SupervisorService {
       type,
       lessons,
       playbook: this.registry.activePlaybook(type.id),
-      brief: brief ? { fromSessionId: s.parentSessionId, text: brief } : null,
+      gitPush,
     });
     writePrivate(join(this.ensureSessionDir(s.sessionId), 'system-prompt.md'), text);
     if (actor && learning && lessons.length) {
@@ -938,6 +1087,7 @@ export class Supervisor implements SupervisorService {
 
   /** Validates and reserves synchronously (a slot or a queue place), so concurrent callers can never double-start. */
   private requestTurn(req: TurnRequest): Promise<void> {
+    assertNotShuttingDown(this.stopping);
     const s = this.mustGet(req.sessionId);
     assertNotEnded(s);
     if (this.rollingOver.has(s.sessionId))
@@ -1134,6 +1284,8 @@ export class Supervisor implements SupervisorService {
       );
     const sup = this.ctx.config.supervisor;
     const cwd = s.cwd ?? this.resolveCwd(null, s.projectId);
+    // Checked again on every turn: the agent can replace its directory with a link between turns.
+    if (!this.withinProject(cwd, s.projectId)) throw cwdOutsideProject(409, s.projectId);
     const overrides = workspaceSettingsProblems(cwd);
     if (overrides.length)
       throw new HttpError(
@@ -1171,10 +1323,12 @@ export class Supervisor implements SupervisorService {
         { problems: own },
       );
     try {
-      const keyPaths = profile ? (dirs && user ? this.keyCopies(dirs, user, profile) : profile.files) : {};
-      const credentials = profile ? resolveFileRefs(profile.env, keyPaths) : null;
       // The model can print anything in its env or its key files (and the sidecar's env, while they share an OS
-      // user), and every builder can read a session's output.
+      // user), and every builder can read a session's output. So the session gets the profile's `session` part
+      // only: the credential itself never enters it (R-02). Its pushes go through the gateway (remote `aoc`),
+      // which forwards them upstream with that credential.
+      const keyPaths = profile ? (dirs && user ? this.keyCopies(dirs, user, profile.session) : profile.session.files) : {};
+      const credentials = profile ? resolveFileRefs(profile.session.env, keyPaths) : null;
       const sidecarToken = this.sidecarTokens.get(s.sessionId);
       this.secrets.set(
         s.sessionId,
@@ -1182,15 +1336,16 @@ export class Supervisor implements SupervisorService {
           token,
           ...(sidecarToken ? [sidecarToken] : []),
           ...Object.values(credentials ?? {}),
-          ...keyFileSecrets(profile?.files ?? {}),
+          ...this.profileSecrets(profile),
         ]),
       );
+      const gateway = profile?.push ? gatewayGitEnv(this.gatewayUrl(s.projectId), token) : {};
       const env = buildSessionEnv({
         source: this.sourceEnv(),
         allowlist: sup.envAllowlist,
         credentials,
         readOnly: s.readOnly,
-        aoc,
+        aoc: { ...aoc, ...gateway },
         timezone: this.ctx.config.timezone,
         isolated:
           dirs && user
@@ -1214,7 +1369,7 @@ export class Supervisor implements SupervisorService {
       const promptPath = join(dir, 'system-prompt.md');
       const systemPrompt = existsSync(promptPath)
         ? readFileSync(promptPath, 'utf8')
-        : this.writeSystemPrompt(s, type, null, null);
+        : this.writeSystemPrompt(s, type, null);
       const claudeSessionId = s.claudeSessionId ?? this.claudeIds.get(s.sessionId) ?? randomUUID();
       this.claudeIds.set(s.sessionId, claudeSessionId);
       // Claude Code names the transcript after its process cwd, which is the physical path (symlinks resolved).
@@ -1259,10 +1414,10 @@ export class Supervisor implements SupervisorService {
     }
   }
 
-  /** Private copies of the profile's key files for this turn only (removed when it ends, G-01). */
-  private keyCopies(dirs: SessionDirs, user: OsUser, profile: CredentialProfile): Record<string, string> {
+  /** Private copies of the session's key files for this turn only (removed when it ends, G-01). */
+  private keyCopies(dirs: SessionDirs, user: OsUser, creds: ProfileCredentials): Record<string, string> {
     try {
-      return materializeKeyFiles(dirs, user, profile.files);
+      return materializeKeyFiles(dirs, user, creds.files);
     } catch (err) {
       throw new HttpError(500, 'credential_profile_unavailable', (err as Error).message);
     }
@@ -1423,6 +1578,7 @@ export class Supervisor implements SupervisorService {
     this.afterReports(live.sessionId, () => reported.then(() => this.reconcileTurn(live)));
     live.markClosed();
     if (this.stopping) return;
+    void this.recordHead(live);
     try {
       this.finishTurn(live);
     } catch (err) {
@@ -1440,9 +1596,62 @@ export class Supervisor implements SupervisorService {
   }
 
   /**
+   * G-25: when a build session's turn ends, the HEAD of the project repository it works in is recorded, so a commit made
+   * after its last task close can still be traced to it. The sha is read here, by the kernel git service, which runs
+   * git as the repository's owner with the safety settings (never as root inside a tree the agent can write) and,
+   * like every read on aocd's thread, asynchronously and within a time limit; the session supplies nothing. A HEAD
+   * that did not move since the last record adds no event, and a repository that cannot be read costs the turn
+   * nothing (the turn's outcome is already recorded when the answer arrives). The proof is the one `task.done` gives:
+   * the commit was in the workspace.
+   */
+  private async recordHead(live: LiveTurn): Promise<void> {
+    const s = this.view.get(live.sessionId);
+    if (!s || s.readOnly) return;
+    try {
+      const repo = this.projectRepoOf(s);
+      const sha = repo ? await this.readHead(repo) : null;
+      // aocd may have begun to stop while git answered: nothing is appended from then on.
+      if (!sha || this.stopping) return;
+      const last = this.ctx.store.list({ sessionId: s.sessionId, types: ['session.head_recorded'], order: 'desc', limit: 1 })[0];
+      if (last?.meta.sha === sha) return;
+      this.ctx.store.append(
+        ev({
+          type: 'session.head_recorded',
+          actor: SYSTEM,
+          scope: scopeOf(s),
+          meta: { sessionId: s.sessionId, projectId: s.projectId, sha, turn: live.turn },
+          source: 'supervisor',
+          idempotencyKey: `supervisor:head:${s.sessionId}:${live.turn}`,
+        }),
+      );
+    } catch (err) {
+      this.log.warn('could not record the session HEAD', { sessionId: s.sessionId, err: String(err) });
+    }
+  }
+
+  /** The commit HEAD names; null for a repository without commits yet, an error for one git would not or could not read. */
+  private async readHead(repo: string): Promise<string | null> {
+    const r = await this.ctx.services
+      .get('git')
+      .runAsync(repo, ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'], { env: HEAD_READ_ENV, timeoutMs: HEAD_READ_MS });
+    const sha = r.stdout.trim();
+    if (r.code === 0 && /^[0-9a-f]{7,64}$/.test(sha)) return sha;
+    if (r.code === 1 && !r.timedOut) return null; // --quiet: no output and exit 1 when HEAD names no commit
+    throw new Error(r.timedOut ? 'git did not answer in time' : `git exited ${r.code}: ${r.stderr.split('\n')[0]!.slice(0, 200)}`);
+  }
+
+  /** The project's repository, when the session works in it: a HEAD read anywhere else says nothing about the session. */
+  private projectRepoOf(s: SupervisedSession): string | null {
+    const repo = this.ledger()?.projectRepoPath(s.projectId);
+    if (!repo || !s.cwd || !isDirectory(repo)) return null;
+    return isWithin(realpathOr(s.cwd), realpathOr(repo)) ? repo : null;
+  }
+
+  /**
    * Turn end (§2.3, §4, §5, §10). Operator interrupts first, then in order: open decision → Waiting on you;
    * plan limit → Throttled (resumed at reset); credit cap reached → blocked; stop requested → ended; rollover due
-   * → successor; plan complete → ended; crash → Dead; else deliver late answers / auto-continue / idle.
+   * → successor; plan complete, or a triage diagnosis reported → ended; crash → Dead; else deliver late answers /
+   * auto-continue / idle.
    */
   private finishTurn(live: LiveTurn): void {
     const id = live.sessionId;
@@ -1519,7 +1728,8 @@ export class Supervisor implements SupervisorService {
       return;
     }
     const complete = this.planComplete(s, type, live);
-    const due = complete ? null : this.autoRolloverDue(s, type, live);
+    const diagnosed = !complete && this.diagnosisReported(s, type);
+    const due = complete || diagnosed ? null : this.autoRolloverDue(s, type, live);
     if (due) {
       turnEnded('rollover');
       const r = this.rolloverNow(s, SYSTEM, due, 'auto');
@@ -1531,9 +1741,9 @@ export class Supervisor implements SupervisorService {
       }
       s = this.mustGet(id);
     }
-    if (complete) {
+    if (complete || diagnosed) {
       turnEnded('end_turn');
-      this.endSession(id, 'completed', 'plan_complete', SYSTEM);
+      this.endSession(id, 'completed', complete ? 'plan_complete' : 'diagnosis_reported', SYSTEM);
       return;
     }
     if (code !== 0 && !live.result) {
@@ -1689,6 +1899,22 @@ export class Supervisor implements SupervisorService {
     );
   }
 
+  /**
+   * A session of a type whose purpose ends at diagnosis whose `report_diagnosis` is on record has nothing left to do:
+   * its turn ends it. Auto-continuing it would only ask the model to "continue" a plan that triage never closes (the
+   * triage prompt asks for a diagnosis, not for task_done), and park it as Waiting on you for good. A turn that ends
+   * without a diagnosis is unfinished work and is handled as before.
+   */
+  private diagnosisReported(s: SupervisedSession, type: ProcessType | null): boolean {
+    if (!type || !endsAtDiagnosis(type)) return false;
+    const reported = this.ctx.store.list({
+      types: ['ticket.diagnosis_reported'],
+      sessionId: s.sessionId,
+      limit: 1,
+    });
+    return reported.length > 0;
+  }
+
   private resetAt(text: string): number | null {
     return parseResetAt(text, this.ctx.clock.now(), this.ctx.config.timezone);
   }
@@ -1799,8 +2025,10 @@ export class Supervisor implements SupervisorService {
             prompt: rolloverPrompt(s.sessionId, s.threadId),
             cwd: s.cwd,
             ticketId: s.ticketId,
+            changeId: s.changeId,
             parentSessionId: s.sessionId,
             brief: brief.text,
+            idempotencyKey: `rollover:${startedEvent.id}`,
           },
           SYSTEM,
           { reason: 'rollover', causationId: startedEvent.id, priority: true },
@@ -2015,7 +2243,18 @@ export class Supervisor implements SupervisorService {
 
   // ── environment, files, helpers ───────────────────────────────────────────
 
+  /**
+   * The profile a session of a process type holds, read by every path that serves a session (launch, turn start,
+   * system prompt, push gateway). The promotion credential is refused here whatever the registry says: it is aocd's
+   * own push's, and a registry edit after start would otherwise hand it to every session of a type (R1).
+   */
   private credentialsFor(profile: string): CredentialProfile | null {
+    if (this.promotionProfiles.has(profile))
+      throw new HttpError(
+        500,
+        'promotion_profile_forbidden',
+        `Credential profile "${profile}" is the promotion profile: only aocd's own push holds it, so no process type may name it`,
+      );
     const file = this.ctx.config.supervisor.credentialProfilesFile;
     if (!file) {
       this.warnOnce(
@@ -2029,6 +2268,104 @@ export class Supervisor implements SupervisorService {
     } catch (err) {
       throw new HttpError(500, 'credential_profile_unavailable', (err as Error).message);
     }
+  }
+
+  /** Every secret a profile holds or hands out (raw and as stream-json strings), for output redaction. */
+  private profileSecrets(profile: CredentialProfile | null): string[] {
+    if (!profile) return [];
+    return [
+      ...Object.values(resolveFileRefs(profile.env, profile.files)),
+      ...keyFileSecrets(profile.files),
+      ...Object.values(resolveFileRefs(profile.session.env, profile.session.files)),
+      ...keyFileSecrets(profile.session.files),
+    ];
+  }
+
+  // ── push gateway (R-02) ───────────────────────────────────────────────────
+
+  /** `<publicUrl>/ingest/git/<project>.git`: what remote `aoc` points at in a session's environment. */
+  private gatewayUrl(projectId: string): string {
+    return `${this.ctx.config.publicUrl.replace(/\/+$/, '')}${INGEST_GIT_PREFIX}${this.gateway.repoName(projectId)}`;
+  }
+
+  /** The branches a session may push, with its own ids filled in (shown to it in its system prompt). */
+  private pushableRefs(s: SupervisedSession, profile: CredentialProfile | null): string[] {
+    const vars = { sessionId: s.sessionId, projectId: s.projectId, threadId: s.threadId, ticketId: s.ticketId };
+    return (profile?.push?.refs ?? []).map((p) => expandPattern(p, vars)).filter((r): r is string => r !== null);
+  }
+
+  /** Who a gateway request is, now: a credentialed session, in a running turn, on its own project's repository. */
+  private pushPrincipal(sessionId: string, repoName: string): PushPrincipal {
+    const s = this.view.get(sessionId);
+    if (!s || TERMINAL_LIFECYCLES.includes(s.lifecycle))
+      return { ok: false, status: 403, reason: 'aoc: not an active managed session' };
+    if (s.readOnly) return { ok: false, status: 403, reason: 'aoc: read-only sessions cannot push' };
+    // A token alone is not enough: pushes are accepted while one of the session's turns is running.
+    const live = this.running.get(sessionId);
+    if (!live?.started || live.exit)
+      return { ok: false, status: 403, reason: 'aoc: pushes are accepted only while a turn of the session is running' };
+    if (repoName !== this.gateway.repoName(s.projectId))
+      return { ok: false, status: 404, reason: "aoc: not this session's repository" };
+    const profileName = this.registry.getType(s.processType)?.credentialProfile ?? null;
+    if (!profileName) return { ok: false, status: 403, reason: 'aoc: this process type holds no credential profile' };
+    let profile: CredentialProfile | null;
+    try {
+      profile = this.credentialsFor(profileName);
+    } catch (err) {
+      this.log.error('push gateway: credential profile unavailable', { profile: profileName, err: String(err) });
+      return { ok: false, status: 503, reason: 'aoc: the credential profile is unavailable (see the aocd log)' };
+    }
+    if (!profile) return { ok: false, status: 503, reason: 'aoc: no credential profiles are configured' };
+    return {
+      ok: true,
+      vars: { sessionId, projectId: s.projectId, threadId: s.threadId, ticketId: s.ticketId },
+      actor: { kind: 'agent', id: sessionId },
+      profileName,
+      patterns: profile.push?.refs ?? null,
+    };
+  }
+
+  /** The upstream push of a gateway request: run by aocd with the profile's credential, which no session ever holds. */
+  private async forwardPush(input: {
+    repo: string;
+    command: string[];
+    env: Record<string, string>;
+    profileName: string;
+    timeoutMs: number;
+  }): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+    const r = await this.runIsolated({
+      cwd: input.repo,
+      command: input.command,
+      credentialProfile: input.profileName,
+      timeoutMs: input.timeoutMs,
+      env: input.env,
+    });
+    // Whatever git or the remote echoed, no credential value leaves aocd.
+    const secrets = secretsToRedact(this.profileSecrets(this.credentialsFor(input.profileName)));
+    return { exitCode: r.exitCode, stdout: redactSecrets(r.stdout, secrets), stderr: redactSecrets(r.stderr, secrets) };
+  }
+
+  private recordPush(r: PushRecord): void {
+    const s = this.view.get(r.vars.sessionId);
+    if (!s) return;
+    const count = (result: 'forwarded' | 'refused' | 'failed') => r.results.filter((x) => x.result === result).length;
+    this.ctx.store.append(
+      ev({
+        type: 'session.git_pushed',
+        actor: { kind: 'agent', id: r.vars.sessionId },
+        scope: scopeOf(s),
+        meta: {
+          sessionId: s.sessionId,
+          credentialProfile: label(r.profileName),
+          refs: r.results.length,
+          forwarded: count('forwarded'),
+          refused: count('refused'),
+          failed: count('failed'),
+        },
+        payload: { results: r.results },
+        source: 'supervisor',
+      }),
+    );
   }
 
   private tokenFor(sessionId: string, actor: Actor): string {
@@ -2075,11 +2412,15 @@ export class Supervisor implements SupervisorService {
     };
     if (!this.sessionSidecars.get(sessionId)?.size) return revoke();
     this.pendingRevocations.set(sessionId, revoke);
-    this.later(revoke, this.sidecarGraceMs() + SIDECAR_FLUSH_MS);
+    this.later(revoke, this.sidecarGraceMs() + this.sidecarFlushMs());
   }
 
   private sidecarGraceMs(): number {
     return this.opts.sidecarGraceMs ?? SIDECAR_GRACE_MS;
+  }
+
+  private sidecarFlushMs(): number {
+    return this.opts.sidecarFlushMs ?? SIDECAR_FLUSH_MS;
   }
 
   /** Runs `next` once the session's earlier reports are in (one chain per session, in turn order). */
@@ -2298,6 +2639,11 @@ function assertNotEnded(s: SupervisedSession): void {
     throw new HttpError(409, 'session_ended', `Session ${s.sessionId} has ${s.lifecycle}`);
 }
 
+/** aocd keeps serving while it winds the supervisor down: nothing new may start in that window. */
+function assertNotShuttingDown(stopping: boolean): void {
+  if (stopping) throw new HttpError(503, 'shutting_down', 'aocd is shutting down');
+}
+
 function assertNotStopping(live: LiveTurn): void {
   if (live.interrupt?.kind === 'stop' || live.interrupt?.kind === 'abort')
     throw new HttpError(409, 'stopping', 'The session is already stopping');
@@ -2313,6 +2659,14 @@ function writerLocked(threadId: string, holder: string | null): HttpError {
       holderSessionId: holder,
     },
   );
+}
+
+/**
+ * Process types whose purpose ends at diagnosis: the read-only triage types of the registry (`bug-triage`). The
+ * ticket flow (mod-intake) takes it from there, from the recorded diagnosis, not from the session.
+ */
+function endsAtDiagnosis(type: ProcessType): boolean {
+  return type.class === 'triage' && type.readOnly;
 }
 
 function contextPct(tokens: number, model: string): number {
@@ -2340,6 +2694,19 @@ function realpathOr(p: string): string {
   } catch {
     return p;
   }
+}
+
+function isWithin(inner: string, outer: string): boolean {
+  const rel = relative(outer, inner);
+  return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
+}
+
+function cwdOutsideProject(status: 409 | 422, projectId: string): HttpError {
+  return new HttpError(
+    status,
+    'cwd_outside_project',
+    `A session of project ${projectId} works in the project's repository or its directory under supervisor.workspacesDir`,
+  );
 }
 
 function isDirectory(p: string): boolean {

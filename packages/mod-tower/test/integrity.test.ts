@@ -232,7 +232,7 @@ describe('integrity', () => {
         action: {
           kind: 'open',
           label: 'Open promotion',
-          href: '/changes?promotionId=prm_1',
+          href: '/rollbacks?promotionId=prm_1',
           recommendedOptionId: null,
         },
       }),
@@ -241,6 +241,47 @@ describe('integrity', () => {
     s = await h.snap();
     expect(s.attention).toEqual([]);
     expect(s.integrity.provenanceRefusals7d).toBe(1);
+  });
+
+  it('words a promotion refused for touching the governance core as self-modification (G-41), not as a raw code', async () => {
+    h = await setup();
+    h.emit(
+      {
+        type: 'promotion.requested',
+        actor: sys,
+        scope: { projectId: 'prj_a' },
+        meta: {
+          promotionId: 'prm_gov',
+          projectId: 'prj_a',
+          fromRef: 'fix/audit-store',
+          fromSha: 'abcdef1',
+          targetBranch: 'main',
+          ticketId: null,
+          changeId: null,
+        },
+        source: 'api',
+      },
+      ago(h, hours(1)),
+    );
+    h.emit(
+      {
+        type: 'promotion.refused',
+        actor: sys,
+        meta: { promotionId: 'prm_gov', reason: 'self_modification', orphanShas: ['abcdef2'] },
+        source: 'system',
+      },
+      ago(h, hours(1)),
+    );
+    const s = await h.snap();
+    expect(s.attention).toEqual([
+      expect.objectContaining({
+        id: 'provenance_refused:prm_gov',
+        title: 'Promotion refused: self-modification of the governance core',
+        costOfDelay: expect.objectContaining({
+          basis: 'Promotion refused · 1h · self-modification of the governance core · 1 orphan commit',
+        }),
+      }),
+    ]);
   });
 
   it('break-glass: open until its post-incident change completes; overdue records are items; unknown decisions still surface', async () => {
@@ -312,7 +353,7 @@ describe('integrity', () => {
           score: 64.7,
           basis: 'Post-incident record · 2h 20m overdue · open audit finding until filed',
         }, // 62 + 20·log2(1 + 2h 20m/1d)
-        action: { kind: 'open', label: 'Open record', href: '/changes?id=chg_pi', recommendedOptionId: null },
+        action: { kind: 'open', label: 'Open record', href: '/changes/chg_pi', recommendedOptionId: null },
       }),
     ]);
     changeCompleted(h, 'chg_pi');
@@ -405,7 +446,7 @@ describe('integrity', () => {
         action: {
           kind: 'resolve_decision',
           label: 'Review',
-          href: '/decisions?id=dec_lost',
+          href: '/decisions?focus=dec_lost',
           decisionId: 'dec_lost',
           requiresPasskey: true,
           recommendedOptionId: null,

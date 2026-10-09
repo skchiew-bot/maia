@@ -31,11 +31,12 @@ const READY = ticket({
   ],
 });
 
-function signoffRoute(record: { body?: unknown }) {
+/** The answer to a sign-off: by default the ticket as the server holds it before it has reacted to the answer. */
+function signoffRoute(record: { body?: unknown }, after: Parameters<typeof ticket>[0] = {}) {
   return (url: string, init: RequestInit) => {
     if (url !== '/portal/api/tickets/tkt_7/uat' || init.method !== 'POST') return undefined;
     record.body = JSON.parse(String(init.body));
-    return jsonResponse({ ...READY, canSignOffUat: false });
+    return jsonResponse({ ...READY, canSignOffUat: false, ...after });
   };
 }
 
@@ -86,6 +87,24 @@ describe('portal ticket page', () => {
     expect(record.body).toEqual({ verdict: 'pass' });
     expect(screen.queryByRole('form', { name: 'Does the fix work for you?' })).toBeNull();
     expect(screen.getByRole('region', { name: 'Status' })).toHaveTextContent('Being worked on');
+  });
+
+  it('reads the same when the server has already moved the request back to being worked on', async () => {
+    const user = userEvent.setup();
+    const record: { body?: unknown } = {};
+    routes(
+      get('/portal/api/tickets/tkt_7', READY),
+      signoffRoute(record, { status: 'being_worked_on', statusLabel: 'Being worked on' }),
+    );
+    renderPortal('/portal/tickets/tkt_7', REQUESTER);
+    const form = await screen.findByRole('form', { name: 'Does the fix work for you?' });
+    await user.click(within(form).getByRole('radio', { name: /Yes, it works/ }));
+    await user.click(within(form).getByRole('button', { name: 'Send my answer' }));
+    expect(await screen.findByText(/Thanks for confirming the fix works/)).toBeInTheDocument();
+    expect(screen.queryByRole('form', { name: 'Does the fix work for you?' })).toBeNull();
+    const status = screen.getByRole('region', { name: 'Status' });
+    expect(status).toHaveTextContent('Being worked on');
+    expect(within(status).getByRole('list', { name: 'Progress' })).toHaveTextContent('Being worked on (current step)');
   });
 
   it('rejects the fix only with a description of what is still wrong', async () => {

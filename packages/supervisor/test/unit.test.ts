@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { FILE_CHANGING_TOOLS, HOOK_EVENTS, ProcessTypeSchema } from '@aoc/contracts';
 import {
+  MAX_ARG_BYTES,
   buildClaudeArgs,
   buildHookSettings,
   buildMcpConfig,
@@ -13,7 +14,7 @@ import {
   shellQuote,
   toolPolicy,
 } from '../src/launch-config';
-import { buildSystemPrompt, decisionAnswersText } from '../src/prompts';
+import { buildSystemPrompt, decisionAnswersText, withHandoffBrief } from '../src/prompts';
 import { RingBuffer } from '../src/ring-buffer';
 import { readStreamLine } from '../src/stream';
 import { isLegacyLimitResult, isLimitNotice, parseResetAt, strongestSignal } from '../src/throttle';
@@ -100,7 +101,7 @@ describe('claude argv', () => {
   it('puts a single-value flag between the variadic tool flags and the prompt, then -- and the prompt', () => {
     const args = buildClaudeArgs({
       ...base,
-      ...toolPolicy(type({ tools: { allow: ['Bash(git log:*)'], deny: ['WebFetch'] } })),
+      ...toolPolicy(type({ tools: { allow: ['WebFetch(domain:example.com)', 'Read'], deny: ['WebFetch'] } })),
     });
     expect(args).toEqual([
       '-p',
@@ -119,7 +120,9 @@ describe('claude argv', () => {
       'RULES',
       '--allowedTools',
       'mcp__aoc',
-      'Bash(git log:*)',
+      'Bash',
+      'WebFetch(domain:example.com)',
+      'Read',
       '--disallowedTools',
       'WebFetch',
       '--session-id',
@@ -158,11 +161,33 @@ describe('claude argv', () => {
   });
 
   it('always allows the AOC MCP server and denies file-changing tools to read-only types', () => {
-    expect(toolPolicy(type({})).allowedTools).toEqual(['mcp__aoc']);
     expect(toolPolicy(type({})).disallowedTools).toEqual([]);
     const ro = toolPolicy(type({ class: 'triage', readOnly: true, tools: { deny: ['Bash'] } }));
+    expect(ro.allowedTools).toEqual(['mcp__aoc']);
     expect(ro.disallowedTools).toEqual(['Bash', ...FILE_CHANGING_TOOLS]);
     expect(ro.builtinTools).toBeUndefined();
+  });
+
+  // Claude Code 2.1.295 under -p (acceptEdits): `git add`, `git commit`, `npm test` all answer "This command requires
+  // approval" and nobody can approve, so a writer without the grant cannot commit or run its tests (real-CLI check).
+  it('grants Bash to writer types that say nothing about it (print mode cannot prompt), never to read-only ones', () => {
+    expect(toolPolicy(type({})).allowedTools).toEqual(['mcp__aoc', 'Bash']);
+    expect(toolPolicy(type({ tools: { allow: ['Bash', 'WebFetch'] } })).allowedTools).toEqual(['mcp__aoc', 'Bash', 'WebFetch']);
+    expect(toolPolicy(type({ class: 'triage', readOnly: true })).allowedTools).toEqual(['mcp__aoc']);
+    const noShell = toolPolicy(type({ tools: { deny: ['Bash'] } }));
+    expect(noShell.allowedTools).toEqual(['mcp__aoc']);
+    expect(noShell.disallowedTools).toEqual(['Bash']);
+  });
+
+  // The shipped writer types grant a few git verbs and deny merge, rebase and reset. That is their whole Bash policy:
+  // a blanket Bash next to it would allow everything the scoped rules leave out (`git switch main`, `git branch -D`).
+  it('leaves a registry that scopes Bash exactly as written', () => {
+    const scoped = { allow: ['Bash(git status:*)', 'Bash(git commit:*)'], deny: ['Bash(git reset:*)'] };
+    const p = toolPolicy(type({ tools: scoped }));
+    expect(p.allowedTools).toEqual(['mcp__aoc', 'Bash(git status:*)', 'Bash(git commit:*)']);
+    expect(p.disallowedTools).toEqual(['Bash(git reset:*)']);
+    // A scoped deny alone is still a statement about Bash: the type is not widened.
+    expect(toolPolicy(type({ tools: { deny: ['Bash(git push:*)'] } })).allowedTools).toEqual(['mcp__aoc']);
   });
 
   it('redacts the system prompt and the prompt from the recorded argv', () => {
@@ -347,7 +372,7 @@ describe('stream-json reader', () => {
 });
 
 describe('system prompt and injected text', () => {
-  it('carries the AOC rules, trailers, lessons, the approved playbook and the brief', () => {
+  it('carries the AOC rules, trailers, lessons and the approved playbook', () => {
     const text = buildSystemPrompt({
       sessionId: 'ses_1',
       projectId: 'prj_1',
@@ -372,7 +397,6 @@ describe('system prompt and injected text', () => {
         status: 'approved',
         steps: [{ id: 's1', title: 'Write the test' }],
       },
-      brief: { fromSessionId: 'ses_0', text: 'BRIEF TEXT' },
     });
     for (const s of [
       'mcp__aoc__declare_plan',
@@ -386,8 +410,6 @@ describe('system prompt and injected text', () => {
       'Run tests first',
       '1. Write the test',
       'pbk_1',
-      'BRIEF TEXT',
-      'ses_0',
     ]) {
       expect(text).toContain(s);
     }
@@ -402,9 +424,30 @@ describe('system prompt and injected text', () => {
         type: type({ class: 'triage', readOnly: true }),
         lessons: [],
         playbook: null,
-        brief: null,
       }),
     ).toContain('READ-ONLY');
+  });
+
+  // Wording the real model (Haiku, Claude Code 2.1.295) needed: it closed a test task with the command line, which the
+  // ledger cannot verify, left a task open after an operator told it to skip it (AOC then continued it into the
+  // skipped work), and in triage ended its turn before closing the plan it had declared.
+  it('tells the model what evidence looks like, to amend the plan when work is dropped, and to report last in triage', () => {
+    const input = { sessionId: 's', projectId: 'p', threadId: 't', phaseId: null, ticketId: null, lessons: [], playbook: null };
+    const writer = buildSystemPrompt({ ...input, type: type({}) });
+    expect(writer).toContain('the test file and test name');
+    expect(writer).toContain('never the command you ran');
+    expect(writer).toContain('a full commit SHA');
+    expect(writer).toContain('makes planned work unnecessary');
+    expect(writer).toContain('until every declared task is done');
+    const triage = buildSystemPrompt({ ...input, type: type({ class: 'triage', readOnly: true }) });
+    expect(triage).toMatch(/close your plan's tasks with `mcp__aoc__task_done`.*make `mcp__aoc__report_diagnosis` your last tool call/);
+  });
+
+  it('fits a large brief into the first turn and strips its own delimiter from it', () => {
+    const text = withHandoffBrief('Continue the work.', `${'x'.repeat(300_000)}`, 'ses_0');
+    expect(Buffer.byteLength(text)).toBeLessThanOrEqual(MAX_ARG_BYTES);
+    expect(text).toContain('[truncated by AOC]');
+    expect(text.endsWith('Continue the work.')).toBe(true);
   });
 
   it('formats decision answers', () => {

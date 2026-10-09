@@ -3,6 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync, write
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import type { IsolatedRunInput, SupervisorService } from '@aoc/contracts';
 import { lookupOsUser } from '../src/isolation';
 import { handOver, isolatedRunEnv } from '../src/sandbox';
 import { FAKE_CLAUDE, createHarness, type Harness } from './harness';
@@ -98,6 +99,23 @@ describe('isolated runs: environment and sandbox (G-04)', () => {
         sandbox: {},
       }),
     ).rejects.toThrow(/never gets a credential profile/);
+  });
+
+  it('takes the sandbox option through the SupervisorService contract, which is what mod-change calls', async () => {
+    h = await createHarness();
+    const service: SupervisorService = h.sup;
+    const input: IsolatedRunInput = {
+      cwd: h.root,
+      command: [process.execPath, '-e', probe({})],
+      credentialProfile: null,
+      timeoutMs: 5000,
+      env: { HOME: '/nonexistent' },
+      sandbox: { handOver: [h.root] },
+    };
+    expect(JSON.parse((await service.runIsolated(input)).stdout)).toMatchObject({ credential: null });
+    await expect(service.runIsolated({ ...input, credentialProfile: 'uat-deploy', sandbox: {} })).rejects.toThrow(
+      /never gets a credential profile/,
+    );
   });
 
   it('without session isolation, a sandboxed run stays with aocd’s user and holds no credential', async () => {

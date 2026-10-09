@@ -64,6 +64,7 @@ describe('startup recovery (§2.3: waiting survives reboots)', () => {
     const clock = new FakeClock('2026-10-09T02:00:00.000Z');
     const masterKey = randomBytes(32);
     const ledger = new StubLedger();
+    ledger.projects.add('prj_r');
     const actor = { kind: 'human' as const, id: 'usr_owner' };
     const stubs = (decisions: (ctx: ModuleContext) => DecisionService): AocModule => ({
       name: 'stubs',

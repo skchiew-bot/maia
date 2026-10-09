@@ -14,7 +14,6 @@ import {
   trendFacets,
   verdictDetail,
 } from '../../src/pages/learning/model';
-import { combine } from '../../src/pages/learning/resources';
 import { CLASSES, ERRORS, OFFENCES, TREND, offence } from './fixtures';
 
 describe('repeat-offence lifecycle', () => {
@@ -140,33 +139,11 @@ describe('model verdict wording', () => {
   });
 });
 
-describe('stream filter and resource combination', () => {
+describe('stream filter', () => {
   it('refreshes on learning events only', () => {
     for (const t of ['error.observed', 'rootcause.assigned', 'offence.transitioned', 'lesson.bound']) {
       expect(isLearningEvent(t)).toBe(true);
     }
     expect(isLearningEvent('session.liveness_changed')).toBe(false);
-  });
-
-  it('combines resources: data once all loaded, first error, busy while any loads', () => {
-    let reloaded = 0;
-    const reload = () => {
-      reloaded += 1;
-    };
-    const both = combine(
-      { data: 1, error: undefined, loading: false, reload },
-      { data: undefined, error: new Error('x'), loading: true, reload },
-    );
-    expect(both.data).toBeUndefined();
-    expect(both.loading).toBe(true);
-    expect((both.error as Error).message).toBe('x');
-    both.reload();
-    expect(reloaded).toBe(2);
-    expect(
-      combine(
-        { data: 'a', error: undefined, loading: false, reload },
-        { data: 2, error: undefined, loading: false, reload },
-      ).data,
-    ).toEqual(['a', 2]);
   });
 });

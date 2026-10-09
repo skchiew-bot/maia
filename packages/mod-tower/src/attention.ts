@@ -6,6 +6,7 @@ import {
   DECISION_TEST_INFO,
   MODEL_CONTEXT_TOKENS,
   PASSKEY_KINDS,
+  TESTED_DECISION_KINDS,
   modelTierOf,
   type AttentionKind,
   type DecisionKind,
@@ -77,12 +78,13 @@ const REFUSAL_LABEL: Record<string, string> = {
   gate_missing: 'gate missing',
   tests_failed: 'tests failed',
   not_fast_forward: 'not a fast-forward',
+  self_modification: 'self-modification of the governance core',
 };
 
 const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 const plural = (n: number, word: string) => `${n.toLocaleString('en-US')} ${word}${n === 1 ? '' : 's'}`;
 const usd = (n: number) => `$${n.toFixed(2)}`;
-const decisionHref = (id: string) => `/decisions?id=${encodeURIComponent(id)}`;
+const decisionHref = (id: string) => `/decisions?focus=${encodeURIComponent(id)}`;
 
 type Action = TowerAttentionItem['action'];
 /** A non-decision action: nothing to apply inline. */
@@ -221,8 +223,8 @@ export function buildAttention(r: ReadCtx, integrity: IntegrityFacts): TowerAtte
     if (ticket) ticketsCarried.add(ticket.ticket_id);
     const customer = customerStake(r, ticket, d.kind);
     const passkey = d.requires_passkey === 1 || PASSKEY_KINDS.has(d.kind);
-    const testInfo = d.kind === 'agent_decision' && d.test ? DECISION_TEST_INFO[d.test] : null;
-    const label = testInfo ? `Agent decision (test ${testInfo.no}: ${d.test})` : DECISION_LABEL[d.kind];
+    const testInfo = TESTED_DECISION_KINDS.has(d.kind) && d.test ? DECISION_TEST_INFO[d.test] : null;
+    const label = testInfo ? `${DECISION_LABEL[d.kind]} (test ${testInfo.no}: ${d.test})` : DECISION_LABEL[d.kind];
     const due = decisionDueMs(d.kind, d.requested_ms, d.due_ms);
     const pastSla = due !== null && r.now > due;
     const sla = DECISION_SLA_MS[d.kind];
@@ -316,7 +318,7 @@ export function buildAttention(r: ReadCtx, integrity: IntegrityFacts): TowerAtte
       action: go(
         'open',
         'Open record',
-        b.change_id ? `/changes?id=${encodeURIComponent(b.change_id)}` : '/changes',
+        b.change_id ? `/changes/${encodeURIComponent(b.change_id)}` : '/changes',
       ),
       chips: ['Break-glass'],
     });
@@ -503,7 +505,7 @@ export function buildAttention(r: ReadCtx, integrity: IntegrityFacts): TowerAtte
         reason,
         ...(p.orphan_count ? [plural(p.orphan_count, 'orphan commit')] : []),
       ],
-      action: go('open', 'Open promotion', `/changes?promotionId=${encodeURIComponent(p.promotion_id)}`),
+      action: go('open', 'Open promotion', `/rollbacks?promotionId=${encodeURIComponent(p.promotion_id)}`),
       chips: ['Provenance'],
     });
   }

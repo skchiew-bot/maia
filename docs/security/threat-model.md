@@ -197,6 +197,7 @@ unprivileged OS user (O-1).
 | | Threat | Control | Status | Residual |
 | --- | --- | --- | --- | --- |
 | E | A credential profile reaches the wrong session | The profile comes from the process type only; the registry schema forbids credentials on read-only types, and the supervisor drops them for read-only sessions anyway | Built | — |
+| E | **A builder extracts the credential its session holds** (asks the model to print it encoded, reads `/proc/<pid>/environ`, copies a key file) and pushes from their own machine (R-02, [wave 2](review-wave2.md)) | A push credential is never in a session: a profile's `env` and `files` stay with aocd. A session pushes with `git push aoc …` through the supervisor's gateway, which accepts it only during a turn, checks every ref against the profile's `push.refs`, refuses `main`, `release/*`, tags and deletions, and forwards it upstream with the credential itself ([runbook §4, item 11](../runbooks/credential-isolation.md)). A session holds only the profile's read-only `session` part | Built | The gateway authenticates with the session's ingest token, which the model can read (T-3, R-01): it can push what `push.refs` allows, during a turn, and nothing more. Credentials that are not git (a deploy API, a cloud CLI) have no proxy yet. With `isolation: "none"` sessions can read the profiles file |
 | I | aocd secrets leak into sessions | `envAllowlist` copies only named variables, and never an `AOC_*` variable of aocd's own | Built | The default allowlist includes the Claude credentials (O-14) and `HOME`, so a session shares the service user's home directory: its SSH keys, git and `gh` credentials and Claude login state (O-1) |
 | E | **The agent runs code as the supervisor or aocd** through git hooks or config in its workspace, or through acceptance tests the supervisor executes | Never run privileged git or tests in an agent-writable tree ([T-2](#t-2-code-execution-through-git-configuration-in-agent-workspaces)) | Required (O-2) | `runIsolated` (built) runs as the aocd user, in the repository the sessions work in |
 | T | Invalid generated settings disable every hook silently | The generated settings are validated against a schema before launch; no `SessionStart` within N seconds → launch failure | Built / Required (O-15) | Until the `SessionStart` check exists, a Claude Code version that rejects settings AOC considers valid runs without hooks, unnoticed |
@@ -255,7 +256,7 @@ unprivileged OS user (O-1).
 
 | | Threat | Control | Status | Residual |
 | --- | --- | --- | --- | --- |
-| E | A feature or UAT deploy key pushes to `main` | Rulesets restrict updates of `main` and `release/*` to the supervisor machine user; a push drill proves it | Ops | GitHub admins can change rulesets: watch the audit log |
+| E | A feature or UAT deploy key pushes to `main` | Rulesets restrict updates of `main` and `release/*` to the supervisor machine user; the key is held by aocd alone and the push gateway refuses `main` and `release/*` before the key is used (R-02); a push drill proves both | Ops / Built | GitHub admins can change rulesets: watch the audit log |
 | T | Force-push or tag deletion rewrites pinned history | Block force-pushes and deletions on `main` and `release/*`; protect the `aoc/*` pin tags | Ops | — |
 | I | Agents read the credential profiles file | The file is owned by the service user, mode 0600, and agents run as a different OS user. The self-modification guard denies tool writes to it, not reads | Ops / Required (O-1) | Void while agents and aocd share a user, which they do today: the supervisor spawns `claude` as the aocd user |
 | E | An agent pushes a branch whose name matches a protected pattern | Rulesets on patterns; creation of `release/*` restricted to the machine user | Ops | — |
@@ -319,9 +320,10 @@ Where AOC runs git or repository code today (commit `a1c8a0c`):
   environment.
 - **Promotion.** `mod-change` merges and pushes through `supervisor.runIsolated` in the project repository, with
   the promotion credential profile. That is the repository the managed sessions work in: a session's working
-  directory defaults to its project's repository. `mod-change` sets `AOC_SUPERVISOR_PUSH=1` precisely so that the
-  repository's `pre-push` guard lets the push through, which means that the repository's `pre-push` hook **runs**,
-  with the promotion credential in its environment.
+  directory defaults to its project's repository. `mod-change` set `AOC_SUPERVISOR_PUSH=1` precisely so that the
+  repository's `pre-push` guard let the push through, which means that the repository's `pre-push` hook **ran**,
+  with the promotion credential in its environment. (Fixed with G-04: the push now comes from a service-owned clone
+  with hooks off, and the variable was removed, so no environment variable unlocks a push to a protected ref.)
 - **Rollback verification.** `mod-change` checks the target commit out into a temporary worktree of the project
   repository and runs the acceptance command there through `runIsolated`, as `sh -c`, without a credential profile
   but with the allowlisted environment (Claude credentials, `HOME`). The command comes from the change record's
@@ -376,6 +378,10 @@ state that holds.
   - Give the sidecar its own token, outside the `claude` environment (O-3, Built): sidecar reports refuse the
     session token.
   - Give sessions a home directory of their own, holding no credentials (O-1).
+  - Keep every credential that can push out of the environment: a session pushes through the supervisor's gateway
+    with its own ingest token, which can do no more than the profile's `push.refs` allow, and only during a turn
+    (Built, R-02). What the model can print is then the token, the Claude credentials and the profile's read-only
+    `session` values.
   - Restrict network egress from build sessions and review how Claude credentials reach sessions (O-14).
 - **Residual:** an agent can still lie about **itself** through its own hook and MCP events and through the
   transcript it writes; its liveness and usage now reach aocd only from the sidecar and are reconciled against the
@@ -676,7 +682,8 @@ charged (R14).
   - CODEOWNERS and required human review for core paths (Ops).
 - **Residual and findings (O-10):**
   - `selfModification.aocRepoPaths` defaults to empty, which leaves the core protection inert. The audit-state
-    protection applies regardless.
+    protection applies regardless. Production mode refuses to start from a source checkout of AOC while the list is
+    empty; a dist install carries no checkout to see, so its clones are listed by hand (gap P-18).
   - The default `protectedPaths` list now covers every Tier 1 path (governance, audit, credits, ingest, supervisor, dependency and build files, the rules and the spec); review it for the production configuration.
   - The Bash analysis is a speed bump: a script, a build step or an interpreter fed from a file changes files
     the guard never sees. While agents run as the aocd user (O-1), nothing at the file-system level stops them.
@@ -701,10 +708,15 @@ passed the gate by copying a trailer.
   for a commit reachable from a HEAD AOC recorded for it (`packages/mod-change/src/provenance.ts`). As designed:
   cross-check every traced commit against AOC's **own records**, not the message. For
   example, require each commit to be reachable from a HEAD that AOC recorded for a managed session linked to that
-  change or ticket (`task.done.headSha`, `change.completed.pinnedSha`, `phase.completed.pinnedSha`), and not
-  reachable from the base. A stronger option: per-session commit-signing keys issued by the supervisor, verified at
-  promotion; a laptop has no such key.
-- **Residual:** per-session commit signing is not built.
+  change or ticket (`task.done.headSha`, `change.completed.pinnedSha`, `phase.completed.pinnedSha`, and the
+  supervisor's `session.head_recorded.sha` at the end of every build turn), and not reachable from the base. A
+  stronger option: per-session commit-signing keys issued by the supervisor, verified at promotion; a laptop has no
+  such key.
+- **Residual:** per-session commit signing is not built. A recorded HEAD proves a commit was in the session's
+  workspace when the platform read it, not that the session wrote it. A session (or a prompt injected into one) that
+  checks a foreign commit out before a turn ends or a task closes, for example one fetched from a branch of the
+  remote, gets it recorded for itself, and a copied `AOC-Session` trailer then traces. Only commit signing closes
+  this; the go-live decision and its diff review stay the control.
 
 ---
 

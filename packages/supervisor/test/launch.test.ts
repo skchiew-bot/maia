@@ -1,4 +1,5 @@
-import { statSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { HOOK_EVENTS, type Actor } from '@aoc/contracts';
@@ -61,6 +62,7 @@ describe('launch', () => {
       h.file(id, 'system-prompt.md'),
       '--allowedTools',
       'mcp__aoc',
+      'Bash',
       '--session-id',
       uuid,
       '--model',
@@ -70,14 +72,16 @@ describe('launch', () => {
     ]);
     expect(call!.cwd).toBe(join(h.t.config.supervisor.workspacesDir, 'prj_demo'));
 
-    // env: allowlist + AOC_* + the type's credential profile; aocd secrets never leak (§3, R1)
+    // env: allowlist + AOC_* + what the type's credential profile hands to sessions (its `session` part); aocd
+    // secrets never leak, and neither does the credential aocd pushes with (§3, R1, R-02)
     const env = call!.env;
     expect(env).toMatchObject({
       HOME: h.env.HOME,
       LANG: 'C.UTF-8',
       CLAUDE_CONFIG_DIR: h.env.CLAUDE_CONFIG_DIR,
       TZ: 'Asia/Kuala_Lumpur',
-      GIT_PUSH_TOKEN: SECRETS.gitFeature,
+      NPM_READ_TOKEN: SECRETS.sessionRead,
+      GIT_AUTHOR_NAME: 'AOC feature agent',
     });
     expect(env).toMatchObject({
       AOC_SESSION_ID: id,
@@ -91,10 +95,18 @@ describe('launch', () => {
       kind: 'session',
       sessionId: id,
     });
-    for (const leaked of ['DEPLOY_KEY', 'AOC_MASTER_KEY', 'DEPLOY_TOKEN', 'AOC_CHANGE_ID', 'AOC_TICKET_ID'])
+    for (const leaked of [
+      'DEPLOY_KEY',
+      'AOC_MASTER_KEY',
+      'DEPLOY_TOKEN',
+      'GIT_PUSH_TOKEN',
+      'GIT_KEY_FILE',
+      'AOC_CHANGE_ID',
+      'AOC_TICKET_ID',
+    ])
       expect(env[leaked], leaked).toBeUndefined();
-    expect(JSON.stringify(env)).not.toContain(SECRETS.aocdDeployKey);
-    expect(JSON.stringify(env)).not.toContain(SECRETS.aocdMasterKey);
+    for (const held of [SECRETS.aocdDeployKey, SECRETS.aocdMasterKey, SECRETS.gitFeature, SECRETS.featureKey])
+      expect(JSON.stringify(env)).not.toContain(held);
 
     // per-session files
     const mcp = JSON.parse(h.file(id, 'mcp.json'));
@@ -162,7 +174,7 @@ describe('launch', () => {
     const logged = lines.join('\n');
     for (const secret of [...Object.values(SECRETS), env.AOC_INGEST_TOKEN!, sidecarToken])
       expect(logged).not.toContain(secret);
-    expect(logged).toContain('GIT_PUSH_TOKEN'); // names only
+    expect(logged).toContain('NPM_READ_TOKEN'); // names only
   });
 
   it('gives read-only types no credentials, a restricted tool set and no writer lock', async () => {
@@ -287,6 +299,72 @@ describe('launch', () => {
       expect: 201,
     });
     expect(h.events('session.launch_requested', ok.sessionId)[0]!.meta.model).toBe('claude-sonnet-5-5');
+  });
+
+  it('refuses an unknown project with 404 before anything is recorded: no launch, thread or workspace', async () => {
+    h = await createHarness();
+    const builder = h.owner.headers;
+    const res = await h.t.request('POST', '/api/sessions', {
+      headers: builder,
+      body: { processType: 'docs', projectId: 'prj_typo', prompt: 'x' },
+    });
+    expect(res.status).toBe(404);
+    const err = ((await res.json()) as { error: { code: string; message: string } }).error;
+    expect(err.code).toBe('unknown_project');
+    expect(err.message).toContain('prj_typo');
+    await expect(
+      h.sup.launch({ processType: 'docs', projectId: 'prj_typo', prompt: 'x' }, h.ownerActor),
+    ).rejects.toMatchObject({ status: 404, code: 'unknown_project' });
+    expect(h.events('session.launch_requested')).toEqual([]);
+    expect(h.ledger.threads.size).toBe(0);
+    expect(existsSync(join(h.t.config.supervisor.workspacesDir, 'prj_typo'))).toBe(false);
+
+    // An existing project launches; so does one created since (the check asks the ledger every time).
+    h.ledger.projects.add('prj_typo');
+    const ok = await h.t.json<{ sessionId: string }>('POST', '/api/sessions', {
+      headers: builder,
+      body: { processType: 'docs', projectId: 'prj_typo', prompt: 'x' },
+      expect: 201,
+    });
+    expect(h.events('session.launch_requested', ok.sessionId)[0]!.meta.projectId).toBe('prj_typo');
+  });
+
+  it('names the unknown project before it looks at the cwd, and a refusal spends no idempotency key (R-07, R-09)', async () => {
+    h = await createHarness();
+    const intake = { kind: 'system', id: 'intake' } as const;
+    const req = {
+      processType: 'bug-triage',
+      projectId: 'prj_late',
+      prompt: 'Diagnose ticket 9',
+      idempotencyKey: 'intake.triage:evt_9:0',
+    };
+    // A typo is "unknown project", not a baffling "cwd outside the project".
+    await expect(h.sup.launch({ ...req, cwd: tmpdir() }, intake)).rejects.toMatchObject({
+      status: 404,
+      code: 'unknown_project',
+    });
+    await expect(h.sup.launch(req, intake)).rejects.toMatchObject({ status: 404, code: 'unknown_project' });
+    expect(h.events('session.launch_requested')).toEqual([]);
+
+    // The refusals recorded nothing, so the key is free: once the project exists the same delivery launches, once.
+    h.ledger.projects.add('prj_late');
+    const first = await h.sup.launch(req, intake);
+    const again = await h.sup.launch(req, intake);
+    expect(again.sessionId).toBe(first.sessionId);
+    await h.waitLifecycle(first.sessionId, 'idle');
+    expect(h.events('session.launch_requested')).toHaveLength(1);
+    expect(h.calls()).toHaveLength(1);
+  });
+
+  it('checks the process type as well: an unknown type is a 422 whatever the project', async () => {
+    h = await createHarness();
+    for (const projectId of ['prj_demo', 'prj_typo']) {
+      await expect(
+        h.sup.launch({ processType: 'opus-please', projectId, prompt: 'x' }, h.ownerActor),
+      ).rejects.toMatchObject({ status: 422, code: 'unknown_process_type' });
+    }
+    expect(h.events('session.launch_requested')).toEqual([]);
+    expect(h.ledger.threads.size).toBe(0);
   });
 
   it('refuses a second writer on a thread (409) until the first one ends', async () => {

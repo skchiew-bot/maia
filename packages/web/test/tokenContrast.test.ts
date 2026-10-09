@@ -189,6 +189,18 @@ const GROUPS: Record<string, Pair[]> = {
       UI,
       'active nav icon and bar, selected chip icon, tab underline',
     ),
+    ...on(
+      ['--accent'],
+      ['--surface', '--surface-2'],
+      UI,
+      'busy hairline along the top of a refreshing table, widget body or resource (.is-busy::before)',
+    ),
+    ...on(
+      ['--text-3'],
+      ['--surface', '--surface-2'],
+      UI,
+      'selected segment boundary against its thumb and its track (.aoc-seg__option.is-selected)',
+    ),
     {
       fg: '--brand-red-contrast',
       bg: '--brand-red',

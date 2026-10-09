@@ -3,6 +3,7 @@ import {
   ApiError,
   apiDelete,
   apiGet,
+  apiPatch,
   apiPost,
   apiPut,
   loginPathFor,
@@ -52,6 +53,38 @@ describe('api client', () => {
     expect(fetchMock.mock.calls[0]![1]?.headers).toMatchObject({ 'Content-Type': 'application/json' });
     await expect(apiPut('/api/x', { a: 1 })).resolves.toEqual({ echoed: { a: 1 } });
     await expect(apiDelete('/api/x')).resolves.toBeUndefined();
+  });
+
+  it('PATCHes a JSON body with the same cookie, header and error conventions as the other verbs', async () => {
+    const fetchMock = mockFetch((_url, init) => jsonResponse({ patched: JSON.parse(String(init.body)) }));
+    await expect(apiPatch('/api/projects/prj_1', { name: 'Renamed' })).resolves.toEqual({
+      patched: { name: 'Renamed' },
+    });
+    const [url, init = {}] = fetchMock.mock.calls[0]!;
+    expect(url).toBe('/api/projects/prj_1');
+    expect(init).toMatchObject({ method: 'PATCH', credentials: 'include' });
+    expect(init.headers).toMatchObject({
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      'X-Requested-With': 'aoc-web',
+    });
+
+    // Field errors survive for the forms that show them next to the field (422 `details`).
+    mockFetch(() =>
+      jsonResponse(
+        { error: { code: 'invalid', message: 'Check the form', details: [{ path: 'name', message: 'Too long' }] } },
+        { status: 422 },
+      ),
+    );
+    await expect(apiPatch('/api/projects/prj_1', { name: 'x'.repeat(500) })).rejects.toMatchObject({
+      status: 422,
+      code: 'invalid',
+      details: [{ path: 'name', message: 'Too long' }],
+    });
+
+    mockFetch(() => jsonResponse({}, { status: 401 }));
+    await expect(apiPatch('/api/projects/prj_1', {})).rejects.toMatchObject({ status: 401 });
+    expect(onUnauthorized).toHaveBeenCalledWith('/login?next=%2Fconsole');
   });
 
   it('turns error bodies into ApiError with status, code and message', async () => {

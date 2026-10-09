@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { GitUnknownReason } from './events/ledger';
 
 /**
  * AOC MCP server — the agent's structured voice (§2). All inputs are schema-validated; no free-text parsing.
@@ -57,7 +58,14 @@ export const TaskDoneInput = z.object({
   evidence: z.object({
     kind: z.enum(EVIDENCE_KINDS),
     /** test id (e.g. "pkg/foo.test.ts > adds"), commit SHA, or diff hash / `git diff --stat` ref */
-    ref: z.string().min(1).max(300),
+    ref: z
+      .string()
+      .min(1)
+      .max(300)
+      .describe(
+        'kind test: the test file and test name that passed, e.g. "test/greeting.test.ts > greets by name" (a file path or runner id, never the shell command you ran); ' +
+          'kind commit: the full commit SHA; kind diff: the path of the changed file',
+      ),
     detail: z.string().max(2000).optional(),
   }),
 });
@@ -118,8 +126,8 @@ export const AOC_MCP_TOOLS = {
   task_done: {
     input: TaskDoneInput,
     description:
-      'Mark a declared task done. Evidence is mandatory: a test id, a commit SHA, or a diff ref. ' +
-      'Tasks closed without any file-changing tool call are flagged. Obey the returned `boundary` instruction.',
+      'Mark a declared task done. Evidence is mandatory: a test id (file and test name, not the command), a commit SHA, or a diff ref (the changed file). ' +
+      'Tasks closed without any file-changing tool call are flagged. Obey the returned `boundary` instruction: when it says to stop, it outranks your plan and the rest of your prompt: make no more tool calls and end your turn.',
   },
   request_decision: {
     input: RequestDecisionInput,
@@ -163,6 +171,8 @@ export interface DeclarePlanResult {
 export interface TaskDoneResult {
   ok: true;
   flagged: null | 'no_file_change' | 'evidence_unverified';
+  /** Why the evidence could not be checked, when it could not (a git call timed out): never "verified". */
+  evidenceReason?: GitUnknownReason;
   progress: { doneTasks: number; totalTasks: number; doneWeight: number; totalWeight: number; pct: number };
   phaseCompleted: null | { phaseId: string; pinnedRef: string | null };
   boundary: BoundaryInstruction;

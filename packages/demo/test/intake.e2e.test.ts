@@ -74,6 +74,9 @@ describe('intake on a seeded demo', () => {
       expect(signoff.status, JSON.stringify(signoff.data)).toBe(200);
       const golive = await waitFor('ticket.golive_requested', () => ticketEvent('ticket.golive_requested'), 120_000);
       expect(golive.meta.decisionId).not.toBe('none');
+      // The requester has nothing left to test, and what holds the change now is not theirs to see.
+      const mine = await call<Record<string, unknown>>(base, 'GET', `/portal/api/tickets/${ticketId}`, tokens.tokens.daniel.token);
+      expect(mine.data).toMatchObject({ status: 'being_worked_on', statusLabel: 'Being worked on', canSignOffUat: false });
       const events = eventsAfter(layout.aocData, tokens.head.seq);
       expect(events.some((e) => e.type === 'promotion.requested' && e.meta.ticketId === ticketId)).toBe(true);
       expect(events.filter((e) => e.type === 'promotion.refused')).toEqual([]);
@@ -85,7 +88,7 @@ describe('intake on a seeded demo', () => {
       throw err;
     } finally {
       stopped = await stopChild(aocd, 'SIGTERM', 60_000);
-      // aocd's sidecars outlive it for a final flush that writes a spool file into the data directory.
+      // A clean stop leaves nothing in its process group (it waits for its sidecars); this keeps a failed run from leaking.
       await groupExited(aocd.pid!, 20_000);
     }
     expect(stopped, log).toEqual({ code: 0, signal: null });

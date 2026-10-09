@@ -5,7 +5,7 @@
 import { z } from 'zod';
 import { DECISION_KINDS, LIVENESS_STATES, ROLES, SESSION_LIFECYCLE } from '../domain';
 import { DECISION_TESTS } from '../mcp';
-import { defineEvent, meta, payload, zId, zIso, zLabel, zNonNeg } from './define';
+import { defineEvent, meta, payload, zId, zIso, zLabel, zNonNeg, zSha } from './define';
 
 const liveness = z.enum(LIVENESS_STATES).nullable();
 
@@ -134,6 +134,39 @@ export const SESSION_EVENTS = [
       sessionId: zId,
       reason: z.enum(['no_manifest', 'credit_cap', 'writer_lock', 'read_only', 'self_modification', 'protected_operation', 'diagnosis_budget']),
     }),
+    payload: null,
+  }),
+  defineEvent({
+    type: 'session.git_pushed',
+    owner: 'supervisor',
+    description:
+      "A managed session pushed through the supervisor's push gateway (§3, R-02). The supervisor checked every ref against the session's credential profile and forwarded the allowed ones upstream with the credential only it holds. Ref names are agent-chosen text: they stay in the encrypted body.",
+    meta: meta({
+      sessionId: zId,
+      credentialProfile: zLabel,
+      refs: z.number().int().min(1),
+      forwarded: z.number().int().min(0),
+      refused: z.number().int().min(0),
+      failed: z.number().int().min(0),
+    }),
+    payload: payload({
+      results: z.array(
+        z.object({
+          ref: z.string(),
+          oldSha: z.string(),
+          newSha: z.string(),
+          result: z.enum(['forwarded', 'refused', 'failed']),
+          reason: z.string().nullable(),
+        }),
+      ),
+    }),
+  }),
+  defineEvent({
+    type: 'session.head_recorded',
+    owner: 'supervisor',
+    description:
+      "The HEAD of a build session's project repository when one of its turns ended, read by the supervisor service as the repository's owner (never supplied by the session). Provenance counts a commit as the session's work only when it is reachable from a HEAD recorded this way or at a task close (G-25).",
+    meta: meta({ sessionId: zId, projectId: zId, sha: zSha, turn: z.number().int().min(1) }),
     payload: null,
   }),
   defineEvent({

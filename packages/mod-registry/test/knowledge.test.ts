@@ -1,6 +1,8 @@
+import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
-import type { KnowledgeSearchResponse } from '@aoc/contracts';
+import type { KnowledgeSearchResponse, StoredEvent } from '@aoc/contracts';
 import type { TestRuntime, TestUser } from '@aoc/kernel';
+import { createKnowledgeProjector } from '../src/knowledge';
 import { retirePlaybook, seedPlaybook, start } from './helpers';
 
 const INTAKE = { kind: 'system', id: 'intake' } as const;
@@ -18,8 +20,8 @@ function diagnose(
     type: 'ticket.diagnosis_reported',
     actor: { kind: 'agent', id: sessionId },
     scope: { ticketId, sessionId, projectId: 'prj_shop' },
-    meta: { ticketId, sessionId, confidence, rootCauseClass },
-    payload: { rootCause, fixPlan, affectedAreas: ['src/checkout'] },
+    meta: { ticketId, sessionId, confidence },
+    payload: { rootCause, fixPlan, affectedAreas: ['src/checkout'], ...(rootCauseClass ? { rootCauseClass } : {}) },
     source: 'mcp',
   });
 }
@@ -329,6 +331,26 @@ describe('team knowledge layer (§14)', () => {
     retirePlaybook(t, 'pbk_co');
     expect(await ids('reproduce')).toEqual([]);
     await t.close();
+  });
+
+  it('keeps the class of a diagnosis whose log chained it in meta, and none once the body is erased', () => {
+    const projector = createKnowledgeProjector();
+    const db = new DatabaseSync(':memory:');
+    for (const sql of projector.ddl) db.exec(sql);
+    const legacy = {
+      type: 'ticket.diagnosis_reported',
+      seq: 1,
+      ts: '2026-10-01T00:00:00.000Z',
+      scope: { ticketId: 'tkt_old' },
+      bodyScope: 'tkt_old',
+      meta: { ticketId: 'tkt_old', sessionId: 'ses_old', confidence: 0.8, rootCauseClass: 'null-check' },
+    } as unknown as StoredEvent;
+    const cls = () => (db.prepare('SELECT root_cause_class AS cls FROM reg_kn_diagnoses').get() as { cls: string | null }).cls;
+    projector.apply({ db, replaying: true }, legacy, { rootCause: 'Null check missing', fixPlan: 'Add a guard' });
+    expect(cls()).toBe('null-check');
+    projector.apply({ db, replaying: true }, legacy, null);
+    expect(cls()).toBeNull();
+    db.close();
   });
 
   it('is internal: builders and approvers search it, requesters and anonymous callers never', async () => {

@@ -20,7 +20,7 @@ const fixPlanCard = (): DecisionCardView =>
     id: 'dec_fix',
     kind: 'fix_plan',
     test: null,
-    title: `Fix plan for ${ID}: Agent desktop logs me out right after login`,
+    title: 'Agent desktop logs me out right after login — fix plan',
     question: 'Approve this fix plan? Nothing touches code until it clears this gate (§7).',
     options: [
       { id: 'approve', label: 'Approve fix plan' },
@@ -255,6 +255,23 @@ describe('Ticket page', { timeout: 15_000 }, () => {
         body: { resolution: 'cannot_reproduce' },
       }),
     );
+  });
+
+  it('offers "withdrawn" only to an Approver: it speaks for the requester and the daemon refuses it otherwise', async () => {
+    const user = userEvent.setup();
+    installApi();
+    const resolutions = async (as: AuthUser) => {
+      const { unmount } = renderAt(`/tickets/${ID}`, as);
+      await user.click(await screen.findByRole('button', { name: 'Close ticket…' }));
+      const dialog = screen.getByRole('alertdialog', { name: 'Close this ticket?' });
+      const values = within(dialog)
+        .getAllByRole('option')
+        .map((o) => (o as HTMLOptionElement).value);
+      unmount();
+      return values;
+    };
+    expect(await resolutions(BUILDER)).toEqual(['duplicate', 'cannot_reproduce', 'wont_fix']);
+    expect(await resolutions(CEO)).toEqual(['duplicate', 'cannot_reproduce', 'wont_fix', 'withdrawn']);
   });
 
   it('keeps raw media behind the role boundary for Builders', async () => {

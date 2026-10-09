@@ -84,7 +84,10 @@ type LedgerMcpTool = 'declare_plan' | 'amend_plan' | 'task_done' | 'playbook_ste
 export function mountLedgerRoutes(app: App, core: LedgerCore): void {
   // ── MCP ingest (session token; the token's session must be the body's session) ──
   const mcp: {
-    [K in LedgerMcpTool]: (sessionId: string, input: z.infer<(typeof AOC_MCP_TOOLS)[K]['input']>) => object;
+    [K in LedgerMcpTool]: (
+      sessionId: string,
+      input: z.infer<(typeof AOC_MCP_TOOLS)[K]['input']>,
+    ) => object | Promise<object>;
   } = {
     declare_plan: (s, i) => declarePlan(core, s, i),
     amend_plan: (s, i) => amendPlan(core, s, i),
@@ -107,7 +110,7 @@ export function mountLedgerRoutes(app: App, core: LedgerCore): void {
         requireIngest(c, { sessionId: env.data.sessionId, allowSystem: false });
         const input = AOC_MCP_TOOLS[tool].input.safeParse(env.data.input ?? {});
         if (!input.success) throw new LedgerError(422, `Invalid ${tool} input`, issues(input.error));
-        return c.json(mcp[tool](env.data.sessionId, input.data as never), 200);
+        return c.json(await mcp[tool](env.data.sessionId, input.data as never), 200);
       } catch (err) {
         return mcpError(c, err);
       }

@@ -286,8 +286,8 @@
 }
 .aoc-seg__option {
   height: 24px;
-  padding: 0 10px;
-  border: 0;
+  padding: 0 9px;
+  border: 1px solid transparent;
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-2);
@@ -298,7 +298,12 @@
 .aoc-seg__option:hover {
   color: var(--text);
 }
+/*
+ * The thumb alone is 1.1:1 against the track, so the selected segment also carries a --text-3 boundary, at least
+ * 4.9:1 against both the track and the thumb in either theme: the state never rests on a tint (WCAG 1.4.11).
+ */
 .aoc-seg__option.is-selected {
+  border-color: var(--text-3);
   background: var(--surface);
   color: var(--text);
   box-shadow: var(--shadow);
@@ -308,7 +313,13 @@
 }
 .aoc-seg--sm .aoc-seg__option {
   height: 20px;
-  padding: 0 8px;
+  padding: 0 7px;
+}
+@media (forced-colors: active) {
+  .aoc-seg__option.is-selected {
+    border-color: Highlight;
+    outline: 1px solid Highlight;
+  }
 }
 
 /* ---- Menu ---- */
