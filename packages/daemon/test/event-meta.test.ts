@@ -97,12 +97,8 @@ function findings(): Finding[] {
   return out;
 }
 
-/**
- * Fields found by this lint whose schema sits in a lead-owned contracts file, so the fix is a requested change rather
- * than an edit here. The list may only shrink: an entry that no longer violates must be removed.
- *   session.rollover_started.briefHash is sha256hex(handoff brief) in the supervisor; `zHash` types it (core.ts).
- */
-const KNOWN = ['session.rollover_started meta.briefHash'];
+/** Fields known to violate the lint and waiting for a contract change. The list may only shrink; it is empty now. */
+const KNOWN: string[] = [];
 
 describe('the clear-text chain holds machine values only (§13)', () => {
   it('every meta schema is strict, and no meta field can hold text of any length', () => {
