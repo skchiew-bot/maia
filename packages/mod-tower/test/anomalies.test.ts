@@ -19,6 +19,7 @@ import {
   meteringStub,
   plan,
   playbookApproved,
+  reconciled,
   setup,
   taskDone,
   topupRequested,
@@ -98,6 +99,14 @@ function approvals(total: number, self: number): void {
   }
 }
 
+/** `judged` reconciled turns, the first `flagged` of them discrepant, plus turns that could not be judged. */
+function checks(judged: number, flagged: number, unverified = 0): void {
+  const statuses = ['under_reported', 'over_reported', 'regressed'] as const;
+  for (let i = 0; i < judged; i++)
+    reconciled(h, 'ses_docs', i < flagged ? statuses[i % statuses.length]! : i % 2 ? 'overhead' : 'match', { at: ago(h, CUR) });
+  for (let i = 0; i < unverified; i++) reconciled(h, 'ses_docs', 'unverified', { at: ago(h, CUR) });
+}
+
 function runs(onDiscoveryModel: number, onExecutionModel: number): void {
   playbookApproved(h, 'pbk_1', 'bug-fix', ago(h, 3 * DAY));
   for (let i = 0; i < onDiscoveryModel + onExecutionModel; i++) {
@@ -164,6 +173,12 @@ const CASES: Record<AnomalySignal, Case[]> = {
     ['normal', () => approvals(10, 5), 50],
     ['watch', () => approvals(10, 6), 60],
     ['alert', () => approvals(10, 8), 80],
+  ],
+  // Floor 5%: watch at 7.5%, alert at 10%. Unverified turns were not judged: in neither count.
+  metering_discrepancy: [
+    ['normal', () => checks(20, 1), 5],
+    ['watch', () => checks(40, 3), 7.5],
+    ['alert', () => checks(10, 1, 30), 10],
   ],
 };
 
@@ -258,7 +273,7 @@ describe('anomaly radar (portfolio level, R11)', () => {
     }
     runs(2, 0);
     const s = await h.snap();
-    expect(s.anomalies).toHaveLength(7);
+    expect(s.anomalies).toHaveLength(8);
     expect(s.anomalies.filter((a) => a.status !== 'normal').length).toBeGreaterThan(3);
     const radarJson = JSON.stringify(s.anomalies);
     for (const p of people) {

@@ -8,6 +8,7 @@ import type {
   Severity,
   TaskSize,
   TowerSnapshot,
+  UsageReconciliationStatus,
 } from '@aoc/contracts';
 import { TASK_SIZE_WEIGHT } from '@aoc/contracts';
 import {
@@ -386,6 +387,26 @@ export function usage(
       },
       payload: { messageIds: [`msg_${++msg}`] },
       source: 'sidecar',
+    },
+    o.at,
+  );
+}
+
+let reconciledTurn = 0;
+/** The supervisor's check of one turn's sidecar usage against the process's own figures (G-44). */
+export function reconciled(
+  h: Harness,
+  sessionId: string,
+  status: UsageReconciliationStatus,
+  o: { at?: number; projectId?: string } = {},
+): void {
+  h.emit(
+    {
+      type: 'usage.reconciled',
+      actor: { kind: 'system', id: 'supervisor' },
+      scope: { sessionId, projectId: o.projectId },
+      meta: { sessionId, turn: ++reconciledTurn, status, reported: status !== 'unverified', compacted: false, batches: 1, models: [] },
+      source: 'supervisor',
     },
     o.at,
   );

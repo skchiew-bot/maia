@@ -67,6 +67,7 @@ import {
   nudgeText,
   rolloverPrompt,
 } from './prompts';
+import { previousCheckOf, reconcileTurnUsage, sidecarTotals } from './reconcile';
 import { RegistryAccess } from './registry-access';
 import { RingBuffer } from './ring-buffer';
 import { clip, readStreamLine, type OutputDraft, type StreamFacts } from './stream';
@@ -166,6 +167,9 @@ interface LiveTurn {
   result: StreamFacts['result'];
   signals: ThrottleSignal[];
   contextTokens: number;
+  compacted: boolean;
+  /** The turn started its conversation (`--session-id`): the process's cumulative figures start from zero. */
+  fresh: boolean;
   interrupt: Interrupt | null;
   killTimer: NodeJS.Timeout | null;
   sidecar: ChildProcess | null;
@@ -184,6 +188,7 @@ interface SpawnPlan {
   prompt: string;
   claudeSessionId: string;
   transcriptPath: string;
+  resume: boolean;
   dir: string;
 }
 
@@ -799,6 +804,8 @@ export class Supervisor implements SupervisorService {
       result: null,
       signals: [],
       contextTokens: 0,
+      compacted: false,
+      fresh: false,
       interrupt: null,
       killTimer: null,
       sidecar: null,
@@ -837,6 +844,7 @@ export class Supervisor implements SupervisorService {
     let child: ChildProcess;
     try {
       plan = this.planTurn(s, req);
+      live.fresh = !plan.resume;
       child = spawn(sup.claudeBin, plan.args, {
         cwd: plan.cwd,
         env: plan.env,
@@ -991,6 +999,7 @@ export class Supervisor implements SupervisorService {
       prompt,
       claudeSessionId,
       transcriptPath,
+      resume,
       dir,
     };
   }
@@ -1061,6 +1070,7 @@ export class Supervisor implements SupervisorService {
       live.contextTokens = f.contextTokens;
       this.lastContext.set(id, f.contextTokens);
     }
+    if (f.compacted) live.compacted = true;
     if (f.init) this.checkInit(live, f.init);
     if (f.rateLimit?.status === 'rejected') {
       live.signals.push({
@@ -1128,9 +1138,10 @@ export class Supervisor implements SupervisorService {
     live.child?.stdout?.destroy();
     live.child?.stderr?.destroy();
     if (this.running.get(live.sessionId) === live) this.running.delete(live.sessionId);
-    // Before the next turn can write to the same transcript: the sidecar reports exactly this turn's tail.
+    // Before the next turn can write to the same transcript: the sidecar reports exactly this turn's tail, and the
+    // turn is reconciled once that report is in.
     const reported = this.stopSidecar(live);
-    this.afterReports(live.sessionId, () => reported);
+    this.afterReports(live.sessionId, () => reported.then(() => this.reconcileTurn(live)));
     live.markClosed();
     if (this.stopping) return;
     this.liveness()?.recordProcess(live.sessionId, false, null);
@@ -1322,6 +1333,52 @@ export class Supervisor implements SupervisorService {
         payload: { message: clip(t.message, 500) },
         source: 'supervisor',
         idempotencyKey: `supervisor:throttle:${s.sessionId}:${live.turn}`,
+      }),
+    );
+  }
+
+  /**
+   * O-5: the usage the sidecar recorded since the session's previous check against the process's own figures (the
+   * stream-json result reaches only the supervisor), so that neither is trusted alone. Runs once the turn's sidecar
+   * has exited; turns without a sidecar configured are not metered by one and are not reconciled.
+   */
+  private reconcileTurn(live: LiveTurn): void {
+    if (this.stopping || !live.started || !this.ctx.config.supervisor.sidecarCommand.length) return;
+    const id = live.sessionId;
+    const s = this.view.get(id);
+    if (!s) return;
+    const previous = this.ctx.store.list({ sessionId: id, types: ['usage.reconciled'], order: 'desc', limit: 1 })[0];
+    const recorded = this.ctx.store.list({
+      sessionId: id,
+      types: ['usage.recorded'],
+      fromSeq: (previous?.seq ?? 0) + 1,
+      limit: 100_000,
+    });
+    const cumulative = live.result?.modelUsage ?? null;
+    const r = reconcileTurnUsage({
+      turn: live.turn,
+      cumulative,
+      fresh: live.fresh,
+      previous: previous ? previousCheckOf(previous.meta as MetaOf<'usage.reconciled'>) : null,
+      sidecar: sidecarTotals(recorded.map((e) => e.meta as MetaOf<'usage.recorded'>)),
+      compacted: live.compacted,
+    });
+    this.ctx.store.append(
+      ev({
+        type: 'usage.reconciled',
+        actor: SYSTEM,
+        scope: scopeOf(s),
+        meta: {
+          sessionId: id,
+          turn: live.turn,
+          status: r.status,
+          reported: cumulative !== null,
+          compacted: live.compacted,
+          batches: recorded.length,
+          models: r.models,
+        },
+        source: 'supervisor',
+        idempotencyKey: `supervisor:usage:${id}:${live.turn}`,
       }),
     );
   }
