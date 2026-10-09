@@ -181,6 +181,8 @@ function signInHint(aoc: AocServer, env: NodeJS.ProcessEnv): string | null {
     ? 'from $AOC_BOOTSTRAP_TOKEN'
     : file
       ? `in ${file}`
-      : 'printed once by `aoc init`';
+      : aoc.config.dataDir === ':memory:'
+        ? 'set $AOC_BOOTSTRAP_TOKEN: nothing is written for an in-memory data directory'
+        : `in ${aoc.config.dataDir}/bootstrap-token`;
   return `no users yet; sign in as the first Approver with the bootstrap token (${where})`;
 }

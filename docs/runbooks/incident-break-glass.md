@@ -24,7 +24,7 @@ Use break-glass **only** when all of these are true:
 1. Production is down or critically degraded for users.
 2. The normal path is too slow for the impact. The normal path is a change request with its four fields, then
    UAT, then the go-live gate with its provenance check.
-3. A specific fix is ready: a hotfix commit, or a known-good pinned tag (`aoc/*`) to return to.
+3. A specific fix is ready: a hotfix commit that fast-forwards the protected branch. To return to an earlier state, use a rollback (break-glass cannot move the branch backwards).
 
 Do not use it for deadlines, convenience, or to skip a review that would say no. Every use is reviewed afterwards
 (§5).

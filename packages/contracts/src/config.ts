@@ -336,7 +336,7 @@ export const AocConfigSchema = z.object({
       rpName: z.string().default('AOC — Agent Ops Console'),
       origin: z.string().default('http://localhost:7420'),
       sessionTtlHours: z.number().int().positive().default(12),
-      /** Bootstrap token file for the first Approver (printed once by `aoc init`). */
+      /** Where the first Approver's bootstrap token is read from; default <dataDir>/bootstrap-token (0600, written on first start). */
       bootstrapTokenFile: z.string().optional(),
     })
     .default({}),

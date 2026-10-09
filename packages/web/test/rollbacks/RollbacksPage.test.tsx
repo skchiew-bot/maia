@@ -211,7 +211,7 @@ describe('Rollbacks', { timeout: 30_000 }, () => {
 
     await user.selectOptions(within(dialog).getByRole('combobox', { name: /Project/ }), 'prj_aoc');
     await user.type(
-      within(dialog).getByRole('textbox', { name: /Commit, branch or pinned tag/ }),
+      within(dialog).getByRole('textbox', { name: /Commit or branch to promote/ }),
       'hotfix/backoff',
     );
     await user.type(
