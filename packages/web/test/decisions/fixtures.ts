@@ -50,7 +50,13 @@ export function card(over: Partial<DecisionCardView> & { id: string }): Decision
   return { ...base, ...over, ageMs: over.ageMs ?? NOW - Date.parse(createdAt) };
 }
 
-export function resolved(c: DecisionCardView, by: string, method: 'button' | 'passkey', optionId: string, ageMs: number): DecisionCardView {
+export function resolved(
+  c: DecisionCardView,
+  by: string,
+  method: 'button' | 'passkey',
+  optionId: string,
+  ageMs: number,
+): DecisionCardView {
   const resolvedAt = iso(Date.parse(c.createdAt) + ageMs);
   return {
     ...c,

@@ -16,6 +16,7 @@ import {
   type RootCauseDimension,
   type StoredEvent,
 } from '@aoc/contracts';
+import { proposeForApproval, type ApproverGate } from '@aoc/distill';
 import { HttpError, type ModuleContext, type NewEvent } from '@aoc/kernel';
 import { CostCalculator, type CostSubject } from './costs';
 import { lessonPayoff, unusedStreak, type RunUse } from './rules';
@@ -37,6 +38,8 @@ export interface ResolvedLearningOptions {
 /** Reactor / job writes. AI suggestions use their own actor so the audit log tells them apart from rules. */
 export const SYSTEM: Actor = { kind: 'system', id: 'learning' };
 export const AI_ACTOR: Actor = { kind: 'system', id: 'learning:ai' };
+/** Lessons bind only when a person chooses `bind` (one bad lesson corrupts the fleet, §11). */
+export const LESSON_GATE: ApproverGate = { kind: 'lesson_binding', approveOptionId: 'bind' };
 
 export interface ErrorRow {
   error_id: string;
@@ -530,9 +533,10 @@ export class LearningEngine {
     const rule = input.rule.trim();
     const fix = input.fix.trim();
     const rationale = input.rationale?.trim();
-    const card = decisions.request(
-      {
-        kind: 'lesson_binding',
+    proposeForApproval({
+      decisions,
+      gate: LESSON_GATE,
+      request: {
         title: `Bind lesson for ${input.scopeType === 'process_type' ? 'process type' : 'code area'} ${scopeValue}`,
         question: 'Bind this lesson? Once bound it is injected into every session in its scope.',
         options: [
@@ -549,15 +553,23 @@ export class LearningEngine {
         requesterId: actor.id.slice(0, 64),
       },
       actor,
-    );
-    this.ctx.store.append({
-      type: 'lesson.proposed',
-      actor,
-      meta: { lessonId, classId: input.classId, scopeType: input.scopeType, scopeValue, decisionId: card.id },
-      payload: { rule, fix, ...(rationale ? { rationale } : {}) },
-      bodyScope: lessonId,
-      source: opts.source,
-      causationId: opts.causationId,
+      withdrawAs: SYSTEM,
+      record: (card) =>
+        this.ctx.store.append({
+          type: 'lesson.proposed',
+          actor,
+          meta: {
+            lessonId,
+            classId: input.classId,
+            scopeType: input.scopeType,
+            scopeValue,
+            decisionId: card.id,
+          },
+          payload: { rule, fix, ...(rationale ? { rationale } : {}) },
+          bodyScope: lessonId,
+          source: opts.source,
+          causationId: opts.causationId,
+        }),
     });
     return lessonId;
   }

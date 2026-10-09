@@ -101,7 +101,7 @@ export function funnelOf(tickets: readonly InternalTicket[], now: number): Funne
   });
 }
 
-export type GateState = 'passed' | 'waiting' | 'blocked' | 'not_reached' | 'skipped';
+export type GateState = 'passed' | 'waiting' | 'blocked' | 'failed' | 'not_reached' | 'skipped';
 
 export interface Gates {
   fixPlan: GateState;
@@ -153,6 +153,7 @@ export const GATE_WORD: Record<GateState, string> = {
   passed: 'passed',
   waiting: 'waiting',
   blocked: 'not started',
+  failed: 'approved, promotion failed',
   not_reached: 'not reached',
   skipped: 'skipped',
 };
@@ -306,6 +307,7 @@ const TIMELINE_TYPES: ReadonlySet<string> = new Set([
   'promotion.requested',
   'promotion.completed',
   'promotion.refused',
+  'promotion.failed',
   'session.ended',
 ]);
 
@@ -316,4 +318,46 @@ export function timelineEvents(events: readonly AuditEventHeaderDTO[]): AuditEve
 export function shortTicketId(id: string): string {
   const rest = id.slice(id.indexOf('_') + 1);
   return rest.length > 8 ? `tkt_…${rest.slice(-6)}` : id;
+}
+
+export interface PromotionOutcome {
+  promotionId: string;
+  status: 'requested' | 'completed' | 'refused' | 'failed';
+  reason: string | null;
+  at: string;
+}
+
+/** The latest promotion on the ticket (go-live): requested, then completed, refused or failed. */
+export function latestPromotion(events: readonly AuditEventHeaderDTO[]): PromotionOutcome | null {
+  let out: PromotionOutcome | null = null;
+  for (const e of [...events].sort((a, b) => a.seq - b.seq)) {
+    const m = e.meta as { promotionId?: string; reason?: string };
+    if (!m.promotionId || !e.type.startsWith('promotion.')) continue;
+    const status = e.type.slice('promotion.'.length);
+    if (status !== 'requested' && status !== 'completed' && status !== 'refused' && status !== 'failed')
+      continue;
+    out = { promotionId: m.promotionId, status, reason: m.reason ?? null, at: e.ts };
+  }
+  return out;
+}
+
+/** The go-live decision raised for the ticket (its subject is the promotion, so it is not listed by ticket). */
+export function goLiveDecisionId(events: readonly AuditEventHeaderDTO[]): string | null {
+  let id: string | null = null;
+  for (const e of [...events].sort((a, b) => a.seq - b.seq)) {
+    if (e.type !== 'ticket.golive_requested') continue;
+    const d = (e.meta as { decisionId?: unknown }).decisionId;
+    id = typeof d === 'string' && d && d !== 'none' ? d : null;
+  }
+  return id;
+}
+
+/** Diagnoses of the latest triage round (re-triage starts a new round); all of them when the round is unknown. */
+export function latestRound(
+  diagnoses: readonly TicketDiagnosisDTO[],
+  budget: TriageBudget | undefined,
+): TicketDiagnosisDTO[] {
+  if (!budget?.sessionIds.length) return [...diagnoses];
+  const round = diagnoses.filter((d) => budget.sessionIds.includes(d.sessionId));
+  return round.length ? round : [...diagnoses];
 }

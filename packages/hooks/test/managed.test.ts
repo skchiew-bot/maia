@@ -90,7 +90,7 @@ describe('managed mode: the daemon decides, the hook relays', () => {
     expect(run.code).toBe(2);
     expect(run.stderr).toContain(FAIL_CLOSED);
     expect(run.stdout).toBe('');
-    expect(readSpool(join(home, '.aoc', 'spool', 'managed'))).toEqual([]);
+    expect(readSpool(join(home, '.aoc', 'spool', 'managed', AOC_SESSION))).toEqual([]);
   });
 
   it('fails closed on PreToolUse on a 5xx', async () => {
@@ -131,11 +131,11 @@ describe('managed mode: the daemon decides, the hook relays', () => {
     });
   });
 
-  it('replays the spool (default ~/.aoc/spool/managed) after the next successful non-PreToolUse call', async () => {
+  it('replays the spool (default ~/.aoc/spool/managed/<session>) after the next successful non-PreToolUse call', async () => {
     const home = tmp();
     const down = await runHookBinary('PostToolUse', postToolUse(), managedEnv(home, await deadUrl()));
     expect(down.code).toBe(0);
-    const spoolDir = join(home, '.aoc', 'spool', 'managed');
+    const spoolDir = join(home, '.aoc', 'spool', 'managed', AOC_SESSION);
     expect(readSpool(spoolDir)).toHaveLength(1);
 
     daemon = await startFakeDaemon((r) =>
@@ -170,7 +170,7 @@ describe('managed mode: the daemon decides, the hook relays', () => {
     expect(JSON.parse(post.stdout).systemMessage).toMatch(
       /rejected the PostToolUse hook \(HTTP 401\).*not recorded/,
     );
-    expect(readSpool(join(home, '.aoc', 'spool', 'managed'))).toEqual([]);
+    expect(readSpool(join(home, '.aoc', 'spool', 'managed', AOC_SESSION))).toEqual([]);
   });
 
   it('fails closed on a response it cannot interpret', async () => {

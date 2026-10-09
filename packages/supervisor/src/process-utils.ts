@@ -23,6 +23,18 @@ export function signalTree(pid: number, signal: NodeJS.Signals): void {
 }
 
 /**
+ * Kill whatever is left in a process group whose leader has exited. Never falls back to the bare pid: once the
+ * leader is gone that pid may already belong to an unrelated process.
+ */
+export function killProcessGroup(pgid: number): void {
+  try {
+    process.kill(-pgid, 'SIGKILL');
+  } catch {
+    // empty group: nothing was left behind
+  }
+}
+
+/**
  * True when `pid` is alive AND its command line contains `needle` (the claude session UUID). Guards against pid
  * reuse after a reboot: an unrelated process with a recycled pid is never treated (or signalled) as a session.
  */
