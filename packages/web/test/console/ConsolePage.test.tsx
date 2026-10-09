@@ -153,7 +153,11 @@ describe('ConsolePage', () => {
     expect(within(working).getByRole('img', { name: /actions per minute over the last 30 minutes/ })).toBeInTheDocument();
 
     expect(within(tiles).getByText('observed · read-only')).toBeInTheDocument();
-    expect(within(within(tiles).getByRole('article', { name: 'Flaky e2e' })).getByText('—')).toBeInTheDocument();
+    // A dead session has no "APM now"; its chart still draws the window, so the number beside it is the window's peak.
+    const dead = within(tiles).getByRole('article', { name: 'Flaky e2e' });
+    expect(within(dead).getByText('APM peak')).toBeInTheDocument();
+    expect(within(dead).queryByText('APM now')).not.toBeInTheDocument();
+    expect(dead.querySelector('.console-tile__apm-value')).toHaveTextContent('6');
 
     const ended = screen.getByRole('table', { name: 'Sessions that ended today' });
     expect(within(ended).getByRole('link', { name: 'QA export' })).toHaveAttribute('href', '/sessions/ses_done');

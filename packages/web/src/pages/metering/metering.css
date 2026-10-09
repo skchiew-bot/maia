@@ -553,7 +553,9 @@
 }
 .met-fxfacts {
   display: grid;
-  flex: 1;
+  /* A basis (not 0) so the facts drop under the rate when less than a column is left beside it, instead of
+     overflowing their box on a phone. */
+  flex: 1 1 200px;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: var(--sp-2) var(--sp-4);
   min-width: 0;

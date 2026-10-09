@@ -39,6 +39,8 @@ export function SessionTile({ session: s, apmMax, rolloverPct, activitySeq, now 
   const p = s.progress;
   const weighted = p && p.totalWeight > 0 ? p.doneWeight / p.totalWeight : 0;
   const apmNow = state === 'dead' ? null : s.apm.current;
+  // A dead session has no "now"; its chart still draws the window, so the number printed with it is that window's peak.
+  const apmPeak = Math.max(0, ...s.apm.points);
   const lastActivity = s.lastActivityAt ? `last activity ${formatClock(s.lastActivityAt)}` : 'no activity yet';
 
   return (
@@ -107,8 +109,16 @@ export function SessionTile({ session: s, apmMax, rolloverPct, activitySeq, now 
             className="console-tile__spark"
           />
           <p className="console-tile__apm">
-            <span className="console-tile__apm-value aoc-num">{apmNow === null ? '—' : formatInteger(apmNow)}</span>
-            <span className="console-tile__apm-unit">APM now</span>
+            <span className="console-tile__apm-value aoc-num">{formatInteger(apmNow ?? apmPeak)}</span>
+            <span className="console-tile__apm-unit">
+              {apmNow === null ? (
+                <>
+                  APM peak<span className="aoc-sr-only"> in the last {formatInteger(s.apm.windowMinutes)} minutes</span>
+                </>
+              ) : (
+                'APM now'
+              )}
+            </span>
           </p>
         </div>
 

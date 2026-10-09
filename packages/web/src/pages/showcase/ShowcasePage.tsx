@@ -454,9 +454,9 @@ function Legend() {
   return (
     <ul className="sc-legend" aria-label="Legend">
       <li>
-        <svg width={34} height={12} aria-hidden="true">
-          <rect className="sc-seg" x={1} y={2} width={32} height={8} rx={2} />
-          <rect className="sc-seg__done" x={1} y={2} width={18} height={8} rx={2} />
+        <svg width={24} height={12} aria-hidden="true">
+          <rect className="sc-seg" x={1} y={2} width={22} height={8} rx={2} />
+          <rect className="sc-seg__done" x={1} y={2} width={13} height={8} rx={2} />
         </svg>
         Phase, done weight dark
       </li>

@@ -367,7 +367,7 @@ async function keyboardWalk(page: Page, viewport: Variant): Promise<Keyboard> {
     const r = info.rect;
     const onScreen = r.x + r.width > 0 && r.y + r.height > 0 && r.x < viewport.width && r.y < viewport.height;
     if (!onScreen) k.offscreen.push(stop);
-    else if (!info.indicator && !(await focusChangesPixels(page, info.rect, viewport)))
+    else if (!info.nextField && !info.indicator && !(await focusChangesPixels(page, info.rect, viewport)))
       k.invisible.push(stop);
     if (info.isPrimary && !k.reached) {
       k.reached = true;
