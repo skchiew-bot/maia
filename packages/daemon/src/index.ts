@@ -3,6 +3,7 @@ export { createAocServer, type AocServer, type AocServerOptions } from './server
 export { runDaemon } from './daemon';
 export {
   ConfigError,
+  checkSelfModificationBoundary,
   loadConfig,
   parseDaemonArgs,
   resolveHelperCommands,

@@ -83,6 +83,7 @@ export const AocConfigSchema = z.object({
    * - the KEK must come from an existing keys.masterKeyFile outside dataDir (mode 0400/0600, owned by aocd's user) —
    *   never AOC_MASTER_KEY, never generated (docs/runbooks/credential-isolation.md §4, key-custody.md §3);
    * - every credential profile of the `promotion` section must be defined in supervisor.credentialProfilesFile;
+   * - aocd run from a source checkout of AOC needs selfModification.aocRepoPaths (the daemon checks; gap P-18);
    * - with intake.requireScan, only an anti-virus engine counts as a scan (the builtin heuristic does not).
    */
   mode: z.enum(['development', 'production']).default('development'),

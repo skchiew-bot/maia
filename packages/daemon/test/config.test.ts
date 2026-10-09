@@ -3,7 +3,13 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { AocConfigSchema } from '@aoc/contracts';
-import { ConfigError, loadConfig, parseDaemonArgs, resolveHelperCommands } from '../src/config';
+import {
+  ConfigError,
+  checkSelfModificationBoundary,
+  loadConfig,
+  parseDaemonArgs,
+  resolveHelperCommands,
+} from '../src/config';
 import { removeTempDirs, repoRoot, tempDir } from './helpers';
 
 afterEach(() => removeTempDirs());
@@ -391,6 +397,56 @@ describe('resolveHelperCommands', () => {
     expect(
       resolveHelperCommands(once.config, { repoRoot: null, binDir: tempDir() }).config.supervisor,
     ).toEqual(once.config.supervisor);
+  });
+});
+
+describe('checkSelfModificationBoundary (gap P-18)', () => {
+  /** A directory shaped like a checkout of the AOC repository: a git directory and packages/kernel. */
+  const checkout = () => {
+    const dir = tempDir('aoc-checkout-');
+    mkdirSync(join(dir, '.git'));
+    mkdirSync(join(dir, 'packages', 'kernel'), { recursive: true });
+    return dir;
+  };
+  const loaded = (config: Record<string, unknown>, root: string | null) => ({
+    config: AocConfigSchema.parse(config),
+    repoRoot: root,
+  });
+  const production = { mode: 'production' };
+
+  it('refuses production from a source checkout while aocRepoPaths is empty, naming the key, the checkout and the boundary document', () => {
+    const root = checkout();
+    const check = () => checkSelfModificationBoundary(loaded(production, root));
+    expect(check).toThrow(ConfigError);
+    expect(check).toThrow(/selfModification\.aocRepoPaths is empty/);
+    expect(check).toThrow(/docs\/compliance\/self-modification-boundary\.md/);
+    expect(check).toThrow(root);
+  });
+
+  it('accepts it once the AOC clones are listed', () => {
+    const config = { ...production, selfModification: { aocRepoPaths: ['/var/lib/aoc/workspaces/aoc'] } };
+    expect(() => checkSelfModificationBoundary(loaded(config, checkout()))).not.toThrow();
+  });
+
+  it('does not ask development, whatever the checkout', () => {
+    expect(() => checkSelfModificationBoundary(loaded({}, checkout()))).not.toThrow();
+  });
+
+  it('does not ask an installed bundle: no checkout, a tree without git history, or a repository that is not AOC', () => {
+    expect(() => checkSelfModificationBoundary(loaded(production, null))).not.toThrow();
+    const exported = checkout();
+    rmSync(join(exported, '.git'), { recursive: true });
+    expect(() => checkSelfModificationBoundary(loaded(production, exported))).not.toThrow();
+    const other = tempDir('aoc-other-');
+    mkdirSync(join(other, '.git'));
+    expect(() => checkSelfModificationBoundary(loaded(production, other))).not.toThrow();
+  });
+
+  it('is told by loadConfig which checkout aocd runs from: the one found from the daemon code, none when detached', () => {
+    const cwd = tempDir();
+    const fromSource = loadConfig({ cwd, env: {}, binDir: join(repoRoot, 'packages', 'daemon', 'src') });
+    expect(fromSource.repoRoot).toBe(repoRoot);
+    expect(loadConfig({ cwd, env: {}, ...detached() }).repoRoot).toBeNull();
   });
 });
 

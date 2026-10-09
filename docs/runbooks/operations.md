@@ -56,6 +56,12 @@ built-in default is, which is not a governed mapping. A minimal production confi
 }
 ```
 
+Production mode refuses to start in two more cases that this file can avoid. The credential profiles file must define
+`prod-promote`, or whichever profiles the optional `promotion` section names for the push to a protected remote
+([credential isolation](credential-isolation.md) §4 item 9). And an aocd started from a source checkout of AOC needs
+`selfModification.aocRepoPaths` (the example above names the clone; a dist install, as in the unit below, is not
+asked, so list its clones by hand: [self-modification boundary](../compliance/self-modification-boundary.md) §2).
+
 ## 2. Start and stop
 
 **Start** (development): `node dist/bin/aocd.mjs` (or `aoc serve`), after `pnpm build`.

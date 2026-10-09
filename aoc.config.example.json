@@ -2,7 +2,7 @@
   "//": "aocd configuration. Copy to aoc.config.json where you start aocd, or point --config <file> / AOC_CONFIG at it. Every key is optional and the values below are the built-in defaults. Relative paths resolve against this file's directory (~ is your home). Keys starting with // are comments; a //key shows an optional setting without enabling it. Env overrides: AOC_PORT, AOC_HOST, AOC_DATA_DIR, AOC_PUBLIC_URL. Secrets never go here: see .env.example.",
 
   "mode": "development",
-  "//mode": "development | production. Production refuses to start unless managed sessions are isolated (supervisor.sessionUser + readOnlySessionUser, aocd as root) and the KEK comes from keys.masterKeyFile (outside dataDir, 0400/0600, owned by aocd's user; never AOC_MASTER_KEY, never generated), every promotion credential profile (see promotion) is defined in supervisor.credentialProfilesFile, and with intake.requireScan refuses attachments (503) unless an anti-virus engine scans them. See docs/runbooks/credential-isolation.md §4.",
+  "//mode": "development | production. Production refuses to start unless managed sessions are isolated (supervisor.sessionUser + readOnlySessionUser, aocd as root) and the KEK comes from keys.masterKeyFile (outside dataDir, 0400/0600, owned by aocd's user; never AOC_MASTER_KEY, never generated), every promotion credential profile (see promotion) is defined in supervisor.credentialProfilesFile, selfModification.aocRepoPaths lists the clones of AOC itself when aocd runs from a source checkout, and with intake.requireScan refuses attachments (503) unless an anti-virus engine scans them. See docs/runbooks/credential-isolation.md §4.",
 
   "dataDir": ".aoc/data",
   "host": "127.0.0.1",
@@ -149,7 +149,7 @@
   },
 
   "selfModification": {
-    "//": "Repos that are AOC itself; changes under protectedPaths (the Tier 1 core in docs/compliance/self-modification-boundary.md: governance, audit, credit, ingest, supervisor, build and rule files) are refused to agents and logged outside AOC (§13). Set aocRepoPaths to every clone of the AOC repo that managed sessions can reach; the guard protects no core code while it is empty.",
+    "//": "Repos that are AOC itself; changes under protectedPaths (the Tier 1 core in docs/compliance/self-modification-boundary.md: governance, audit, credit, ingest, supervisor, build and rule files) are refused to agents and logged outside AOC (§13). Set aocRepoPaths to every clone of the AOC repo that managed sessions can reach; the guard protects no core code while it is empty, and production mode refuses to start from a source checkout of AOC until it is set (docs/compliance/self-modification-boundary.md).",
     "aocRepoPaths": [],
     "protectedPaths": [
       "packages/kernel/",
