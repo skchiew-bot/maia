@@ -16,6 +16,7 @@ import { AocConfigSchema } from '@aoc/contracts';
 import { daemonEnv } from './daemon-env';
 import { DEFAULT_TIMING, launchBody, loadFleet, nextAction, saveFleet, selectSlots, type FleetState, type KeeperTiming, type SessionStatus, type SlotSpec } from './fleet';
 import { demoLayout, isSeeded, readDemoTokens, resetDemoDir, type DemoLayout, type DemoTokens } from './layout';
+import { groupExited } from './process-group';
 import { claudeSimProblem } from './sim-guard';
 
 const REPO = fileURLToPath(new URL('../../..', import.meta.url));
@@ -338,6 +339,17 @@ async function main(): Promise<void> {
         process.kill(daemon.pid, 'SIGKILL');
         await exited(daemon, 5_000);
       }
+    }
+    // aocd's sidecars outlive it for a final flush that lands in the data directory: "Stopped." must mean nothing of
+    // this demo is left running or writing (a --reset or an rm -rf right after would race with it).
+    if (daemon.pid && !(await groupExited(daemon.pid, 15_000))) {
+      say('aocd left processes behind; stopping its process group.');
+      try {
+        process.kill(-daemon.pid, 'SIGKILL');
+      } catch {
+        // gone in the meantime
+      }
+      await groupExited(daemon.pid, 5_000);
     }
     say('Stopped.');
     process.exit(code);

@@ -27,9 +27,11 @@ pnpm --filter @aoc/demo live -- --data-dir /abs/path/demo [--port 7420] [--reset
 5. **Prints** the console URL and the CEO (Approver) token. Paste the token on the sign-in page.
 
 **Ctrl-C** first stops every managed session that has a process, through the API. It then stops aocd and waits for
-it to exit. The launcher signals only the daemon it started, by PID, and never pattern-kills. Sessions waiting on
-a decision or throttled have no process, so they keep their state and are still there on the next start. A second
-Ctrl-C stops aocd without waiting for the sessions.
+it to exit, then for the per-session sidecars aocd leaves behind (they outlive it for a final flush into the data
+directory). `Stopped.` therefore means nothing of the demo is still running or writing, and `--reset` or `rm -rf`
+right after is safe. The launcher signals only the daemon it started and that daemon's own process group, by PID,
+and never pattern-kills. Sessions waiting on a decision or throttled have no process, so they keep their state and
+are still there on the next start. A second Ctrl-C stops aocd without waiting for the sessions.
 
 ### What the CEO sees
 
@@ -116,7 +118,8 @@ prompt text:
 
 - rollover successor;
 - triage of the receipts ticket (confidence 0.86);
-- build of the receipts ticket (git commit to `uat/<ticket>`);
+- build of the receipts ticket (git commit to `uat/<ticket>`; it closes the commit task while HEAD is that commit and
+  only then returns to `main`, because go-live provenance traces a commit only if it is in a HEAD the session recorded);
 - triage of any other ticket (confidence 0.40, so it bounces to a human);
 - a small generic task for anything else.
 
