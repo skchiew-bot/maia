@@ -85,7 +85,7 @@ describe('intake on a seeded demo', () => {
       throw err;
     } finally {
       stopped = await stopChild(aocd, 'SIGTERM', 60_000);
-      // aocd's sidecars outlive it for a final flush that writes a spool file into the data directory.
+      // A clean stop leaves nothing in its process group (it waits for its sidecars); this keeps a failed run from leaking.
       await groupExited(aocd.pid!, 20_000);
     }
     expect(stopped, log).toEqual({ code: 0, signal: null });

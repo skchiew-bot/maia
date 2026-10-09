@@ -340,8 +340,9 @@ async function main(): Promise<void> {
         await exited(daemon, 5_000);
       }
     }
-    // aocd's sidecars outlive it for a final flush that lands in the data directory: "Stopped." must mean nothing of
-    // this demo is left running or writing (a --reset or an rm -rf right after would race with it).
+    // A clean stop leaves nothing behind (aocd waits for its sidecars), but a killed aocd leaves them to spool a final
+    // flush into the data directory: "Stopped." must mean nothing of this demo is left running or writing (a --reset or
+    // an rm -rf right after would race with it).
     if (daemon.pid && !(await groupExited(daemon.pid, 15_000))) {
       say('aocd left processes behind; stopping its process group.');
       try {

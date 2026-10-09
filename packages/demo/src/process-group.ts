@@ -1,8 +1,9 @@
 /**
  * Process groups of the daemon a demo starts. aocd is spawned detached, so it leads its own group and the group is
- * aocd plus what aocd started and did not detach again: the per-session sidecars. aocd SIGTERMs those as it shuts
- * down but does not wait for them, so they outlive it for their final flush, which they spool into the data
- * directory (`sessions/<id>/sidecar/spool/`) because the daemon is already gone.
+ * aocd plus what aocd started and did not detach again: the per-session sidecars. A clean stop waits for those itself
+ * (their last report goes through its API, and a stuck one is killed after a few seconds). They can outlive aocd only
+ * when it is killed, and then they spool their final flush into the data directory (`sessions/<id>/sidecar/spool/`)
+ * because the daemon is gone.
  */
 
 /** True while any process is left in the group (a zombie counts until it is reaped). */
