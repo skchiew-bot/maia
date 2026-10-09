@@ -18,7 +18,8 @@ and the authors were not independent of the code.
 
 Therefore: **before AOC governs real work, one or more humans who were not part of the build must review the
 governance, audit and credit core (§1, Tier 1) and sign off.** The scope and the record are in §5. Until that
-sign-off exists, treat every AOC control as provisional, and say so in any evidence pack.
+sign-off exists, treat every AOC control as provisional, and say so in any evidence pack. At integration commit
+`a1c8a0c` no such review has taken place ([gap P-06](gaps.md)).
 
 ## 1. What the core is
 
@@ -59,9 +60,13 @@ Tier 1.
 Tier 2 changes still get a change record and normal human review. They simply may be produced by AOC-managed
 sessions.
 
-The extended list is a **CEO decision** (threat model O-10). The default `selfModification.protectedPaths` in
-`packages/contracts/src/config.ts` lists only the first eight rows. Set the full list in the production
-configuration, and ask the lead to update the default.
+The extended list is a **CEO decision** (threat model O-10, gap P-18). The default
+`selfModification.protectedPaths` in `packages/contracts/src/config.ts` lists only the first eight rows. Set the
+full list in the production configuration, and ask the lead to update the default.
+
+**AOC's audit state** is protected separately, for every managed session, whatever repository it works in: the
+data directory, the anchor repository, the RFC 3161 token directory, the external audit log, the KEK file and the
+credential profiles file.
 
 ## 2. How the boundary is enforced
 
@@ -73,20 +78,32 @@ There are four layers. Each one makes up for the weakness of the layer before it
   - `selfModification.aocRepoPaths`: the repository roots that **are** AOC;
   - `selfModification.protectedPaths`: path prefixes relative to such a root;
   - `selfModification.externalAuditLog`.
-- **Behaviour** (`mod-audit`; Contracted): a `PreToolGuard` for managed sessions. When a file-changing tool's
-  target resolves inside an AOC root and under a protected prefix, it denies the call. Resolution normalises `..`
-  and follows symlinks; Bash commands are matched best effort. The guard then:
-  - returns `blockReason: self_modification`, so the session records `session.blocked {reason: self_modification}`;
-  - appends `selfmod.blocked {sessionId, rule, pathHash}`, with the path in the encrypted payload;
-  - writes a line to the external audit log (Layer 4).
+- **Behaviour** (`mod-audit`, guard order 5; Built): a `PreToolGuard` for managed sessions only; it abstains for
+  observed sessions. It denies a call that would change the core of an AOC repository (a target inside an
+  `aocRepoPaths` root, under a protected prefix) or AOC's audit state (above):
+  - **What it inspects:** the file-changing tools (`Edit`, `Write`, `MultiEdit`, `NotebookEdit`), any other tool
+    whose name says it writes (an MCP filesystem server, for example), and Bash: redirects, `rm`, `mv`, `cp`,
+    `tee`, `sed -i`, `git checkout --`, `git apply`, `patch`, `sh -c`, inline interpreter code, `find -delete` and
+    `xargs`. Inside an AOC repository, a patch must come from a file or a here-document so its paths can be
+    checked, and a command too large to inspect is denied.
+  - **How it resolves targets:** from the tool input, not the session's working directory, so an absolute path
+    from a session in another repository is caught too. `..` is normalised; both spellings of a symlinked path
+    are checked; a hard link to a protected file is found; recursive operations (`rm -r`, `mv`, `chmod -R`) on an
+    ancestor of a protected tree count.
+  - **Then it:** first writes a line to the external audit log (Layer 4); then appends
+    `selfmod.blocked {sessionId, rule, pathHash, externalLogged}`, with the path, the tool and the command in the
+    encrypted payload; then returns `blockReason: self_modification`, so the session records
+    `session.blocked {reason: self_modification}`.
 - **No decision card is offered.** There is nothing for a human to approve inside the session. Core changes follow
   the human path (§4).
 - A guard that throws counts as a deny (kernel `GuardPolicy`).
 - **Two caveats:**
-  - **`aocRepoPaths` defaults to an empty list, and with it the guard protects nothing.** Production must set it
-    to every clone of the AOC repository that managed sessions can reach.
-  - Bash can change files without naming them (`sed -i` through a script, `git apply`, a Make target), so this
-    layer is a speed bump (§2.4 of the spec makes the same point about command matching).
+  - **`aocRepoPaths` defaults to an empty list, and with it the guard protects no core code** (the audit state
+    stays protected). Production must set it to every clone of the AOC repository that managed sessions can
+    reach (gap P-18).
+  - Bash can change files without naming them (a script, a Make target, an interpreter reading its program from
+    a file), so this layer is a speed bump (§2.4 of the spec makes the same point about command matching). And
+    while sessions run as the aocd OS user (threat model O-1), nothing at the file-system level backs it up.
 
 ### Layer 2: credentials (the wall)
 
@@ -105,8 +122,8 @@ For the **AOC repository itself**, configure the `main` ruleset differently from
   would let AOC approve its own core, which is exactly what §13 forbids.
 - Required status checks: `scripts/check.sh` (typecheck and tests).
 
-Requested change (threat model O-10): AOC's own promotion gate should additionally refuse any candidate for the AOC
-repository whose commits touch Tier 1 paths and trace to a managed session.
+Requested change (threat model O-10, gap G-41): AOC's own promotion gate should additionally refuse any candidate
+for the AOC repository whose commits touch Tier 1 paths and trace to a managed session.
 
 ### Layer 4: audit outside AOC
 
@@ -114,9 +131,16 @@ repository whose commits touch Tier 1 paths and trace to a managed session.
 the chain is part of what is being protected. Three external records:
 
 1. **The external self-modification log** (`selfModification.externalAuditLog`, default
-   `.aoc/selfmod-audit.log`). It gets one line per blocked attempt and one line per merged change to Tier 1. **A
-   local file on the AOC host is not "outside AOC".** Ship it off-host as it is written: to the central log
-   service, to an append-only bucket, or as commits to the anchor repository.
+   `.aoc/selfmod-audit.log`).
+   - **Built:** one JSON line per blocked attempt, written before the chained `selfmod.blocked` event, fsync'd,
+     mode 0600. Each line carries the SHA-256 of the previous line (`prev`), so an edit or a deletion in the
+     middle shows when the file is re-hashed. Lines cut from the end do not: compare the line count with the
+     chained `selfmod.blocked {externalLogged: true}` events.
+   - **Not built:** a line per merged change to Tier 1 (gap G-41). Until then, step 5 of the human path (§4)
+     records each merge outside AOC by other means.
+   - **A local file on the AOC host is not "outside AOC"**, and the aocd user can rewrite it. Ship it off-host as
+     it is written: to the central log service, to an append-only bucket, or as commits to the anchor repository
+     (gap P-07).
 2. **GitHub history, pull-request reviews and the organisation audit log** of the AOC repository. They are owned by
    the organisation, not by the AOC host, and they show who authored, who reviewed and who merged every core change.
 3. **The off-host chain anchors** ([anchoring](../runbooks/anchoring.md)). They prove that `selfmod.blocked`
@@ -142,8 +166,9 @@ the chain is part of what is being protected. Three external records:
    [ADR](../adr/README.md).
 3. **Pull request** on GitHub. CI must be green. **A Code Owner other than the author approves.**
 4. **A human merges.** No AOC bypass exists in the AOC repository (Layer 3).
-5. **External record.** The merge and its review are written to the external self-modification log (Layer 4),
-   with the pull-request link and the reviewers.
+5. **External record.** The merge and its review are recorded outside AOC (Layer 4), with the pull-request link and
+   the reviewers. AOC does not write these lines itself yet (gap G-41): the merging human does, in the off-host
+   copy of the log or the organisation's change log.
 6. **Deploy** following the [operations upgrade procedure](../runbooks/operations.md#8-upgrades). Config changes
    appear as `config.changed` or `registry.changed` at startup. Each one must match an approved change request.
 
@@ -161,23 +186,28 @@ the chain is part of what is being protected. Three external records:
 - [ ] **Strict meta** across the whole event catalog: nothing personal or free-text in clear.
 - [ ] **Ingest authentication:** session-token scoping, observer restrictions, fail-closed paths, system tokens.
 - [ ] **Guard policy:** ordering, deny on exception, handling of observed sessions.
-- [ ] **Decisions:** routing, separation of duties (including the single-Approver case, O-8), the binding of passkey
-      assertions to decision and option, policy resolution (only the credit auto-grant), expiry.
+- [ ] **Decisions:** routing; separation of duties, including the single-Approver rule (with
+      `decisions.soleApproverFallback: false`, the CEO's decision of 2026-10-09, the only Approver can never resolve
+      their own request); the binding of passkey assertions to decision, option and card; policy resolution
+      (only the credit auto-grant); expiry.
 - [ ] **Credits:** enforcement only at boundaries; the auto-grant at most once per period; top-up separation of
       duties.
-- [ ] **Identity** (when it lands):
+- [ ] **Identity:**
   - token hashing and revocation;
   - cookie flags and CSRF protection (O-22);
   - WebAuthn ceremonies (challenge binding, origin and rpId checks, signature counter).
-- [ ] **Supervisor** (when it lands):
-  - `envAllowlist` and credential-profile injection;
-  - the separate sandbox user (O-1);
-  - no privileged git in workspaces (O-2);
-  - settings validation and launch fail-closed checks (O-15).
-- [ ] **Change control** (when it lands): the provenance algorithm; isolation of rollback verification;
-      break-glass audit; immutable pin tags.
-- [ ] **Audit** (when it lands): anchoring to off-host records; Verify reads external anchors only; the
-      self-modification guard (path resolution, symlinks, the external log).
+- [ ] **Supervisor:**
+  - `envAllowlist` and credential-profile injection, including the `HOME` it passes through;
+  - the separate sandbox user (O-1, not built);
+  - `runIsolated` and no privileged git in workspaces (O-2, not built);
+  - settings validation and launch fail-closed checks (O-15);
+  - the sidecar's token and principal (O-3).
+- [ ] **Change control:** the provenance algorithm (O-27); isolation of rollback verification and its acceptance
+      command; break-glass audit; immutable pin tags.
+- [ ] **Audit:** anchoring to off-host records; Verify reads the remote and refuses to anchor a chain that no
+      longer matches; the erasure API's authorisation (O-28); the self-modification guard (path resolution,
+      symlinks, hard links, the Bash analysis, the external log's hash chain).
+- [ ] **Evidence:** packs that check anchors against the off-host records (O-29).
 - [ ] **Supply chain:** every dependency pinned to an exact version and reviewed; the lockfile matches.
 
 **Record of the review:** reviewer names, the commit SHA reviewed, findings and their dispositions, and a sign-off

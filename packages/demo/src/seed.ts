@@ -40,6 +40,7 @@ import { createLedgerModule } from '@aoc/mod-ledger';
 import { createMeteringModule } from '@aoc/mod-metering';
 import { createRegistryModule } from '@aoc/mod-registry';
 import { createSessionsModule } from '@aoc/mod-sessions';
+import { createTowerModule } from '@aoc/mod-tower';
 import { demoLayout, resetDemoDir, type DemoTokens, type LiveKind } from './layout';
 import { PROJECT_FILES } from './repos';
 import { simPrompt } from './scenarios';
@@ -119,6 +120,7 @@ const modules: AocModule[] = [
   createAuditModule(),
   createEvidenceModule(),
   createIntakeModule(),
+  createTowerModule(),
 ];
 
 // 'error': the seeder runs without a supervisor, so intake's "cannot start triage" warning is expected noise.

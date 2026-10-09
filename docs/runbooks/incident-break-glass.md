@@ -29,9 +29,12 @@ Use break-glass **only** when all of these are true:
 Do not use it for deadlines, convenience, or to skip a review that would say no. Every use is reviewed afterwards
 (§5).
 
-> **Single-Approver warning.** The invoker of a break-glass can never approve it (separation of duties). If the
-> CEO is the only Approver and invokes break-glass personally, **nobody can approve it**. Until a deputy Approver
-> exists (threat model O-8), a Builder invokes and the CEO approves.
+> **Single-Approver rule.** The invoker of a break-glass can never approve it (separation of duties). The CEO
+> decided on 2026-10-09 that a single Approver gets no exception (`decisions.soleApproverFallback: false`). So
+> while the CEO is the only Approver, **a Builder invokes and the CEO approves**. A break-glass the CEO invokes
+> personally has no eligible approver and waits until a second Approver exists. Keep at least one Builder who can
+> invoke reachable out of hours, or appoint a second Approver with a passkey
+> ([threat model T-8](../security/threat-model.md#t-8-self-approval-and-separation-of-duties)).
 
 ## 3. Break-glass procedure
 
@@ -93,7 +96,8 @@ The change record raised at approval must be completed within 24 h of approval, 
 | Acceptance test | How the emergency change is now verified: tests added, and the UAT done after the fact |
 
 - Each field must be **edited or affirmed** separately. A blind one-click confirm is flagged (§14).
-- The record then goes through approval like any change at scope `production`.
+- The record then goes through approval like any change at scope `production`. Whoever submits it cannot approve
+  it, so while the CEO is the only Approver, the incident lead (a Builder) submits it and the CEO approves.
 - If it is not completed in time, AOC records `breakglass.post_incident_overdue`. The Control Tower shows a
   **critical** `post_incident_overdue` item until it is done.
 - The emergency commits must then pass the normal provenance path, so that future promotions are not blocked by
