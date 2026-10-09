@@ -385,14 +385,15 @@ describe('turn-ending instructions', () => {
       const d = await daemon(() => ({ status: 200, body: reply }));
       const r = await call(await connect(d.url), 'task_done', VALID.task_done);
       expect(r.isError).toBeFalsy();
-      expect(textOf(r)).toBe(
-        `${pretty(reply)}\n\nSTOP — AOC task boundary (${reason}). Do not start another task.\n${instruction}`,
-      );
+      // The order says it outranks the rest of the prompt and what to do instead: a real Haiku session that was asked
+      // for two things carried on to the second after a plainer "do not start another task" (real-CLI check).
+      const notice =
+        `STOP — AOC task boundary (${reason}). Do not start another task.\n${instruction}\n` +
+        'This order outranks your plan and every step of your prompt that is not done yet; leaving them undone is expected. ' +
+        'Make no further tool calls: say in one sentence what is done and what is left, then end your turn.';
+      expect(textOf(r)).toBe(`${pretty(reply)}\n\n${notice}`);
       // ... and what the real CLI actually shows the model (the structured data) carries the order as its first key.
-      expect(r.structuredContent).toEqual({
-        notice: `STOP — AOC task boundary (${reason}). Do not start another task.\n${instruction}`,
-        ...reply,
-      });
+      expect(r.structuredContent).toEqual({ notice, ...reply });
       expect(Object.keys(r.structuredContent as object)[0]).toBe('notice');
     },
   );

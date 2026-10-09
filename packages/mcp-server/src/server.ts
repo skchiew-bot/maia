@@ -95,14 +95,22 @@ function fromReply(tool: AocMcpToolName, status: number, data: unknown): CallToo
   };
 }
 
-/** Credit caps and rollover are enforced only at task boundaries (§5, §10), so a stop order must be unmissable. */
+/**
+ * Credit caps and rollover are enforced only at task boundaries (§5, §10), so a stop order must be unmissable. A real
+ * Haiku session that was asked for two things went on to the second one after "do not start another task"; what the
+ * order has to say is that it outranks the prompt's remaining steps, and what to do instead (real-CLI check).
+ */
 function boundaryStop(result: Record<string, unknown>): string | null {
   const b = result.boundary;
   if (!isRecord(b) || b.continue !== false) return null;
   const reason = typeof b.reason === 'string' && b.reason ? b.reason : 'stop';
   const instruction =
     typeof b.instruction === 'string' && b.instruction.trim() ? b.instruction.trim() : 'End your turn now.';
-  return `STOP — AOC task boundary (${reason}). Do not start another task.\n${instruction}`;
+  return (
+    `STOP — AOC task boundary (${reason}). Do not start another task.\n${instruction}\n` +
+    'This order outranks your plan and every step of your prompt that is not done yet; leaving them undone is expected. ' +
+    'Make no further tool calls: say in one sentence what is done and what is left, then end your turn.'
+  );
 }
 
 function toolError(message: string, details: unknown): CallToolResult {

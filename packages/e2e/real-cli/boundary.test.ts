@@ -48,13 +48,13 @@ describe.skipIf(!REAL_CLI_ENABLED)('real CLI: stop at the next task boundary', (
       expect(eventsOf(r, sessionId, ['session.turn_ended']).map((e) => [e.meta.outcome, e.meta.exitCode])).toEqual([['stop_requested', 0]]);
       expect(hooksCaptured(r).some((h) => h.event === 'PostToolUse' && h.input.tool_name === 'Bash' && String(JSON.stringify(h.input.tool_response)).includes('tests pass'))).toBe(true);
 
-      // The boundary answer reached the model as structured data, and it stopped there.
+      // The boundary answer reached the model as structured data, and it stopped there: the first task_done that was
+      // answered stop_requested is the model's last tool call.
       const [turn] = streamsOf(r, sessionId);
       const calls = toolUses(turn!);
-      const stopping = calls.findLast((c) => c.name === 'mcp__aoc__task_done')!;
-      expect(stopping, 'the model must close the first task with task_done').toBeTruthy();
-      const answer = JSON.stringify(turn!.filter((o) => o.type === 'user' && JSON.stringify(o).includes(stopping.id)));
-      expect(answer).toContain('stop_requested');
+      const answers = turn!.filter((o) => o.type === 'user').map((o) => JSON.stringify(o));
+      const stopping = calls.find((c) => c.name === 'mcp__aoc__task_done' && answers.some((a) => a.includes(c.id) && a.includes('stop_requested')))!;
+      expect(stopping, 'the model must close the first task with task_done, and be told to stop').toBeTruthy();
       expect(calls.slice(calls.indexOf(stopping) + 1).map((c) => `${c.name}: ${JSON.stringify(c.input).slice(0, 100)}`)).toEqual([]);
       expect(existsSync(join(repo, 'b.txt'))).toBe(false);
       expect(eventsOf(r, sessionId, ['task.done'])).toHaveLength(1);

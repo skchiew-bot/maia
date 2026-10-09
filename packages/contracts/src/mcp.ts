@@ -127,7 +127,7 @@ export const AOC_MCP_TOOLS = {
     input: TaskDoneInput,
     description:
       'Mark a declared task done. Evidence is mandatory: a test id (file and test name, not the command), a commit SHA, or a diff ref (the changed file). ' +
-      'Tasks closed without any file-changing tool call are flagged. Obey the returned `boundary` instruction: when it says to stop, end your turn.',
+      'Tasks closed without any file-changing tool call are flagged. Obey the returned `boundary` instruction: when it says to stop, it outranks your plan and the rest of your prompt: make no more tool calls and end your turn.',
   },
   request_decision: {
     input: RequestDecisionInput,

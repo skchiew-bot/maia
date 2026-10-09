@@ -25,6 +25,8 @@ const STREAMS = [
   'aoc-nudge.turn-3.stream-json.jsonl',
   'aoc-permission-denied.stream-json.jsonl',
   'aoc-triage.stream-json.jsonl',
+  'aoc-boundary-ignored.stream-json.jsonl',
+  'aoc-boundary-obeyed.stream-json.jsonl',
 ];
 
 describe('stream-json as a real managed session printed it', () => {
