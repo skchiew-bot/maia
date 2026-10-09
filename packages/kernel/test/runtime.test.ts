@@ -51,3 +51,36 @@ describe('AocRuntime', () => {
     await t.close();
   });
 });
+
+describe('reactor drain', () => {
+  it('tracks follow-ups appended synchronously by a reactor in the same drain', async () => {
+    const order: string[] = [];
+    const mod: AocModule = {
+      name: 'chain',
+      reactors: [
+        {
+          name: 'first',
+          handles: ['session.nudged'],
+          react(e, _p, ctx) {
+            order.push('first');
+            // synchronous follow-up append inside the reaction (no await before it)
+            ctx.store.append({ type: 'session.restarted', actor: { kind: 'system', id: 't' }, meta: { sessionId: 'ses_y' }, source: 'system', causationId: e.id });
+          },
+        },
+        {
+          name: 'second',
+          handles: ['session.restarted'],
+          async react() {
+            await new Promise((r) => setTimeout(r, 20));
+            order.push('second');
+          },
+        },
+      ],
+    };
+    const t = await createTestRuntime({ modules: [mod] });
+    t.rt.store.append({ type: 'session.nudged', actor: { kind: 'human', id: 'usr_1' }, meta: { sessionId: 'ses_y' }, payload: { text: 'x' }, source: 'api' });
+    await t.drain();
+    expect(order).toEqual(['first', 'second']);
+    await t.close();
+  });
+});

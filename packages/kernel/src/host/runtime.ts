@@ -111,33 +111,42 @@ export class AocRuntime {
     await this.drain();
   }
 
-  /** Resolves when every queued reaction has run (tests await this after actions). */
+  /**
+   * Resolves when every queued reaction has run (tests await this after actions). `draining` is set BEFORE the
+   * loop starts, so a reactor that appends synchronously during its reaction joins this loop instead of starting
+   * a second, untracked one (which would break ordering and let drain() resolve early).
+   */
   drain(): Promise<void> {
     if (this.draining) return this.draining;
-    this.draining = (async () => {
-      while (this.queue.length && !this.stopped) {
-        const item = this.queue.shift()!;
-        let lastErr: unknown = null;
-        for (let attempt = 0; attempt < 3; attempt++) {
-          try {
-            await item.reactor.react(item.e, item.payload, this.ctx);
-            lastErr = null;
-            break;
-          } catch (err) {
-            lastErr = err;
+    let done!: () => void;
+    this.draining = new Promise<void>((r) => (done = r));
+    void (async () => {
+      try {
+        while (this.queue.length && !this.stopped) {
+          const item = this.queue.shift()!;
+          let lastErr: unknown = null;
+          for (let attempt = 0; attempt < 3; attempt++) {
+            try {
+              await item.reactor.react(item.e, item.payload, this.ctx);
+              lastErr = null;
+              break;
+            } catch (err) {
+              lastErr = err;
+            }
           }
+          if (lastErr) {
+            this.opts.log.error('reactor failed', { reactor: item.reactor.name, seq: item.e.seq, err: String(lastErr) });
+            this.store.db
+              .prepare('INSERT INTO reactor_failures (reactor, seq, error, at) VALUES (?,?,?,?)')
+              .run(item.reactor.name, item.e.seq, String(lastErr).slice(0, 1000), this.opts.clock.iso());
+          }
+          this.store.db.prepare('UPDATE reactor_cursors SET seq = MAX(seq, ?) WHERE name = ?').run(item.e.seq, item.reactor.name);
         }
-        if (lastErr) {
-          this.opts.log.error('reactor failed', { reactor: item.reactor.name, seq: item.e.seq, err: String(lastErr) });
-          this.store.db
-            .prepare('INSERT INTO reactor_failures (reactor, seq, error, at) VALUES (?,?,?,?)')
-            .run(item.reactor.name, item.e.seq, String(lastErr).slice(0, 1000), this.opts.clock.iso());
-        }
-        this.store.db.prepare('UPDATE reactor_cursors SET seq = MAX(seq, ?) WHERE name = ?').run(item.e.seq, item.reactor.name);
+      } finally {
+        this.draining = null;
+        done();
       }
-    })().finally(() => {
-      this.draining = null;
-    });
+    })();
     return this.draining;
   }
 
