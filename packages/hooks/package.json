@@ -13,7 +13,6 @@
   },
   "dependencies": {
     "@aoc/contracts": "workspace:*",
-    "@aoc/client": "workspace:*",
-    "@aoc/sidecar": "workspace:*"
+    "@aoc/client": "workspace:*"
   }
 }

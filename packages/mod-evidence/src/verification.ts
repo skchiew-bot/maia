@@ -1,10 +1,15 @@
-import type { EvidenceAnchorCheck, EvidenceEventLine, EvidenceVerification } from '@aoc/contracts';
+import type {
+  AnchorCheckDTO,
+  EvidenceAnchorCheck,
+  EvidenceAnchorExternal,
+  EvidenceEventLine,
+  EvidenceNotVerifiableReason,
+  EvidenceVerification,
+  EvidenceVerificationStatus,
+  VerifyReportDTO,
+} from '@aoc/contracts';
 import { canonicalJson, sha256hex, type ChainVerifyResult, type EventStore } from '@aoc/kernel';
 import { iterateEvents, metaOf } from './events';
-import type { Pacer } from './jobs';
-
-/** Rows per verification step: small enough that one step is a short slice of the daemon thread. */
-const VERIFY_BATCH = 1000;
 
 /** The kernel's event-hash recipe, recomputed from an exported line so packs are verifiable offline. */
 export function recomputeLineHash(chainId: string, l: EvidenceEventLine): string {
@@ -45,34 +50,85 @@ export interface RangeLinkage {
 }
 
 /**
- * Whole-chain verification (up to the pack's head) plus every anchor: the hash recomputed at each anchored seq must
- * equal the hash recorded when it was anchored. The in-file chain alone is defeatable (R2) — anchors are what make
- * it evidence. The chain is walked in steps with the event loop handed back between them (R-05).
+ * What a pack is verified with: the audit service's verify-against-anchor (the off-host records and proofs), or —
+ * when that is unavailable — only the in-file recomputation, which makes the pack not verifiable (R2).
  */
-export async function buildVerification(
+export type PackVerificationSource =
+  | { report: VerifyReportDTO }
+  | { report: null; reason: 'audit_service_unavailable' | 'audit_verify_failed'; inFile: ChainVerifyResult };
+
+function externalOf(c: AnchorCheckDTO, report: VerifyReportDTO): EvidenceAnchorExternal {
+  const found = c.record === 'found';
+  return {
+    record: c.record,
+    hash: found ? c.anchoredHash : null,
+    matched: found && c.matched,
+    proofOk: found && c.proofOk,
+    // A TSA-signed token stands on its own; a git anchor counts only once seen on the fetched off-host remote.
+    offHost: found && (c.provider === 'rfc3161' || (report.remoteChecked === true && c.offHost === true)),
+    signed: c.signed,
+    problems: c.problems,
+  };
+}
+
+function statusOf(
+  source: PackVerificationSource,
+  chainOk: boolean,
+  rangeOk: boolean,
+): { status: EvidenceVerificationStatus; reason: EvidenceNotVerifiableReason | null } {
+  if (!chainOk || !rangeOk) return { status: 'failed', reason: null };
+  const report = source.report;
+  if (!report) return { status: 'not_verifiable', reason: source.reason };
+  const found = report.anchors.filter((c) => c.record === 'found');
+  // Any disagreement documents tampering, whether or not the rest could be checked.
+  if (report.anchors.some((c) => c.record === 'missing') || found.some((c) => !c.matched || !c.proofOk))
+    return { status: 'failed', reason: null };
+  if (report.anchors.some((c) => c.record === 'store_unavailable'))
+    return { status: 'not_verifiable', reason: 'off_host_record_unavailable' };
+  if (!report.anchors.length) return { status: 'not_verifiable', reason: 'no_anchors' };
+  if (report.remoteChecked === false && report.anchors.some((c) => c.provider === 'git'))
+    return { status: 'not_verifiable', reason: 'off_host_record_unavailable' };
+  if (report.anchors.some((c) => !externalOf(c, report).offHost))
+    return { status: 'not_verifiable', reason: 'anchors_not_off_host' };
+  return report.ok ? { status: 'verified', reason: null } : { status: 'failed', reason: null };
+}
+
+/**
+ * Whole-chain verification plus every anchor, confirmed against its off-host record by the audit service: a forgery
+ * that rewrites the log and its anchor.created rows still disagrees with the records held off-host. The in-chain
+ * anchors are listed with their external result; the pack is verified only when every one is confirmed off-host.
+ */
+export function buildVerification(
   store: EventStore,
   headSeq: number,
   linkage: RangeLinkage,
-  pacer: Pacer,
-): Promise<EvidenceVerification> {
+  source: PackVerificationSource,
+): EvidenceVerification {
   const anchorEvents = [...iterateEvents(store, { types: ['anchor.created'], toSeq: headSeq })];
-  const steps = store.verifyChainSteps({
-    atSeqs: anchorEvents.map((a) => metaOf(a, 'anchor.created').seq),
-    toSeq: headSeq,
-    batch: VERIFY_BATCH,
-  });
-  let chain: ChainVerifyResult;
-  for (;;) {
-    const step = steps.next();
-    if (step.done) {
-      chain = step.value;
-      break;
-    }
-    await pacer.yield();
-  }
+  const report = source.report;
+  const chain = report
+    ? {
+        ok: report.chainOk,
+        chainId: report.chainId,
+        headSeq: report.headSeq,
+        headHash: report.headHash,
+        checked: report.checked,
+        firstBadSeq: report.chainFirstBadSeq,
+        problems: report.chainProblems,
+      }
+    : {
+        ok: source.inFile.ok,
+        chainId: source.inFile.chainId,
+        headSeq: source.inFile.headSeq,
+        headHash: source.inFile.headHash,
+        checked: source.inFile.checked,
+        firstBadSeq: source.inFile.firstBadSeq,
+        problems: source.inFile.problems,
+      };
   const anchors: EvidenceAnchorCheck[] = anchorEvents.map((a) => {
     const m = metaOf(a, 'anchor.created');
-    const recomputed = chain.hashesAt[m.seq] ?? null;
+    const check = report?.anchors.find((c) => c.provider === m.provider && c.seq === m.seq) ?? null;
+    const external = check && report ? externalOf(check, report) : null;
     return {
       anchorId: m.anchorId,
       eventSeq: a.seq,
@@ -80,10 +136,11 @@ export async function buildVerification(
       anchoredAt: a.ts,
       seq: m.seq,
       anchoredHash: m.hash,
-      recomputedHash: recomputed,
-      matched: recomputed !== null && recomputed === m.hash,
+      recomputedHash: check ? check.recomputedHash : report ? null : (source.inFile.hashesAt[m.seq] ?? null),
+      matched: external !== null && external.matched && external.proofOk && external.offHost,
       provider: m.provider,
       proofRef: m.proofRef,
+      external,
     };
   });
   const matched = anchors.filter((a) => a.matched).sort((a, b) => a.seq - b.seq);
@@ -100,17 +157,20 @@ export async function buildVerification(
   const tail = Math.max(0, headSeq - lastAnchoredSeq);
   const rangeTail = linkage.seqs.filter((s) => s > lastAnchoredSeq).length;
   const anchorsMatched = anchors.filter((a) => a.matched).length;
+  const { status, reason } = statusOf(source, chain.ok, linkage.hashesMatched === linkage.hashesRecomputed);
   return {
-    ok: chain.ok && anchorsMatched === anchors.length && linkage.hashesMatched === linkage.hashesRecomputed,
-    chain: {
-      ok: chain.ok,
-      chainId: chain.chainId,
-      headSeq: chain.headSeq,
-      headHash: chain.headHash,
-      checked: chain.checked,
-      firstBadSeq: chain.firstBadSeq,
-      problems: chain.problems,
-    },
+    ok: status === 'verified',
+    status,
+    notVerifiableReason: reason,
+    external: report
+      ? {
+          verifiedAt: report.verifiedAt,
+          remoteChecked: report.remoteChecked,
+          problems: report.problems,
+          warnings: report.warnings,
+        }
+      : null,
+    chain,
     anchorsChecked: anchors.length,
     anchorsMatched,
     anchors,
@@ -139,7 +199,7 @@ export async function buildVerification(
       canonicalJson:
         'JSON with object keys sorted recursively, no whitespace, undefined members dropped (RFC 8785 style)',
       genesisPrevHash: "sha256('aoc-genesis:' + chainId) is the prevHash of seq 1",
-      note: 'The in-file chain alone is defeatable (drop the trigger and recompute). anchoredHash is the value recorded when the head was anchored; confirm it against the off-host proof named by proofRef (§13, R2).',
+      note: 'The in-file chain alone is defeatable (drop the trigger and recompute). Each anchor was checked against its off-host record (git commit on the anchor remote, or RFC 3161 token) by the audit service: external.hash is that record; anchoredHash is what the chain itself recorded (§13, R2).',
     },
   };
 }

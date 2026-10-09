@@ -8,11 +8,14 @@ import {
   newId,
   requiredRoleFor,
   requiresPasskey,
+  resolutionAssurance,
   roleSatisfies,
+  RESOLUTION_ASSURANCE_LABEL,
   routeModel,
   ProcessTypeSchema,
   validateEvent,
   AocConfigSchema,
+  projectSlug,
   transcriptPathFor,
   type LivenessInput,
 } from '../src';
@@ -82,6 +85,15 @@ describe('roles & decisions (§6)', () => {
     expect(hasPermission('approver', 'mapping.stamp')).toBe(false);
     expect(hasPermission('requester', 'mapping.stamp', { complianceLead: true })).toBe(false);
   });
+
+  it('labels a bearer-token button as attribution and only a verified passkey as a signature (G-29)', () => {
+    const label = (method: 'button' | 'passkey' | 'policy', passkeyVerified: boolean) =>
+      RESOLUTION_ASSURANCE_LABEL[resolutionAssurance({ method, passkeyVerified })];
+    expect(label('button', false)).toBe('Attribution (bearer token)');
+    expect(label('passkey', true)).toBe('Signed (passkey)');
+    expect(label('passkey', false)).toBe('Attribution (bearer token)');
+    expect(label('policy', false)).toBe('Platform policy');
+  });
 });
 
 describe('event catalog', () => {
@@ -101,9 +113,53 @@ describe('registry + config + misc', () => {
     expect(routeModel(t, true)).toBe('sonnet');
     expect(routeModel(t, false)).toBe('opus');
   });
+  it('backup events carry sizes, hashes and fingerprints only; backup settings are validated', () => {
+    const meta = {
+      backupId: 'bkp_01K0000000000000000ABCDEF1',
+      file: 'aoc-backup-20261009T183005Z-0ABCDEF1.aocbk',
+      bytes: 10,
+      sha256: 'a'.repeat(64),
+      keyId: '0123456789abcdef',
+      kekId: 'fedcba9876543210',
+      headSeq: 1,
+      headHash: 'b'.repeat(64),
+      files: 2,
+      aocDbBytes: 1,
+      bodiesDbBytes: 1,
+      blobs: 0,
+      blobBytes: 0,
+      skippedBlobs: 0,
+      bodiesMissing: 0,
+      copied: null,
+      pruned: 0,
+      retained: 1,
+    };
+    expect(validateEvent('backup.completed', meta, null)).toEqual([]);
+    expect(validateEvent('backup.completed', { ...meta, file: '/var/lib/aoc/backups/x.aocbk' }, null)).not.toEqual([]);
+    expect(validateEvent('backup.completed', { ...meta, dir: '/home/someone' }, null)).not.toEqual([]);
+    expect(validateEvent('backup.failed', { backupId: null, stage: 'copy', reason: 'copy_failed' }, { detail: 'exit 3' })).toEqual([]);
+    expect(validateEvent('backup.failed', { backupId: null, stage: 'copy', reason: 'no such file /home/x' }, {})).not.toEqual([]);
+    const audit = AocConfigSchema.parse({}).audit;
+    expect(audit).toMatchObject({ backupDir: '.aoc/backups', backupAtLocalTime: '02:30', backupRetentionDays: 35, backupCopyCommand: [] });
+    expect(audit.backupKeyFile).toBeUndefined();
+    expect(AocConfigSchema.safeParse({ audit: { backupAtLocalTime: '2:30' } }).success).toBe(false);
+    expect(AocConfigSchema.safeParse({ audit: { backupRetentionDays: 0 } }).success).toBe(false);
+  });
   it('defaults config and builds ids/paths', () => {
     expect(AocConfigSchema.parse({}).port).toBe(7420);
     expect(newId('session')).toMatch(/^ses_[0-9A-Z]{26}$/);
     expect(transcriptPathFor('/home/u/my.repo', 'abc', '/h/.claude')).toBe('/h/.claude/projects/-home-u-my-repo/abc.jsonl');
+  });
+  // Expected slugs were produced by the slug function embedded in the Claude Code 2.1.295 binary (research C11).
+  it('truncates project slugs past 200 characters and appends the cwd hash, like Claude Code', () => {
+    const exactly200 = '/' + 'a'.repeat(199);
+    expect(projectSlug(exactly200)).toBe('-' + 'a'.repeat(199));
+    const nested = '/home/dev/' + 'very-long-directory-name/'.repeat(9) + 'repo';
+    expect(projectSlug(nested)).toBe(
+      '-home-dev-' + 'very-long-directory-name-'.repeat(7) + 'very-long-direc-gy7dfj',
+    );
+    // Non-ASCII characters count as one UTF-16 unit each and become '-'.
+    expect(projectSlug('/srv/wörk/' + 'x'.repeat(195))).toBe('-srv-w-rk-' + 'x'.repeat(190) + '-q0c2ns');
+    expect(projectSlug('/tmp/aoc-capture/work')).toBe('-tmp-aoc-capture-work');
   });
 });

@@ -103,6 +103,18 @@ describe('lessons registry', () => {
     await t.drain();
     expect((await lessonOf(t, builder.headers, other.lessonId)).status).toBe('rejected');
     expect(learning(t).lessonsForScope({ processType: 'x', codeAreas: ['packages/web'] })).toEqual([]);
+
+    // A binding card that expires unanswered never binds (G-33).
+    const lapsed = await propose(t, builder, { scopeType: 'code_area', scopeValue: 'packages/cli' });
+    t.rt.store.append({
+      type: 'decision.expired',
+      actor: { kind: 'system', id: 'decisions' },
+      scope: { decisionId: lapsed.decisionId },
+      meta: { decisionId: lapsed.decisionId, ageMs: 7 * DAY },
+      source: 'system',
+    });
+    await t.drain();
+    expect((await lessonOf(t, builder.headers, lapsed.lessonId)).status).toBe('rejected');
     await t.close();
   });
 

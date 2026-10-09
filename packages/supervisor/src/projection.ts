@@ -15,6 +15,7 @@ export interface SupervisedSession {
   threadId: string;
   phaseId: string | null;
   ticketId: string | null;
+  changeId: string | null;
   parentSessionId: string | null;
   processType: string;
   model: string;
@@ -57,7 +58,7 @@ const DDL = [
     owner_id TEXT,
     project_id TEXT NOT NULL,
     thread_id TEXT NOT NULL,
-    phase_id TEXT, ticket_id TEXT, parent_session_id TEXT,
+    phase_id TEXT, ticket_id TEXT, change_id TEXT, parent_session_id TEXT,
     process_type TEXT NOT NULL,
     model TEXT NOT NULL,
     read_only INTEGER NOT NULL,
@@ -115,16 +116,17 @@ function apply(db: DatabaseSync, e: StoredEvent, payload: JsonValue | null): voi
   switch (e.type) {
     case 'session.launch_requested':
       db.prepare(
-        `INSERT INTO ${TABLE} (session_id, owner_id, project_id, thread_id, phase_id, ticket_id, parent_session_id, process_type, model,
-           read_only, cwd, lifecycle, lifecycle_reason, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'launching', 'launch_requested', ?) ON CONFLICT(session_id) DO NOTHING`,
+        `INSERT INTO ${TABLE} (session_id, owner_id, project_id, thread_id, phase_id, ticket_id, change_id, parent_session_id,
+           process_type, model, read_only, cwd, lifecycle, lifecycle_reason, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'launching', 'launch_requested', ?) ON CONFLICT(session_id) DO NOTHING`,
       ).run(
         id,
-        e.actor.kind === 'human' ? e.actor.id : null,
+        ownerOf(db, e, m),
         m.projectId as string,
         m.threadId as string,
         str(m.phaseId),
         str(m.ticketId),
+        str(m.changeId),
         str(m.parentSessionId),
         m.processType as string,
         m.model as string,
@@ -132,12 +134,6 @@ function apply(db: DatabaseSync, e: StoredEvent, payload: JsonValue | null): voi
         str(p?.cwd),
         e.ts,
       );
-      // Launched on an agent's behalf (rollover successor): the session keeps its predecessor's owner.
-      if (e.actor.kind !== 'human' && m.parentSessionId) {
-        db.prepare(
-          `UPDATE ${TABLE} SET owner_id = (SELECT owner_id FROM ${TABLE} WHERE session_id = ?) WHERE session_id = ? AND owner_id IS NULL`,
-        ).run(m.parentSessionId as string, id);
-      }
       break;
     case 'session.launched':
       db.prepare(
@@ -191,6 +187,20 @@ function apply(db: DatabaseSync, e: StoredEvent, payload: JsonValue | null): voi
   }
 }
 
+/**
+ * The owner recorded at launch. Events written before launch_requested carried ownerId: the launching human,
+ * else (a rollover successor) the parent session's owner.
+ */
+function ownerOf(db: DatabaseSync, e: StoredEvent, m: Meta): string | null {
+  if ('ownerId' in m) return str(m.ownerId);
+  if (e.actor.kind === 'human') return e.actor.id;
+  if (!m.parentSessionId) return null;
+  const parent = db
+    .prepare(`SELECT owner_id FROM ${TABLE} WHERE session_id = ?`)
+    .get(m.parentSessionId as string) as { owner_id: string | null } | undefined;
+  return parent?.owner_id ?? null;
+}
+
 interface Row {
   session_id: string;
   claude_session_id: string | null;
@@ -199,6 +209,7 @@ interface Row {
   thread_id: string;
   phase_id: string | null;
   ticket_id: string | null;
+  change_id: string | null;
   parent_session_id: string | null;
   process_type: string;
   model: string;
@@ -229,6 +240,7 @@ function toSession(r: Row): SupervisedSession {
     threadId: r.thread_id,
     phaseId: r.phase_id,
     ticketId: r.ticket_id,
+    changeId: r.change_id,
     parentSessionId: r.parent_session_id,
     processType: r.process_type,
     model: r.model,

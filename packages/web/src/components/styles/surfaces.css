@@ -16,7 +16,7 @@
 .aoc-breadcrumbs li + li::before {
   content: '/' / '';
   margin-right: 4px;
-  color: var(--border-strong);
+  color: var(--text-3);
 }
 .aoc-breadcrumbs a {
   color: var(--text-2);

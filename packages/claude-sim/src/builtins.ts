@@ -1,6 +1,17 @@
 import crash from '../scenarios/crash.json' with { type: 'json' };
 import creditBurn from '../scenarios/credit-burn.json' with { type: 'json' };
 import decision from '../scenarios/decision.json' with { type: 'json' };
+import demoCsatResume from '../scenarios/demo-csat-resume.json' with { type: 'json' };
+import demoDecision from '../scenarios/demo-decision.json' with { type: 'json' };
+import demoDedupeResume from '../scenarios/demo-dedupe-resume.json' with { type: 'json' };
+import demoDeepThink from '../scenarios/demo-deep-think.json' with { type: 'json' };
+import demoFeatureBuild from '../scenarios/demo-feature-build.json' with { type: 'json' };
+import demoRollover from '../scenarios/demo-rollover.json' with { type: 'json' };
+import demoRolloverSuccessor from '../scenarios/demo-rollover-successor.json' with { type: 'json' };
+import demoRunbookRestart from '../scenarios/demo-runbook-restart.json' with { type: 'json' };
+import demoStall from '../scenarios/demo-stall.json' with { type: 'json' };
+import demoThrottle from '../scenarios/demo-throttle.json' with { type: 'json' };
+import demoTriage from '../scenarios/demo-triage.json' with { type: 'json' };
 import drift from '../scenarios/drift.json' with { type: 'json' };
 import evidenceMissing from '../scenarios/evidence-missing.json' with { type: 'json' };
 import happyPath from '../scenarios/happy-path.json' with { type: 'json' };
@@ -28,6 +39,18 @@ const RAW_BUILT_INS: Readonly<Record<string, unknown>> = {
   'credit-burn': creditBurn,
   'long-context': longContext,
   drift,
+  // Live demo (packages/demo): every state of the operator console, driven by real managed sessions.
+  'demo-csat-resume': demoCsatResume,
+  'demo-decision': demoDecision,
+  'demo-dedupe-resume': demoDedupeResume,
+  'demo-deep-think': demoDeepThink,
+  'demo-feature-build': demoFeatureBuild,
+  'demo-rollover': demoRollover,
+  'demo-rollover-successor': demoRolloverSuccessor,
+  'demo-runbook-restart': demoRunbookRestart,
+  'demo-stall': demoStall,
+  'demo-throttle': demoThrottle,
+  'demo-triage': demoTriage,
 };
 
 export const DEFAULT_SCENARIO = 'happy-path';

@@ -3,6 +3,7 @@
  * (owner: mod-evidence, §13, §14). Packs carry ids, enums, numbers and hashes only — never payloads.
  */
 import { z } from 'zod';
+import type { ResolutionAssurance } from '../decisions';
 import type { Actor, JsonObject, Scope } from '../envelope';
 
 export const ISO42001_STANDARD = 'ISO/IEC 42001:2023';
@@ -107,6 +108,8 @@ export interface EvidencePackSummaryDTO {
   chainOk: boolean;
   anchorsChecked: number;
   anchorsMatched: number;
+  /** Off-host verification outcome (null for packs generated before it was recorded). */
+  verification: EvidenceVerificationStatus | null;
   downloadUrl: string;
 }
 
@@ -236,6 +239,7 @@ export interface EvidencePackManifest {
   fx: EvidenceFxSummary;
   verification: {
     ok: boolean;
+    status: EvidenceVerificationStatus;
     chainOk: boolean;
     anchorsChecked: number;
     anchorsMatched: number;
@@ -246,21 +250,66 @@ export interface EvidencePackManifest {
   files: EvidencePackFileEntry[];
 }
 
+/**
+ * verified: the chain recomputes and every anchor is confirmed by its off-host record; failed: a check failed (the
+ * pack documents tampering); not_verifiable: no audit service, or an off-host record could not be read or is not
+ * held off-host — the pack proves nothing beyond the in-file chain, which is defeatable on its own (R2).
+ */
+export type EvidenceVerificationStatus = 'verified' | 'failed' | 'not_verifiable';
+
+export type EvidenceNotVerifiableReason =
+  | 'audit_service_unavailable'
+  | 'audit_verify_failed'
+  | 'off_host_record_unavailable'
+  | 'anchors_not_off_host'
+  | 'no_anchors';
+
+/** The off-host side of one anchor, from the audit service's verify-against-anchor (§13, R2). */
+export interface EvidenceAnchorExternal {
+  /** found; missing from a readable anchor store; or the store could not be read. */
+  record: 'found' | 'missing' | 'store_unavailable';
+  /** Hash in the off-host record (null unless found). */
+  hash: string | null;
+  /** The recomputed chain hash equals the off-host record's hash. */
+  matched: boolean;
+  /** The record's own proof holds (git: commit reachable and signed as configured; RFC 3161: token valid). */
+  proofOk: boolean;
+  /** Held beyond this host: a git commit present on the fetched remote, or a TSA-signed token. */
+  offHost: boolean;
+  signed: boolean | null;
+  problems: string[];
+}
+
 export interface EvidenceAnchorCheck {
   anchorId: string;
   eventSeq: number;
   eventId: string;
   anchoredAt: string;
   seq: number;
+  /** What the chain's anchor.created recorded — rewritten along with the log by anyone who rewrites the log. */
   anchoredHash: string;
   recomputedHash: string | null;
+  /** Confirmed off-host: the recomputed hash equals the off-host record's hash and the record's proof holds. */
   matched: boolean;
   provider: string;
   proofRef: string;
+  /** Null when the pack could not be verified against the off-host anchors. */
+  external: EvidenceAnchorExternal | null;
 }
 
 export interface EvidenceVerification {
+  /** status === 'verified'. */
   ok: boolean;
+  status: EvidenceVerificationStatus;
+  notVerifiableReason: EvidenceNotVerifiableReason | null;
+  /** The audit service's run (null when it was unavailable). */
+  external: {
+    verifiedAt: string;
+    /** git anchor remote fetched and compared (null = no remote configured). */
+    remoteChecked: boolean | null;
+    problems: string[];
+    warnings: string[];
+  } | null;
   chain: {
     ok: boolean;
     chainId: string;
@@ -339,6 +388,9 @@ export interface EvidenceGate {
   resolvedBy: string;
   method: string;
   passkeyVerified: boolean;
+  /** §6: a button under a bearer token is attribution, a verified passkey a signature (RESOLUTION_ASSURANCE_LABEL). */
+  assurance: ResolutionAssurance;
+  assuranceLabel: string;
   selfApproved: boolean;
   ageMs: number;
   resolvedAt: string;
@@ -351,6 +403,8 @@ export interface EvidenceGate {
 export interface EvidenceGates {
   count: number;
   byKind: Record<string, number>;
+  /** Resolutions per assurance: signature (passkey), attribution (bearer token), policy. */
+  byAssurance: Record<ResolutionAssurance, number>;
   passkeyVerified: number;
   selfApproved: number;
   byPolicy: number;

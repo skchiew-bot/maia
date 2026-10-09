@@ -42,6 +42,10 @@ const ListQuery = z.object({
   limit: z.coerce.number().int().min(1).max(500).optional(),
 });
 const AffirmRateQuery = z.object({ projectId: zId.optional() });
+const PinsQuery = z.object({
+  projectId: zId,
+  limit: z.coerce.number().int().min(1).max(500).optional(),
+});
 
 function found<T>(value: T | null, what: string): T {
   if (value === null) throw new HttpError(404, `${what}_not_found`, `Unknown ${what}`);
@@ -111,6 +115,13 @@ export function mountChangeRoutes(app: App, engine: ChangeEngine): void {
   app.get('/api/governance/affirm-rate', (c) => {
     requirePermission(c, 'gate.approve');
     return c.json(engine.affirmRate(parseQuery(c, AffirmRateQuery).projectId));
+  });
+
+  // ── pinned states (rollback targets and change-record rollback plans) ──
+  app.get('/api/pins', (c) => {
+    requirePermission(c, 'audit.view');
+    const q = parseQuery(c, PinsQuery);
+    return c.json(engine.pinList(q.projectId, q.limit));
   });
 
   // ── rollback ──

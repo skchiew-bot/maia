@@ -354,17 +354,6 @@ export function latestPromotion(events: readonly AuditEventHeaderDTO[]): Promoti
   return out;
 }
 
-/** The go-live decision raised for the ticket (its subject is the promotion, so it is not listed by ticket). */
-export function goLiveDecisionId(events: readonly AuditEventHeaderDTO[]): string | null {
-  let id: string | null = null;
-  for (const e of [...events].sort((a, b) => a.seq - b.seq)) {
-    if (e.type !== 'ticket.golive_requested') continue;
-    const d = (e.meta as { decisionId?: unknown }).decisionId;
-    id = typeof d === 'string' && d && d !== 'none' ? d : null;
-  }
-  return id;
-}
-
 /** Diagnoses of the latest triage round (re-triage starts a new round); all of them when the round is unknown. */
 export function latestRound(
   diagnoses: readonly TicketDiagnosisDTO[],

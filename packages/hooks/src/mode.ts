@@ -20,7 +20,7 @@ export interface ObservedMode {
 }
 export interface OffMode {
   kind: 'off';
-  reason: 'no-client-config' | 'managed-registration-owns-session';
+  reason: 'no-client-config' | 'managed-registration-owns-session' | 'internal-llm-call';
 }
 export type HookMode = ManagedMode | ObservedMode | OffMode;
 
@@ -30,6 +30,8 @@ export type HookMode = ManagedMode | ObservedMode | OffMode;
  * - otherwise observed, configured by ~/.aoc/client.json (or $AOC_CLIENT_CONFIG); no usable config → off (silent).
  * - The globally installed observed entries carry AOC_HOOK_SCOPE=observed; inside a managed session (which inherits
  *   the user's global settings) they stand down so each event is relayed once, by the managed registration.
+ * - AOC_INTERNAL_LLM=1 marks AOC's own `claude -p` calls (FX extraction, distillation): not a session, so the
+ *   observed hooks they inherit from the user's settings stand down.
  */
 export function resolveMode(env: Env, homeDir: string): HookMode {
   const aocDir = join(homeDir, '.aoc');
@@ -49,6 +51,7 @@ export function resolveMode(env: Env, homeDir: string): HookMode {
         join(aocDir, 'spool', 'managed', (aocSessionId ?? 'unknown').replace(/[^A-Za-z0-9_-]/g, '_')),
     };
   }
+  if (env[ENV.internalLlm] === '1') return { kind: 'off', reason: 'internal-llm-call' };
   const config = readObserverConfig(nonEmpty(env[HOOKS_ENV.clientConfig]) ?? join(aocDir, 'client.json'));
   if (!config) return { kind: 'off', reason: 'no-client-config' };
   return {

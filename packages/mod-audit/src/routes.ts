@@ -7,6 +7,8 @@ import {
   type AuditEventDetailDTO,
   type AuditEventHeaderDTO,
   type AuditEventPageDTO,
+  type BackupListDTO,
+  type BackupRunDTO,
   type EraseResultDTO,
   type StoredEvent,
 } from '@aoc/contracts';
@@ -176,6 +178,42 @@ export function registerAuditRoutes(app: App, ctx: ModuleContext, svc: () => Aud
       provider: r.provider,
       reason: r.reason,
     });
+  });
+
+  app.get('/api/audit/backups', (c) => {
+    requirePermission(c, 'audit.view');
+    const s = svc();
+    const audit = ctx.config.audit;
+    const out: BackupListDTO = {
+      configured: s.backups.configured,
+      atLocalTime: audit.backupAtLocalTime,
+      retentionDays: audit.backupRetentionDays,
+      copyConfigured: audit.backupCopyCommand.length > 0,
+      backups: s.backupList(),
+    };
+    return c.json(out);
+  });
+
+  // Same audience as an on-demand anchor; the destination, key and copy command come from config only.
+  app.post('/api/audit/backup', async (c) => {
+    const auth = requirePermission(c, 'audit.verify');
+    const r = await svc().backupNow({ kind: 'human', id: auth.user.id }, 'api', { manual: true });
+    if (r.ok) {
+      const out: BackupRunDTO = { ok: true, backup: r.backup, copyError: r.copyError };
+      return c.json(out);
+    }
+    if ('skipped' in r) {
+      if (r.skipped === 'too_recent')
+        throw new HttpError(429, 'backup_too_recent', 'The last backup is only minutes old; try again later');
+      throw new HttpError(
+        409,
+        'backup_not_configured',
+        r.skipped === 'no_data_dir'
+          ? 'Backups need an on-disk data dir'
+          : 'Backups are off until audit.backupKeyFile is configured',
+      );
+    }
+    throw new HttpError(502, 'backup_failed', `Backup failed: ${r.reason}`, { stage: r.stage, reason: r.reason });
   });
 
   app.post('/api/audit/erase', async (c) => {

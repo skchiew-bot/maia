@@ -19,6 +19,7 @@ import {
   type ProcessRegistry,
   type ProcessType,
   type RegistryEntry,
+  type RegistryRunDTO,
   type RegistryPlaybookStatus,
   type RegistryService,
   type RegistryTypesResponse,
@@ -44,7 +45,7 @@ import {
   type PlaybookDraft,
   type RunEvent,
 } from './distill';
-import { computeRegistryEntries, type CostedRun } from './economics';
+import { computeRegistryEntries, runKind, type CostedRun } from './economics';
 import { searchKnowledge } from './knowledge';
 import {
   activePlaybookRow,
@@ -459,6 +460,7 @@ export class RegistryEngine {
     if (!row || row.status !== 'proposed') return;
     if (store.findByCausation(e.id).some((x) => x.type.startsWith('playbook.'))) return;
     const scope = { projectId: row.project_id ?? undefined, decisionId };
+    // A withdrawn or expired approval card never binds the proposal.
     if (verdict === 'withdrawn') {
       store.append({
         type: 'playbook.retired',
@@ -509,10 +511,10 @@ export class RegistryEngine {
   }
 
   // ── economics ────────────────────────────────────────────────────────────
-  entries(): RegistryEntry[] {
+  /** Every run chain with its cost, tokens and duration (shared by the hero economics and the runs list). */
+  private costedRuns(): { chain: RunChain; run: CostedRun }[] {
     const db = this.ctx.db;
     const metering = this.ctx.services.maybe('metering');
-    const learning = this.ctx.services.maybe('learning');
     const sessionCost = (
       sessionId: string,
       launchModel: string,
@@ -546,19 +548,49 @@ export class RegistryEngine {
       }
       return { usd, basis: 'estimated' };
     };
-    const runs = listRunChains(db).map<CostedRun>((c) => {
-      const costs = c.sessions.map((s) => sessionCost(s.session_id, s.model));
-      return {
-        rootSessionId: c.rootSessionId,
-        processType: c.processType,
-        launchedAtMs: Date.parse(c.launchedAt),
-        launchSeq: c.launchSeq,
-        finished: c.finished,
-        outcome: c.outcome,
+    const tokensOf = (sessionId: string) =>
+      usageOf(db, sessionId).reduce(
+        (a, u) =>
+          a +
+          u.input_tokens +
+          u.output_tokens +
+          u.cache_read_tokens +
+          u.cache_write_5m_tokens +
+          u.cache_write_1h_tokens,
+        0,
+      );
+    return listRunChains(db).map((chain) => {
+      const costs = chain.sessions.map((s) => sessionCost(s.session_id, s.model));
+      const endedAt = chain.finished ? chain.sessions[chain.sessions.length - 1]!.ended_at : null;
+      const run: CostedRun = {
+        rootSessionId: chain.rootSessionId,
+        processType: chain.processType,
+        launchedAtMs: Date.parse(chain.launchedAt),
+        launchSeq: chain.launchSeq,
+        finished: chain.finished,
+        outcome: chain.outcome,
         costUsd: costs.reduce((a, x) => a + x.usd, 0),
         costBasis: costs.every((x) => x.basis === 'metered') ? 'metered' : 'estimated',
+        tokens: chain.sessions.reduce((a, s) => a + tokensOf(s.session_id), 0),
+        durationMs: endedAt ? Math.max(0, Date.parse(endedAt) - Date.parse(chain.launchedAt)) : null,
       };
+      return { chain, run };
     });
+  }
+
+  entries(): RegistryEntry[] {
+    const db = this.ctx.db;
+    const metering = this.ctx.services.maybe('metering');
+    const learning = this.ctx.services.maybe('learning');
+    const runs = this.costedRuns().map((x) => x.run);
+    const fx = this.ctx.services.maybe('fx');
+    const fxRate = (date: string): number | null => {
+      try {
+        return (fx?.rateFor(date) ?? metering?.fxRate(date) ?? null)?.rate ?? null;
+      } catch {
+        return null;
+      }
+    };
     return computeRegistryEntries({
       types: this.loaded.registry.types,
       runs,
@@ -577,7 +609,47 @@ export class RegistryEngine {
       nowMs: this.ctx.clock.now(),
       timezone: this.ctx.config.timezone,
       weeks: this.opts.trendWeeks,
+      fxRate,
     });
+  }
+
+  /** Runs newest first, with their kind (discovery / execution) and any playbook distilled from them. */
+  runs(filter: { processType?: string; outcome?: string; limit: number }): RegistryRunDTO[] {
+    const approvals = approvalIntervals(this.ctx.db);
+    const distilledFrom = new Map<string, string>();
+    for (const p of listPlaybookRows(this.ctx.db, {}))
+      if (p.source_session_id && (p.status === 'proposed' || p.status === 'approved'))
+        distilledFrom.set(p.source_session_id, p.playbook_id);
+    return this.costedRuns()
+      .filter(
+        ({ chain }) =>
+          (!filter.processType || chain.processType === filter.processType) &&
+          (!filter.outcome || (chain.finished && chain.outcome === filter.outcome)),
+      )
+      .sort((a, b) => b.chain.launchSeq - a.chain.launchSeq)
+      .slice(0, filter.limit)
+      .map(({ chain, run }) => {
+        const type = this.getType(chain.processType);
+        const last = chain.sessions[chain.sessions.length - 1]!;
+        return {
+          runId: chain.rootSessionId,
+          lastSessionId: last.session_id,
+          sessions: chain.sessions.length,
+          processType: chain.processType,
+          projectId: chain.projectId,
+          model: chain.model,
+          kind: type ? runKind(type, chain.launchSeq, approvals) : 'discovery',
+          launchedAt: chain.launchedAt,
+          endedAt: chain.finished ? last.ended_at : null,
+          outcome: chain.finished ? chain.outcome : null,
+          finished: chain.finished,
+          costUsd: Math.round(run.costUsd * 10_000) / 10_000,
+          costBasis: run.costBasis,
+          tokens: run.tokens,
+          durationMs: run.durationMs,
+          playbookId: chain.sessions.map((s) => distilledFrom.get(s.session_id)).find(Boolean) ?? null,
+        };
+      });
   }
 
   private playbookStatus(processType: string): RegistryPlaybookStatus {

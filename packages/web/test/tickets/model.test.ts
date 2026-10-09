@@ -5,7 +5,6 @@ import {
   diagnosisOf,
   funnelOf,
   gatesOf,
-  goLiveDecisionId,
   latestPromotion,
   latestRound,
   stageSpans,
@@ -75,7 +74,9 @@ describe('gates', () => {
     expect(gatesOf(atGate, { status: 'rejected' }).goLive).toBe('rejected');
     expect(gatesOf(atGate, { status: 'requested' }).goLive).toBe('waiting');
     // A completed ticket stays passed whatever an older promotion recorded.
-    expect(gatesOf(ticket({ ticketId: 't', stage: 'completed' }), { status: 'failed' }).goLive).toBe('passed');
+    expect(gatesOf(ticket({ ticketId: 't', stage: 'completed' }), { status: 'failed' }).goLive).toBe(
+      'passed',
+    );
   });
 });
 
@@ -140,22 +141,27 @@ describe('ticket history', () => {
 });
 
 describe('go-live and triage rounds', () => {
-  it('finds the go-live decision through ticket.golive_requested and the latest promotion outcome', () => {
+  it('follows the latest promotion of the ticket, including one requested again after a failure', () => {
     const evts = [
       ...history(),
-      event('ticket.golive_requested', NOW - 5 * MIN, { decisionId: 'dec_go', promotionId: 'prm_1' }),
       event('promotion.requested', NOW - 5 * MIN, { promotionId: 'prm_1' }),
+      event('ticket.golive_requested', NOW - 5 * MIN, { decisionId: 'dec_go', promotionId: 'prm_1' }),
       event('promotion.failed', NOW - 4 * MIN, { promotionId: 'prm_1', reason: 'execution_error' }),
     ];
-    expect(goLiveDecisionId(evts)).toBe('dec_go');
     expect(latestPromotion(evts)).toMatchObject({
       promotionId: 'prm_1',
       status: 'failed',
       reason: 'execution_error',
     });
-    expect(
-      goLiveDecisionId([event('ticket.golive_requested', NOW, { decisionId: 'none', promotionId: null })]),
-    ).toBeNull();
+    const retry = {
+      ...event('promotion.requested', NOW - MIN, { promotionId: 'prm_2', targetBranch: 'main' }),
+      actor: { kind: 'human' as const, id: 'usr_ceo' },
+    };
+    expect(latestPromotion([...evts, retry])).toMatchObject({ promotionId: 'prm_2', status: 'requested' });
+    expect(describeEvent(retry, people, new Map()).text).toBe(
+      'Promotion prm_2 requested to main by Chiew Sin Kwang',
+    );
+    expect(latestPromotion(history())).toBeNull();
   });
 
   it('summarises the latest triage round only', () => {

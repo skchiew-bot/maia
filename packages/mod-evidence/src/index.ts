@@ -39,6 +39,7 @@ import { loadMapping, type LoadedMapping } from './mapping';
 import { buildEvidencePack, type MappingSnapshot } from './pack';
 import { resolveRange, type ResolvedRange } from './range';
 import { PACK_ID_RE, discardUnrecorded, packPath, readStored, writeFrozen } from './storage';
+import type { PackVerificationSource } from './verification';
 
 export * from './mapping';
 export { BUILTIN_MAPPING } from './default-mapping';
@@ -51,7 +52,7 @@ export {
 } from './pack';
 export { resolveRange, zonedStartOfDay, isCalendarDate, type ResolvedRange } from './range';
 export { renderReport, esc } from './report';
-export { recomputeLineHash } from './verification';
+export { buildVerification, recomputeLineHash, type PackVerificationSource } from './verification';
 export { PACK_ID_RE, PackExistsError, packPath, writeFrozen } from './storage';
 export { DEFAULT_PACK_JOB_LIMITS, PackJobQueue, type PackJobLimits } from './jobs';
 
@@ -212,7 +213,7 @@ export function createEvidenceModule(opts: EvidenceModuleOptions = {}): AocModul
       idempotencyKey: `evidence_pack.integrity_failed:${m.packId}:${check.actualHash ?? 'missing'}`,
     });
     ctx.notify({
-      kind: 'info',
+      kind: 'evidence.integrity',
       severity: 'danger',
       title: `Evidence pack ${m.packId} failed its integrity check (${reason === 'missing' ? 'file missing' : 'contents altered'})`,
       audience: ['approver', 'builder'],
@@ -241,8 +242,29 @@ export function createEvidenceModule(opts: EvidenceModuleOptions = {}): AocModul
       chainOk: m.chainOk,
       anchorsChecked: m.anchorsChecked,
       anchorsMatched: m.anchorsMatched,
+      verification: m.verification ?? null,
       downloadUrl: `/api/evidence/packs/${m.packId}/download`,
     };
+  }
+
+  /**
+   * Verify-against-anchor through the audit service (G-42): the pack's anchors are confirmed by their off-host
+   * records, never by the anchor.created rows of the log being evidenced. Without the service the pack is frozen
+   * with the in-file pass only and says it is not verifiable.
+   */
+  async function verificationSource(): Promise<PackVerificationSource> {
+    const inFile = () =>
+      ctx.store.verifyChainAsync({
+        atSeqs: [...iterateEvents(ctx.store, { types: ['anchor.created'] })].map((a) => metaOf(a, 'anchor.created').seq),
+      });
+    const audit = ctx.services.maybe('audit');
+    if (!audit) return { report: null, reason: 'audit_service_unavailable', inFile: await inFile() };
+    try {
+      return { report: await audit.verify() };
+    } catch (err) {
+      ctx.log.error('evidence: off-host verification failed', { err: String(err) });
+      return { report: null, reason: 'audit_verify_failed', inFile: await inFile() };
+    }
   }
 
   function readManifest(bytes: Uint8Array): EvidencePackManifest | null {
@@ -254,12 +276,13 @@ export function createEvidenceModule(opts: EvidenceModuleOptions = {}): AocModul
     }
   }
 
-  /** Builds, freezes and records one pack: what a queued job runs. */
+  /** Verifies, builds, freezes and records one pack: what a queued job runs. */
   async function generatePack(range: ResolvedRange, body: EvidencePackRequest, generatedBy: Actor): Promise<BuiltRecord> {
+    const verification = await verificationSource();
     const packId = newId('evidencePack', ctx.clock.now());
     const generatedAt = ctx.clock.iso();
     const mapping = snapshot();
-    const built = await buildEvidencePack({ store: ctx.store, packId, range, generatedAt, generatedBy, mapping });
+    const built = await buildEvidencePack({ store: ctx.store, packId, range, generatedAt, generatedBy, mapping, verification });
     const v = built.manifest.verification;
     const meta: MetaOf<'evidence_pack.generated'> = {
       packId,
@@ -277,6 +300,7 @@ export function createEvidenceModule(opts: EvidenceModuleOptions = {}): AocModul
       chainOk: v.chainOk,
       anchorsChecked: v.anchorsChecked,
       anchorsMatched: v.anchorsMatched,
+      verification: v.status,
     };
     // Validate before writing so a rejected event never leaves an unrecorded file behind.
     const problems = validateEvent('evidence_pack.generated', meta, null);
@@ -290,14 +314,23 @@ export function createEvidenceModule(opts: EvidenceModuleOptions = {}): AocModul
       discardUnrecorded(path);
       throw err;
     }
-    if (!v.ok) {
+    if (v.status === 'failed') {
       ctx.notify({
-        kind: 'info',
+        kind: 'audit.integrity',
         severity: 'danger',
         title: `Evidence pack ${packId} records a failed chain or anchor verification`,
         audience: ['approver', 'builder'],
         link: `/audit/evidence/${packId}`,
         refs: { packId },
+      });
+    } else if (v.status === 'not_verifiable') {
+      ctx.notify({
+        kind: 'evidence.integrity',
+        severity: 'warn',
+        title: `Evidence pack ${packId} could not be verified against the off-host anchors`,
+        audience: ['approver', 'builder'],
+        link: `/audit/evidence/${packId}`,
+        refs: { packId, reason: built.verification.notVerifiableReason ?? 'unknown' },
       });
     }
     ctx.log.info('evidence pack generated', { packId, from: body.from, to: body.to, events: meta.eventCount, chainOk: v.chainOk });

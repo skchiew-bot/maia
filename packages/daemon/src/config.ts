@@ -31,18 +31,20 @@ export interface LoadedConfig {
 export interface DaemonArgs {
   config: string | null;
   help: boolean;
+  version: boolean;
 }
 
 export function parseDaemonArgs(argv: readonly string[]): DaemonArgs {
-  const out: DaemonArgs = { config: null, help: false };
+  const out: DaemonArgs = { config: null, help: false, version: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
     if (a === '--help' || a === '-h') out.help = true;
+    else if (a === '--version' || a === '-V') out.version = true;
     else if (a === '--config' || a.startsWith('--config=')) {
       const v = a === '--config' ? argv[++i] : a.slice('--config='.length);
       if (!v || v.startsWith('-')) throw new ConfigError('--config needs a file path');
       out.config = v;
-    } else throw new ConfigError(`unknown argument "${a}" (usage: aocd [--config <file>])`);
+    } else throw new ConfigError(`unknown argument "${a}" (usage: aocd [--config <file>] [--version])`);
   }
   return out;
 }
@@ -191,11 +193,22 @@ function resolvePaths(c: AocConfig, baseDir: string): AocConfig {
       sidecarCommand: c.supervisor.sidecarCommand.map(arg),
       hookCommand: c.supervisor.hookCommand.map(arg),
       mcpCommand: c.supervisor.mcpCommand.map(arg),
+      runner: c.supervisor.runner.map(arg),
       workspacesDir: path(c.supervisor.workspacesDir),
+      sessionHomesDir: path(c.supervisor.sessionHomesDir),
       credentialProfilesFile: optPath(c.supervisor.credentialProfilesFile),
     },
     metering: { ...c.metering, rateCardFile: path(c.metering.rateCardFile) },
-    audit: { ...c.audit, anchorRepoPath: path(c.audit.anchorRepoPath) },
+    audit: {
+      ...c.audit,
+      anchorRepoPath: path(c.audit.anchorRepoPath),
+      gnupgHome: optPath(c.audit.gnupgHome),
+      tsaCaFile: optPath(c.audit.tsaCaFile),
+      tsaUntrustedFile: optPath(c.audit.tsaUntrustedFile),
+      backupDir: path(c.audit.backupDir),
+      backupKeyFile: optPath(c.audit.backupKeyFile),
+      backupCopyCommand: c.audit.backupCopyCommand.map(arg),
+    },
     selfModification: {
       ...c.selfModification,
       aocRepoPaths: c.selfModification.aocRepoPaths.map(path),

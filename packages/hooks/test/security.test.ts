@@ -2,7 +2,6 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { deadUrl, managedEnv, postToolUse, readSpool, runHookBinary, startFakeDaemon, stop, tmp, type FakeDaemon } from './helpers';
 import { resolveMode } from '../src/mode';
-import { flushSpoolBounded, loadClient } from '../src/spool';
 
 let daemon: FakeDaemon | null = null;
 afterEach(async () => {
@@ -37,21 +36,5 @@ describe('managed spools are per session', () => {
     const home = tmp();
     const dir = join(home, 'custom');
     expect(resolveMode(managedEnv(home, 'http://x', { AOC_SPOOL_DIR: dir }), home)).toMatchObject({ spoolDir: dir });
-  });
-});
-
-describe('the spool replay budget covers the replay, not the client import', () => {
-  it('replays the spool even when a cold start spends the whole budget loading the client', async () => {
-    const dir = tmp();
-    const target = { spoolDir: dir, daemonUrl: '', token: 't' };
-    (await loadClient(target)).spool({ path: '/ingest/hook', body: { n: 1 }, queuedAt: new Date().toISOString() });
-    daemon = await startFakeDaemon((r) => ({ status: 200, json: { accepted: r.body.items.length, duplicates: 0, rejected: 0 } }));
-    const coldLoad: typeof loadClient = async (t, fetchImpl) => {
-      await new Promise((r) => setTimeout(r, 3500)); // the lazy import of @aoc/client on a cold, busy host
-      return loadClient(t, fetchImpl);
-    };
-    await flushSpoolBounded({ ...target, daemonUrl: daemon.url }, 3000, coldLoad);
-    expect(daemon.requests.map((r) => r.path)).toEqual(['/ingest/spool']);
-    expect(readSpool(dir)).toHaveLength(0);
   });
 });

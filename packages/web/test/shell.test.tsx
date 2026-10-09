@@ -68,9 +68,12 @@ describe('operator shell', () => {
     expect(screen.getByRole('link', { name: /Decisions inbox/ })).toHaveAttribute('href', '/decisions');
   });
 
-  it('lands Approvers on the Control Tower and Builders on the Console', async () => {
+  // Landing pages are lazy chunks: a real page can take seconds to load cold in jsdom under a parallel run.
+  it('lands Approvers on the Control Tower and Builders on the Console', { timeout: 20_000 }, async () => {
     const { unmount } = renderApp('/', APPROVER);
-    expect(await screen.findByRole('heading', { level: 1, name: 'Control Tower' })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'Control Tower' }, { timeout: 15_000 }),
+    ).toBeInTheDocument();
     expect(location()).toBe('/tower');
     unmount();
     renderApp('/', BUILDER);

@@ -535,6 +535,36 @@ describe('top-up requests', () => {
     await t.close();
   });
 
+  it('an expired decision closes the pending request too (G-33)', async () => {
+    const { t } = await setup();
+    const dev = t.user('builder');
+    const req = await t.json<CreditTopupRequest>('POST', '/api/credits/topup-requests', {
+      headers: dev.headers,
+      body: { amountUsd: 20, reason: REASON },
+      expect: 201,
+    });
+    t.rt.store.append({
+      type: 'decision.expired',
+      actor: { kind: 'system', id: 'decisions' },
+      scope: { decisionId: req.decisionId },
+      meta: { decisionId: req.decisionId, ageMs: 3_600_000 },
+      source: 'system',
+    });
+    await t.drain();
+    expect(eventsOf(t, 'credit.topup_withdrawn')[0]!.meta).toEqual({
+      requestId: req.requestId,
+      userId: dev.user.id,
+      decisionId: req.decisionId,
+      reason: 'expired',
+    });
+    await t.json('POST', '/api/credits/topup-requests', {
+      headers: dev.headers,
+      body: { amountUsd: 20, reason: REASON },
+      expect: 201,
+    });
+    await t.close();
+  });
+
   it('an erased request reason degrades to null, also after a rebuild', async () => {
     const { t } = await setup();
     const dev = t.user('builder');

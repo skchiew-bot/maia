@@ -1,0 +1,25 @@
+{
+  "name": "demo-throttle",
+  "description": "Demo \"Throttled\": a feature build (audit timeline CSV export) that closes its first task and then hits the plan usage limit with a reset 4 minutes out (rate_limit_event rejected, is_error result, exit 1). The supervisor resumes it after the reset and it finishes.",
+  "steps": [
+    {"kind":"think","ms":5000,"outputTokens":833},
+    {"kind":"text","text":"Declaring the plan for the CSV export."},
+    {"kind":"mcp","server":"aoc","tool":"declare_plan","args":{"summary":"Export the audit timeline as CSV for the compliance lead.","phases":[{"id":"export","name":"Export","tasks":[{"id":"t1","title":"Add the CSV serializer","size":"s"},{"id":"t2","title":"Stream large exports","size":"m"},{"id":"t3","title":"Add the export button","size":"s"}]}]}},
+    {"kind":"think","ms":6000,"outputTokens":1000},
+    {"kind":"tool","name":"Read","input":{"file_path":"src/export/csv.ts"}},
+    {"kind":"tool","name":"Write","input":{"file_path":"src/export/csv.ts","content":"// CSV serializer for audit timeline rows\n// build {{sim.sessionId}}\nexport function toCsv(rows: Record<string, string | number>[]): string {\n  const cols = Object.keys(rows[0] ?? {});\n  const esc = (v: string | number) => '\"' + String(v).replaceAll('\"', '\"\"') + '\"';\n  return [cols.join(','), ...rows.map((r) => cols.map((c) => esc(r[c] ?? '')).join(','))].join('\\n');\n}\n"}},
+    {"kind":"mcp","server":"aoc","tool":"task_done","args":{"task_id":"t1","evidence":{"kind":"diff","ref":"src/export/csv.ts"}}},
+    {"kind":"think","ms":9000,"outputTokens":1500,"cacheWrite":24000},
+    {"kind":"tool","name":"Read","input":{"file_path":"src/export/stream.ts"}},
+    {"kind":"rateLimit","resetsInMinutes":4},
+    {"kind":"think","ms":4000,"outputTokens":667},
+    {"kind":"text","text":"The plan limit has reset; continuing with streaming exports."},
+    {"kind":"tool","name":"Write","input":{"file_path":"src/export/stream.ts","content":"// Streamed CSV export\n// build {{sim.sessionId}}\nexport async function* streamCsv(pages: AsyncIterable<string[]>): AsyncGenerator<string> {\n  for await (const page of pages) yield page.join('\\n') + '\\n';\n}\n"}},
+    {"kind":"mcp","server":"aoc","tool":"task_done","args":{"task_id":"t2","evidence":{"kind":"diff","ref":"src/export/stream.ts"}}},
+    {"kind":"tool","name":"Read","input":{"file_path":"src/export/button.tsx"}},
+    {"kind":"tool","name":"Write","input":{"file_path":"src/export/button.tsx","content":"// Export button\n// build {{sim.sessionId}}\nexport function ExportButton(props: { onExport: () => void }) {\n  return <button type=\"button\" onClick={props.onExport}>Export CSV</button>;\n}\n"}},
+    {"kind":"mcp","server":"aoc","tool":"task_done","args":{"task_id":"t3","evidence":{"kind":"diff","ref":"src/export/button.tsx"}}},
+    {"kind":"text","text":"The CSV export is done: serializer, streaming and the button."},
+    {"kind":"endTurn","final":true}
+  ]
+}

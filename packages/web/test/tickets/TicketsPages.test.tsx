@@ -41,7 +41,12 @@ interface Posts {
 }
 
 function installApi(
-  opts: { tickets?: InternalTicket[]; one?: InternalTicket | null; promotions?: PromotionDTO[] } = {},
+  opts: {
+    tickets?: InternalTicket[];
+    one?: InternalTicket | null;
+    promotions?: PromotionDTO[];
+    decisions?: DecisionCardView[];
+  } = {},
 ): Posts[] {
   const posts: Posts[] = [];
   mockFetch((raw, init) => {
@@ -67,7 +72,10 @@ function installApi(
     }
     if (url.pathname === '/api/promotions') return jsonResponse({ items: opts.promotions ?? [] });
     if (url.pathname === '/api/decisions')
-      return jsonResponse({ generatedAt: new Date(NOW).toISOString(), decisions: [fixPlanCard()] });
+      return jsonResponse({
+        generatedAt: new Date(NOW).toISOString(),
+        decisions: opts.decisions ?? [fixPlanCard()],
+      });
     if (url.pathname === '/api/users')
       return jsonResponse({
         users: [{ id: 'usr_ceo', name: 'Chiew Sin Kwang', role: 'approver', active: true }],
@@ -95,7 +103,11 @@ const failedPromotion = (ticketId: string): PromotionDTO => ({
   decisionId: 'dec_golive',
   refusal: null,
   rejection: null,
-  failure: { reason: 'credential_profile_missing', detail: null, at: new Date(NOW - 10 * 60_000).toISOString() },
+  failure: {
+    reason: 'credential_profile_missing',
+    detail: null,
+    at: new Date(NOW - 10 * 60_000).toISOString(),
+  },
   completion: null,
 });
 
@@ -166,6 +178,11 @@ describe('Tickets list', { timeout: 15_000 }, () => {
     const row = within(table).getAllByRole('row')[1]!;
     expect(await within(row).findByTitle('Go-live: promotion failed')).toBeInTheDocument();
     expect(within(row).getByTitle('UAT: passed')).toBeInTheDocument();
+    expect(screen.getByText('Go-live promotion did not complete')).toBeInTheDocument();
+    // Nobody is asked for a decision after the promotion failed, so it is not counted as waiting on a gate.
+    expect(screen.getByRole('group', { name: 'Waiting on a human gate' })).toHaveTextContent(
+      /^Waiting on a human gate0/,
+    );
   });
 
   it('filters by stage from the chips and the KPI links', async () => {
@@ -266,6 +283,35 @@ describe('Ticket page', { timeout: 15_000 }, () => {
       'href',
       `/api/tickets/${ID}/attachments/att_1`,
     );
+  });
+
+  it('lets an operator request go-live again when UAT passed but no promotion started', async () => {
+    const user = userEvent.setup();
+    const passedUat = ticket({
+      ticketId: ID,
+      stage: 'uat',
+      publicStatus: 'ready_for_testing',
+      buildSessionId: 'ses_build',
+      uatRef: `uat/${ID}`,
+      openDecisionIds: [],
+    });
+    const posts = installApi({ one: passedUat, decisions: [] });
+    const { unmount } = renderAt(`/tickets/${ID}`, BUILDER);
+    expect(await screen.findByText('UAT passed, but go-live did not start')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Request go-live again' }));
+    await waitFor(() =>
+      expect(posts).toContainEqual({
+        url: '/api/promotions',
+        body: { projectId: 'prj_cxcopilot', fromRef: `uat/${ID}`, ticketId: ID },
+      }),
+    );
+    unmount();
+
+    // The only Approver could never sign a go-live they requested themselves (separation of duties).
+    renderAt(`/tickets/${ID}`, CEO);
+    const button = await screen.findByRole('button', { name: 'Request go-live again' });
+    await waitFor(() => expect(button).toBeDisabled());
+    expect(button).toHaveAccessibleDescription(/You are the only Approver.*ask a Builder to request it/);
   });
 
   it('says so when the ticket does not exist', async () => {

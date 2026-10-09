@@ -45,11 +45,12 @@ export function withHandoffBrief(prompt: string, brief: string, fromSessionId: s
   return `${head}\n${body}\n${tail}\n\n${prompt}`;
 }
 
-/** One line per answered (or withdrawn) decision, e.g. "Decision dec_… answered: Approve. Ship it." */
+/** One line per answered (withdrawn, expired) decision, e.g. "Decision dec_… answered: Approve. Ship it." */
 export function decisionAnswersText(cards: DecisionCard[]): string {
   return cards
     .map((c) => {
       if (c.status === 'withdrawn') return `Decision ${c.id} was withdrawn; do not wait for it.`;
+      if (c.status === 'expired') return `Decision ${c.id} expired unanswered; do not wait for it.`;
       const r = c.resolution;
       const label = c.options.find((o) => o.id === r?.optionId)?.label ?? r?.optionId ?? 'unknown option';
       return `Decision ${c.id} answered: ${label}.${r?.comment ? ` ${r.comment}` : ''}`;

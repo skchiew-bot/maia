@@ -6,12 +6,15 @@ import {
   type AnchorDTO,
   type AnchorProviderName,
   type AuditHealthDTO,
+  type AuditService as AuditServiceContract,
+  type BackupDTO,
   type EventSource,
   type MetaOf,
   type StoredEvent,
   type VerifyReportDTO,
 } from '@aoc/contracts';
 import type { ModuleContext } from '@aoc/kernel';
+import { BackupRunner, type BackupOutcome } from './backup/backup';
 import {
   anchorFileName,
   linkageProblems,
@@ -31,6 +34,7 @@ import {
 import { Rfc3161AnchorProvider } from './anchor/rfc3161';
 import { detectConfigChanges, governedSources } from './config-watch';
 import {
+  DEFAULT_MIN_BACKUP_INTERVAL_MS,
   DEFAULT_STALE_AFTER_MS,
   DEFAULT_TSA_MAX_SKEW_MS,
   type AuditModuleOptions,
@@ -54,6 +58,46 @@ export function tsrDirOf(dataDir: string, opts: AuditModuleOptions): string | nu
   return dataDir === ':memory:' ? null : join(resolve(dataDir), 'anchors');
 }
 
+interface BackupRow {
+  event_seq: number;
+  backup_id: string;
+  at: string;
+  file: string;
+  bytes: number;
+  sha256: string;
+  key_id: string;
+  head_seq: number;
+  head_hash: string;
+  copied: number | null;
+}
+
+interface AnchorRow {
+  anchor_id: string;
+  provider: AnchorProviderName;
+  seq: number;
+  hash: string;
+  proof_ref: string;
+  signed: number | null;
+  pushed: number | null;
+  event_seq: number;
+  anchored_at: string;
+}
+
+function anchorFromRow(r: AnchorRow): AnchorDTO {
+  const bool = (v: number | null) => (v === null ? null : v === 1);
+  return {
+    anchorId: r.anchor_id,
+    provider: r.provider,
+    seq: r.seq,
+    hash: r.hash,
+    proofRef: r.proof_ref,
+    anchoredAt: r.anchored_at,
+    eventSeq: r.event_seq,
+    signed: bool(r.signed),
+    pushed: bool(r.pushed),
+  };
+}
+
 function toAnchorDTO(e: StoredEvent): AnchorDTO {
   const m = e.meta as MetaOf<'anchor.created'>;
   return {
@@ -72,23 +116,28 @@ function toAnchorDTO(e: StoredEvent): AnchorDTO {
 /**
  * Audit integrity (§13, R2): anchors the chain head off-host and verifies the whole chain against every anchor.
  * Anchor and verify runs are serialised; neither ever trusts the database alone — the off-host records are listed
- * independently, so deleted or rewritten anchor.created events are detected too.
+ * independently, so deleted or rewritten anchor.created events are detected too. Provided to other modules as the
+ * `audit` service.
  */
-export class AuditService {
+export class AuditService implements AuditServiceContract {
   readonly git: GitAnchorProvider;
   readonly rfc3161: Rfc3161AnchorProvider;
+  readonly backups: BackupRunner;
   private queue: Promise<unknown> = Promise.resolve();
+  /** Aborted on module stop: a running chain pass or backup ends at its next chunk instead of holding shutdown. */
+  private readonly stopping = new AbortController();
 
   constructor(
     private readonly ctx: ModuleContext,
     private readonly opts: AuditModuleOptions = {},
   ) {
     const audit = ctx.config.audit;
+    // aocd configures these through `audit.*`; module options override them (tests, embedding).
     this.git = new GitAnchorProvider({
       repoPath: resolve(audit.anchorRepoPath),
       remote: audit.anchorRemote,
-      gpgKeyId: opts.gpgKeyId,
-      gnupgHome: opts.gnupgHome,
+      gpgKeyId: opts.gpgKeyId ?? audit.gpgKeyId,
+      gnupgHome: opts.gnupgHome ?? audit.gnupgHome,
       gitBin: opts.gitBin,
     });
     this.rfc3161 = new Rfc3161AnchorProvider({
@@ -96,10 +145,17 @@ export class AuditService {
       tsaUrl: audit.tsaUrl,
       fetch: opts.tsaFetch ?? defaultFetch,
       opensslBin: opts.opensslBin,
-      caFile: opts.tsaCaFile,
-      untrustedFile: opts.tsaUntrustedFile,
+      caFile: opts.tsaCaFile ?? audit.tsaCaFile,
+      untrustedFile: opts.tsaUntrustedFile ?? audit.tsaUntrustedFile,
       maxSkewMs: opts.tsaMaxSkewMs ?? DEFAULT_TSA_MAX_SKEW_MS,
     });
+    this.backups = new BackupRunner(ctx);
+  }
+
+  /** Abort the running chain pass or backup and wait for queued work to settle (module stop). */
+  async stop(): Promise<void> {
+    this.stopping.abort();
+    await this.queue;
   }
 
   get providerName(): AnchorProviderName | 'none' {
@@ -132,29 +188,16 @@ export class AuditService {
   }
 
   anchorList(): AnchorDTO[] {
-    const rows = this.ctx.db.prepare('SELECT * FROM aud_anchors ORDER BY seq, event_seq').all() as {
-      anchor_id: string;
-      provider: AnchorProviderName;
-      seq: number;
-      hash: string;
-      proof_ref: string;
-      signed: number | null;
-      pushed: number | null;
-      event_seq: number;
-      anchored_at: string;
-    }[];
-    const bool = (v: number | null) => (v === null ? null : v === 1);
-    return rows.map((r) => ({
-      anchorId: r.anchor_id,
-      provider: r.provider,
-      seq: r.seq,
-      hash: r.hash,
-      proofRef: r.proof_ref,
-      anchoredAt: r.anchored_at,
-      eventSeq: r.event_seq,
-      signed: bool(r.signed),
-      pushed: bool(r.pushed),
-    }));
+    const rows = this.ctx.db.prepare('SELECT * FROM aud_anchors ORDER BY seq, event_seq').all() as unknown as AnchorRow[];
+    return rows.map(anchorFromRow);
+  }
+
+  /** The newest anchored position (highest seq) — the `audit` service's lastAnchor. */
+  lastAnchor(): AnchorDTO | null {
+    const row = this.ctx.db.prepare('SELECT * FROM aud_anchors ORDER BY seq DESC, event_seq DESC LIMIT 1').get() as
+      | AnchorRow
+      | undefined;
+    return row ? anchorFromRow(row) : null;
   }
 
   // ── config ─────────────────────────────────────────────────────────────────
@@ -245,9 +288,12 @@ export class AuditService {
       if (listing.problems.length)
         return fail('anchor_store_invalid', listing.problems.slice(0, 3).join('; '));
       const known = this.chainAnchors().filter((a) => a.provider === name);
+      // Captured in the same tick as the verifier's upper bound (the stored head), so rows added behind the store's
+      // back show up as a head mismatch while events appended during the chunked pass do not.
       const head = store.head();
-      const v = store.verifyChain({
+      const v = await store.verifyChainAsync({
         atSeqs: [...known.map((a) => a.seq), ...listing.anchors.map((a) => a.record.seq)],
+        signal: this.stopping.signal,
       });
       if (v.headSeq !== head.seq || v.headHash !== head.hash)
         return fail(
@@ -302,6 +348,11 @@ export class AuditService {
   }
 
   // ── verification ───────────────────────────────────────────────────────────
+  /** The `audit` service's verify: recorded as chain.verified only when asked to. */
+  verify(record?: { actor: Actor; source: EventSource }): Promise<VerifyReportDTO> {
+    return record ? this.verifyNow(record.actor, record.source) : this.exclusive(() => this.computeVerify());
+  }
+
   /** Verify-against-anchor; appends chain.verified (and alerts when it fails). */
   verifyNow(actor: Actor, source: EventSource): Promise<VerifyReportDTO> {
     return this.exclusive(async () => {
@@ -325,7 +376,7 @@ export class AuditService {
       report.eventSeq = e.seq;
       if (!report.ok) {
         this.ctx.notify({
-          kind: 'info',
+          kind: 'audit.integrity',
           title: 'Audit chain verification FAILED',
           audience: ['approver', 'builder'],
           severity: 'danger',
@@ -362,7 +413,7 @@ export class AuditService {
     }
     const seqs = new Set<number>(chainAnchors.map((a) => a.seq));
     for (const name of PROVIDERS) for (const a of listings[name].anchors) seqs.add(a.record.seq);
-    const v = store.verifyChain({ atSeqs: [...seqs] });
+    const v = await store.verifyChainAsync({ atSeqs: [...seqs], signal: this.stopping.signal });
     problems.push(...v.problems.map((p) => `in-file chain: ${p}`));
 
     const checks: AnchorCheckDTO[] = [];
@@ -382,6 +433,8 @@ export class AuditService {
           provider: name,
           seq,
           anchoredHash,
+          chainHash: d?.hash ?? null,
+          record: x ? 'found' : listing.available ? 'missing' : 'store_unavailable',
           recomputedHash: recomputed,
           matched: recomputed !== null && recomputed === anchoredHash,
           proofOk: false,
@@ -446,6 +499,8 @@ export class AuditService {
     return {
       ok: problems.length === 0,
       chainOk: v.ok,
+      chainFirstBadSeq: v.firstBadSeq,
+      chainProblems: v.problems,
       chainId: store.chainId,
       headSeq: v.headSeq,
       headHash: v.headHash,
@@ -474,6 +529,45 @@ export class AuditService {
       if (!final) await new Promise((res) => setTimeout(res, this.opts.retryDelayMs ?? 30_000));
     }
     await this.verifyNow(AUDIT_SYSTEM_ACTOR, 'scheduler');
+  }
+
+  // ── backups (G-21) ─────────────────────────────────────────────────────────
+  /**
+   * Run a backup now, serialised with anchoring and verify, so no snapshot holds an anchor committed off-host but not
+   * yet recorded. A manual run is refused while the last backup is younger than minBackupIntervalMs.
+   */
+  backupNow(actor: Actor, source: EventSource, opts: { manual?: boolean } = {}): Promise<BackupOutcome> {
+    return this.exclusive(async () => {
+      if (opts.manual) {
+        const last = this.lastBackup();
+        const min = this.opts.minBackupIntervalMs ?? DEFAULT_MIN_BACKUP_INTERVAL_MS;
+        if (last && this.ctx.clock.now() - Date.parse(last.at) < min) return { ok: false, skipped: 'too_recent' };
+      }
+      return this.backups.run(actor, source, this.stopping.signal);
+    });
+  }
+
+  /** Completed backups, newest first. */
+  backupList(limit = 100): BackupDTO[] {
+    const rows = this.ctx.db
+      .prepare('SELECT * FROM aud_backups ORDER BY event_seq DESC LIMIT ?')
+      .all(limit) as unknown as BackupRow[];
+    return rows.map((r) => ({
+      backupId: r.backup_id,
+      at: r.at,
+      file: r.file,
+      bytes: r.bytes,
+      sha256: r.sha256,
+      keyId: r.key_id,
+      headSeq: r.head_seq,
+      headHash: r.head_hash,
+      copied: r.copied === null ? null : r.copied === 1,
+      eventSeq: r.event_seq,
+    }));
+  }
+
+  lastBackup(): BackupDTO | null {
+    return this.backupList(1)[0] ?? null;
   }
 
   // ── health ─────────────────────────────────────────────────────────────────
@@ -549,6 +643,13 @@ export class AuditService {
       : null;
     const anchorStale =
       this.providerName !== 'none' && head.seq > 0 && (!lastAnchor || lastAnchor.ageMs > staleAfterMs);
+    const backupConfigured = this.backups.configured;
+    const backup = this.lastBackup();
+    const lastBackup = backup ? { ...backup, ageMs: Math.max(0, now - Date.parse(backup.at)) } : null;
+    const backupFailure = db
+      .prepare('SELECT event_seq, at, stage, reason FROM aud_backup_failures ORDER BY event_seq DESC LIMIT 1')
+      .get() as { event_seq: number; at: string; stage: string; reason: string } | undefined;
+    const backupStale = backupConfigured && head.seq > 0 && (!lastBackup || lastBackup.ageMs > staleAfterMs);
 
     const warnings: string[] = [];
     if (this.providerName === 'none') warnings.push('anchoring_disabled');
@@ -560,6 +661,11 @@ export class AuditService {
     if (projections.some((p) => p.status !== 'ok')) warnings.push('projection_degraded');
     if (reactorFailures.total > 0) warnings.push('reactor_failures');
     if (jobs.some((j) => j.lastStatus === 'error')) warnings.push('job_failed');
+    if (!backupConfigured) warnings.push('backup_not_configured');
+    else if (head.seq > 0 && !lastBackup) warnings.push('backup_never');
+    else if (backupStale) warnings.push('backup_stale');
+    if (backupFailure && backupFailure.event_seq > (lastBackup?.eventSeq ?? 0)) warnings.push('backup_failed');
+    if (lastBackup?.copied === false) warnings.push('backup_not_copied');
     return {
       generatedAt: clock.iso(),
       chainId: store.chainId,
@@ -585,6 +691,14 @@ export class AuditService {
       reactorFailures,
       jobs,
       selfmodBlocked: { total: selfmod.total, last24h: selfmod.recent },
+      backup: {
+        configured: backupConfigured,
+        last: lastBackup,
+        lastFailure: backupFailure
+          ? { at: backupFailure.at, stage: backupFailure.stage, reason: backupFailure.reason }
+          : null,
+        stale: backupStale,
+      },
       warnings,
     };
   }

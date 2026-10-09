@@ -11,6 +11,7 @@ function enc(id: string): string {
 }
 
 export const API_PATHS = {
+  health: '/api/health',
   authMe: '/api/auth/me',
   console: '/api/console',
   sessions: '/api/sessions',
@@ -27,6 +28,8 @@ export const API_PATHS = {
   projectTimeline: (id: string) => `/api/projects/${enc(id)}/timeline`,
   auditVerify: '/api/audit/verify',
   auditAnchor: '/api/audit/anchor',
+  auditBackup: '/api/audit/backup',
+  auditBackups: '/api/audit/backups',
   evidencePacks: '/api/evidence/packs',
   evidencePackDownload: (packId: string) => `/api/evidence/packs/${enc(packId)}/download`,
   users: '/api/users',

@@ -72,6 +72,7 @@ export function closeDay(m: MeteringModel, date: string): void {
     fxRate: fx.rate ?? 0,
     fxStatus: fx.status,
     fxSourceDate: fx.sourceDate,
+    fxSession: fx.session,
     rateCardVersion: m.cardOn(date)?.version ?? 0,
     inputTokens: row.inputTokens,
     outputTokens: row.outputTokens,

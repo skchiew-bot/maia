@@ -22,7 +22,10 @@ flowchart LR
   text (ticket descriptions, session titles, decision text). Treat `aoc.db` backups as personal data.
 - **Load order** (kernel `loadOrCreateMasterKey`): the `AOC_MASTER_KEY` environment variable, then the file at
   `keys.masterKeyFile`, and otherwise a **newly generated** key written to that path, or to `dataDir/master.key`
-  when no path is set (mode 0600).
+  when no path is set (mode 0600, parent directory 0700). **With `"mode": "production"`** aocd refuses to start
+  unless the KEK comes from an existing `keys.masterKeyFile` outside `dataDir`, mode 0400 or 0600, owned by aocd's
+  user — or a systemd credential in `$CREDENTIALS_DIRECTORY` (option 2 below). It refuses `AOC_MASTER_KEY` and never
+  generates a key.
 
 > **The generated key is a development convenience. It is never acceptable in production.** It sits next to the
 > data it protects, so any copy of the data directory carries its own key. And if a configured path is mistyped,
@@ -36,11 +39,13 @@ On the AOC host, as root or the service user, with nothing else logging the term
 ```bash
 umask 077
 openssl rand -hex 32 > /etc/aoc/kek          # 64 hex characters = 32 bytes
-chown aoc:aoc /etc/aoc/kek && chmod 0400 /etc/aoc/kek
+chown root:root /etc/aoc/kek && chmod 0400 /etc/aoc/kek   # owner = the user aocd runs as
 test "$(tr -d '\n' < /etc/aoc/kek | wc -c)" -eq 64 && echo ok
 ```
 
-The kernel accepts 64 hex characters or the base64 form of 32 bytes. Then set `keys.masterKeyFile` in the aocd
+With session isolation (credential-isolation runbook §4) aocd runs as root, so root owns the KEK; production mode
+refuses a KEK file owned by anyone but aocd's user. The kernel accepts 64 hex characters or the base64 form of 32
+bytes. Then set `keys.masterKeyFile` in the aocd
 config to the chosen location (§3).
 
 **Escrow** before first use: make one offline copy under two-person control. Either a sealed printout in the
@@ -54,13 +59,15 @@ manager's audit log), so that the record does not depend on the system the key p
 | --- | --- | --- |
 | **1. A file, mode 0400** (the minimum for production) | `keys.masterKeyFile: /etc/aoc/kek`, owned by the service user, **outside `dataDir`**, on a volume that the data backups do not include | Simple. Root, and anyone who can read the service user's files, can read it. That is why agents must run as a different OS user (threat model O-1) |
 | **2. An OS secret store** | **Linux/systemd:** seal it with `systemd-creds encrypt --name=aoc-kek /etc/aoc/kek /etc/credstore.encrypted/aoc-kek` (bound to the TPM2 or host key), shred the plaintext, and add `LoadCredentialEncrypted=aoc-kek:/etc/credstore.encrypted/aoc-kek` to the unit. Set `keys.masterKeyFile` to `/run/credentials/aocd.service/aoc-kek` (`$CREDENTIALS_DIRECTORY/aoc-kek`) | The plaintext lives only in a non-swappable, service-private mount. Recommended default for Linux production hosts |
-| **3. KMS or HSM** | Keep only a KMS-wrapped copy of the KEK (AWS KMS, Google Cloud KMS, Azure Key Vault, or an HSM). An `ExecStartPre` step decrypts it into `/run/aoc/kek` (tmpfs, mode 0400, owner `aoc`). The host identity is the only principal allowed to decrypt | Every decrypt is logged by the KMS: an independent trail of key use. Keeping the KEK inside the HSM for every unwrap would need kernel support that does not exist |
+| **3. KMS or HSM** | Keep only a KMS-wrapped copy of the KEK (AWS KMS, Google Cloud KMS, Azure Key Vault, or an HSM). An `ExecStartPre` step decrypts it into `/run/aoc/kek` (tmpfs, mode 0400, owned by the user aocd runs as). The host identity is the only principal allowed to decrypt | Every decrypt is logged by the KMS: an independent trail of key use. Keeping the KEK inside the HSM for every unwrap would need kernel support that does not exist |
 
-**Do not use `AOC_MASTER_KEY` in production.** Child processes inherit aocd's environment. The kernel's git
-wrapper passes the whole environment to `git`, and scanners get it too, so an environment-borne KEK can leak into
-any of them (threat model O-13). Keep it in a file.
+**Do not use `AOC_MASTER_KEY` in production** — `"mode": "production"` refuses it. Child processes inherit
+aocd's environment: the kernel's git wrapper now passes only an allowlist, but other helpers (the anchor git push,
+the claude CLI LLM adapter) still get the whole environment, so an environment-borne KEK can leak into them (threat
+model O-13, gap G-46). Keep it in a file.
 
-Pre-start check, so aocd never generates a fresh key in production (systemd unit drop-in):
+Production mode already refuses to generate a key. An extra pre-start check in the unit (systemd drop-in) makes a
+missing credential fail before aocd starts:
 
 ```ini
 [Service]
@@ -71,10 +78,14 @@ For option 1, use the file path instead.
 
 ## 4. Backups (off-host, nightly)
 
+**aocd does steps 1–3 itself** once `audit.backupKeyFile` is set: a daily, consistent, encrypted backup of `aoc.db`,
+`bodies.db`, `blobs/`, `anchors/` and the evidence packs (never the keys), recorded as `backup.completed` and restored
+with `aocd restore`. Setup, monitoring and the restore procedure are in the
+[backup and restore runbook](backup-restore.md). Step 4 still needs its own copy, and the manual steps stay valid
+for a copy taken by hand, for example with aocd stopped.
+
 Back up the data and the keys **separately**: different media, different custodians. A backup that contains both
 `bodies.db` and the KEK is a copy of all your personal data in clear, and it also defeats crypto-shred (§6).
-
-AOC has no backup or restore command yet (gap G-21): the steps below are a script you schedule yourself.
 
 **What to back up, in this order** (a body is written before its event commits, so this order guarantees every
 event in the copy has its body):
@@ -163,6 +174,9 @@ Approver-only.
    and anyone else who received it may still hold it.
 
 ## 7. Restore drill (quarterly)
+
+With aocd's own backups, follow [backup and restore §6](backup-restore.md#6-quarterly-restore-drill): `aocd restore`
+performs the checks of step 4 before it installs anything. For a backup set taken by hand:
 
 1. Take the newest backup set, the backup key, and the KEK from escrow (two-person rule).
 2. Restore onto an **isolated** host with no network path to GitHub or the production anchor remote. Read-only

@@ -74,7 +74,7 @@ const DDL = [
   `CREATE INDEX IF NOT EXISTS mtr_throttle_hits_date ON mtr_throttle_hits(date)`,
   `CREATE TABLE IF NOT EXISTS mtr_rollups (
     date TEXT PRIMARY KEY, seq INTEGER NOT NULL, closed_at TEXT NOT NULL, usd REAL NOT NULL, rm REAL NOT NULL,
-    fx_rate REAL NOT NULL, fx_status TEXT NOT NULL, fx_source_date TEXT, rate_card_version INTEGER NOT NULL,
+    fx_rate REAL NOT NULL, fx_status TEXT NOT NULL, fx_source_date TEXT, fx_session TEXT, rate_card_version INTEGER NOT NULL,
     input_tokens INTEGER NOT NULL, output_tokens INTEGER NOT NULL, cache_read_tokens INTEGER NOT NULL,
     cache_write_tokens INTEGER NOT NULL, cache_write_5m_tokens INTEGER NOT NULL, cache_write_1h_tokens INTEGER NOT NULL,
     messages INTEGER NOT NULL, unpriced_tokens INTEGER NOT NULL, throttle_idle_ms INTEGER NOT NULL,
@@ -380,10 +380,10 @@ export function createMeteringProjector(deps: ProjectorDeps): Projector {
         case 'rollup.closed': {
           const m = metaOf(e, 'rollup.closed');
           db.prepare(
-            `INSERT OR IGNORE INTO mtr_rollups (date, seq, closed_at, usd, rm, fx_rate, fx_status, fx_source_date, rate_card_version,
+            `INSERT OR IGNORE INTO mtr_rollups (date, seq, closed_at, usd, rm, fx_rate, fx_status, fx_source_date, fx_session, rate_card_version,
               input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cache_write_5m_tokens, cache_write_1h_tokens,
               messages, unpriced_tokens, throttle_idle_ms, throttle_hits, subscription_usd, breakdown_json)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
           ).run(
             m.date,
             e.seq,
@@ -393,6 +393,7 @@ export function createMeteringProjector(deps: ProjectorDeps): Projector {
             m.fxRate,
             m.fxStatus,
             m.fxSourceDate,
+            m.fxSession ?? null,
             m.rateCardVersion,
             m.inputTokens,
             m.outputTokens,

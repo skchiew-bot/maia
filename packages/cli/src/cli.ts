@@ -3,6 +3,7 @@ import { AOC_ENV } from '@aoc/contracts';
 import pkg from '../package.json' with { type: 'json' };
 import { registerAudit } from './commands/audit';
 import { registerAuth } from './commands/auth';
+import { registerBackup } from './commands/backup';
 import { registerDecisions } from './commands/decisions';
 import { registerDoctor } from './commands/doctor';
 import { registerHooks } from './commands/hooks';
@@ -56,6 +57,7 @@ export function buildProgram(ctx: CommandContext): Command {
   registerDecisions(program, ctx);
   registerProjects(program, ctx);
   registerAudit(program, ctx);
+  registerBackup(program, ctx);
   registerUsers(program, ctx);
   registerHooks(program, ctx);
   registerDoctor(program, ctx);

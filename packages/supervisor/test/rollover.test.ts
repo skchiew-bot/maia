@@ -48,6 +48,7 @@ describe('context rollover (§5, R16)', () => {
       parentSessionId: id,
       phaseId: 'ph_2',
       processType: 'feature-build',
+      ownerId: h.owner.user.id,
     });
     expect(h.events('session.turn_started', next)[0]!.meta).toMatchObject({ turn: 1, reason: 'rollover' });
     // R-10: the brief is data in the first user turn, never system-prompt authority

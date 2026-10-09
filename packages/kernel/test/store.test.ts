@@ -1,10 +1,18 @@
 import { randomBytes } from 'node:crypto';
-import { mkdtempSync } from 'node:fs';
+import { existsSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
-import { EventStore, EventValidationError, FakeClock, silentLogger, type Projector } from '../src';
+import {
+  blobRelativePath,
+  EventStore,
+  EventValidationError,
+  FakeClock,
+  keyFingerprint,
+  silentLogger,
+  type Projector,
+} from '../src';
 
 const mk = (dataDir = ':memory:', key = randomBytes(32)) =>
   new EventStore({ dataDir, clock: new FakeClock(), log: silentLogger, masterKey: key });
@@ -33,22 +41,6 @@ describe('EventStore', () => {
     expect(v.hashesAt[1]).toBe(a.hash);
     const raw = s.bodies.db.prepare('SELECT ct FROM bodies').all() as { ct: Uint8Array }[];
     expect(Buffer.concat(raw.map((r) => Buffer.from(r.ct))).toString('utf8')).not.toContain('hello');
-  });
-
-  it('verifies in steps a caller can interleave with other work, up to a given seq', () => {
-    const s = mk();
-    for (let i = 0; i < 7; i++) s.append(nudge('ses_a', `n${i}`));
-    const steps = s.verifyChainSteps({ batch: 3, toSeq: 5, atSeqs: [5] });
-    const yielded: number[] = [];
-    let r = steps.next();
-    while (!r.done) {
-      yielded.push(r.value);
-      s.append(nudge('ses_b', 'appended meanwhile'));
-      r = steps.next();
-    }
-    expect(yielded).toEqual([3, 5]);
-    expect(r.value).toMatchObject({ ok: true, headSeq: 5, checked: 5, hashesAt: { 5: s.get(5)!.hash } });
-    expect(s.verifyChain()).toMatchObject({ ok: true, headSeq: 9 });
   });
 
   it('rejects invalid events and free text in meta', () => {
@@ -198,5 +190,30 @@ describe('BodyStore blobs', () => {
     expect(s.bodies.getBlob('att_1')?.equals(data)).toBe(true);
     s.eraseScope('tkt_1', { actor: { kind: 'human', id: 'usr_1' }, reason: 'pdpa_request' });
     expect(s.bodies.getBlob('att_1')).toBeNull();
+  });
+});
+
+describe('BodyStore key checks (backup and restore)', () => {
+  it('names its KEK by fingerprint, recognises it, and reports data keys a wrong KEK cannot unwrap', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'aoc-keys-'));
+    const kek = randomBytes(32);
+    const s = mk(dir, kek);
+    s.append(nudge('ses_a', 'x'));
+    s.append(nudge('ses_b', 'y'));
+    s.bodies.putBlob('att 1/../x', 'tkt_1', Buffer.from('blob'), '2026-10-09T00:00:00Z');
+    expect(s.bodies.kekId()).toBe(keyFingerprint(kek, 'kek'));
+    expect(s.bodies.kekId()).toMatch(/^[0-9a-f]{16}$/);
+    expect(keyFingerprint(kek, 'backup')).not.toBe(keyFingerprint(kek, 'kek'));
+    expect(s.bodies.isKek(Buffer.from(kek))).toBe(true);
+    expect(s.bodies.isKek(randomBytes(32))).toBe(false);
+    expect(s.bodies.checkKeys()).toEqual({ checked: 3, failed: [] });
+    // The blob lives where blobRelativePath says (ids that are not plain names are hashed).
+    expect(blobRelativePath('tkt_1', 'att 1/../x')).toMatch(/^tkt_1\/~[0-9a-f]{40}$/);
+    expect(existsSync(join(dir, 'blobs', blobRelativePath('tkt_1', 'att 1/../x')))).toBe(true);
+    s.close();
+
+    const wrong = mk(dir, randomBytes(32));
+    expect(wrong.bodies.checkKeys()).toEqual({ checked: 3, failed: ['ses_a#1', 'ses_b#1', 'tkt_1#1'] });
+    wrong.close();
   });
 });

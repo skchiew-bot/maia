@@ -3,7 +3,7 @@
  * gated rollback, break-glass and the provenance-guaranteed promotion path. Every state change is an event.
  */
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import {
   BLIND_AFFIRM_DWELL_MS,
   CHANGE_FIELDS,
@@ -19,6 +19,9 @@ import {
   type DecisionOption,
   type JsonValue,
   type MetaOf,
+  type PinDTO,
+  type PinListDTO,
+  type PinProblem,
   type PromotionDTO,
   type ProvenanceDTO,
   type RollbackDTO,
@@ -52,7 +55,14 @@ import {
   type PromotionRow,
   type RollbackRow,
 } from './projection';
-import { LOG_FORMAT, classifyCommit, parseLog, type ProvenanceLookups } from './provenance';
+import {
+  FILES_LOG_ARGS,
+  LOG_FORMAT,
+  classifyCommit,
+  parseFilesLog,
+  parseLog,
+  type ProvenanceLookups,
+} from './provenance';
 import {
   RepoOpError,
   createRestoreCommit,
@@ -631,6 +641,71 @@ export class ChangeEngine implements ChangeService {
       editRatioSum: sum('editRatioSum'),
     });
     return { rows, totals, blindDwellMs: this.o.blindAffirmMs };
+  }
+
+  // ── pinned states ────────────────────────────────────────────────────────
+  /** A project's pinned states, newest first, each checked the way a rollback resolves its target. */
+  pinList(projectId: string, limit = 100): PinListDTO {
+    const repo = this.repoPath(projectId);
+    const git = this.ctx.services.get('git');
+    const usable = !!repo && git.isRepo(repo);
+    const branch = usable ? this.defaultBranch(projectId) : null;
+    const head = usable && branch ? git.revParse(repo!, `refs/heads/${branch}`) : null;
+    const tags = usable ? this.tagCommits(repo!) : new Map<string, string>();
+    const byState = new Map<string, PinDTO>();
+    for (const r of this.read.pinRows(projectId)) {
+      const by = { source: r.source, sourceId: r.source_id, at: r.at, seq: r.seq };
+      const key = `${r.tag ?? ''}\u0000${r.sha ?? ''}`;
+      const known = byState.get(key);
+      if (known) known.pinnedBy.push(by);
+      else
+        byState.set(key, {
+          tag: r.tag,
+          sha: r.sha,
+          pinnedBy: [by],
+          ...(usable
+            ? this.resolvePin(repo!, tags, r.tag, r.sha)
+            : { resolvedSha: null, problem: 'repo_unknown' }),
+        });
+    }
+    const latest = (p: PinDTO) => p.pinnedBy[p.pinnedBy.length - 1]!.seq;
+    const pins = [...byState.values()].sort((a, b) => latest(b) - latest(a)).slice(0, limit);
+    return { projectId, defaultBranch: branch, head, pins };
+  }
+
+  private resolvePin(
+    repo: string,
+    tags: Map<string, string>,
+    tag: string | null,
+    sha: string | null,
+  ): { resolvedSha: string | null; problem: PinProblem | null } {
+    if (tag) {
+      const commit = tags.get(tag.replace(/^refs\/tags\//, ''));
+      if (!commit) return { resolvedSha: null, problem: 'tag_missing' };
+      if (sha && !commit.startsWith(sha)) return { resolvedSha: null, problem: 'tag_moved' };
+      return { resolvedSha: commit, problem: null };
+    }
+    const git = this.ctx.services.get('git');
+    const commit = sha && git.commitExists(repo, sha) ? git.revParse(repo, sha) : null;
+    return commit ? { resolvedSha: commit, problem: null } : { resolvedSha: null, problem: 'commit_missing' };
+  }
+
+  /** Every tag of the repository with the commit it points at (annotated tags peeled), in one git call. */
+  private tagCommits(repo: string): Map<string, string> {
+    const r = this.ctx.services
+      .get('git')
+      .run(repo, [
+        'for-each-ref',
+        '--format=%(refname:strip=2)%00%(objectname)%00%(*objectname)',
+        'refs/tags',
+      ]);
+    const out = new Map<string, string>();
+    if (r.code !== 0) return out;
+    for (const line of r.stdout.split('\n')) {
+      const [name, object, peeled] = line.split('\u0000');
+      if (name && object) out.set(name, peeled || object);
+    }
+    return out;
   }
 
   // ── rollback ─────────────────────────────────────────────────────────────
@@ -1239,18 +1314,31 @@ export class ChangeEngine implements ChangeService {
   }
 
   // ── provenance & promotion ───────────────────────────────────────────────
-  private get lookups(): ProvenanceLookups {
+  /** Lookups for one provenance run: each session's recorded history (`<heads> ^<base>`) is listed once, then memoised. */
+  private lookups(projectId: string, repo: string, baseRef: string): ProvenanceLookups {
+    const git = this.ctx.services.get('git');
+    const recorded = new Map<string, Set<string>>();
     return {
-      changeApproved: (id, projectId) => {
-        const c = this.read.change(id);
-        return !!c && c.project_id === projectId && APPROVED_STATUSES.has(c.status);
-      },
-      sessionChange: (sessionId, projectId) => this.read.approvedChangeForSession(sessionId, projectId),
+      sessionChanges: (sessionId) => this.read.approvedChangesForSession(sessionId, projectId),
       sessionTicket: (sessionId) =>
         this.read.sessionTicket(sessionId) ??
         this.ctx.services.maybe('sessions')?.get(sessionId)?.ticketId ??
         null,
       ticketFixPlanApproved: (ticketId) => this.read.ticketFixPlanApproved(ticketId),
+      sessionRecorded: (sessionId, sha) => {
+        let shas = recorded.get(sessionId);
+        if (!shas) {
+          shas = new Set();
+          const heads = this.read.sessionHeads(sessionId, projectId);
+          if (heads.length) {
+            // A head unknown to this repo (e.g. never pushed from the session's clone) proves nothing: ignored.
+            const r = git.run(repo, ['rev-list', '--ignore-missing', ...heads, `^${baseRef}`]);
+            if (r.code === 0) for (const line of r.stdout.split('\n')) if (line.trim()) shas.add(line.trim());
+          }
+          recorded.set(sessionId, shas);
+        }
+        return shas.has(sha);
+      },
     };
   }
 
@@ -1259,7 +1347,10 @@ export class ChangeEngine implements ChangeService {
     return { ok: d.ok, orphanShas: d.orphanShas, reasons: d.reasons };
   }
 
-  /** Every commit in `<default>..<sha>` must trace through an approved change record or an approved fix plan. */
+  /**
+   * Every commit in `<default>..<sha>` must trace through an approved change record or an approved fix plan, via a
+   * session the platform linked to that gate and whose recorded HEADs contain the commit (provenance.ts).
+   */
   provenanceDetail(projectId: string, ref: string): ProvenanceDTO {
     const fail = (reason: string, sha = ref, baseRef: string | null = null): ProvenanceDTO => ({
       projectId,
@@ -1284,7 +1375,8 @@ export class ChangeEngine implements ChangeService {
     const logged = parseLog(log.stdout);
     if (logged.length > MAX_PROVENANCE_COMMITS)
       return fail(`more than ${MAX_PROVENANCE_COMMITS} commits to trace`, sha, baseRef);
-    const commits = logged.map((c) => classifyCommit(c, projectId, this.lookups));
+    const look = this.lookups(projectId, repo, baseRef);
+    const commits = logged.map((c) => classifyCommit(c, projectId, look));
     const orphans = commits.filter((c) => !c.traced);
     return {
       projectId,
@@ -1295,6 +1387,58 @@ export class ChangeEngine implements ChangeService {
       orphanShas: orphans.map((c) => c.sha),
       reasons: orphans.map((c) => `${short(c.sha)}: ${c.reason}`),
     };
+  }
+
+  /**
+   * AOC's own governance core (§13, R14): when `repo` is an AOC repo, the commits of `range` that change
+   * selfModification.protectedPaths, with those files; null when it is not one. 'unchecked' when an AOC repo cannot
+   * be checked (callers fail closed).
+   */
+  private coreChanges(repo: string, range: string): { sha: string; files: string[] }[] | null | 'unchecked' {
+    const selfmod = this.ctx.services.maybe('selfmod');
+    if (!selfmod) {
+      const listed = this.ctx.config.selfModification.aocRepoPaths.some((p) => resolve(p) === resolve(repo));
+      return listed ? 'unchecked' : null;
+    }
+    if (selfmod.coreFiles(repo, []) === null) return null;
+    const log = this.ctx.services.get('git').run(repo, [...FILES_LOG_ARGS, range]);
+    if (log.code !== 0) return 'unchecked';
+    const byCommit = parseFilesLog(log.stdout);
+    const core = new Set(selfmod.coreFiles(repo, [...new Set([...byCommit.values()].flat())]) ?? []);
+    return [...byCommit].flatMap(([sha, files]) => {
+      const touched = files.filter((f) => core.has(f));
+      return touched.length ? [{ sha, files: touched }] : [];
+    });
+  }
+
+  /** Sessions named by the commit that are not observed (a developer's own Claude Code); unknown ones count as managed. */
+  private managedSessions(c: ProvenanceDTO['commits'][number] | undefined): string[] {
+    if (!c) return ['unknown'];
+    const sessions = this.ctx.services.maybe('sessions');
+    return c.sessionIds.filter((id) => sessions?.get(id)?.mode !== 'observed');
+  }
+
+  private recordSelfChange(entry: Record<string, JsonValue>): void {
+    if (!this.ctx.services.maybe('selfmod')?.recordExternal(entry))
+      this.ctx.log.error('self-modification: external log entry not written', { kind: String(entry.kind) });
+  }
+
+  /** Every promotion that lands core changes in an AOC repo (break-glass included) is recorded outside AOC (§13). */
+  private recordCorePromotion(p: PromotionRow, before: string, after: string, decisionId: string | null): void {
+    const repo = this.repoPath(p.project_id);
+    const core = repo ? this.coreChanges(repo, `${before}..${after}`) : null;
+    if (core === null || (core !== 'unchecked' && !core.length)) return;
+    this.recordSelfChange({
+      kind: 'selfmod.promoted',
+      projectId: p.project_id,
+      promotionId: p.promotion_id,
+      mainShaBefore: before,
+      mainShaAfter: after,
+      breakglass: !!p.breakglass_id,
+      decisionId,
+      commits: core === 'unchecked' ? null : core.map((c) => c.sha),
+      files: core === 'unchecked' ? null : [...new Set(core.flatMap((c) => c.files))],
+    });
   }
 
   async requestPromotion(
@@ -1334,6 +1478,35 @@ export class ChangeEngine implements ChangeService {
     }
     const prov = this.provenanceDetail(input.projectId, fromSha);
     if (!prov.ok) return refuse('provenance_gap', prov.orphanShas, prov.reasons);
+    // §13: AOC's own agents never change its governance core; such a promotion is refused and recorded outside AOC.
+    const core = this.coreChanges(repo, `${prov.baseRef}..${fromSha}`);
+    if (core === 'unchecked')
+      return refuse('self_modification', [], [
+        'the self-modification boundary could not be checked for this AOC repository',
+      ]);
+    const byManaged = (core ?? []).flatMap((c) => {
+      const sessionIds = this.managedSessions(prov.commits.find((x) => x.sha === c.sha));
+      return sessionIds.length ? [{ ...c, sessionIds }] : [];
+    });
+    if (byManaged.length) {
+      this.recordSelfChange({
+        kind: 'selfmod.promotion_refused',
+        projectId: input.projectId,
+        promotionId,
+        fromSha,
+        commits: byManaged.map((c) => c.sha),
+        sessionIds: [...new Set(byManaged.flatMap((c) => c.sessionIds))],
+        files: [...new Set(byManaged.flatMap((c) => c.files))],
+      });
+      return refuse(
+        'self_modification',
+        byManaged.map((c) => c.sha),
+        byManaged.map(
+          (c) =>
+            `${short(c.sha)}: managed session ${c.sessionIds.join(', ')} changed AOC's governance core (${c.files.slice(0, 3).join(', ')}${c.files.length > 3 ? ', …' : ''}); the core is human-built and reviewed outside AOC (§13)`,
+        ),
+      );
+    }
     if (ticketId && this.read.ticketUat(ticketId) !== 'pass')
       return refuse('uat_missing', [], [`ticket ${ticketId} has no passing UAT sign-off`]);
     if (head === fromSha || git.isAncestor(repo, fromSha, head))
@@ -1433,6 +1606,7 @@ export class ChangeEngine implements ChangeService {
             ticketId: p.ticket_id,
           },
         });
+        this.recordCorePromotion(p, ff.before, ff.after, decisionId);
         if (ff.warning)
           this.ctx.notify({
             kind: 'info',

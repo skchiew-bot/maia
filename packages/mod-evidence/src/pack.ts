@@ -7,6 +7,7 @@ import {
   type EvidencePackFileEntry,
   type EvidencePackManifest,
   type EvidencePackRange,
+  type EvidenceVerification,
   type MappingStatus,
   type StoredEvent,
 } from '@aoc/contracts';
@@ -27,7 +28,12 @@ import {
   rateCardVersionsUsed,
   type SectionContext,
 } from './sections';
-import { buildVerification, recomputeLineHash, type RangeLinkage } from './verification';
+import {
+  buildVerification,
+  recomputeLineHash,
+  type PackVerificationSource,
+  type RangeLinkage,
+} from './verification';
 
 export const PACK_PRIVACY_STATEMENT =
   'events.jsonl holds chained event headers only (ids, enums, numbers, hashes). Event payloads and bodies are never exported: personal data stays behind the role boundary.';
@@ -55,6 +61,8 @@ export interface BuildPackInput {
   generatedAt: string;
   generatedBy: Actor;
   mapping: MappingSnapshot;
+  /** The verification the pack is frozen with (audit service, or in-file only); its head is the pack's head. */
+  verification: PackVerificationSource;
 }
 
 export interface BuiltPack {
@@ -62,6 +70,8 @@ export interface BuiltPack {
   /** sha256 of the zip bytes. */
   packHash: string;
   manifest: EvidencePackManifest;
+  /** verification.json as packed. */
+  verification: EvidenceVerification;
 }
 
 const json = (x: unknown) => strToU8(JSON.stringify(x, null, 2) + '\n');
@@ -84,15 +94,16 @@ function publicRange(r: ResolvedRange): EvidencePackRange {
 }
 
 /**
- * Build a frozen evidence pack from the log as of the current head. Reads chained headers only — never
+ * Build a frozen evidence pack from the log as of the verified head. Reads chained headers only — never
  * payloads — so nothing behind the role boundary (personal data, prompts, file contents) can leak into it.
- * It walks up to a year of events and the whole chain, so it hands the event loop back as it goes (R-05):
+ * It walks up to a year of events, so it hands the event loop back as it goes and deflates off-thread (R-05):
  * managed hooks keep being answered while a pack is built.
  */
 export async function buildEvidencePack(input: BuildPackInput): Promise<BuiltPack> {
   const { store, range, mapping } = input;
   const pacer = new Pacer();
-  const head = store.head();
+  const verified = input.verification.report ?? input.verification.inFile;
+  const head = { seq: verified.headSeq, hash: verified.headHash, chainId: verified.chainId };
   const endTsIncl = new Date(range.endMs - 1).toISOString();
   const ctx: SectionContext = { store, headSeq: head.seq, range, endTsIncl, generatedAt: input.generatedAt };
   const beforeTs = new Date(range.startMs - 1).toISOString();
@@ -162,7 +173,7 @@ export async function buildEvidencePack(input: BuildPackInput): Promise<BuiltPac
     else if (e.type === 'promotion.completed' && e.meta.breakglass === true) breakglassPromotions.push(e);
   }
 
-  const verification = await buildVerification(store, head.seq, linkage, pacer);
+  const verification = buildVerification(store, head.seq, linkage, input.verification);
   const gatesFile = buildGates(ctx, resolved);
   await pacer.yield();
   const changesFile = buildChanges(ctx, changes);
@@ -244,6 +255,7 @@ export async function buildEvidencePack(input: BuildPackInput): Promise<BuiltPac
     fx: fxFile.summary,
     verification: {
       ok: verification.ok,
+      status: verification.status,
       chainOk: verification.chain.ok,
       anchorsChecked: verification.anchorsChecked,
       anchorsMatched: verification.anchorsMatched,
@@ -272,5 +284,5 @@ export async function buildEvidencePack(input: BuildPackInput): Promise<BuiltPac
     { 'manifest.json': json(manifest), ...Object.fromEntries(data), 'index.html': html },
     { level: 6, mtime: new Date(input.generatedAt) },
   );
-  return { zip: zipped, packHash: sha256hex(zipped), manifest };
+  return { zip: zipped, packHash: sha256hex(zipped), manifest, verification };
 }

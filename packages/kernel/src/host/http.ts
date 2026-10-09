@@ -43,7 +43,8 @@ export function requireIngest(c: Ctx, opts: { sessionId?: string | null; allowOb
   throw new HttpError(403, 'forbidden', 'Token kind not allowed here');
 }
 
-export async function readJson<T>(c: Ctx, schema: z.ZodType<T>): Promise<T> {
+/** Parsed body as the schema's output type (defaults and transforms applied, and typed so). */
+export async function readJson<S extends z.ZodTypeAny>(c: Ctx, schema: S): Promise<z.output<S>> {
   let body: unknown;
   try {
     body = await c.req.json();
@@ -56,7 +57,8 @@ export async function readJson<T>(c: Ctx, schema: z.ZodType<T>): Promise<T> {
   return r.data;
 }
 
-export function parseQuery<T>(c: Ctx, schema: z.ZodType<T>): T {
+/** Parsed query string as the schema's output type (defaults and transforms applied, and typed so). */
+export function parseQuery<S extends z.ZodTypeAny>(c: Ctx, schema: S): z.output<S> {
   const r = schema.safeParse(c.req.query());
   if (!r.success) throw new HttpError(422, 'invalid', 'Invalid query', r.error.issues.map((i) => ({ path: i.path.join('.'), message: i.message })));
   return r.data;

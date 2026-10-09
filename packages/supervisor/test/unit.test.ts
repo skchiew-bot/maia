@@ -3,7 +3,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { FILE_CHANGING_TOOLS, HOOK_EVENTS, ProcessTypeSchema } from '@aoc/contracts';
-import { MANAGED_HOOK_EVENTS } from '../src/claude-facts';
 import {
   MAX_ARG_BYTES,
   buildClaudeArgs,
@@ -133,7 +132,7 @@ describe('claude argv', () => {
     ]);
   });
 
-  it('resumes by id, omits the CLI default permission mode and passes --tools for restricted types', () => {
+  it('resumes by id, names the CLI default permission mode explicitly and passes --tools for restricted types', () => {
     const triage = type({ id: 'bug-triage', class: 'triage', readOnly: true, permissionMode: 'dontAsk' });
     const args = buildClaudeArgs({
       ...base,
@@ -141,7 +140,13 @@ describe('claude argv', () => {
       permissionMode: 'default',
       ...toolPolicy({ ...triage, builtinTools: ['Read', 'Glob', 'Grep'] } as typeof triage),
     });
-    expect(args).not.toContain('--permission-mode');
+    // 'default' and 'manual' are the same mode; the CLI calls it 'manual'. Never left to the user's settings.
+    const mode = (m: 'default' | 'manual') => {
+      const a = buildClaudeArgs({ ...base, permissionMode: m, ...toolPolicy(type({})) });
+      return a.slice(a.indexOf('--permission-mode'), a.indexOf('--permission-mode') + 2);
+    };
+    expect(mode('default')).toEqual(['--permission-mode', 'manual']);
+    expect(mode('manual')).toEqual(['--permission-mode', 'manual']);
     expect(args).not.toContain('--session-id');
     expect(args.slice(args.indexOf('--resume'), args.indexOf('--resume') + 2)).toEqual([
       '--resume',
@@ -239,7 +244,7 @@ describe('per-session MCP config and hook settings', () => {
 
   it('registers one validated command hook per verified event', () => {
     const s = buildHookSettings(['node', '/opt/AOC hooks/hook.js']);
-    expect(Object.keys(s.hooks).sort()).toEqual([...MANAGED_HOOK_EVENTS].sort());
+    expect(Object.keys(s.hooks).sort()).toEqual([...HOOK_EVENTS].sort());
     for (const ev of [
       ...HOOK_EVENTS,
       'PostToolUseFailure',
@@ -417,8 +422,11 @@ describe('system prompt and injected text', () => {
       decisionAnswersText([
         card as never,
         { id: 'dec_2', status: 'withdrawn', options: [], resolution: null } as never,
+        { id: 'dec_3', status: 'expired', options: [], resolution: null } as never,
       ]),
-    ).toBe('Decision dec_1 answered: Approve. Ship it.\nDecision dec_2 was withdrawn; do not wait for it.');
+    ).toBe(
+      'Decision dec_1 answered: Approve. Ship it.\nDecision dec_2 was withdrawn; do not wait for it.\nDecision dec_3 expired unanswered; do not wait for it.',
+    );
   });
 });
 

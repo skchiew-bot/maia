@@ -165,7 +165,7 @@ export function describeEvent(
       return {
         icon: 'changes',
         tone: 'neutral',
-        text: `Promotion ${shortId(str(m.promotionId))} requested to ${str(m.targetBranch) || 'main'}`,
+        text: `Promotion ${shortId(str(m.promotionId))} requested to ${str(m.targetBranch) || 'main'}${e.actor.kind === 'human' ? ` by ${who(e.actor.id)}` : ''}`,
       };
     case 'promotion.completed':
       return { icon: 'ok', tone: 'ok', text: `Promotion ${shortId(str(m.promotionId))} completed` };

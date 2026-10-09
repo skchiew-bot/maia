@@ -14,7 +14,7 @@
 | Listen | `127.0.0.1:7420` | Loopback, behind a TLS reverse proxy; `publicUrl` and `identity.origin` set to the public HTTPS origin (WebAuthn requires it) |
 | Data | `.aoc/data/`: `aoc.db` (chain and read models), `bodies.db` (encrypted bodies), `blobs/`, and `master.key` (dev only) | `/var/lib/aoc/data`, on a disk with monitoring; the KEK elsewhere ([key custody](key-custody.md)) |
 | Config | `AocConfigSchema.parse({})` gives a complete, safe local default (`packages/contracts/src/config.ts`) | See the example below |
-| Sessions | Up to `supervisor.maxConcurrentSessions` (8) `claude -p` children, plus one sidecar each | Today they run as the service user and share its `HOME` (the default `envAllowlist` passes it), so every session can read whatever that user can: its home (SSH keys, git and `gh` credentials), the KEK, the databases and the credential profiles. Keep that home directory free of anything a session must not have. Target: a separate sandbox user with its own home (threat model O-1, gap G-01) |
+| Sessions | Up to `supervisor.maxConcurrentSessions` (8) `claude -p` children, plus one sidecar each | With `supervisor.isolation: "user"` (required in production) each turn runs as `supervisor.sessionUser` (read-only types as `readOnlySessionUser`) with its own `HOME`, `CLAUDE_CONFIG_DIR` and `TMPDIR` under `supervisor.sessionHomesDir`; aocd runs as root and refuses to start if a session user can read its data, KEK or credential profiles ([credential isolation §4](credential-isolation.md#4-the-supervisor-host), gap G-01). The sidecars stay with aocd. With isolation off (development) sessions run as aocd's user and share its `HOME`, so they can read whatever that user can: keep that home free of anything a session must not have |
 | Request limits | Body caps, checked before authentication or parsing: 4 MiB for the API, 16 MiB for `/ingest/*`, 64 MiB for a spool flush, and for the portal the attachment allowance plus 1 MiB (6 × 200 MB + 1 MiB with the defaults); 413 above them. A request to `/ingest/*` without a valid token gets 401 before its body is read | Set the reverse proxy's body limit to at least the portal allowance, or lower `intake.maxVideoBytes` and `intake.maxAttachments`; a proxy default of 1 MB breaks uploads |
 | Time zone | `Asia/Kuala_Lumpur`. Daily jobs, rollups and FX days use local dates | Keep it unless the business moves |
 
@@ -26,6 +26,7 @@ production, use absolute paths. A minimal production configuration (`/etc/aoc/ao
 
 ```json
 {
+  "mode": "production",
   "dataDir": "/var/lib/aoc/data",
   "publicUrl": "https://aoc.example.internal",
   "keys": { "masterKeyFile": "/run/credentials/aocd.service/aoc-kek" },
@@ -120,11 +121,12 @@ Daily, or continuously from monitoring:
 | Service up | `systemctl is-active aocd`; an HTTP request to the console | Active; 200 |
 | Integrity | Control Tower integrity panel (`chainOk`, `lastVerifiedAt`, `anchorAgeMs`, `unanchoredEvents`) | `chainOk` true; anchor age within cadence ([anchoring](anchoring.md#5-daily-checks)) |
 | Projections | `projection_health` (below); Tower `projection_degraded` | No rows with status `degraded` |
+| Malware scanner | `GET /api/health` with a builder or approver token: `checks.intake` (anonymous callers see `ok` only); `aoc doctor` | `ok` true, `avEngine` true (ClamAV). In `mode: production` without an engine, attachments are refused (503) |
 | Reactors | `reactor_failures` in the last 24 h; Tower `reactorFailures24h` | None, or each one explained |
 | Jobs | `job_runs.last_status` | `ok` for every job |
 | Decisions | The oldest open card; gate latency p90 (Tower) | Within the agreed SLA (R15) |
 | Disk | Free space on the data volume; size of `aoc.db-wal` | More than 20 % free; the WAL is checkpointed regularly |
-| Backups | The nightly backup exists off-host and is not shrinking | See [key custody](key-custody.md#4-backups-off-host-nightly) |
+| Backups | `aoc backup list`; `/api/audit/health` warnings `backup_*` | The nightly backup exists off-host and is not shrinking ([backup and restore §4](backup-restore.md#4-daily-checks)) |
 
 Read-only SQL checks (WAL mode allows a reader alongside aocd):
 
@@ -160,7 +162,7 @@ projector that is new on an existing log, whose fingerprint changed, or that is 
 
 1. Plan a maintenance window and stop running sessions first (§2): while the rebuild runs, hooks cannot get an
    answer and fail closed.
-2. Take a backup ([key custody](key-custody.md#4-backups-off-host-nightly)).
+2. Take a backup: `aoc anchor`, then `aoc backup now` ([backup and restore](backup-restore.md)).
 3. **Make sure the right KEK is configured.** A rebuild reads every body; with a wrong KEK it fails and rolls
    back. Never let aocd start with a generated key
    ([key custody §3](key-custody.md#3-store-the-kek-options-weakest-to-strongest)).
@@ -225,8 +227,9 @@ A dead-lettered reaction means something that should have happened did not.
 
 ## 6. Backups
 
-The full procedure (what, the order, encryption, retention, keys kept apart) is in
-[key custody §4](key-custody.md#4-backups-off-host-nightly), and the restore drill is in
+aocd backs itself up daily once `audit.backupKeyFile` is set (`aoc backup now` / `aoc backup list`; restore with
+`aocd restore`): see the [backup and restore runbook](backup-restore.md). Key custody and the manual procedure are in
+[key custody §4](key-custody.md#4-backups-off-host-nightly) and the drill in
 [key custody §7](key-custody.md#7-restore-drill-quarterly). The rules that matter most:
 
 - **Never copy `aoc.db` alone while aocd runs.** Use `sqlite3 … ".backup …"` or `VACUUM INTO`. Copy `aoc.db`
@@ -239,9 +242,9 @@ The full procedure (what, the order, encryption, retention, keys kept apart) is 
 
 Jobs are defined by modules: interval jobs (`everyMs`) and daily jobs (`dailyAt`, local time). Each module
 declares its own: for example `intake.diagnosis-budget` and `decisions.aging` (every 60 s), the ledger's overrun
-check, the FX fetch (`fx.daily` at 18:00 MYT, then `fx.retry@18:30` and `fx.retry@21:00` while BNM's 1700 rate is
-unpublished; architecture §11), the metering day close and lesson retirement. `SELECT name FROM job_runs` lists the
-jobs that have run.
+check, the FX fetch (`fx.daily` at 18:00 MYT, which first re-checks the previous weekday, then `fx.retry@18:30`
+and `fx.retry@21:00` while BNM's 1700 rate is unpublished; architecture §11), the metering day close and lesson
+retirement. `SELECT name FROM job_runs` lists the jobs that have run.
 
 **Anchoring now:** the nightly `audit.anchor` job runs at `audit.anchorAtLocalTime` (02:00 by default).
 `aoc anchor` anchors the current chain head immediately. Use it after a missed anchor, before a backup, or
