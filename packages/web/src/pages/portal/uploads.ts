@@ -155,11 +155,16 @@ export function checkSelection(files: readonly { size: number }[], limits: Intak
   return null;
 }
 
-/** Reads the first bytes of a file for the type check. */
+/** Reads the first bytes of a file for the type check (FileReader where Blob#arrayBuffer is missing). */
 export async function readHead(file: Blob): Promise<Uint8Array> {
   const slice = file.slice(0, HEAD_BYTES);
-  const buffer = typeof slice.arrayBuffer === 'function' ? await slice.arrayBuffer() : await new Response(slice).arrayBuffer();
-  return new Uint8Array(buffer);
+  if (typeof slice.arrayBuffer === 'function') return new Uint8Array(await slice.arrayBuffer());
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(new Uint8Array(reader.result as ArrayBuffer));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsArrayBuffer(slice);
+  });
 }
 
 export type SubmitField = 'title' | 'description' | 'severity';

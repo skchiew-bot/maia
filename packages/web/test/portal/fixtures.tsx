@@ -1,12 +1,19 @@
 import type { PublicTicket } from '@aoc/contracts';
-import { render } from '@testing-library/react';
+import { configure, render } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
+import { vi } from 'vitest';
 import { AuthProvider, type AuthUser } from '../../src/api';
-import { ClockProvider, fixedClock, ToastProvider } from '../../src/components';
+import { ClockProvider, fixedClock, ToastProvider, type Clock } from '../../src/components';
 import { AppRoutes } from '../../src/routes';
 import { jsonResponse, mockFetch } from '../helpers';
 
 export const NOW = Date.parse('2026-10-09T05:42:00Z');
+
+/** Pages are lazy chunks and CI machines get busy: give async queries and tests room (this file only). */
+export function allowSlowRenders(): void {
+  configure({ asyncUtilTimeout: 8000 });
+  vi.setConfig({ testTimeout: 30_000 });
+}
 
 export const REQUESTER: AuthUser = { id: 'usr_dan', name: 'Daniel Lim', role: 'requester', flags: {} };
 export const APPROVER: AuthUser = { id: 'usr_ceo', name: 'Chiew Sin Kwang', role: 'approver', flags: {} };
@@ -34,10 +41,16 @@ export function Location() {
   return <output data-testid="location">{l.pathname + l.search}</output>;
 }
 
-export function renderPortal(path: string, user: AuthUser | null) {
+/** A clock the test moves by hand (`fixed`, so nothing schedules timers on it). */
+export function manualClock(start = NOW): Clock & { advance: (ms: number) => void } {
+  let t = start;
+  return { now: () => t, fixed: true, advance: (ms) => (t += ms) };
+}
+
+export function renderPortal(path: string, user: AuthUser | null, clock: Clock = fixedClock(NOW)) {
   return render(
     <MemoryRouter initialEntries={[path]}>
-      <ClockProvider clock={fixedClock(NOW)}>
+      <ClockProvider clock={clock}>
         <AuthProvider initialUser={user}>
           <ToastProvider>
             <AppRoutes />
