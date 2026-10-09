@@ -11,7 +11,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { mcpToolName, transcriptPathFor, type AocMcpToolName, type HookOutput } from '@aoc/contracts';
 import type { Harness, LaunchedSession } from './harness';
-import { HOOK_MAIN, MCP_MAIN, SIDECAR_MAIN, tsNode } from './paths';
+import { bin } from './bin';
 
 // ── hook binary ───────────────────────────────────────────────────────────────
 
@@ -38,10 +38,10 @@ export function denyReason(run: HookRun): string {
   return out && 'permissionDecisionReason' in out ? (out.permissionDecisionReason ?? '') : run.stderr;
 }
 
-/** Spawn `node --import tsx packages/hooks/src/main.ts <event>` exactly like a registered hook command. */
+/** Spawn `node aoc-hook.mjs <event>` exactly like a registered hook command. */
 export function runHookBinary(event: string, stdin: unknown, env: Record<string, string>, cwd: string, track?: (c: ChildProcess) => void): Promise<HookRun> {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, tsNode(HOOK_MAIN, event), { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(process.execPath, [bin('aoc-hook'), event], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
     track?.(child);
     let stdout = '';
     let stderr = '';
@@ -326,7 +326,7 @@ export class ClaudeSession {
     if (this.client) return this.client;
     const transport = new StdioClientTransport({
       command: process.execPath,
-      args: tsNode(MCP_MAIN),
+      args: [bin('aoc-mcp')],
       cwd: this.s.cwd,
       env: {
         PATH: process.env.PATH ?? '',
@@ -387,8 +387,8 @@ export class ClaudeSession {
     const stateDir = join(this.h.root, 'sidecar', this.s.sessionId);
     const child = spawn(
       process.execPath,
-      tsNode(
-        SIDECAR_MAIN,
+      [
+        bin('aoc-sidecar'),
         '--session', this.s.sessionId,
         '--pid', String(this.s.pid),
         '--transcript', this.s.transcriptPath,
@@ -397,7 +397,7 @@ export class ClaudeSession {
         '--interval', String(opts.intervalMs ?? 200),
         '--state-dir', stateDir,
         '--spool-dir', join(stateDir, 'spool'),
-      ),
+      ],
       { cwd: this.s.cwd, env: { PATH: process.env.PATH ?? '', HOME: this.h.homeDir, TZ: 'Asia/Kuala_Lumpur' }, stdio: ['ignore', 'ignore', 'pipe'] },
     );
     this.h.track(child);

@@ -4,7 +4,7 @@
  * the real MCP server; a top-up approved by another approver lifts it. Under the real supervisor, a launch over the
  * cap waits blocked without a process and the approval resumes it with its launch prompt.
  */
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -201,8 +201,12 @@ describe('(h) credit cap under the supervisor', () => {
     const spent = await waitFor(async () => {
       const a = await account(h, dev);
       return a.usedUsd >= 1.4 && a;
-    }, { timeout: 30_000, what: 'the spend, metered from the turn-end sidecar flush' });
+    }, { timeout: 30_000, what: "the spend, from the sidecar's flush after the session ended" });
     expect(spent).toMatchObject({ capped: true, autoGrantUsed: false, autoGrantAvailableUsd: 0.25 });
+    // ...and once that sidecar is done, the ended session's token is revoked.
+    const mcpConfig = JSON.parse(readFileSync(join(h.root, 'sessions', first, 'mcp.json'), 'utf8')) as { mcpServers: { aoc: { env: Record<string, string> } } };
+    const firstToken = mcpConfig.mcpServers.aoc.env.AOC_INGEST_TOKEN!;
+    await waitFor(() => h.aoc.runtime.services.get('identity').verifyIngestToken(firstToken) === null, { timeout: 15_000, what: "the ended session's token revoked" });
 
     const second = await launchSim(h, dev, projectId, WORK_FILE);
     const blocked = await untilSession(h, second, dev, (d) => d.lifecycle === 'blocked', 'the launch to wait on the cap');

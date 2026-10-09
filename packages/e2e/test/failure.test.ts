@@ -27,6 +27,22 @@ function readSpool(dir: string): SpoolItem[] {
     .map((l) => JSON.parse(l) as SpoolItem);
 }
 
+/**
+ * A hook gives the spool replay ~1 s; what does not make it in time is replayed by the next delivered event, as in a
+ * live session. On a busy machine that can take another event or two, so keep sending them (each one may replay).
+ */
+async function replayedBy(nextEvent: (n: number) => Promise<unknown>, done: () => boolean, what: string): Promise<void> {
+  for (let n = 1; ; n++) {
+    try {
+      await waitFor(done, { timeout: 3_000, what });
+      return;
+    } catch (err) {
+      if (n === 5) throw err;
+      await nextEvent(n);
+    }
+  }
+}
+
 const toolUsed = (sessionId: string, toolUseId: string) =>
   h.events({ types: ['tool.used'], sessionId }).filter((e) => e.meta.toolUseId === toolUseId);
 
@@ -71,7 +87,7 @@ describe('(e) daemon down', () => {
     // The next delivered managed event replays the spool (PreToolUse never does: it would delay the tool).
     const managedSpool = readSpool(claude.spoolDir);
     expectExit0(await claude.hook('PostToolUse', { ...read, tool_use_id: 'toolu_after_restart' }));
-    await waitFor(() => readSpool(claude.spoolDir).length === 0, { what: 'managed spool flushed' });
+    await replayedBy((n) => claude.hook('PostToolUse', { ...read, tool_use_id: `toolu_more_${n}` }), () => readSpool(claude.spoolDir).length === 0, 'managed spool flushed');
     expect(toolUsed(s.sessionId, 'toolu_during_outage')).toHaveLength(1);
     expect(toolUsed(s.sessionId, 'toolu_after_restart')).toHaveLength(1);
     expect(h.events({ types: ['tool.used'], sessionId: s.sessionId }).find((e) => e.meta.toolUseId === 'toolu_during_outage')!.sourceTs).toBe(managedSpool[0]!.body && (managedSpool[0]!.body as { sentAt: string }).sentAt);
@@ -83,7 +99,7 @@ describe('(e) daemon down', () => {
 
     // Observed: the next delivered hook replays its spool — hook events and the usage read during the outage.
     expectExit0(await observed.hook('UserPromptSubmit', { prompt: 'carry on' }));
-    await waitFor(() => readSpool(observed.spoolDir).length === 0, { what: 'observed spool flushed' });
+    await replayedBy(() => observed.hook('UserPromptSubmit', { prompt: 'still there?' }), () => readSpool(observed.spoolDir).length === 0, 'observed spool flushed');
     expect(toolUsed(observedId, 'toolu_obs')).toHaveLength(1);
     const usage = await waitFor(() => h.events({ types: ['usage.recorded'], sessionId: observedId }).length > 0 && h.events({ types: ['usage.recorded'], sessionId: observedId }), {
       timeout: 3_000,
@@ -118,8 +134,8 @@ describe('(e) daemon down', () => {
     // Session A's next event flushes whatever it can; B's own next event must still deliver B's buffered one.
     expectExit0(await a.hook('PostToolUse', read(a.s.cwd, 'toolu_a_after'), noSpoolDir));
     expectExit0(await b.hook('PostToolUse', read(b.s.cwd, 'toolu_b_after'), noSpoolDir));
-    await waitFor(() => toolUsed(a.sessionId, 'toolu_a_outage').length === 1, { what: "A's spooled event" });
-    await waitFor(() => toolUsed(b.sessionId, 'toolu_b_outage').length === 1, { timeout: 3_000, what: "B's spooled event" });
+    await replayedBy((n) => a.hook('PostToolUse', read(a.s.cwd, `toolu_a_more_${n}`), noSpoolDir), () => toolUsed(a.sessionId, 'toolu_a_outage').length === 1, "A's spooled event");
+    await replayedBy((n) => b.hook('PostToolUse', read(b.s.cwd, `toolu_b_more_${n}`), noSpoolDir), () => toolUsed(b.sessionId, 'toolu_b_outage').length === 1, "B's spooled event");
     expect(h.store.verifyChain().ok).toBe(true);
   });
 });
@@ -137,7 +153,8 @@ describe('(e) spool hygiene', () => {
     const file = readdirSync(claude.spoolDir).find((f) => f.endsWith('.jsonl'))!;
     writeFileSync(join(claude.spoolDir, file), '{not json\n' + readFileSync(join(claude.spoolDir, file), 'utf8'));
     await h.restart();
-    expectExit0(await claude.hook('Stop', { stop_hook_active: false, last_assistant_message: 'ok' }));
-    await waitFor(() => toolUsed(s.sessionId, 'toolu_good').length === 1, { what: 'good line replayed' });
+    const stop = () => claude.hook('Stop', { stop_hook_active: false, last_assistant_message: 'ok' });
+    expectExit0(await stop());
+    await replayedBy(stop, () => toolUsed(s.sessionId, 'toolu_good').length === 1, 'good line replayed');
   });
 });

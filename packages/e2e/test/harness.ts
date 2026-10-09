@@ -48,7 +48,8 @@ import {
 import { createIdentityModule } from '@aoc/mod-identity';
 import { createSessionsModule } from '@aoc/mod-sessions';
 import { createSupervisorModule } from '@aoc/supervisor';
-import { CLAUDE_SIM_BIN, REPO_ROOT } from './paths';
+import { bin } from './bin';
+import { REPO_ROOT } from './paths';
 
 // ── small utilities ───────────────────────────────────────────────────────────
 
@@ -373,7 +374,10 @@ export class Harness {
           supervisor: {
             workspacesDir: join(this.root, 'workspaces'),
             claudeBin: process.execPath,
-            claudeArgsPrefix: [CLAUDE_SIM_BIN],
+            claudeArgsPrefix: [bin('claude-sim')],
+            hookCommand: [process.execPath, bin('aoc-hook')],
+            mcpCommand: [process.execPath, bin('aoc-mcp')],
+            sidecarCommand: [process.execPath, bin('aoc-sidecar')],
             envAllowlist: [...defaultConfig().supervisor.envAllowlist, ...SIM_ENV_KEYS],
           },
           metering: { rateCardFile: join(REPO_ROOT, 'config', 'rate-card.json') },
