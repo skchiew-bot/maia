@@ -92,6 +92,13 @@ export const INTAKE_EVENTS = [
     payload: payload({ note: z.string().optional() }),
   }),
   defineEvent({
+    type: 'intake.media_accessed',
+    owner: 'intake',
+    description: 'Raw intake media was accessed (PDPA access log): who, which attachment.',
+    meta: meta({ ticketId: zId, attachmentId: zId, userId: zId, basis: z.enum(['media_permission', 'linked_session']) }),
+    payload: null,
+  }),
+  defineEvent({
     type: 'ticket.public_status_changed',
     owner: 'intake',
     description: 'Abstracted status the requester sees.',
