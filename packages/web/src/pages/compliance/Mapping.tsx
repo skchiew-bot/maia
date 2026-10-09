@@ -334,6 +334,39 @@ function Clamp({ text, lines, label }: { text: string; lines: number; label: str
   );
 }
 
+const CHIPS_SHOWN = 6;
+
+/** The catalog event types that evidence a control, each opening the audit log filtered to it. */
+function EventTypeLinks({ types }: { types: readonly string[] }) {
+  const [all, setAll] = useState(false);
+  const shown = all ? types : types.slice(0, CHIPS_SHOWN);
+  return (
+    <span className="compliance-chips">
+      {shown.map((t) => (
+        <Link
+          key={t}
+          className="aoc-chip aoc-tone--neutral compliance-chip"
+          to={`/audit?type=${encodeURIComponent(t)}`}
+          aria-label={`${t} events in the audit log`}
+        >
+          {t}
+        </Link>
+      ))}
+      {types.length > CHIPS_SHOWN && (
+        <button
+          type="button"
+          className="aoc-link-button compliance-chips__more"
+          aria-expanded={all}
+          onClick={() => setAll((v) => !v)}
+        >
+          {all ? 'fewer' : `+${types.length - CHIPS_SHOWN} more`}
+          <span className="aoc-sr-only"> event types</span>
+        </button>
+      )}
+    </span>
+  );
+}
+
 function RowStatus({ status }: { status: ComplianceMappingRowDTO['status'] }) {
   return status === 'stamped' ? (
     <Badge tone="ok" icon="ok">
@@ -410,20 +443,7 @@ export function MappingTable({ mapping }: { mapping: ComplianceMappingDTO }) {
         cell: (r) => (
           <span className="compliance-evidence">
             {r.evidence.length > 0 && <Clamp text={r.evidence.join(' · ')} lines={3} label="evidence" />}
-            {r.eventTypes.length > 0 && (
-              <span className="compliance-chips">
-                {r.eventTypes.map((t) => (
-                  <Link
-                    key={t}
-                    className="aoc-chip aoc-tone--neutral compliance-chip"
-                    to={`/audit?type=${encodeURIComponent(t)}`}
-                    aria-label={`${t} events in the audit log`}
-                  >
-                    {t}
-                  </Link>
-                ))}
-              </span>
-            )}
+            {r.eventTypes.length > 0 && <EventTypeLinks types={r.eventTypes} />}
           </span>
         ),
       },

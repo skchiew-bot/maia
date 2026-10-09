@@ -207,10 +207,10 @@ export function withinRange(
 }
 
 export const ERASE_REASONS = [
-  { value: 'pdpa_request', label: 'PDPA request from the data subject' },
-  { value: 'secret_leak', label: 'A secret leaked into a body' },
-  { value: 'retention', label: 'Retention period ended' },
-  { value: 'other', label: 'Other (explain on the decision)' },
+  { value: 'pdpa_request', label: 'PDPA request from the data subject', short: 'PDPA request' },
+  { value: 'secret_leak', label: 'A secret leaked into a body', short: 'Secret leak' },
+  { value: 'retention', label: 'Retention period ended', short: 'Retention' },
+  { value: 'other', label: 'Other (explain on the decision)', short: 'Other' },
 ] as const;
 export type EraseReason = (typeof ERASE_REASONS)[number]['value'];
 

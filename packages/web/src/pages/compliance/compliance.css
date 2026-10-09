@@ -234,9 +234,14 @@
   margin-top: 2px;
 }
 .compliance-chip {
+  height: 20px;
+  padding: 0 6px;
   font-family: var(--font-mono);
-  font-size: var(--fs-xs);
+  font-weight: 500;
   text-decoration: none;
+}
+.compliance-chips__more {
+  font-size: var(--fs-xs);
 }
 .compliance-chip:hover {
   border-color: var(--accent);

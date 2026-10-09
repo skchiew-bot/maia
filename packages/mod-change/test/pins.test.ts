@@ -88,7 +88,13 @@ describe('pinned states (GET /api/pins): rollback targets checked against the re
       type: 'phase.completed',
       actor: { kind: 'agent', id: 'ses_x' },
       scope: { projectId: 'prj_gone' },
-      meta: { sessionId: 'ses_x', projectId: 'prj_gone', phaseId: 'p1', pinnedSha: 'c'.repeat(40), pinnedTag: 'aoc/x' },
+      meta: {
+        sessionId: 'ses_x',
+        projectId: 'prj_gone',
+        phaseId: 'p1',
+        pinnedSha: 'c'.repeat(40),
+        pinnedTag: 'aoc/x',
+      },
       source: 'mcp',
     });
     expect(await pins('projectId=prj_gone')).toMatchObject({
@@ -101,7 +107,9 @@ describe('pinned states (GET /api/pins): rollback targets checked against the re
   it('needs audit.view and a project id', async () => {
     h = await harness();
     const requester = h.t.user('requester', 'Rae Requester');
-    expect((await h.t.request('GET', `/api/pins?projectId=${PROJECT}`, { headers: requester.headers })).status).toBe(403);
+    expect(
+      (await h.t.request('GET', `/api/pins?projectId=${PROJECT}`, { headers: requester.headers })).status,
+    ).toBe(403);
     expect((await h.t.request('GET', '/api/pins', { headers: h.builder.headers })).status).toBe(422);
   });
 });

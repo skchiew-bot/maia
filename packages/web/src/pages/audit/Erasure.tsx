@@ -20,7 +20,7 @@ import { shortId } from './ids';
 import { ERASE_REASONS, validScopeId, type EraseReason } from './model';
 import { ActorName } from './people';
 
-const REASON_LABEL: Record<string, string> = Object.fromEntries(ERASE_REASONS.map((r) => [r.value, r.label]));
+const REASON_SHORT: Record<string, string> = Object.fromEntries(ERASE_REASONS.map((r) => [r.value, r.short]));
 
 function truncate(s: string, n: number): string {
   return s.length > n ? `${s.slice(0, n - 1)}…` : s;
@@ -170,12 +170,12 @@ export function ErasureHistory({ events }: { events: readonly AuditEventHeaderDT
         id: 'scope',
         header: 'Scope',
         primary: true,
-        cell: (e) => <code>{String(e.meta.scopeId ?? '')}</code>,
+        cell: (e) => <code className="audit-scope-id">{String(e.meta.scopeId ?? '')}</code>,
       },
       {
         id: 'reason',
         header: 'Reason',
-        cell: (e) => REASON_LABEL[String(e.meta.reason)] ?? String(e.meta.reason ?? ''),
+        cell: (e) => REASON_SHORT[String(e.meta.reason)] ?? String(e.meta.reason ?? ''),
       },
       {
         id: 'bodies',

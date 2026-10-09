@@ -656,7 +656,9 @@ export class ChangeEngine implements ChangeService {
           tag: r.tag,
           sha: r.sha,
           pinnedBy: [by],
-          ...(usable ? this.resolvePin(repo!, tags, r.tag, r.sha) : { resolvedSha: null, problem: 'repo_unknown' }),
+          ...(usable
+            ? this.resolvePin(repo!, tags, r.tag, r.sha)
+            : { resolvedSha: null, problem: 'repo_unknown' }),
         });
     }
     const latest = (p: PinDTO) => p.pinnedBy[p.pinnedBy.length - 1]!.seq;
@@ -685,7 +687,11 @@ export class ChangeEngine implements ChangeService {
   private tagCommits(repo: string): Map<string, string> {
     const r = this.ctx.services
       .get('git')
-      .run(repo, ['for-each-ref', '--format=%(refname:strip=2)%00%(objectname)%00%(*objectname)', 'refs/tags']);
+      .run(repo, [
+        'for-each-ref',
+        '--format=%(refname:strip=2)%00%(objectname)%00%(*objectname)',
+        'refs/tags',
+      ]);
     const out = new Map<string, string>();
     if (r.code !== 0) return out;
     for (const line of r.stdout.split('\n')) {
