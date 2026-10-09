@@ -57,8 +57,9 @@ sidecar stays with aocd. Development keeps `isolation: "none"` as the default, w
 - The ingest token is still in the session's environment (G-44 / O-3).
 - A non-root aocd with a `sudo` runner is not supported: the sidecar cannot read the 0600 transcript and aocd cannot
   SIGKILL another user's process.
-- A session's own `HOME` keeps what the agent writes there (for example `~/.claude/settings.json`) across that
-  session's turns; it no longer reaches other sessions or aocd.
+- A session's own `HOME` keeps what the agent writes there across that session's turns (it no longer reaches other
+  sessions or aocd). `~/.claude/settings.json` gets the workspace-settings rules before every turn (no
+  `disableAllHooks`, no `env`); other Claude Code state there (for example `.claude.json`) is not checked.
 
 ### G-04 Privileged git never in agent-writable trees (threat model O-2)
 Rows: S3-b, S8-g, S14.2-a, R1. **Owner: unassigned.**

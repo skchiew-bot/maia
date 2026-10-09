@@ -74,6 +74,7 @@ import {
   resolveFileRefs,
   secretsToRedact,
   toolPolicy,
+  userSettingsProblems,
   workspaceSettingsProblems,
   type CredentialProfile,
 } from './launch-config';
@@ -1079,6 +1080,14 @@ export class Supervisor implements SupervisorService {
     // Read-only sessions run as their own user: they can open neither a build session's key copy nor its /proc.
     const user = iso ? (s.readOnly ? iso.reader : iso.writer) : null;
     const dirs = iso && user ? prepareSessionDirs(iso, user, s.sessionId) : null;
+    const own = dirs ? userSettingsProblems(dirs.claudeConfigDir) : [];
+    if (dirs && own.length)
+      throw new HttpError(
+        409,
+        'session_settings_override',
+        `The session's own Claude Code settings would bypass AOC (${own.join('; ')}). Remove them from ${dirs.claudeConfigDir}, then restart the session.`,
+        { problems: own },
+      );
     try {
       const keyPaths = profile ? (dirs && user ? this.keyCopies(dirs, user, profile) : profile.files) : {};
       const credentials = profile ? resolveFileRefs(profile.env, keyPaths) : null;

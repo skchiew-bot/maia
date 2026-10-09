@@ -228,6 +228,11 @@ The host that runs aocd and the supervisor. Items 1–3 are enforced by aocd whe
    credential profile sets `GIT_AUTHOR_NAME` / `GIT_AUTHOR_EMAIL` (for example to its machine user).
    `session.launched` records who each turn ran as (`payload.runAs`).
 
+   The session can write its own `HOME`, so before every turn aocd checks `~/.claude/settings.json` there with the
+   rules it applies to the workspace's `.claude/settings*.json`: no `disableAllHooks`, no `env`, plain JSON, no link.
+   A turn that planted one ends the session (`session_settings_override`); delete the file as root to restart it.
+   Output redaction covers the session's credential values and the text of its profile's key files.
+
    **Claude credentials.** A fresh `CLAUDE_CONFIG_DIR` holds no login, so give sessions a token through
    `supervisor.envAllowlist`: `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) or `ANTHROPIC_API_KEY`. The
    model can read it (threat model O-14).

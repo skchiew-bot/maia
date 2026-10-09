@@ -289,14 +289,26 @@ export function readCredentialProfile(file: string, profile: string): Record<str
  * cannot be shown to be harmless.
  */
 export function workspaceSettingsProblems(cwd: string): string[] {
+  return settingsProblems(join(cwd, '.claude'), '.claude', ['settings.json', 'settings.local.json']);
+}
+
+/**
+ * An isolated session's user settings: its CLAUDE_CONFIG_DIR sits in its own HOME, which the agent can write, so
+ * the same rules apply — or a turn could switch the hooks off for every later turn of that session.
+ */
+export function userSettingsProblems(claudeConfigDir: string): string[] {
+  return settingsProblems(claudeConfigDir, '~/.claude', ['settings.json']);
+}
+
+function settingsProblems(dir: string, shownDir: string, names: readonly string[]): string[] {
   const problems: string[] = [];
   // aocd (root, with session isolation) must not read through a link the agent planted.
-  if (lstatOrNull(join(cwd, '.claude'))?.isSymbolicLink()) return ['.claude is a link'];
-  for (const name of ['settings.json', 'settings.local.json']) {
-    const shown = `.claude/${name}`;
+  if (lstatOrNull(dir)?.isSymbolicLink()) return [`${shownDir} is a link`];
+  for (const name of names) {
+    const shown = `${shownDir}/${name}`;
     let text: string;
     try {
-      text = readWorkspaceFile(join(cwd, '.claude', name));
+      text = readWorkspaceFile(join(dir, name));
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'ENOENT') problems.push(`${shown} is unreadable`);
       continue;

@@ -41,6 +41,7 @@ import {
   redactSecrets,
   resolveFileRefs,
   secretsToRedact,
+  userSettingsProblems,
   workspaceSettingsProblems,
 } from '../src/launch-config';
 import { createHarness, type Harness, type HarnessOptions } from './harness';
@@ -190,6 +191,26 @@ describe('workspace settings are read without trusting the workspace', () => {
     const linked = temp('aoc-ws-');
     symlinkSync(join(cwd, '.claude'), join(linked, '.claude'));
     expect(workspaceSettingsProblems(linked)).toEqual(['.claude is a link']);
+  });
+});
+
+describe('an isolated session’s own user settings', () => {
+  it('get the workspace rules: no disableAllHooks, no env, no link', () => {
+    const dir = temp('aoc-userset-');
+    expect(userSettingsProblems(dir)).toEqual([]);
+    writeFileSync(join(dir, 'settings.json'), JSON.stringify({ permissions: { allow: ['Read'] } }));
+    expect(userSettingsProblems(dir)).toEqual([]);
+    writeFileSync(
+      join(dir, 'settings.json'),
+      JSON.stringify({ disableAllHooks: true, env: { AOC_MODE: 'observed' } }),
+    );
+    expect(userSettingsProblems(dir)).toEqual([
+      '~/.claude/settings.json sets disableAllHooks',
+      '~/.claude/settings.json sets env (AOC_MODE)',
+    ]);
+    const home = temp('aoc-userset-home-');
+    symlinkSync(dir, join(home, '.claude'));
+    expect(userSettingsProblems(join(home, '.claude'))).toEqual(['~/.claude is a link']);
   });
 });
 
@@ -711,6 +732,22 @@ describe.skipIf(!canCreateUsers)('OS-level isolation end to end (needs root to c
     expect(toolResults(build)).toEqual(['released']);
     expect(existsSync(copy)).toBe(false);
   }, 120_000);
+
+  it('refuses the next turn of a session that switched its own hooks off in its HOME', async () => {
+    const w = world();
+    h = await harness(w);
+    const marker = scenario(w, 'unhook', [
+      bash(`printf '%s' '{"disableAllHooks":true}' > "$CLAUDE_CONFIG_DIR/settings.json"`),
+      endTurn,
+    ]);
+    const id = await h.launch(`${marker} make yourself at home`, { processType: 'iso-build' });
+    await h.waitLifecycle(id, 'idle', 60_000);
+    await expect(h.sup.nudge(id, 'carry on', h.ownerActor)).rejects.toMatchObject({
+      status: 409,
+      code: 'session_settings_override',
+    });
+    expect(h.lifecycle(id)).toBe('failed');
+  }, 90_000);
 
   it('runs supervisor commands without credentials (acceptance tests) as the session user, never as root', async () => {
     const w = world();
