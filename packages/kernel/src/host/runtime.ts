@@ -47,7 +47,12 @@ export class AocRuntime {
 
   private constructor(private readonly opts: RuntimeOptions) {
     const dataDir = opts.dataDir ?? opts.config.dataDir;
-    const masterKey = opts.masterKey ?? loadOrCreateMasterKey(opts.config.keys.masterKeyFile ?? join(dataDir, 'master.key')).key;
+    const masterKey =
+      opts.masterKey ??
+      loadOrCreateMasterKey(opts.config.keys.masterKeyFile ?? join(dataDir, 'master.key'), process.env, {
+        production: opts.config.mode === 'production',
+        dataDir,
+      }).key;
     this.store = new EventStore({ dataDir, clock: opts.clock, log: opts.log, masterKey });
     this.broadcaster = new Broadcaster(() => opts.clock.iso());
     this.store.db.exec(`

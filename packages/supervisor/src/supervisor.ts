@@ -16,7 +16,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { isAbsolute, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { z } from 'zod';
 import {
   AOC_ENV,
@@ -43,17 +43,40 @@ import {
 } from '@aoc/contracts';
 import { HttpError, type Logger, type ModuleContext, type NewEvent } from '@aoc/kernel';
 import {
+  ensureDir,
+  materializeKeyFiles,
+  prepareHomesRoot,
+  prepareSessionDirs,
+  profileKeyFiles,
+  removeStaleSessionFiles,
+  removeKeyFiles,
+  resolveIsolation,
+  selfCheck,
+  sessionDirs,
+  turnSpawn,
+  writeSessionConfig,
+  type OsUser,
+  type SessionDirs,
+  type SessionIsolation,
+  type TurnSpawn,
+} from './isolation';
+import {
   MAX_ARG_BYTES,
   buildClaudeArgs,
   buildHookSettings,
   buildMcpConfig,
   buildSessionEnv,
+  keyFileSecrets,
   readCredentialProfile,
+  readCredentialProfileSpec,
   redactArgv,
   redactSecrets,
+  resolveFileRefs,
   secretsToRedact,
   toolPolicy,
+  userSettingsProblems,
   workspaceSettingsProblems,
+  type CredentialProfile,
 } from './launch-config';
 import { killProcessGroup, processMatches, runCommand, signalProcess, signalTree } from './process-utils';
 import { SupervisorView, TERMINAL_LIFECYCLES, type SupervisedSession } from './projection';
@@ -184,7 +207,9 @@ interface LiveTurn {
 interface SpawnPlan {
   cwd: string;
   env: Record<string, string>;
-  args: string[];
+  /** How the turn is started: as the session user (G-01) or, without isolation, as aocd itself. */
+  spawn: TurnSpawn;
+  runAs: string | null;
   prompt: string;
   claudeSessionId: string;
   transcriptPath: string;
@@ -216,6 +241,8 @@ export class Supervisor implements SupervisorService {
   private readonly warned = new Set<string>();
   private readonly sessionsRoot: string;
   private readonly ownsSessionsRoot: boolean;
+  /** Session users and their directories (supervisor.isolation 'user'); null = sessions run as aocd (development). */
+  private readonly isolation: SessionIsolation | null;
   private stopping = false;
 
   constructor(
@@ -225,12 +252,60 @@ export class Supervisor implements SupervisorService {
     this.view = new SupervisorView(ctx.db);
     this.registry = new RegistryAccess(ctx, opts.registryFile ?? ctx.config.registryFile);
     this.log = ctx.log.child({ module: 'supervisor' });
+    // Refuses to start when production mode lacks isolation, or the isolation settings are unusable.
+    const { isolation, warnings } = resolveIsolation(ctx.config);
+    this.isolation = isolation;
+    for (const w of warnings) this.log.warn(w);
     this.ownsSessionsRoot = !opts.sessionsDir && ctx.dataDir === ':memory:';
     this.sessionsRoot = opts.sessionsDir
       ? resolve(opts.sessionsDir)
       : this.ownsSessionsRoot
         ? mkdtempSync(join(tmpdir(), 'aoc-sessions-'))
         : resolve(ctx.dataDir, 'sessions');
+    if (isolation) {
+      try {
+        this.checkIsolation(isolation);
+      } catch (err) {
+        if (this.ownsSessionsRoot) rmSync(this.sessionsRoot, { recursive: true, force: true });
+        throw err;
+      }
+    }
+  }
+
+  /**
+   * Startup self-check (G-01): proves, as each session user, that aocd's data dir and databases, the KEK, the
+   * credential profiles, the key files they name and aocd's private session files are unreadable, and that what a
+   * turn needs (its directories, claude, the hook and MCP commands) is reachable. Key copies left by a crash go.
+   */
+  private checkIsolation(iso: SessionIsolation): void {
+    const config = this.ctx.config;
+    const sup = config.supervisor;
+    const dataDir = this.ctx.dataDir === ':memory:' ? null : resolve(this.ctx.dataDir);
+    const kek = config.keys.masterKeyFile ?? (dataDir ? join(dataDir, 'master.key') : null);
+    const profiles = sup.credentialProfilesFile ? resolve(sup.credentialProfilesFile) : null;
+    const secrets = [
+      ...(dataDir ? [dataDir, join(dataDir, 'aoc.db'), join(dataDir, 'bodies.db'), join(dataDir, 'blobs')] : []),
+      ...(kek ? [resolve(kek)] : []),
+      ...(profiles ? [profiles, ...profileKeyFiles(profiles)] : []),
+      this.sessionsRoot,
+    ];
+    prepareHomesRoot(iso);
+    const workspaces = resolve(sup.workspacesDir);
+    mkdirSync(workspaces, { recursive: true });
+    selfCheck({
+      iso,
+      secrets,
+      reach: [iso.homesRoot, workspaces],
+      commands: [[sup.claudeBin, ...sup.claudeArgsPrefix], sup.hookCommand, sup.mcpCommand].filter((c) => c.length),
+      path: this.sourceEnv().PATH ?? '/usr/local/bin:/usr/bin:/bin',
+    });
+    const stale = removeStaleSessionFiles(iso.homesRoot);
+    this.log.info('session isolation verified', {
+      sessionUser: iso.writer.name,
+      readOnlySessionUser: iso.reader.name,
+      runner: iso.runner.length > 0,
+      staleKeyCopiesRemoved: stale,
+    });
   }
 
   // ── SupervisorService ─────────────────────────────────────────────────────
@@ -370,6 +445,9 @@ export class Supervisor implements SupervisorService {
       }
       credentials = readCredentialProfile(resolve(sup.credentialProfilesFile), input.credentialProfile);
     }
+    // Isolation means aocd runs as root: commands without credentials (acceptance tests, git reads) execute code an
+    // agent may have written (threat model T-2), so they run as the session user, never as root.
+    if (this.isolation && !credentials) return this.runAsSessionUser(this.isolation, input);
     const env = buildSessionEnv({
       source: this.sourceEnv(),
       allowlist: sup.envAllowlist,
@@ -379,6 +457,39 @@ export class Supervisor implements SupervisorService {
       timezone: this.ctx.config.timezone,
     });
     return runCommand({ cwd: input.cwd, command: input.command, env, timeoutMs: input.timeoutMs });
+  }
+
+  /** One isolated command as the credentialed session user, with a throwaway HOME and TMPDIR and no credentials. */
+  private async runAsSessionUser(
+    iso: SessionIsolation,
+    input: { cwd: string; command: string[]; timeoutMs: number },
+  ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+    const [bin, ...args] = input.command;
+    if (!bin) throw new Error('runIsolated: command is required');
+    const id = `aoc-run-${randomUUID()}`;
+    const dirs = prepareSessionDirs(iso, iso.writer, id);
+    try {
+      const env = buildSessionEnv({
+        source: this.sourceEnv(),
+        allowlist: this.ctx.config.supervisor.envAllowlist,
+        credentials: null,
+        readOnly: true,
+        aoc: {},
+        timezone: this.ctx.config.timezone,
+        isolated: { user: iso.writer.name, home: dirs.home, claudeConfigDir: dirs.claudeConfigDir, tmpDir: dirs.tmp },
+      });
+      const s = turnSpawn(iso, iso.writer, { sessionId: id, sessionDir: dirs.dir, cwd: input.cwd }, bin, args);
+      return await runCommand({
+        cwd: input.cwd,
+        command: [s.command, ...s.args],
+        env,
+        timeoutMs: input.timeoutMs,
+        uid: s.uid,
+        gid: s.gid,
+      });
+    } finally {
+      rmSync(dirs.dir, { recursive: true, force: true });
+    }
   }
 
   // ── read side (routes) ────────────────────────────────────────────────────
@@ -653,6 +764,11 @@ export class Supervisor implements SupervisorService {
       if (!type.readOnly) ledger?.releaseWriter(thread.threadId, sessionId, 'failed', actor);
       throw err;
     }
+    if (!this.isolation)
+      this.log.warn(
+        'ISOLATION OFF: this managed session runs as the aocd OS user and can read the KEK, both databases and the credential profiles (supervisor.isolation "none", development only)',
+        { sessionId },
+      );
     try {
       const s = this.mustGet(sessionId);
       this.claudeIds.set(sessionId, randomUUID());
@@ -711,7 +827,14 @@ export class Supervisor implements SupervisorService {
       return resolve(repo);
     }
     const dir = resolve(this.ctx.config.supervisor.workspacesDir, projectId);
-    mkdirSync(dir, { recursive: true });
+    if (!this.isolation) {
+      mkdirSync(dir, { recursive: true });
+      return dir;
+    }
+    // A new workspace belongs to the credentialed session user: builds write it, read-only sessions read it.
+    mkdirSync(dirname(dir), { recursive: true });
+    const { writer } = this.isolation;
+    ensureDir(dir, 0o755, writer.uid, writer.gid, { onlyIfCreated: true });
     return dir;
   }
 
@@ -848,11 +971,14 @@ export class Supervisor implements SupervisorService {
     let child: ChildProcess;
     try {
       plan = this.planTurn(s, req);
-      child = spawn(sup.claudeBin, plan.args, {
+      const { command, args, uid, gid } = plan.spawn;
+      // Hooks, the MCP server and the model's tools are claude's children: they inherit its uid/gid.
+      child = spawn(command, args, {
         cwd: plan.cwd,
         env: plan.env,
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: true,
+        ...(uid !== undefined ? { uid, gid } : {}),
       });
     } catch (err) {
       this.abandonReservation(live, err instanceof HttpError ? err.code : 'turn_setup_failed', req.actor);
@@ -867,7 +993,7 @@ export class Supervisor implements SupervisorService {
       });
     } catch (err) {
       this.abandonReservation(live, 'spawn_failed', req.actor);
-      throw new HttpError(502, 'spawn_failed', `Could not start ${sup.claudeBin}: ${(err as Error).message}`);
+      throw new HttpError(502, 'spawn_failed', `Could not start ${plan.spawn.command}: ${(err as Error).message}`);
     }
     if (this.stopping) {
       signalTree(child.pid!, 'SIGKILL');
@@ -901,8 +1027,10 @@ export class Supervisor implements SupervisorService {
         },
         payload: {
           cwd: plan.cwd,
-          argv: redactArgv([sup.claudeBin, ...plan.args]),
+          argv: redactArgv([plan.spawn.command, ...plan.spawn.args]),
           transcriptPath: plan.transcriptPath,
+          // The audit record of who the turn ran as: a session user, or null when isolation is off.
+          runAs: plan.runAs,
         },
         source: 'supervisor',
       }),
@@ -920,6 +1048,7 @@ export class Supervisor implements SupervisorService {
       turn: live.turn,
       reason: req.reason,
       pid: live.pid,
+      runAs: plan.runAs,
       envKeys: Object.keys(plan.env).sort(),
     });
     if (live.interrupt) this.signalInterrupt(live);
@@ -927,6 +1056,7 @@ export class Supervisor implements SupervisorService {
 
   private abandonReservation(live: LiveTurn, reason: string, actor: Actor): void {
     if (this.running.get(live.sessionId) === live) this.running.delete(live.sessionId);
+    this.dropKeyCopies(live.sessionId);
     live.settled = true;
     live.markClosed();
     this.failSession(live.sessionId, reason, actor);
@@ -967,57 +1097,121 @@ export class Supervisor implements SupervisorService {
       ...(s.changeId ? { [AOC_ENV.changeId]: s.changeId } : {}),
       ...(s.ticketId ? { [AOC_ENV.ticketId]: s.ticketId } : {}),
     };
-    const credentials =
-      s.readOnly || !type.credentialProfile ? null : this.credentialsFor(type.credentialProfile);
-    // The model can print anything in its env, and every builder can read a session's output.
-    this.secrets.set(s.sessionId, secretsToRedact([token, ...Object.values(credentials ?? {})]));
-    const env = buildSessionEnv({
-      source: this.sourceEnv(),
-      allowlist: sup.envAllowlist,
-      credentials,
-      readOnly: s.readOnly,
-      aoc,
-      timezone: this.ctx.config.timezone,
-    });
-    const mcpPath = join(dir, 'mcp.json');
-    const settingsPath = join(dir, 'settings.json');
-    const promptPath = join(dir, 'system-prompt.md');
-    writePrivate(mcpPath, JSON.stringify(buildMcpConfig(sup.mcpCommand, aoc), null, 2));
-    writePrivate(settingsPath, JSON.stringify(buildHookSettings(sup.hookCommand), null, 2));
-    const systemPrompt = existsSync(promptPath)
-      ? readFileSync(promptPath, 'utf8')
-      : this.writeSystemPrompt(s, type, null, null);
-    const claudeSessionId = s.claudeSessionId ?? this.claudeIds.get(s.sessionId) ?? randomUUID();
-    this.claudeIds.set(s.sessionId, claudeSessionId);
-    // Claude Code names the transcript after its process cwd, which is the physical path (symlinks resolved).
-    const transcriptPath = transcriptPathFor(
-      realpathOr(cwd),
-      claudeSessionId,
-      claudeConfigDir(env, homedir()),
-    );
-    const resume = this.conversationExists(s, transcriptPath);
-    const prompt = this.turnPrompt(s, req, resume);
-    const args = buildClaudeArgs({
-      model: s.model,
-      mcpConfigPath: mcpPath,
-      settingsPath,
-      permissionMode: type.permissionMode,
-      systemPrompt,
-      ...toolPolicy(type),
-      claudeSessionId,
-      resume,
-      prompt,
-    });
-    return {
-      cwd,
-      env,
-      args: [...sup.claudeArgsPrefix, ...args],
-      prompt,
-      claudeSessionId,
-      transcriptPath,
-      token,
-      dir,
-    };
+    const profile = s.readOnly || !type.credentialProfile ? null : this.credentialsFor(type.credentialProfile);
+    const iso = this.isolation;
+    // Read-only sessions run as their own user: they can open neither a build session's key copy nor its /proc.
+    const user = iso ? (s.readOnly ? iso.reader : iso.writer) : null;
+    const dirs = iso && user ? prepareSessionDirs(iso, user, s.sessionId) : null;
+    const own = dirs ? userSettingsProblems(dirs.claudeConfigDir) : [];
+    if (dirs && own.length)
+      throw new HttpError(
+        409,
+        'session_settings_override',
+        `The session's own Claude Code settings would bypass AOC (${own.join('; ')}). Remove them from ${dirs.claudeConfigDir}, then restart the session.`,
+        { problems: own },
+      );
+    try {
+      const keyPaths = profile ? (dirs && user ? this.keyCopies(dirs, user, profile) : profile.files) : {};
+      const credentials = profile ? resolveFileRefs(profile.env, keyPaths) : null;
+      // The model can print anything in its env or its key files, and every builder can read a session's output.
+      this.secrets.set(
+        s.sessionId,
+        secretsToRedact([
+          token,
+          ...Object.values(credentials ?? {}),
+          ...keyFileSecrets(profile?.files ?? {}),
+        ]),
+      );
+      const env = buildSessionEnv({
+        source: this.sourceEnv(),
+        allowlist: sup.envAllowlist,
+        credentials,
+        readOnly: s.readOnly,
+        aoc,
+        timezone: this.ctx.config.timezone,
+        isolated:
+          dirs && user
+            ? { user: user.name, home: dirs.home, claudeConfigDir: dirs.claudeConfigDir, tmpDir: dirs.tmp }
+            : null,
+      });
+      const mcp = JSON.stringify(buildMcpConfig(sup.mcpCommand, aoc), null, 2);
+      const settings = JSON.stringify(buildHookSettings(sup.hookCommand), null, 2);
+      let mcpPath = join(dir, 'mcp.json');
+      let settingsPath = join(dir, 'settings.json');
+      if (dirs && user) {
+        // Readable by the session, never writable by it: the hooks cannot be edited away mid-turn.
+        mcpPath = dirs.mcpConfig;
+        settingsPath = dirs.settings;
+        writeSessionConfig(mcpPath, mcp, user);
+        writeSessionConfig(settingsPath, settings, user);
+      } else {
+        writePrivate(mcpPath, mcp);
+        writePrivate(settingsPath, settings);
+      }
+      const promptPath = join(dir, 'system-prompt.md');
+      const systemPrompt = existsSync(promptPath)
+        ? readFileSync(promptPath, 'utf8')
+        : this.writeSystemPrompt(s, type, null, null);
+      const claudeSessionId = s.claudeSessionId ?? this.claudeIds.get(s.sessionId) ?? randomUUID();
+      this.claudeIds.set(s.sessionId, claudeSessionId);
+      // Claude Code names the transcript after its process cwd, which is the physical path (symlinks resolved).
+      const transcriptPath = transcriptPathFor(
+        realpathOr(cwd),
+        claudeSessionId,
+        claudeConfigDir(env, homedir()),
+      );
+      const resume = this.conversationExists(s, transcriptPath);
+      const prompt = this.turnPrompt(s, req, resume);
+      const args = [
+        ...sup.claudeArgsPrefix,
+        ...buildClaudeArgs({
+          model: s.model,
+          mcpConfigPath: mcpPath,
+          settingsPath,
+          permissionMode: type.permissionMode,
+          systemPrompt,
+          ...toolPolicy(type),
+          claudeSessionId,
+          resume,
+          prompt,
+        }),
+      ];
+      return {
+        cwd,
+        env,
+        spawn:
+          iso && user && dirs
+            ? turnSpawn(iso, user, { sessionId: s.sessionId, sessionDir: dirs.dir, cwd }, sup.claudeBin, args)
+            : { command: sup.claudeBin, args },
+        runAs: user?.name ?? null,
+        prompt,
+        claudeSessionId,
+        transcriptPath,
+        token,
+        dir,
+      };
+    } catch (err) {
+      this.dropKeyCopies(s.sessionId);
+      throw err;
+    }
+  }
+
+  /** Private copies of the profile's key files for this turn only (removed when it ends, G-01). */
+  private keyCopies(dirs: SessionDirs, user: OsUser, profile: CredentialProfile): Record<string, string> {
+    try {
+      return materializeKeyFiles(dirs, user, profile.files);
+    } catch (err) {
+      throw new HttpError(500, 'credential_profile_unavailable', (err as Error).message);
+    }
+  }
+
+  private dropKeyCopies(sessionId: string): void {
+    if (!this.isolation) return;
+    try {
+      removeKeyFiles(sessionDirs(this.isolation.homesRoot, sessionId));
+    } catch (err) {
+      this.log.error('could not remove the key copies of a session', { sessionId, err: String(err) });
+    }
   }
 
   /**
@@ -1157,6 +1351,8 @@ export class Supervisor implements SupervisorService {
     live.child?.stdout?.destroy();
     live.child?.stderr?.destroy();
     if (this.running.get(live.sessionId) === live) this.running.delete(live.sessionId);
+    // Key copies exist only while a turn runs, so an idle or waiting session holds none.
+    this.dropKeyCopies(live.sessionId);
     const sidecar = live.sidecar;
     if (sidecar) this.later(() => sidecar.exitCode === null && sidecar.kill('SIGTERM'), this.sidecarGraceMs());
     live.markClosed();
@@ -1591,6 +1787,7 @@ export class Supervisor implements SupervisorService {
         actor,
       );
     this.revokeToken(sessionId, actor);
+    this.dropKeyCopies(sessionId);
     if (outcome === 'abandoned' || outcome === 'killed') this.withdrawSessionDecisions(s, actor);
     this.removeQueued(sessionId);
     this.liveness()?.refresh(sessionId);
@@ -1706,7 +1903,7 @@ export class Supervisor implements SupervisorService {
 
   // ── environment, files, helpers ───────────────────────────────────────────
 
-  private credentialsFor(profile: string): Record<string, string> | null {
+  private credentialsFor(profile: string): CredentialProfile | null {
     const file = this.ctx.config.supervisor.credentialProfilesFile;
     if (!file) {
       this.warnOnce(
@@ -1716,7 +1913,7 @@ export class Supervisor implements SupervisorService {
       return null;
     }
     try {
-      return readCredentialProfile(resolve(file), profile);
+      return readCredentialProfileSpec(resolve(file), profile);
     } catch (err) {
       throw new HttpError(500, 'credential_profile_unavailable', (err as Error).message);
     }
