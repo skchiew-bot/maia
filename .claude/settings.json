@@ -1,5 +1,17 @@
 {
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR\"/scripts/claude-session-start.mjs",
+            "timeout": 300,
+            "statusMessage": "Fetching history and dependencies, reading where the work stands"
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [
@@ -8,6 +20,12 @@
             "command": "node \"$CLAUDE_PROJECT_DIR\"/scripts/claude-stop-hook.mjs",
             "timeout": 60,
             "statusMessage": "Checking compliance docs against the code"
+          },
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR\"/scripts/claude-continuity-check.mjs",
+            "timeout": 30,
+            "statusMessage": "Checking for work that is not on GitHub yet"
           }
         ]
       }

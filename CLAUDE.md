@@ -38,6 +38,25 @@ packages/demo        demo seeder + `live` launcher (real sessions on claude-sim;
 - Whole repo (slow, run once at the end): `pnpm typecheck` and `pnpm test`.
 - Adding a dependency: only if essential; `pnpm --filter @aoc/<pkg> add <dep>@<exact-version>`.
 
+## Sessions and handoff (binding)
+One person works on this repo from two Claude accounts and switches when one reaches a usage limit. A new session, in
+either account, sees only GitHub. The hooks in `.claude/settings.json` start and stop every session the same way.
+- **One task = one branch = one PR.** Open a draft PR at the first push. To continue a task, work on its branch
+  (`/pickup`), never start it again on a new one; the SessionStart status lists the branches with unmerged work.
+  Once a branch's PR is merged, restart the branch from the latest default branch before new work (the same name is
+  fine); never keep committing on top of merged history.
+- **Checkpoint after every verified step:** commit (`wip: …` while red, with a `Next: <next step>` trailer) and push to
+  the task branch. Never end a turn with work that exists only in the container; the Stop hook blocks it once.
+- **Keep the PR's `## Handoff` section current** (Done, Next, Last check, Open decisions). `/handoff` does all of this
+  when the user is about to switch.
+- **Fetch before pushing** and merge `origin/<branch>` if it moved. Never force-push; never push to the default branch.
+- Sessions never delete branches; the user, or GitHub's auto-delete, removes a branch once its PR is merged.
+
+## Compact instructions
+When you are using compact, keep: the task and what done means, the branch and PR, the last check run (command,
+result, commit), the next step, open decisions, and the user's latest instructions. Drop file contents and tool output
+already acted on; the SessionStart hook re-adds the live branch status after compaction.
+
 ## Code rules
 - Extensionless relative imports (`import { x } from './x'`). Named exports. No default exports except React pages/components where idiomatic.
 - Pure functions for domain rules; inject `Clock` (never call `Date.now()` directly in domain code) so tests are deterministic.
