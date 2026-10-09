@@ -1,22 +1,36 @@
 import { describe, expect, it } from 'vitest';
-import type { FxRateDTO, FxRunResultDTO, FxStatusDTO, MetaOf, Notification } from '@aoc/contracts';
-import type { TestRuntime } from '@aoc/kernel';
 import {
-  API_URL,
+  AocConfigSchema,
+  type FxRateDTO,
+  type FxRunResultDTO,
+  type FxStatusDTO,
+  type MetaOf,
+  type Notification,
+} from '@aoc/contracts';
+import type { TestRuntime } from '@aoc/kernel';
+import { BNM_API_ACCEPT } from '../src';
+import {
+  apiUrl,
   at,
   bnmApi,
   bnmPage,
   closeDay,
   fxRuntime,
   honestModel,
+  notPublished,
+  observed,
+  OCTOBER_1700,
+  octoberPage,
   PAGE_URL,
   ratesApi,
   recorded,
   runDaily,
+  tick,
   wrongModel,
 } from './helpers';
 
-const live = (date: string, rate: number, extractor: 'haiku' | 'sonnet' = 'haiku') =>
+type Extractor = 'haiku' | 'sonnet' | 'api';
+const live = (date: string, rate: number, extractor: Extractor = 'haiku', session = '1700') =>
   ({
     date,
     pair: 'USD/MYR',
@@ -26,7 +40,10 @@ const live = (date: string, rate: number, extractor: 'haiku' | 'sonnet' = 'haiku
     extractor,
     validation: 'pass',
     reason: 'fetched',
+    session,
   }) as const;
+
+const down = { status: 503, body: 'Service Unavailable' };
 
 function notifications(t: TestRuntime): Notification[] {
   const out: Notification[] = [];
@@ -44,71 +61,90 @@ function metas<T extends 'fx.discrepancy_raised' | 'fx.discrepancy_resolved' | '
   return t.rt.store.list({ types: [type] }).map((e) => e.meta as MetaOf<T>);
 }
 
-describe('daily FX run', () => {
-  it('records a live rate: Haiku extraction reconciled with the BNM published figure, at the configured local time', async () => {
+async function rateOn(t: TestRuntime, date: string): Promise<FxRateDTO> {
+  return (await ratesApi(t, t.user('builder').headers, date, date))[0]!;
+}
+
+describe('daily FX run (session 1700: page scrape, BNM Open API cross-check)', () => {
+  it('records the 1700 middle rate at 18:00, stamped with its session and reconciled at 4 dp with the API for that date and session', async () => {
     const t = await fxRuntime();
-    t.http.page(bnmPage({ date: '2026-10-09', mid: 4.213 })).api(bnmApi({ date: '2026-10-09', mid: 4.213 }));
+    // The API serves binary floats: 4.0899999999999999 is the page's 4.0900.
+    t.http
+      .page(octoberPage('2026-10-08'))
+      .api('2026-10-08', bnmApi({ date: '2026-10-08', mid: '4.0899999999999999' }));
     t.llm.on('fx.extract@haiku', honestModel);
 
-    at(t, '2026-10-09', '12:00');
-    expect(await t.rt.tickJobs()).toEqual([]);
-    at(t, '2026-10-09', '12:31');
-    expect(await t.rt.tickJobs()).toEqual(['fx.daily']);
-    expect(await t.rt.tickJobs()).toEqual([]);
+    expect(await tick(t, '2026-10-08', '17:59')).toEqual([]);
+    expect(await tick(t, '2026-10-08', '18:00')).toEqual(['fx.daily']);
+    expect(recorded(t)).toEqual([live('2026-10-08', 4.09)]);
+    // Later attempts leave a live day alone.
+    expect(await tick(t, '2026-10-08', '18:30')).toEqual(['fx.retry@18:30']);
+    expect(await tick(t, '2026-10-08', '21:00')).toEqual(['fx.retry@21:00']);
+    expect(await tick(t, '2026-10-08', '23:59')).toEqual([]);
+    expect(recorded(t)).toHaveLength(1);
 
-    expect(recorded(t)).toEqual([live('2026-10-09', 4.213)]);
+    expect(t.http.calls.map((c) => [c.url, c.headers.accept])).toEqual([
+      [PAGE_URL, 'text/html,application/xhtml+xml'],
+      ['https://api.bnm.gov.my/public/exchange-rate/USD/date/2026-10-08?session=1700', BNM_API_ACCEPT],
+    ]);
     expect(t.llm.calls.map((c) => [c.model, c.purpose])).toEqual([['haiku', 'fx.extract']]);
-    expect([t.http.count(PAGE_URL), t.http.count(API_URL)]).toEqual([1, 1]);
     const fx = t.rt.services.get('fx');
-    expect(fx.rateFor('2026-10-09')).toEqual({ rate: 4.213, status: 'live', sourceDate: '2026-10-09' });
-    expect(fx.rateFor('2026-10-08')).toBeNull();
+    expect(fx.rateFor('2026-10-08')).toEqual({ rate: 4.09, status: 'live', sourceDate: '2026-10-08' });
+    expect(fx.rateFor('2026-10-07')).toBeNull();
 
-    const builder = t.user('builder');
-    const [dto] = await ratesApi(t, builder.headers, '2026-10-01', '2026-10-09');
+    const dto = await rateOn(t, '2026-10-08');
     expect(dto).toMatchObject({
-      rate: 4.213,
+      rate: 4.09,
+      bnmSession: '1700',
       flagged: false,
-      official: 4.213,
-      officialDate: '2026-10-09',
-      session: '12:00 noon',
+      official: 4.09,
+      officialDate: '2026-10-08',
+      notes: null,
       closed: false,
       revisions: 1,
       recordedBy: 'scheduler:fx',
       problems: [],
     });
-    expect(dto!.rawExcerpt).toContain('USD | 1 U.S. Dollar | 4.2080 | 4.2180 | 4.2130');
+    expect(dto.rawExcerpt).toContain('8 Oct 2026 | 4.0900');
     expect(t.rt.store.verifyChain().ok).toBe(true);
     await t.close();
   });
 
-  it('carries Friday forward over the weekend by design — no fetch, no LLM, not flagged', async () => {
+  it('carries Friday forward over the weekend by design — no fetch, no LLM, not flagged; the rate keeps its session', async () => {
     const t = await fxRuntime();
-    t.http.page(bnmPage({ date: '2026-10-09', mid: 4.213 })).api(bnmApi({ date: '2026-10-09', mid: 4.213 }));
+    t.http
+      .page(bnmPage({ date: '2026-10-09', mid: 4.0905 }))
+      .api('2026-10-09', bnmApi({ date: '2026-10-09', mid: 4.0905 }));
     t.llm.on('fx.extract@haiku', honestModel);
     await runDaily(t, '2026-10-09');
-    await runDaily(t, '2026-10-10');
+    for (const time of ['18:00', '18:30', '21:00']) await tick(t, '2026-10-10', time);
     await runDaily(t, '2026-10-11');
 
     const weekend = {
       pair: 'USD/MYR',
-      rate: 4.213,
+      rate: 4.0905,
       status: 'inherited',
       sourceDate: '2026-10-09',
       extractor: 'none',
       validation: 'not_applicable',
       reason: 'weekend_or_holiday',
+      session: '1700',
     };
     expect(recorded(t)).toEqual([
-      live('2026-10-09', 4.213),
+      live('2026-10-09', 4.0905),
       { date: '2026-10-10', ...weekend },
       { date: '2026-10-11', ...weekend },
     ]);
     expect(t.http.calls).toHaveLength(2);
     expect(t.llm.calls).toHaveLength(1);
     const rates = await ratesApi(t, t.user('builder').headers, '2026-10-09', '2026-10-11');
-    expect(rates.map((r) => r.flagged)).toEqual([false, false, false]);
+    expect(rates.map((r) => [r.flagged, r.bnmSession])).toEqual([
+      [false, '1700'],
+      [false, '1700'],
+      [false, '1700'],
+    ]);
     expect(t.rt.services.get('fx').rateFor('2026-10-12')).toEqual({
-      rate: 4.213,
+      rate: 4.0905,
       status: 'inherited',
       sourceDate: '2026-10-09',
     });
@@ -117,48 +153,113 @@ describe('daily FX run', () => {
 
   it('bootstraps a first run on a weekend from the last publication the page shows', async () => {
     const t = await fxRuntime();
-    t.http.page(bnmPage({ date: '2026-10-09', mid: 4.213 })).api(bnmApi({ date: '2026-10-09', mid: 4.213 }));
+    t.http.page(bnmPage({ date: '2026-10-09', mid: 4.0905 })).api('2026-10-10', notPublished());
     t.llm.on('fx.extract@haiku', honestModel);
     await runDaily(t, '2026-10-10');
     await runDaily(t, '2026-10-11');
-    expect(recorded(t).map((m) => [m.date, m.rate, m.status, m.sourceDate, m.extractor, m.reason])).toEqual([
-      ['2026-10-10', 4.213, 'inherited', '2026-10-09', 'haiku', 'weekend_or_holiday'],
-      ['2026-10-11', 4.213, 'inherited', '2026-10-09', 'none', 'weekend_or_holiday'],
+    expect(
+      recorded(t).map((m) => [m.date, m.rate, m.status, m.sourceDate, m.extractor, m.reason, m.session]),
+    ).toEqual([
+      ['2026-10-10', 4.0905, 'inherited', '2026-10-09', 'haiku', 'weekend_or_holiday', '1700'],
+      ['2026-10-11', 4.0905, 'inherited', '2026-10-09', 'none', 'weekend_or_holiday', '1700'],
     ]);
     expect(t.http.count(PAGE_URL)).toBe(1);
     await t.close();
   });
 
-  it('stamps a weekday holiday inherited from the older publication date the page still shows', async () => {
+  it('stamps a weekday public holiday only at the last attempt: page unchanged and BNM 404 (Malaysia Day 2026-09-16)', async () => {
     const t = await fxRuntime();
-    t.http.page(bnmPage({ date: '2026-10-09', mid: 4.213 })).api(bnmApi({ date: '2026-10-09', mid: 4.213 }));
+    t.http
+      .page(bnmPage({ date: '2026-09-15', mid: 4.08 }))
+      .api('2026-09-15', bnmApi({ date: '2026-09-15', mid: 4.08 }))
+      .api('2026-09-16', notPublished());
     t.llm.on('fx.extract@haiku', honestModel);
-    await runDaily(t, '2026-10-09');
-    await runDaily(t, '2026-10-12'); // Monday: BNM closed, page still shows Friday
+    await runDaily(t, '2026-09-15');
+
+    expect(await tick(t, '2026-09-16', '18:00')).toEqual(['fx.daily']);
+    expect(await tick(t, '2026-09-16', '18:30')).toEqual(['fx.retry@18:30']);
+    expect(recorded(t)).toHaveLength(1); // not published yet: nothing recorded while an attempt remains
+    expect(await tick(t, '2026-09-16', '21:00')).toEqual(['fx.retry@21:00']);
     expect(recorded(t).at(-1)).toEqual({
-      date: '2026-10-12',
+      date: '2026-09-16',
       pair: 'USD/MYR',
-      rate: 4.213,
+      rate: 4.08,
       status: 'inherited',
-      sourceDate: '2026-10-09',
+      sourceDate: '2026-09-15',
       extractor: 'haiku',
       validation: 'pass',
       reason: 'weekend_or_holiday',
+      session: '1700',
     });
-    const [mon] = await ratesApi(t, t.user('builder').headers, '2026-10-12', '2026-10-12');
-    expect(mon!.flagged).toBe(false);
+    expect(await rateOn(t, '2026-09-16')).toMatchObject({ flagged: false, revisions: 1, bnmSession: '1700' });
+    expect(t.http.count(apiUrl('2026-09-16'))).toBe(3);
     await t.close();
   });
 
-  it('records the scraped figure with validation pass when the BNM API is unavailable', async () => {
+  it('at 12:30 (the old run time) the page still shows yesterday: nothing is recorded, a retry follows, not a holiday', async () => {
     const t = await fxRuntime();
-    t.http.page(bnmPage({ date: '2026-10-09', mid: 4.213 })).api({ status: 502, body: 'Bad Gateway' });
+    t.http.page(octoberPage('2026-10-08')).api('2026-10-09', notPublished());
+    t.llm.on('fx.extract@haiku', honestModel);
+    at(t, '2026-10-09', '12:30');
+    const res = await t.json<FxRunResultDTO>('POST', '/api/fx/run', { headers: t.user('approver').headers });
+    expect(res).toEqual({
+      date: '2026-10-09',
+      outcome: 'awaiting_publication',
+      record: null,
+      discrepancyDecisionId: null,
+      problems: ['not_published'],
+    });
+    expect(recorded(t)).toEqual([]);
+    await t.close();
+  });
+
+  it('flags a page still showing yesterday at the last attempt when the API shows BNM has published today', async () => {
+    const t = await fxRuntime();
+    t.http
+      .page(octoberPage('2026-10-08'))
+      .api('2026-10-08', bnmApi({ date: '2026-10-08', mid: 4.09 }))
+      .api('2026-10-09', bnmApi({ date: '2026-10-09', mid: 4.0905 }));
+    t.llm.on('fx.extract@haiku', honestModel);
+    await runDaily(t, '2026-10-08');
+    at(t, '2026-10-09', '18:00');
+    expect(
+      await t.json<FxRunResultDTO>('POST', '/api/fx/run', { headers: t.user('approver').headers }),
+    ).toMatchObject({
+      outcome: 'awaiting_publication',
+      problems: ['page_not_updated'],
+    });
+    await runDaily(t, '2026-10-09');
+    expect(recorded(t)[1]).toEqual({
+      date: '2026-10-09',
+      pair: 'USD/MYR',
+      rate: 4.09,
+      status: 'inherited',
+      sourceDate: '2026-10-08',
+      extractor: 'none',
+      validation: 'not_applicable',
+      reason: 'source_unreadable',
+      session: '1700',
+    });
+    expect(await rateOn(t, '2026-10-09')).toMatchObject({
+      flagged: true,
+      problems: ['page_not_updated'],
+      official: 4.0905,
+      officialDate: '2026-10-09',
+    });
+    await t.close();
+  });
+
+  it('records the scraped figure unreconciled at the last attempt when the API cannot confirm it', async () => {
+    const t = await fxRuntime();
+    t.http
+      .page(bnmPage({ date: '2026-10-09', mid: 4.0905 }))
+      .api('2026-10-09', { status: 502, body: 'Bad Gateway' });
     t.llm.on('fx.extract@haiku', honestModel);
     await runDaily(t, '2026-10-09');
-    expect(recorded(t)).toEqual([live('2026-10-09', 4.213)]);
-    const [dto] = await ratesApi(t, t.user('builder').headers, '2026-10-09', '2026-10-09');
+    expect(recorded(t)).toEqual([live('2026-10-09', 4.0905)]);
+    const dto = await rateOn(t, '2026-10-09');
     expect(dto).toMatchObject({ official: null, flagged: false });
-    expect(dto!.notes).toMatch(/BNM Open API unavailable \(api_http_status: HTTP 502\)/);
+    expect(dto.notes).toMatch(/BNM Open API could not confirm it \(api_http_status: HTTP 502\)/);
     await t.close();
   });
 });
@@ -166,7 +267,7 @@ describe('daily FX run', () => {
 describe("carry forward yesterday's rate (flagged)", () => {
   it.each([
     ['a network error', new Error('getaddrinfo ENOTFOUND www.bnm.gov.my'), 'page_network_error'],
-    ['HTTP 503', { status: 503, body: 'Service Unavailable' }, 'page_http_status'],
+    ['HTTP 503', down, 'page_http_status'],
     ['an empty page', { status: 200, body: '' }, 'page_empty'],
     [
       'no rate-like text',
@@ -178,35 +279,37 @@ describe("carry forward yesterday's rate (flagged)", () => {
     async (_label, response, problem) => {
       const t = await fxRuntime();
       t.http
-        .page(bnmPage({ date: '2026-10-08', mid: 4.2 }), response)
-        .api(bnmApi({ date: '2026-10-08', mid: 4.2 }));
+        .page(octoberPage('2026-10-08'), response)
+        .api('2026-10-08', bnmApi({ date: '2026-10-08', mid: 4.09 }));
       t.llm.on('fx.extract@haiku', honestModel);
       await runDaily(t, '2026-10-08');
       await runDaily(t, '2026-10-09');
       expect(recorded(t)[1]).toEqual({
         date: '2026-10-09',
         pair: 'USD/MYR',
-        rate: 4.2,
+        rate: 4.09,
         status: 'inherited',
         sourceDate: '2026-10-08',
         extractor: 'none',
         validation: 'not_applicable',
         reason: 'source_unreadable',
+        session: '1700',
       });
       expect(t.llm.calls).toHaveLength(1);
-      expect(t.http.count(API_URL)).toBe(1);
-      const [fri] = await ratesApi(t, t.user('builder').headers, '2026-10-09', '2026-10-09');
-      expect(fri).toMatchObject({ flagged: true, problems: [problem] });
+      expect(t.http.apiCalls()).toHaveLength(1);
+      expect(await rateOn(t, '2026-10-09')).toMatchObject({ flagged: true, problems: [problem] });
       await t.close();
     },
   );
 
   it('escalates a Haiku figure that fails self-validation to Sonnet once, and records Sonnet’s valid figure', async () => {
     const t = await fxRuntime();
-    t.http.page(bnmPage({ date: '2026-10-09', mid: 4.213 })).api(bnmApi({ date: '2026-10-09', mid: 4.213 }));
+    t.http
+      .page(bnmPage({ date: '2026-10-09', mid: 4.0905 }))
+      .api('2026-10-09', bnmApi({ date: '2026-10-09', mid: 4.0905 }));
     t.llm.on('fx.extract@haiku', wrongModel(4.231)).on('fx.extract@sonnet', honestModel);
     await runDaily(t, '2026-10-09');
-    expect(recorded(t)).toEqual([live('2026-10-09', 4.213, 'sonnet')]);
+    expect(recorded(t)).toEqual([live('2026-10-09', 4.0905, 'sonnet')]);
     expect(t.llm.calls.map((c) => c.model)).toEqual(['haiku', 'sonnet']);
     expect(t.llm.calls[1]!.prompt).toContain('failed these automatic checks: rate_not_in_source');
     await t.close();
@@ -215,67 +318,115 @@ describe("carry forward yesterday's rate (flagged)", () => {
   it('stops after Sonnet also fails and carries yesterday forward — the bad figure is never written', async () => {
     const t = await fxRuntime();
     t.http
-      .page(bnmPage({ date: '2026-10-08', mid: 4.2 }), bnmPage({ date: '2026-10-09', mid: 4.213 }))
-      .api(bnmApi({ date: '2026-10-08', mid: 4.2 }));
+      .page(octoberPage('2026-10-08'), bnmPage({ date: '2026-10-09', mid: 4.0905, earlier: OCTOBER_1700 }))
+      .api('2026-10-08', bnmApi({ date: '2026-10-08', mid: 4.09 }));
     t.llm
       .on('fx.extract@haiku', honestModel)
-      .on('fx.extract@haiku', wrongModel(4.231))
-      .on('fx.extract@sonnet', wrongModel(4.213, '2026-10-12'));
+      .on('fx.extract@haiku', wrongModel(4.0951))
+      .on('fx.extract@sonnet', wrongModel(4.0905, '2026-10-12'));
     await runDaily(t, '2026-10-08');
     await runDaily(t, '2026-10-09');
     expect(recorded(t)[1]).toEqual({
       date: '2026-10-09',
       pair: 'USD/MYR',
-      rate: 4.2,
+      rate: 4.09,
       status: 'inherited',
       sourceDate: '2026-10-08',
       extractor: 'sonnet',
       validation: 'fail',
       reason: 'validation_failed',
+      session: '1700',
     });
     expect(t.llm.calls.map((c) => c.model)).toEqual(['haiku', 'haiku', 'sonnet']);
-    expect(t.http.count(API_URL)).toBe(1);
-    const [fri] = await ratesApi(t, t.user('builder').headers, '2026-10-09', '2026-10-09');
-    expect(fri).toMatchObject({
+    expect(t.http.apiCalls()).toHaveLength(1);
+    expect(await rateOn(t, '2026-10-09')).toMatchObject({
       flagged: true,
       problems: ['haiku:rate_not_in_source', 'sonnet:date_in_future'],
     });
-    expect(recorded(t).some((m) => m.rate === 4.231 || m.date === '2026-10-12')).toBe(false);
-    await t.close();
-  });
-
-  it('rejects out-of-band figures even when printed on the page (or injected into it); with nothing to carry forward, nothing is written', async () => {
-    const t = await fxRuntime();
-    t.http.page(bnmPage({ date: '2026-10-09', mid: 42.13 }));
-    t.llm.on('fx.extract@haiku', honestModel).on('fx.extract@sonnet', wrongModel(9.9999));
-    const notes = notifications(t);
-    at(t, '2026-10-09');
-    const res = await t.json<FxRunResultDTO>('POST', '/api/fx/run', { headers: t.user('approver').headers });
-    expect(res).toMatchObject({
-      date: '2026-10-09',
-      outcome: 'no_rate',
-      record: null,
-      problems: ['haiku:out_of_band', 'sonnet:out_of_band'],
-    });
-    expect(recorded(t)).toEqual([]);
-    expect(t.http.count(API_URL)).toBe(0);
-    expect(notes).toContainEqual(
-      expect.objectContaining({ kind: 'fx.alert', severity: 'danger', refs: { date: '2026-10-09' } }),
-    );
+    expect(recorded(t).some((m) => m.rate === 4.0951 || m.date === '2026-10-12')).toBe(false);
     await t.close();
   });
 });
 
-describe('reconciliation with the BNM published figure', () => {
+describe('BNM Open API cross-check', () => {
+  it('never reconciles against the session 1130 counter rates (middle_rate null) served when no session is sent', async () => {
+    const t = await fxRuntime();
+    t.http.page(octoberPage('2026-10-08')).api('2026-10-08', observed('api-USD-no-session-param.json'));
+    t.llm.on('fx.extract@haiku', honestModel);
+
+    expect(await tick(t, '2026-10-08', '18:00')).toEqual(['fx.daily']);
+    at(t, '2026-10-08', '18:10');
+    expect(
+      await t.json<FxRunResultDTO>('POST', '/api/fx/run', { headers: t.user('approver').headers }),
+    ).toMatchObject({
+      outcome: 'awaiting_corroboration',
+      record: null,
+      problems: ['api_wrong_session'],
+    });
+    await tick(t, '2026-10-08', '18:30');
+    expect(recorded(t)).toEqual([]);
+    await tick(t, '2026-10-08', '21:00');
+
+    expect(recorded(t)).toEqual([live('2026-10-08', 4.09)]);
+    expect(metas(t, 'fx.discrepancy_raised')).toEqual([]);
+    expect(t.http.count(PAGE_URL)).toBe(4); // one read per attempt, never a mismatch re-fetch
+    const dto = await rateOn(t, '2026-10-08');
+    expect(dto).toMatchObject({ official: null, flagged: false, bnmSession: '1700' });
+    expect(dto.notes).toMatch(/api_wrong_session: session 1130, expected 1700/);
+    await t.close();
+  });
+
+  it('treats the page 4.0900 against an API 4.0870 as a discrepancy (compared at 4 dp; the old 0.005 tolerance hid it)', async () => {
+    const t = await fxRuntime();
+    t.http
+      .page(octoberPage('2026-10-07'), octoberPage('2026-10-08'))
+      .api('2026-10-07', bnmApi({ date: '2026-10-07', mid: '4.0880000000000001' }))
+      .api('2026-10-08', bnmApi({ date: '2026-10-08', mid: 4.087 }));
+    t.llm.on('fx.extract@haiku', honestModel);
+    await runDaily(t, '2026-10-07');
+    await runDaily(t, '2026-10-08');
+
+    expect([t.http.count(PAGE_URL), t.http.count(apiUrl('2026-10-08'))]).toEqual([3, 2]);
+    const [raised] = metas(t, 'fx.discrepancy_raised');
+    expect(raised).toEqual({
+      date: '2026-10-08',
+      scraped: 4.09,
+      official: 4.087,
+      decisionId: expect.any(String),
+      scrapedDate: '2026-10-08',
+      officialDate: '2026-10-08',
+      extractor: 'haiku',
+      session: '1700',
+    });
+    expect(t.decisions!.get(raised!.decisionId)!.context).toContain(
+      'At 4 dp they differ by 0.0030, more than the reconcile tolerance 0.0001.',
+    );
+    expect(recorded(t)).toEqual([
+      live('2026-10-07', 4.088),
+      {
+        date: '2026-10-08',
+        pair: 'USD/MYR',
+        rate: 4.088,
+        status: 'inherited',
+        sourceDate: '2026-10-07',
+        extractor: 'haiku',
+        validation: 'fail',
+        reason: 'discrepancy_pending',
+        session: '1700',
+      },
+    ]);
+    await t.close();
+  });
+
   it('re-fetches once on a mismatch and records the figure that then reconciles', async () => {
     const t = await fxRuntime();
     t.http
-      .page(bnmPage({ date: '2026-10-09', mid: 4.1 }), bnmPage({ date: '2026-10-09', mid: 4.15 }))
-      .api(bnmApi({ date: '2026-10-09', mid: 4.15 }));
+      .page(bnmPage({ date: '2026-10-09', mid: 4.095 }), bnmPage({ date: '2026-10-09', mid: 4.0905 }))
+      .api('2026-10-09', bnmApi({ date: '2026-10-09', mid: 4.0905 }));
     t.llm.on('fx.extract@haiku', honestModel);
     await runDaily(t, '2026-10-09');
-    expect(recorded(t)).toEqual([live('2026-10-09', 4.15)]);
-    expect([t.http.count(PAGE_URL), t.http.count(API_URL)]).toEqual([2, 2]);
+    expect(recorded(t)).toEqual([live('2026-10-09', 4.0905)]);
+    expect([t.http.count(PAGE_URL), t.http.count(apiUrl('2026-10-09'))]).toEqual([2, 2]);
     expect(metas(t, 'fx.discrepancy_raised')).toEqual([]);
     expect(t.decisions!.list()).toEqual([]);
     await t.close();
@@ -285,11 +436,12 @@ describe('reconciliation with the BNM published figure', () => {
     const t = await fxRuntime();
     t.http
       .page(bnmPage({ date: '2026-10-08', mid: 4.12 }), bnmPage({ date: '2026-10-09', mid: 4.1 }))
-      .api(bnmApi({ date: '2026-10-08', mid: 4.12 }), bnmApi({ date: '2026-10-09', mid: 4.15 }));
+      .api('2026-10-08', bnmApi({ date: '2026-10-08', mid: 4.12 }))
+      .api('2026-10-09', bnmApi({ date: '2026-10-09', mid: 4.15 }));
     t.llm.on('fx.extract@haiku', honestModel);
     await runDaily(t, '2026-10-08');
     await runDaily(t, '2026-10-09');
-    expect([t.http.count(PAGE_URL), t.http.count(API_URL)]).toEqual([3, 3]);
+    expect([t.http.count(PAGE_URL), t.http.count(apiUrl('2026-10-09'))]).toEqual([3, 2]);
 
     const [raised] = metas(t, 'fx.discrepancy_raised');
     expect(raised).toEqual({
@@ -300,6 +452,7 @@ describe('reconciliation with the BNM published figure', () => {
       scrapedDate: '2026-10-09',
       officialDate: '2026-10-09',
       extractor: 'haiku',
+      session: '1700',
     });
     const card = t.decisions!.get(raised!.decisionId)!;
     expect(card).toMatchObject({
@@ -312,7 +465,9 @@ describe('reconciliation with the BNM published figure', () => {
     });
     expect(card.options.map((o) => o.id)).toEqual(['accept_official', 'accept_scraped', 'manual']);
     expect(card.context).toContain('Original confirmed figure: 4.1000');
-    expect(card.context).toContain('Conflicting figure: 4.1500 from the BNM Open API');
+    expect(card.context).toContain(
+      'Conflicting figure: 4.1500 from the BNM Open API for 2026-10-09, session 1700.',
+    );
     expect(recorded(t)[1]).toEqual({
       date: '2026-10-09',
       pair: 'USD/MYR',
@@ -322,6 +477,7 @@ describe('reconciliation with the BNM published figure', () => {
       extractor: 'haiku',
       validation: 'fail',
       reason: 'discrepancy_pending',
+      session: '1700',
     });
 
     const approver = t.user('approver');
@@ -331,6 +487,7 @@ describe('reconciliation with the BNM published figure', () => {
       date: '2026-10-09',
       scraped: 4.1,
       official: 4.15,
+      bnmSession: '1700',
       status: 'open',
       decisionStatus: 'open',
     });
@@ -368,6 +525,7 @@ describe('reconciliation with the BNM published figure', () => {
       extractor: 'api',
       validation: 'pass',
       reason: 'manual_override',
+      session: '1700',
     });
     expect(t.rt.services.get('fx').rateFor('2026-10-09')).toEqual({
       rate: 4.15,
@@ -382,7 +540,9 @@ describe('reconciliation with the BNM published figure', () => {
 
   it('lets the approver enter the rate manually: the override resolves the open discrepancy decision', async () => {
     const t = await fxRuntime();
-    t.http.page(bnmPage({ date: '2026-10-09', mid: 4.1 })).api(bnmApi({ date: '2026-10-09', mid: 4.15 }));
+    t.http
+      .page(bnmPage({ date: '2026-10-09', mid: 4.1 }))
+      .api('2026-10-09', bnmApi({ date: '2026-10-09', mid: 4.15 }));
     t.llm.on('fx.extract@haiku', honestModel);
     await runDaily(t, '2026-10-09'); // first run ever: nothing to carry forward while it is open
     const [raised] = metas(t, 'fx.discrepancy_raised');
@@ -391,7 +551,7 @@ describe('reconciliation with the BNM published figure', () => {
     const approver = t.user('approver');
     const dto = await t.json<FxRateDTO>('POST', '/api/fx/rates/2026-10-09/override', {
       headers: approver.headers,
-      body: { rate: 4.1475, reason: 'Confirmed against the BNM 12:00 noon table' },
+      body: { rate: 4.1475, reason: 'Confirmed against the BNM 1700 table' },
     });
     expect(dto).toMatchObject({
       date: '2026-10-09',
@@ -400,13 +560,14 @@ describe('reconciliation with the BNM published figure', () => {
       extractor: 'manual',
       validation: 'not_applicable',
       reason: 'manual_override',
+      bnmSession: '1700',
       recordedBy: approver.user.id,
-      notes: 'Confirmed against the BNM 12:00 noon table',
+      notes: 'Confirmed against the BNM 1700 table',
     });
     expect(t.decisions!.get(raised!.decisionId)!.resolution).toMatchObject({
       optionId: 'manual',
       resolvedBy: approver.user.id,
-      comment: 'Confirmed against the BNM 12:00 noon table',
+      comment: 'Confirmed against the BNM 1700 table',
     });
     await t.drain();
     expect(metas(t, 'fx.discrepancy_resolved')).toEqual([
@@ -423,41 +584,358 @@ describe('reconciliation with the BNM published figure', () => {
   });
 });
 
-describe('carry-forward alert', () => {
-  it('alerts once per streak after N consecutive carried-forward weekdays; weekends do not count', async () => {
-    const t = await fxRuntime({ carryForwardAlertDays: 3 });
-    const down = { status: 503, body: 'Service Unavailable' };
+describe('sanity bounds', () => {
+  it('rejects out-of-band figures even when printed on the page (or injected into it); with nothing to carry forward, nothing is written', async () => {
+    const t = await fxRuntime();
+    t.http.page(bnmPage({ date: '2026-10-09', mid: 42.13 }));
+    t.llm.on('fx.extract@haiku', honestModel).on('fx.extract@sonnet', wrongModel(9.9999));
+    const notes = notifications(t);
+    at(t, '2026-10-09');
+    const res = await t.json<FxRunResultDTO>('POST', '/api/fx/run', { headers: t.user('approver').headers });
+    expect(res).toMatchObject({
+      date: '2026-10-09',
+      outcome: 'no_rate',
+      record: null,
+      problems: ['haiku:out_of_band', 'sonnet:out_of_band'],
+    });
+    expect(recorded(t)).toEqual([]);
+    expect(t.http.apiCalls()).toEqual([]);
+    expect(notes).toContainEqual(
+      expect.objectContaining({ kind: 'fx.alert', severity: 'danger', refs: { date: '2026-10-09' } }),
+    );
+    await t.close();
+  });
+
+  it('rejects a day-over-day move above 3% outright, whatever the API says', async () => {
+    const t = await fxRuntime();
     t.http
-      .page(bnmPage({ date: '2026-10-08', mid: 4.2 }), down)
-      .api(bnmApi({ date: '2026-10-08', mid: 4.2 }));
+      .page(octoberPage('2026-10-08'), bnmPage({ date: '2026-10-09', mid: 4.23 }))
+      .api('2026-10-08', bnmApi({ date: '2026-10-08', mid: 4.09 }))
+      .api('2026-10-09', bnmApi({ date: '2026-10-09', mid: 4.23 }));
+    t.llm.on('fx.extract@haiku', honestModel).on('fx.extract@sonnet', honestModel);
+    await runDaily(t, '2026-10-08');
+    await runDaily(t, '2026-10-09');
+    expect(recorded(t)[1]).toEqual({
+      date: '2026-10-09',
+      pair: 'USD/MYR',
+      rate: 4.09,
+      status: 'inherited',
+      sourceDate: '2026-10-08',
+      extractor: 'sonnet',
+      validation: 'fail',
+      reason: 'validation_failed',
+      session: '1700',
+    });
+    expect(await rateOn(t, '2026-10-09')).toMatchObject({
+      flagged: true,
+      problems: ['haiku:daily_change_exceeded', 'sonnet:daily_change_exceeded'],
+    });
+    expect(t.http.count(apiUrl('2026-10-09'))).toBe(0);
+    await t.close();
+  });
+
+  it('accepts a move above the 1.25% soft flag when the API agrees exactly at 4 dp', async () => {
+    const t = await fxRuntime();
+    t.http
+      .page(octoberPage('2026-10-08'), bnmPage({ date: '2026-10-09', mid: 4.15 }))
+      .api('2026-10-08', bnmApi({ date: '2026-10-08', mid: 4.09 }))
+      .api('2026-10-09', bnmApi({ date: '2026-10-09', mid: '4.1500000000000004' }));
+    t.llm.on('fx.extract@haiku', honestModel);
+    await runDaily(t, '2026-10-08');
+    await runDaily(t, '2026-10-09');
+    expect(recorded(t)[1]).toEqual(live('2026-10-09', 4.15));
+    const dto = await rateOn(t, '2026-10-09');
+    expect(dto).toMatchObject({ official: 4.15, flagged: false });
+    expect(dto.notes).toBe(
+      'Day-over-day move 1.47% is above the 1.25% soft flag; the BNM Open API agrees exactly at 4 dp',
+    );
+    await t.close();
+  });
+
+  it('treats a soft-flagged move the API does not match exactly as a discrepancy, though one unit in the 4th decimal is within the tolerance', async () => {
+    const t = await fxRuntime();
+    t.http
+      .page(octoberPage('2026-10-08'), bnmPage({ date: '2026-10-09', mid: 4.15 }))
+      .api('2026-10-08', bnmApi({ date: '2026-10-08', mid: 4.09 }))
+      .api('2026-10-09', bnmApi({ date: '2026-10-09', mid: 4.1501 }));
+    t.llm.on('fx.extract@haiku', honestModel);
+    await runDaily(t, '2026-10-08');
+    await runDaily(t, '2026-10-09');
+    const [raised] = metas(t, 'fx.discrepancy_raised');
+    expect(raised).toMatchObject({ date: '2026-10-09', scraped: 4.15, official: 4.1501, session: '1700' });
+    expect(t.decisions!.get(raised!.decisionId)!.context).toContain(
+      'The day-over-day move 1.47% is above the 1.25% soft flag, so the figures must agree exactly at 4 dp; they differ by 0.0001.',
+    );
+    expect(recorded(t)[1]).toMatchObject({ rate: 4.09, status: 'inherited', reason: 'discrepancy_pending' });
+    expect(t.http.count(PAGE_URL)).toBe(3);
+    await t.close();
+  });
+
+  it('never accepts a soft-flagged move on the page alone: waits for the retries, then carries forward (flagged) for a manual check', async () => {
+    const t = await fxRuntime();
+    t.http
+      .page(octoberPage('2026-10-08'), bnmPage({ date: '2026-10-09', mid: 4.15 }))
+      .api('2026-10-08', bnmApi({ date: '2026-10-08', mid: 4.09 }))
+      .api('2026-10-09', notPublished());
+    t.llm.on('fx.extract@haiku', honestModel);
+    const notes = notifications(t);
+    await runDaily(t, '2026-10-08');
+
+    expect(await tick(t, '2026-10-09', '18:00')).toEqual(['fx.daily']);
+    expect(await tick(t, '2026-10-09', '18:30')).toEqual(['fx.retry@18:30']);
+    expect(recorded(t)).toHaveLength(1);
+    expect(await tick(t, '2026-10-09', '21:00')).toEqual(['fx.retry@21:00']);
+    expect(recorded(t)[1]).toEqual({
+      date: '2026-10-09',
+      pair: 'USD/MYR',
+      rate: 4.09,
+      status: 'inherited',
+      sourceDate: '2026-10-08',
+      extractor: 'haiku',
+      validation: 'fail',
+      reason: 'validation_failed',
+      session: '1700',
+    });
+    expect(await rateOn(t, '2026-10-09')).toMatchObject({
+      flagged: true,
+      problems: ['soft_flag_unconfirmed', 'api_not_published'],
+    });
+    expect(metas(t, 'fx.discrepancy_raised')).toEqual([]);
+    expect(notes).toContainEqual(
+      expect.objectContaining({
+        kind: 'fx.alert',
+        severity: 'warn',
+        refs: { date: '2026-10-09' },
+        title: expect.stringMatching(/a 1\.47% move on the BNM page could not be confirmed/),
+      }),
+    );
+    await t.close();
+  });
+});
+
+describe('schedule: 18:00 MYT, retries at 18:30 and 21:00', () => {
+  it('waits while the 1700 rate is not published yet and records it at the retry that finds it', async () => {
+    const t = await fxRuntime();
+    const friday = bnmPage({ date: '2026-10-09', mid: 4.0905, earlier: OCTOBER_1700 });
+    t.http
+      .page(octoberPage('2026-10-08'), octoberPage('2026-10-08'), friday)
+      .api('2026-10-08', bnmApi({ date: '2026-10-08', mid: 4.09 }))
+      .api('2026-10-09', notPublished(), bnmApi({ date: '2026-10-09', mid: 4.0905 }));
+    t.llm.on('fx.extract@haiku', honestModel);
+    await runDaily(t, '2026-10-08');
+
+    expect(await tick(t, '2026-10-09', '18:00')).toEqual(['fx.daily']);
+    expect(recorded(t)).toHaveLength(1);
+    expect(await tick(t, '2026-10-09', '18:30')).toEqual(['fx.retry@18:30']);
+    expect(recorded(t)[1]).toEqual(live('2026-10-09', 4.0905));
+    expect(await tick(t, '2026-10-09', '21:00')).toEqual(['fx.retry@21:00']);
+    expect(await rateOn(t, '2026-10-09')).toMatchObject({ revisions: 1, official: 4.0905 });
+    expect([t.http.count(PAGE_URL), t.http.count(apiUrl('2026-10-09'))]).toEqual([3, 2]);
+    await t.close();
+  });
+
+  it('retries an unreadable page; the live rate then replaces the flagged carry-forward, and no alert fires before the last attempt', async () => {
+    const t = await fxRuntime({ carryForwardAlertWeekdays: 1 });
+    t.http
+      .page(octoberPage('2026-10-08'), down, bnmPage({ date: '2026-10-09', mid: 4.0905 }))
+      .api('2026-10-08', bnmApi({ date: '2026-10-08', mid: 4.09 }))
+      .api('2026-10-09', bnmApi({ date: '2026-10-09', mid: 4.0905 }));
+    t.llm.on('fx.extract@haiku', honestModel);
+    await runDaily(t, '2026-10-08');
+
+    await tick(t, '2026-10-09', '18:00');
+    expect(recorded(t)[1]).toMatchObject({
+      status: 'inherited',
+      reason: 'source_unreadable',
+      session: '1700',
+    });
+    expect(await rateOn(t, '2026-10-09')).toMatchObject({ flagged: true, problems: ['page_http_status'] });
+    expect(metas(t, 'fx.carry_forward_alert')).toEqual([]);
+    await tick(t, '2026-10-09', '18:30');
+    expect(recorded(t)[2]).toEqual(live('2026-10-09', 4.0905));
+    expect(await rateOn(t, '2026-10-09')).toMatchObject({ flagged: false, revisions: 2 });
+    expect(t.http.count(apiUrl('2026-10-09'))).toBe(1);
+    expect(metas(t, 'fx.carry_forward_alert')).toEqual([]);
+    await t.close();
+  });
+
+  it('does not retry a day whose extraction failed validation (Sonnet was the last escalation); the approver can re-run it', async () => {
+    const t = await fxRuntime();
+    t.http
+      .page(octoberPage('2026-10-08'), bnmPage({ date: '2026-10-09', mid: 4.0905 }))
+      .api('2026-10-08', bnmApi({ date: '2026-10-08', mid: 4.09 }))
+      .api('2026-10-09', bnmApi({ date: '2026-10-09', mid: 4.0905 }));
+    t.llm
+      .on('fx.extract@haiku', honestModel)
+      .on('fx.extract@haiku', wrongModel(4.0951))
+      .on('fx.extract@haiku', honestModel)
+      .on('fx.extract@sonnet', wrongModel(4.0951));
+    await runDaily(t, '2026-10-08');
+
+    await tick(t, '2026-10-09', '18:00');
+    expect(recorded(t)[1]).toMatchObject({ reason: 'validation_failed', validation: 'fail' });
+    await tick(t, '2026-10-09', '18:30');
+    await tick(t, '2026-10-09', '21:00');
+    expect(t.llm.calls.map((c) => c.model)).toEqual(['haiku', 'haiku', 'sonnet']);
+    expect(recorded(t)).toHaveLength(2);
+
+    at(t, '2026-10-09', '21:30');
+    const res = await t.json<FxRunResultDTO>('POST', '/api/fx/run', { headers: t.user('approver').headers });
+    expect(res).toMatchObject({ outcome: 'live', record: { rate: 4.0905, revisions: 2 } });
+    expect(t.llm.calls.map((c) => c.model)).toEqual(['haiku', 'haiku', 'sonnet', 'haiku']);
+    await t.close();
+  });
+
+  it('with session 1200 (if mandated) runs from 13:00 on the API figure for that session, without a page cross-check', async () => {
+    const t = await fxRuntime({
+      session: '1200',
+      runAtLocalTime: '13:00',
+      retryAtLocalTimes: ['13:30', '15:00'],
+    });
+    t.http
+      .apiSession('1200', '2026-10-07', notPublished(), observed('api-USD-date-2026-10-07-session-1200.json'))
+      .apiSession('1200', '2026-10-08', notPublished());
+
+    expect(await tick(t, '2026-10-07', '12:59')).toEqual([]);
+    expect(await tick(t, '2026-10-07', '13:00')).toEqual(['fx.daily']);
+    expect(recorded(t)).toEqual([]);
+    expect(await tick(t, '2026-10-07', '13:30')).toEqual(['fx.retry@13:30']);
+    expect(recorded(t)).toEqual([live('2026-10-07', 4.0862, 'api', '1200')]);
+    expect(await tick(t, '2026-10-07', '15:00')).toEqual(['fx.retry@15:00']);
+
+    // A day BNM never publishes for 1200 is a holiday at the last attempt; the carried rate keeps session 1200.
+    for (const time of ['13:00', '13:30', '15:00']) await tick(t, '2026-10-08', time);
+    expect(recorded(t)[1]).toEqual({
+      date: '2026-10-08',
+      pair: 'USD/MYR',
+      rate: 4.0862,
+      status: 'inherited',
+      sourceDate: '2026-10-07',
+      extractor: 'none',
+      validation: 'not_applicable',
+      reason: 'weekend_or_holiday',
+      session: '1200',
+    });
+
+    expect(t.http.count(PAGE_URL)).toBe(0);
+    expect(t.llm.calls).toEqual([]);
+    expect(t.http.apiCalls().map((c) => c.url)).toEqual([
+      ...Array(2).fill('https://api.bnm.gov.my/public/exchange-rate/USD/date/2026-10-07?session=1200'),
+      ...Array(3).fill('https://api.bnm.gov.my/public/exchange-rate/USD/date/2026-10-08?session=1200'),
+    ]);
+    const dto = await rateOn(t, '2026-10-07');
+    expect(dto).toMatchObject({ bnmSession: '1200', official: 4.0862, flagged: false });
+    expect(dto.notes).toMatch(/not cross-checked with the page, whose default view is session 1700/);
+    expect(
+      await t.json<FxStatusDTO>('GET', '/api/fx/status', { headers: t.user('builder').headers }),
+    ).toMatchObject({
+      session: '1200',
+      runAtLocalTime: '13:00',
+      retryAtLocalTimes: ['13:30', '15:00'],
+    });
+    await t.close();
+  });
+});
+
+describe('session 1200 (API figure only)', () => {
+  it('carries forward (flagged) when the API is unreadable or its figure fails the sanity bounds', async () => {
+    const t = await fxRuntime({
+      session: '1200',
+      runAtLocalTime: '13:00',
+      retryAtLocalTimes: ['13:30', '15:00'],
+    });
+    t.http
+      .apiSession('1200', '2026-10-07', observed('api-USD-date-2026-10-07-session-1200.json'))
+      .apiSession('1200', '2026-10-08', { status: 502, body: 'Bad Gateway' })
+      .apiSession('1200', '2026-10-09', bnmApi({ date: '2026-10-09', mid: 4.25, session: '1200' }))
+      .apiSession('1200', '2026-10-12', bnmApi({ date: '2026-10-12', mid: 42.5, session: '1200' }));
+    for (const d of ['2026-10-07', '2026-10-08', '2026-10-09', '2026-10-12']) await runDaily(t, d);
+    expect(
+      recorded(t).map((m) => [m.date, m.rate, m.status, m.extractor, m.validation, m.reason, m.session]),
+    ).toEqual([
+      ['2026-10-07', 4.0862, 'live', 'api', 'pass', 'fetched', '1200'],
+      ['2026-10-08', 4.0862, 'inherited', 'none', 'not_applicable', 'source_unreadable', '1200'],
+      ['2026-10-09', 4.0862, 'inherited', 'api', 'fail', 'validation_failed', '1200'],
+      ['2026-10-12', 4.0862, 'inherited', 'api', 'fail', 'validation_failed', '1200'],
+    ]);
+    const rates = await ratesApi(t, t.user('builder').headers, '2026-10-08', '2026-10-12');
+    expect(rates.map((r) => [r.date, r.flagged, r.problems])).toEqual([
+      ['2026-10-08', true, ['api_http_status']],
+      ['2026-10-09', true, ['daily_change_exceeded']],
+      ['2026-10-12', true, ['api_out_of_band']],
+    ]);
+    expect(t.http.count(PAGE_URL)).toBe(0);
+    await t.close();
+  });
+});
+
+describe('carry-forward alert', () => {
+  it('counts weekdays without a live rate: a weekend plus two holidays (Hari Raya 2025) does not alert, a third weekday does', async () => {
+    const t = await fxRuntime();
+    const friday = bnmPage({ date: '2025-03-28', mid: 4.433 });
+    t.http
+      .page(friday, friday, friday, down)
+      .api('2025-03-28', bnmApi({ date: '2025-03-28', mid: 4.433 }))
+      .api('2025-03-31', notPublished())
+      .api('2025-04-01', notPublished());
     t.llm.on('fx.extract@haiku', honestModel);
     const notes = notifications(t);
     const alerts = () => metas(t, 'fx.carry_forward_alert');
 
-    for (const d of ['2026-10-08', '2026-10-09', '2026-10-10', '2026-10-11', '2026-10-12'])
-      await runDaily(t, d); // Thu live, Fri, (Sat, Sun), Mon
+    // Four calendar days without a publication (Sat 29 – Tue 1 Apr), but only two weekdays.
+    for (const d of ['2025-03-28', '2025-03-29', '2025-03-30', '2025-03-31', '2025-04-01'])
+      await runDaily(t, d);
+    expect(recorded(t).map((m) => [m.date, m.status, m.reason])).toEqual([
+      ['2025-03-28', 'live', 'fetched'],
+      ['2025-03-29', 'inherited', 'weekend_or_holiday'],
+      ['2025-03-30', 'inherited', 'weekend_or_holiday'],
+      ['2025-03-31', 'inherited', 'weekend_or_holiday'],
+      ['2025-04-01', 'inherited', 'weekend_or_holiday'],
+    ]);
     expect(alerts()).toEqual([]);
-    await runDaily(t, '2026-10-13'); // Tue: 3rd carried-forward weekday
-    expect(alerts()).toEqual([{ consecutiveDays: 3, since: '2026-10-09', date: '2026-10-13' }]);
+    const builder = t.user('builder');
+    expect(
+      (await t.json<FxStatusDTO>('GET', '/api/fx/status', { headers: builder.headers })).carryForward,
+    ).toEqual({
+      days: 2,
+      since: '2025-03-31',
+      alertAfterDays: 3,
+      alerted: false,
+    });
+
+    await runDaily(t, '2025-04-02'); // the page is down: a third weekday without a live rate
+    expect(alerts()).toEqual([{ consecutiveDays: 3, since: '2025-03-31', date: '2025-04-02' }]);
     expect(notes.filter((n) => n.kind === 'fx.alert')).toEqual([
       expect.objectContaining({
         severity: 'warn',
         audience: ['approver', 'builder'],
-        refs: { since: '2026-10-09', date: '2026-10-13' },
+        refs: { since: '2025-03-31', date: '2025-04-02' },
         title: expect.stringMatching(/3 weekdays in a row/),
       }),
     ]);
+    await t.close();
+  });
+
+  it('alerts once per streak and counts weekdays with no record at all (aocd down)', async () => {
+    const t = await fxRuntime();
+    t.http.page(octoberPage('2026-10-08'), down).api('2026-10-08', bnmApi({ date: '2026-10-08', mid: 4.09 }));
+    t.llm.on('fx.extract@haiku', honestModel);
+    const alerts = () => metas(t, 'fx.carry_forward_alert');
+
+    await runDaily(t, '2026-10-08'); // Thu live; aocd is down Fri 9 and Mon 12
+    await runDaily(t, '2026-10-13'); // Tue: page down — Fri, Mon, Tue have no live rate
+    expect(alerts()).toEqual([{ consecutiveDays: 3, since: '2026-10-09', date: '2026-10-13' }]);
     await runDaily(t, '2026-10-14'); // Wed: same streak, no second alert
     expect(alerts()).toHaveLength(1);
     const status = await t.json<FxStatusDTO>('GET', '/api/fx/status', { headers: t.user('builder').headers });
     expect(status.carryForward).toEqual({ days: 4, since: '2026-10-09', alertAfterDays: 3, alerted: true });
-    expect(status.lastLive).toEqual({ date: '2026-10-08', rate: 4.2 });
+    expect(status.lastLive).toEqual({ date: '2026-10-08', rate: 4.09 });
 
     t.http
       .clear()
-      .page(bnmPage({ date: '2026-10-15', mid: 4.21 }), down)
-      .api(bnmApi({ date: '2026-10-15', mid: 4.21 }));
-    for (const d of ['2026-10-15', '2026-10-16', '2026-10-19']) await runDaily(t, d); // live Thu ends the streak; Fri, Mon carried
+      .page(bnmPage({ date: '2026-10-15', mid: 4.0912 }), down)
+      .api('2026-10-15', bnmApi({ date: '2026-10-15', mid: 4.0912 }));
+    for (const d of ['2026-10-15', '2026-10-16', '2026-10-19']) await runDaily(t, d); // live Thu ends the streak
     expect(alerts()).toHaveLength(1);
     await runDaily(t, '2026-10-20');
     expect(alerts().map((a) => a.since)).toEqual(['2026-10-09', '2026-10-16']);
@@ -470,7 +948,8 @@ describe('forward-only rates', () => {
     const t = await fxRuntime();
     t.http
       .page(bnmPage({ date: '2026-10-08', mid: 4.2 }), bnmPage({ date: '2026-10-09', mid: 4.213 }))
-      .api(bnmApi({ date: '2026-10-08', mid: 4.2 }), bnmApi({ date: '2026-10-09', mid: 4.213 }));
+      .api('2026-10-08', bnmApi({ date: '2026-10-08', mid: 4.2 }))
+      .api('2026-10-09', bnmApi({ date: '2026-10-09', mid: 4.213 }));
     t.llm.on('fx.extract@haiku', honestModel);
     await runDaily(t, '2026-10-08');
     at(t, '2026-10-09', '00:15');
@@ -502,7 +981,7 @@ describe('forward-only rates', () => {
     expect((await override('2026-10-10', { rate: 4.22, reason: 'tomorrow' })).status).toBe(422);
     expect((await override('2026-10-09', { rate: 4.22 })).status).toBe(422);
 
-    const res = await override('2026-10-09', { rate: 4.2205, reason: 'BNM revised the noon fixing' });
+    const res = await override('2026-10-09', { rate: 4.2205, reason: 'BNM revised the 1700 fixing' });
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({
       date: '2026-10-09',
@@ -510,6 +989,7 @@ describe('forward-only rates', () => {
       status: 'live',
       extractor: 'manual',
       reason: 'manual_override',
+      bnmSession: '1700',
       revisions: 2,
       recordedBy: approver.user.id,
       closed: false,
@@ -530,11 +1010,9 @@ describe('forward-only rates', () => {
         bnmPage({ date: '2026-10-12', mid: 4.25 }),
         bnmPage({ date: '2026-10-13', mid: 4.2 }),
       )
-      .api(
-        bnmApi({ date: '2026-10-09', mid: 4.213 }),
-        bnmApi({ date: '2026-10-12', mid: 4.25 }),
-        bnmApi({ date: '2026-10-13', mid: 4.24 }),
-      );
+      .api('2026-10-09', bnmApi({ date: '2026-10-09', mid: 4.213 }))
+      .api('2026-10-12', bnmApi({ date: '2026-10-12', mid: 4.25 }))
+      .api('2026-10-13', bnmApi({ date: '2026-10-13', mid: 4.24 }));
     t.llm.on('fx.extract@haiku', honestModel);
     const notes = notifications(t);
     for (const d of ['2026-10-09', '2026-10-10', '2026-10-11', '2026-10-12']) await runDaily(t, d);
@@ -547,14 +1025,15 @@ describe('forward-only rates', () => {
         r.status,
         r.sourceDate,
         r.reason,
+        r.bnmSession,
       ]);
 
     // Monday's move does not reach back into the weekend that inherited Friday's rate.
     expect(await view()).toEqual([
-      ['2026-10-09', 4.213, 'live', '2026-10-09', 'fetched'],
-      ['2026-10-10', 4.213, 'inherited', '2026-10-09', 'weekend_or_holiday'],
-      ['2026-10-11', 4.213, 'inherited', '2026-10-09', 'weekend_or_holiday'],
-      ['2026-10-12', 4.25, 'live', '2026-10-12', 'fetched'],
+      ['2026-10-09', 4.213, 'live', '2026-10-09', 'fetched', '1700'],
+      ['2026-10-10', 4.213, 'inherited', '2026-10-09', 'weekend_or_holiday', '1700'],
+      ['2026-10-11', 4.213, 'inherited', '2026-10-09', 'weekend_or_holiday', '1700'],
+      ['2026-10-12', 4.25, 'live', '2026-10-12', 'fetched', '1700'],
     ]);
     // Re-running a day that is already live changes nothing.
     expect((await t.json<FxRunResultDTO>('POST', '/api/fx/run', { headers: approver.headers })).outcome).toBe(
@@ -605,7 +1084,7 @@ describe('forward-only rates', () => {
 });
 
 describe('routes', () => {
-  it('guards reads (audit.view / ratecard.edit) and the approver-only run trigger', async () => {
+  it('guards reads (audit.view / ratecard.edit) and the approver-only run trigger; status shows the schedule and session', async () => {
     const t = await fxRuntime();
     at(t, '2026-10-09', '09:00');
     const requester = t.user('requester');
@@ -633,11 +1112,13 @@ describe('routes', () => {
     expect(await t.json<FxStatusDTO>('GET', '/api/fx/status', { headers: builder.headers })).toEqual({
       today: '2026-10-09',
       enabled: true,
-      runAtLocalTime: '12:30',
+      session: '1700',
+      runAtLocalTime: '18:00',
+      retryAtLocalTimes: ['18:30', '21:00'],
       todayRecord: null,
       current: null,
       lastLive: null,
-      carryForward: { days: 0, since: null, alertAfterDays: 4, alerted: false },
+      carryForward: { days: 0, since: null, alertAfterDays: 3, alerted: false },
       openDiscrepancy: null,
       openDiscrepancyCount: 0,
     });
@@ -647,8 +1128,47 @@ describe('routes', () => {
   it('schedules nothing and refuses manual runs when FX is disabled', async () => {
     const t = await fxRuntime({ enabled: false });
     await expect(t.rt.runJob('fx.daily')).rejects.toThrow(/unknown job/);
+    await expect(t.rt.runJob('fx.retry@18:30')).rejects.toThrow(/unknown job/);
     const res = await t.request('POST', '/api/fx/run', { headers: t.user('approver').headers });
     expect(res.status).toBe(409);
     await t.close();
+  });
+});
+
+describe('config', () => {
+  it('defaults follow the BNM research: session 1700 from 18:00 MYT, 4-dp reconciliation, 1.25% soft flag, alert after 3 weekdays', () => {
+    expect(AocConfigSchema.parse({}).fx).toEqual({
+      enabled: true,
+      session: '1700',
+      runAtLocalTime: '18:00',
+      retryAtLocalTimes: ['18:30', '21:00'],
+      pageUrl: 'https://www.bnm.gov.my/exchange-rates',
+      apiUrl: 'https://api.bnm.gov.my/public/exchange-rate/USD',
+      extractor: 'claude-cli',
+      sanity: { min: 3.5, max: 5.5, maxDailyChangePct: 3, softFlagPct: 1.25 },
+      reconcileTolerance: 0.0001,
+      carryForwardAlertWeekdays: 3,
+    });
+  });
+
+  it('accepts an earlier schedule for session 1200, and refuses one that runs before its session or out of order', () => {
+    const problems = (fx: Record<string, unknown>) => {
+      const r = AocConfigSchema.safeParse({ fx });
+      return r.success ? [] : r.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`);
+    };
+    expect(
+      problems({ session: '1200', runAtLocalTime: '13:00', retryAtLocalTimes: ['13:30', '15:00'] }),
+    ).toEqual([]);
+    expect(problems({ runAtLocalTime: '12:30' })).toEqual([
+      'fx.runAtLocalTime: must be after the 1700 session (BNM publishes it about 40 minutes later)',
+    ]);
+    expect(problems({ retryAtLocalTimes: ['21:00', '18:30'] })).toEqual([
+      'fx.retryAtLocalTimes.1: must be later than 21:00 (after runAtLocalTime, ascending)',
+    ]);
+    expect(problems({ runAtLocalTime: '6pm' })).toEqual([
+      'fx.runAtLocalTime: expected HH:MM (24-hour local time)',
+    ]);
+    expect(problems({ session: '1130' })).toHaveLength(1);
+    expect(problems({ apiUrl: 'api.bnm.gov.my' })).toHaveLength(1);
   });
 });
