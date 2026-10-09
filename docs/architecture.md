@@ -709,7 +709,7 @@ the Requester-only UAT sign-off.
 | --- | --- | --- | --- | --- |
 | `agent_decision`, test `main` (1), `production` (2), `data` (5) | Agent, `request_decision` | Approver | — | The session owner (requester) is excluded. These tests are also enforced at the tool boundary |
 | `agent_decision`, test `irreversible` (3), `ambiguity` (4) | Agent | Builder | — | Owner excluded. These tests are self-reported (§2.4) |
-| `protected_operation` | A guard turning a blocked attempt into a card | Approver | — | Owner excluded |
+| `protected_operation`, test `main` (1), `production` (2) or `data` (5) | The `protected-op` guard (`mod-change`), for a blocked attempt | Approver | — | The session owner (requester) is excluded. Earlier logs recorded these cards as `agent_decision`; both kinds resolve the same way |
 | `fix_plan` | Intake, after triage | Approver | — | Nothing touches code before it clears |
 | `go_live` | Promotion, after the provenance check | Approver | **Yes** | Requester excluded |
 | `rollback` | Change control, after a clean verification | Approver | **Yes** | Requester excluded |
@@ -739,7 +739,7 @@ the Requester-only UAT sign-off.
   event (gap G-33).
 - **Decision SLAs** (approved with the static mock on 2026-10-09): rollback 30 min, agent decision 1 h, credit
   top-up 1 h, go-live 2 h, fix plan 4 h, lesson binding 2 days. They drive breaches and the gate-latency KPI in
-  the Control Tower.
+  the Control Tower. A protected operation keeps the agent decision's 1 h: it was one until it got its own kind.
 - **Passkeys.** For `go_live`, `rollback` and `break_glass`, the WebAuthn challenge is bound to
   `(decisionId, optionId, user)`, and `decision.resolved` records `passkeyVerified`. Elsewhere in v1 a bearer
   token or cookie proves **which token**, not who. That is attribution, not a signature (§6).

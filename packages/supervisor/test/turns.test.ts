@@ -77,6 +77,36 @@ describe('turn end: decisions (§2.3)', () => {
     ]);
   });
 
+  it.each(['protected_operation', 'agent_decision'] as const)(
+    'resumes a session on the answer to a card its protected-op guard raised as %s (the second is how earlier logs recorded it)',
+    async (kind) => {
+      h = await createHarness();
+      const gate = h.gate();
+      const id = await h.launch(`[[fake:gated,normal|gate=${gate.path}]] Push it`);
+      const card = h.t.decisions!.request(
+        decisionFor(h, id, {
+          kind,
+          test: 'main',
+          title: 'Protected operation: push to main',
+          question: 'The agent attempted a protected operation. Allow it to run?',
+          options: [
+            { id: 'approve', label: 'Approve' },
+            { id: 'reject', label: 'Reject' },
+          ],
+          recommendation: null,
+          requesterId: `session:${id}`,
+        }),
+        { kind: 'agent', id },
+      );
+      gate.open();
+      await h.waitLifecycle(id, 'waiting_decision');
+      await h.t.decisions!.resolve(card.id, { optionId: 'reject', comment: 'Not today.' }, h.t.user('approver').user);
+      await h.waitLifecycle(id, 'idle');
+      expect(h.events('session.turn_started', id)[1]!.meta).toMatchObject({ reason: 'decision_answered' });
+      expect(h.callsFor(id)[1]!.prompt).toContain(`Decision ${card.id} answered: Reject. Not today.`);
+    },
+  );
+
   it('waits for every open decision, and resumes on a withdrawal too', async () => {
     h = await createHarness();
     const gate = h.gate();

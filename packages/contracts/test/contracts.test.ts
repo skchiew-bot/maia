@@ -80,6 +80,9 @@ describe('roles & decisions (§6)', () => {
   it('routes main/production/data to the approver, others to builders', () => {
     expect(requiredRoleFor({ kind: 'agent_decision', test: 'main' })).toBe('approver');
     expect(requiredRoleFor({ kind: 'agent_decision', test: 'ambiguity' })).toBe('builder');
+    // A guard-raised card (tests 1, 2, 5, all tool-boundary) goes to the Approver, whatever the test says.
+    for (const test of ['main', 'production', 'data', null] as const)
+      expect(requiredRoleFor({ kind: 'protected_operation', test })).toBe('approver');
     expect(requiredRoleFor({ kind: 'change_request', changeScope: 'reversible_off_main' })).toBe('builder');
     expect(requiredRoleFor({ kind: 'go_live' })).toBe('approver');
     expect(requiresPasskey('rollback')).toBe(true);

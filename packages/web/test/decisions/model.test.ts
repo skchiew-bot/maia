@@ -30,6 +30,15 @@ describe('decision aging against the CEO-approved SLAs', () => {
     expect(agingPhrase(at(74))).toBe('Over SLA by 14m');
   });
 
+  it('ages a protected operation on the agent decision SLA, as those cards did before they had a kind of their own', () => {
+    const at = (ageMin: number) =>
+      agingOf(card({ id: 'd', kind: 'protected_operation', createdAt: new Date(NOW - ageMin * MIN).toISOString() }), NOW);
+    expect(at(20).state).toBe('within');
+    expect(at(74).state).toBe('over');
+    expect(agingPhrase(at(74))).toBe('Over SLA by 14m');
+    expect(closedWithinSla(card({ id: 'c', kind: 'protected_operation', ageMs: 30 * MIN }))).toBe(true);
+  });
+
   it('uses an explicit due time over the kind SLA', () => {
     const a = agingOf(
       card({
