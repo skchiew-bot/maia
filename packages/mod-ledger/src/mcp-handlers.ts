@@ -538,7 +538,7 @@ export async function taskDone(
   core: LedgerCore,
   sessionId: string,
   input: TaskDoneInput,
-): Promise<TaskDoneResult & { evidenceReason?: GitUnknownReason }> {
+): Promise<TaskDoneResult> {
   const before = {
     session: requireSession(core, sessionId),
     ...requireOpenTask(core, sessionId, input.task_id),

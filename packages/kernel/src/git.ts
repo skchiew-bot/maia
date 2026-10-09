@@ -153,7 +153,7 @@ export function uploadPackFor(repo: string): string | null {
 function invocation(args: string[], extra: Record<string, string> | undefined, owner: GitOwner | null) {
   return {
     argv: [...GIT_SAFETY_ARGS, ...args],
-    env: childEnv(process.env, { GIT_TERMINAL_PROMPT: '0', ...(owner ? OWNER_ENV : {}), ...extra }),
+    env: childEnv(process.env, { GIT_TERMINAL_PROMPT: '0', GIT_NO_LAZY_FETCH: '1', ...(owner ? OWNER_ENV : {}), ...extra }),
     ids: owner ? { uid: owner.uid, gid: owner.gid } : {},
   };
 }
