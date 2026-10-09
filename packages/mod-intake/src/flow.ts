@@ -9,6 +9,17 @@ import type { ModuleContext } from '@aoc/kernel';
 
 export const INTAKE_ACTOR: Actor = { kind: 'system', id: 'intake' };
 
+const SUMMARY_MAX = 80;
+
+/**
+ * A card's title leads with the ticket's own summary and ends with the step it asks for ("Receipt photos not
+ * uploading — fix plan"). The ticket id is the card's subject, which every view shows apart from the title.
+ */
+function cardTitle(t: Pick<TicketRow, 'title'>, step: string): string {
+  const summary = t.title.replace(/\s+/g, ' ').trim();
+  return `${summary.length > SUMMARY_MAX ? `${summary.slice(0, SUMMARY_MAX - 1).trimEnd()}…` : summary} — ${step}`;
+}
+
 export interface TicketRow {
   ticket_id: string;
   project_id: string | null;
@@ -179,7 +190,7 @@ export class IntakeFlow {
 
     if (!reported.length) {
       const d = decisions.request(
-        { ...base, kind: 'low_confidence_diagnosis', title: `No diagnosis for ${ticketId}`, question: 'Triage ended without a diagnosis (budget exhausted or stopped). How should we proceed?', options: [{ id: 'retriage', label: 'Re-run triage' }, { id: 'close', label: 'Close as cannot reproduce' }] },
+        { ...base, kind: 'low_confidence_diagnosis', title: cardTitle(t, 'no diagnosis'), question: 'Triage ended without a diagnosis (budget exhausted or stopped). How should we proceed?', options: [{ id: 'retriage', label: 'Re-run triage' }, { id: 'close', label: 'Close as cannot reproduce' }] },
         INTAKE_ACTOR,
       );
       escalate('budget_exhausted', d.id);
@@ -191,7 +202,7 @@ export class IntakeFlow {
         {
           ...base,
           kind: 'low_confidence_diagnosis',
-          title: `Low-confidence diagnosis for ${ticketId}`,
+          title: cardTitle(t, 'low-confidence diagnosis'),
           question: `At least one triage agent reported confidence below ${threshold}. Best: ${Math.round((best.confidence ?? 0) * 100)}%.`,
           options: [{ id: 'accept_best', label: 'Accept the best diagnosis' }, { id: 'retriage', label: 'Re-run triage' }, { id: 'close', label: 'Close as cannot reproduce' }],
           recommendation: { optionId: 'retriage', rationale: 'Low-confidence root causes bounce to a human (§7).' },
@@ -207,7 +218,7 @@ export class IntakeFlow {
         {
           ...base,
           kind: 'triage_reconciliation',
-          title: `Triage agents disagree on ${ticketId}`,
+          title: cardTitle(t, 'triage agents disagree'),
           question: 'Parallel triage agents reached different root causes. Pick one or re-run triage (R17).',
           options: [...reported.map((s) => ({ id: `diag_${s.session_id}`, label: `${s.root_cause_class ?? 'diagnosis'} (${Math.round((s.confidence ?? 0) * 100)}%)`, description: (s.root_cause ?? '').slice(0, 900) })), { id: 'retriage', label: 'Re-run triage' }],
         },
@@ -248,7 +259,7 @@ export class IntakeFlow {
         subjectId: t.ticket_id,
         projectId: t.project_id,
         requesterId: 'system:intake',
-        title: `Fix plan for ${t.ticket_id}: ${t.title.slice(0, 80)}`,
+        title: cardTitle(t, 'fix plan'),
         question: 'Approve this fix plan? Nothing touches code until it clears this gate (§7).',
         options: [{ id: 'approve', label: 'Approve fix plan' }, { id: 'reject', label: 'Reject and re-triage' }],
         context: `Root cause (${Math.round((source.confidence ?? 0) * 100)}% confidence): ${source.root_cause ?? ''}\n\nFix plan:\n${fixPlan}`,
@@ -308,7 +319,7 @@ export class IntakeFlow {
         projectId: t.project_id,
         requesterId: 'system:intake',
         eligibleUserIds: [t.requester_id],
-        title: `Please test your fix for "${t.title.slice(0, 80)}"`,
+        title: cardTitle(t, 'please test your fix'),
         question: 'Does the fix work for you on the test environment?',
         options: [{ id: 'pass', label: 'Yes, it works' }, { id: 'fail', label: 'No, still a problem' }],
       },
@@ -331,7 +342,7 @@ export class IntakeFlow {
       t,
       'uat_build_missing',
       {
-        title: `No UAT build for ${t.ticket_id}: ${t.title.slice(0, 80)}`,
+        title: cardTitle(t, 'no UAT build'),
         question: `The build session finished, but ${uatRef} does not resolve ${hasRepo ? 'in the project repository (the branch was never pushed there)' : '(no repository is configured for the project)'}. Nothing was sent to the requester. How should we proceed?`,
         options: [
           { id: 'rebuild', label: 'Re-run the build under the approved fix plan' },
@@ -419,7 +430,7 @@ export class IntakeFlow {
       t,
       'golive_blocked',
       {
-        title: `Go-live blocked for ${t.ticket_id}: ${t.title.slice(0, 80)}`,
+        title: cardTitle(t, 'go-live blocked'),
         question: `The requester signed off UAT, but go-live did not go through: ${why.slice(0, 2000)}. How should we proceed?`,
         options: [
           { id: 'retry_golive', label: 'Request go-live again' },

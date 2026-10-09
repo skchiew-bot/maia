@@ -488,3 +488,82 @@ describe('ticket lifecycle', () => {
     expect(t.rt.store.list({ types: ['intake.media_accessed'] })[0]!.meta).toMatchObject({ userId: approver.user.id, basis: 'media_permission' });
   });
 });
+
+describe('decision cards the flow raises', () => {
+  const TITLE = 'Claim form crashes on upload';
+  const cards = (ticketId: string) => t.decisions!.list({ subjectId: ticketId });
+  /** Every card is about the ticket (its subject) and reads as the ticket's own summary plus the step it asks for. */
+  const expectSummaryFirst = (ticketId: string, titles: string[]) => {
+    expect(cards(ticketId).map((c) => c.title)).toEqual(titles);
+    for (const c of cards(ticketId)) {
+      expect(c).toMatchObject({ subjectType: 'ticket', subjectId: ticketId });
+      expect(c.title).not.toContain(ticketId);
+    }
+  };
+
+  it('triage escalations: low confidence, disagreement and an exhausted diagnosis budget', async () => {
+    const s = await setup({ intake: { diagnosisBudget: { tokens: 1000, minutes: 5 } } });
+    const req = t.user('requester', 'Nur');
+    const open = async () => ((await (await submit(req.headers)).json()) as PublicTicket).ticketId;
+
+    const lowConfidence = await open();
+    await t.drain();
+    await report(s.launches[0]!.sessionId, 0.3, 'a');
+    await report(s.launches[1]!.sessionId, 0.9, 'a');
+    await t.drain();
+    expectSummaryFirst(lowConfidence, [`${TITLE} — low-confidence diagnosis`]);
+
+    const disagreement = await open();
+    await t.drain();
+    await report(s.launches[2]!.sessionId, 0.9, 'cache-invalidation');
+    await report(s.launches[3]!.sessionId, 0.9, 'race-condition');
+    await t.drain();
+    expectSummaryFirst(disagreement, [`${TITLE} — triage agents disagree`]);
+
+    const exhausted = await open();
+    await t.drain();
+    t.clock.advance(6 * 60_000);
+    await t.rt.runJob('intake.diagnosis-budget');
+    await t.drain();
+    expectSummaryFirst(exhausted, [`${TITLE} — no diagnosis`]);
+  });
+
+  it('the fix-plan gate, the UAT request and a blocked go-live', async () => {
+    const repo = projectRepo();
+    const s = await setup({}, repo.dir);
+    const approver = t.user('approver', 'CEO');
+    const { ticketId, req, build } = await toBuild(s, approver);
+    expectSummaryFirst(ticketId, [`${TITLE} — fix plan`]);
+
+    repo.pushUat(ticketId);
+    endBuild(build.sessionId);
+    await t.drain();
+    s.ctl.refuse = ['abc1234: no AOC-Session / AOC-Change trailer'];
+    await t.json('POST', `/portal/api/tickets/${ticketId}/uat`, { headers: req.headers, body: { verdict: 'pass' } });
+    await t.drain();
+    expectSummaryFirst(ticketId, [`${TITLE} — fix plan`, `${TITLE} — please test your fix`, `${TITLE} — go-live blocked`]);
+  });
+
+  it('a build with nothing to test', async () => {
+    const s = await setup({}, null);
+    const { ticketId, build } = await toBuild(s, t.user('approver', 'CEO'));
+    endBuild(build.sessionId);
+    await t.drain();
+    expectSummaryFirst(ticketId, [`${TITLE} — fix plan`, `${TITLE} — no UAT build`]);
+  });
+
+  it('keeps the step visible when the requester wrote a long or multi-line title', async () => {
+    const s = await setup();
+    const req = t.user('requester', 'Nur');
+    const long = `${'Receipts upload sideways\n'.repeat(5)}and then the page goes blank`;
+    const { ticketId } = (await (await submit(req.headers, [], { title: long })).json()) as PublicTicket;
+    await t.drain();
+    await report(s.launches[0]!.sessionId, 0.9, 'exif');
+    await report(s.launches[1]!.sessionId, 0.9, 'exif');
+    await t.drain();
+    const [card] = cards(ticketId);
+    expect(card!.title).toMatch(/^Receipts upload sideways Receipts upload sideways .*… — fix plan$/);
+    expect(card!.title.length).toBeLessThanOrEqual(80 + ' — fix plan'.length);
+    expect(card!.title).not.toContain('\n');
+  });
+});

@@ -170,8 +170,8 @@ describe('cost of delay (pure)', () => {
   });
 
   it('titles are PII-scrubbed and capped at 120 chars', () => {
-    expect(cleanTitle('Fix plan for tkt_1: login fails for jane.doe@example.com, call +60 12-345 6789')).toBe(
-      'Fix plan for tkt_1: login fails for [email], call [number]',
+    expect(cleanTitle('Login fails for jane.doe@example.com, call +60 12-345 6789 — fix plan')).toBe(
+      'Login fails for [email], call [number] — fix plan',
     );
     expect(cleanTitle('Fix 404 on page 12 (v2.3)\nsecond line')).toBe(
       'Fix 404 on page 12 (v2.3) second line',
