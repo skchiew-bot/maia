@@ -194,7 +194,7 @@ provenance traces a commit only if it is in a HEAD the session recorded (G-25).
 
 ### Git for builds
 
-`bug-fix` and `feature-build` are granted a scoped set of git in `config/process-types.json` (`tools`): `status`,
+Every write-capable process type with a credential profile (`bug-fix`, `feature-build`, `discovery`, `migration`, `test-repair`, `docs`) is granted a scoped set of git in `config/process-types.json` (`tools`; a registry test keeps them identical): `status`,
 `diff`, `log`, `show`, `rev-parse`, `add`, `commit`, `checkout -b`, `switch -c`, `switch uat/*`, `switch -` and
 `push aoc …` (the supervisor's push gateway, which holds the credential; sessions never do). `merge`, `rebase` and
 `reset` are denied, anything else is not granted, and the protected-operation PreToolUse guard still bounces a push

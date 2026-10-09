@@ -14,7 +14,7 @@ import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
-import { MAX_PUSH_BYTES, type Actor } from '@aoc/contracts';
+import { MAX_PUSH_BYTES, transportOf, type Actor, type GitTransport } from '@aoc/contracts';
 import { GIT_SAFETY_ARGS, GIT_SERVICE_ENV, runServiceGit, serviceGitEnv, type Logger } from '@aoc/kernel';
 
 // ── pkt-lines (gitprotocol-common) ────────────────────────────────────────────
@@ -292,19 +292,6 @@ export function serviceRepoPathFor(root: string, projectId: string): string {
   return join(resolve(root), `${name}.git`);
 }
 
-/**
- * How git would reach `url`: the one transport the forward may open, or null for anything else (ext::, fd::, plain
- * http, an option-looking string). The same rule mod-change applies to the promotion remote of the same clone.
- */
-export function transportOf(url: string): 'ssh' | 'https' | 'file' | null {
-  if (!url || url.startsWith('-') || /[\s\0]/.test(url)) return null;
-  const scheme = /^([A-Za-z][A-Za-z0-9+.-]*):\/\//.exec(url)?.[1]?.toLowerCase();
-  if (scheme) return scheme === 'https' || scheme === 'ssh' || scheme === 'file' ? scheme : null;
-  if (url.startsWith('/')) return 'file';
-  // scp-like `[user@]host:path`: a colon before any slash (git's own rule), and no `<helper>::` syntax.
-  return /^(?:[A-Za-z0-9._-]+@)?[A-Za-z0-9.-]+:(?!:)/.test(url) ? 'ssh' : null;
-}
-
 /** The lines of `git push --porcelain`: `<flag>\t<src>:<dst>\t<summary>`, by destination ref. */
 export function parsePorcelain(stdout: string): Map<string, { ok: boolean; summary: string }> {
   const out = new Map<string, { ok: boolean; summary: string }>();
@@ -548,7 +535,7 @@ export class PushGateway {
   /** The operator-configured remote of the service repository (pushurl wins), and how git would reach it. */
   private upstreamOf(
     repo: string,
-  ): { ok: true; url: string; transport: 'ssh' | 'https' | 'file' } | { ok: false; reason: string } {
+  ): { ok: true; url: string; transport: GitTransport } | { ok: false; reason: string } {
     for (const key of ['remote.origin.pushurl', 'remote.origin.url']) {
       const r = runServiceGit(repo, [`--git-dir=${repo}`, 'config', '--get', key]);
       const url = r.code === 0 ? r.stdout.trim() : '';

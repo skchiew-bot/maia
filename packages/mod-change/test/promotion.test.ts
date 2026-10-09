@@ -359,6 +359,8 @@ describe('provenance guarantee and promotion (§14)', () => {
       subjectType: 'promotion',
       subjectId: requested.promotionId,
     });
+    // The card's free text is kept with the change record the promotion is for (erasable with it).
+    expect(h.requested.get(card.id)).toMatchObject({ bodyScope: changeId });
     expect(card.context).toContain('feat: two');
     await expect(h.t.decisions!.resolve(card.id, { optionId: 'approve' }, h.approver.user)).rejects.toThrow(
       /passkey/,
@@ -425,6 +427,7 @@ describe('provenance guarantee and promotion (§14)', () => {
     uat('tkt_9', 'pass');
     const ok = await request();
     expect(ok).toMatchObject({ refused: null, decisionId: expect.any(String) });
+    expect(h.requested.get(ok.decisionId!)).toMatchObject({ bodyScope: PROJECT }); // no change record: the project
     await h.t.decisions!.resolve(ok.decisionId!, { optionId: 'approve', ...PASSKEY }, h.approver.user);
     await h.settle();
     expect(repo.head('main')).toBe(tip);

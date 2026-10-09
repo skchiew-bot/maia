@@ -153,12 +153,14 @@ export class AocRuntime {
   /**
    * Resolves when every queued reaction has run (tests await this after actions). `draining` is set BEFORE the
    * loop starts, so a reactor that appends synchronously during its reaction joins this loop instead of starting
-   * a second, untracked one (which would break ordering and let drain() resolve early).
+   * a second, untracked one (which would break ordering and let drain() resolve early). With nothing queued the
+   * loop ends synchronously and clears `draining` before this returns, so the caller gets its own handle.
    */
   drain(): Promise<void> {
     if (this.draining) return this.draining;
     let done!: () => void;
-    this.draining = new Promise<void>((r) => (done = r));
+    const settled = new Promise<void>((r) => (done = r));
+    this.draining = settled;
     void (async () => {
       try {
         while (this.queue.length && !this.stopped) {
@@ -186,7 +188,7 @@ export class AocRuntime {
         done();
       }
     })();
-    return this.draining;
+    return settled;
   }
 
   /** Mount auth middleware, module routes and the error handler on a Hono app. */

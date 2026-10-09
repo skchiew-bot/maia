@@ -6,6 +6,7 @@ import {
   DECISION_TEST_INFO,
   MODEL_CONTEXT_TOKENS,
   PASSKEY_KINDS,
+  TESTED_DECISION_KINDS,
   modelTierOf,
   type AttentionKind,
   type DecisionKind,
@@ -222,8 +223,8 @@ export function buildAttention(r: ReadCtx, integrity: IntegrityFacts): TowerAtte
     if (ticket) ticketsCarried.add(ticket.ticket_id);
     const customer = customerStake(r, ticket, d.kind);
     const passkey = d.requires_passkey === 1 || PASSKEY_KINDS.has(d.kind);
-    const testInfo = d.kind === 'agent_decision' && d.test ? DECISION_TEST_INFO[d.test] : null;
-    const label = testInfo ? `Agent decision (test ${testInfo.no}: ${d.test})` : DECISION_LABEL[d.kind];
+    const testInfo = TESTED_DECISION_KINDS.has(d.kind) && d.test ? DECISION_TEST_INFO[d.test] : null;
+    const label = testInfo ? `${DECISION_LABEL[d.kind]} (test ${testInfo.no}: ${d.test})` : DECISION_LABEL[d.kind];
     const due = decisionDueMs(d.kind, d.requested_ms, d.due_ms);
     const pastSla = due !== null && r.now > due;
     const sla = DECISION_SLA_MS[d.kind];

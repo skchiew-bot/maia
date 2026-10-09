@@ -63,6 +63,25 @@ describe('aoc run', () => {
     expect(r.stdout).toContain(`Console: ${d.url}/sessions/ses_NEW`);
   });
 
+  it('--change launches the session under that change record, and says nothing about one otherwise', async () => {
+    const r = await aoc(['run', '--type', 'feature-build', '--project', 'prj_1', '--change', 'chg_7', 'go'], {
+      homeDir: home,
+    });
+    expect(r.code).toBe(0);
+    expect(d.calls('POST', '/api/sessions')[0]!.body).toEqual({
+      processType: 'feature-build',
+      projectId: 'prj_1',
+      phaseId: null,
+      threadId: null,
+      cwd: null,
+      prompt: 'go',
+      changeId: 'chg_7',
+    });
+    expect((await aoc(['run', '--help'])).stdout).toContain('--change <changeId>');
+    await aoc(['run', '--type', 'feature-build', '--project', 'prj_1', 'go'], { homeDir: home });
+    expect(d.calls('POST', '/api/sessions')[1]!.body).not.toHaveProperty('changeId');
+  });
+
   it('sends nulls for omitted optional fields and never forwards the shell environment', async () => {
     const env = {
       AOC_TOKEN: TOKEN,

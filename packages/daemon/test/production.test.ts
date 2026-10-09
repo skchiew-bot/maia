@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { writeFileSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { resolveTsxImport } from '../src/paths';
@@ -42,6 +42,7 @@ function runAocd(
 }
 
 describe('production mode refuses unsafe secrets handling (R6, O-1, O-13)', () => {
+  /** The checkout aocd runs from is listed, as production demands of a source checkout (P-18). */
   const production = (cwd: string, kek: string) => ({
     mode: 'production',
     dataDir: 'data',
@@ -51,6 +52,7 @@ describe('production mode refuses unsafe secrets handling (R6, O-1, O-13)', () =
     metering: { rateCardFile: join(repoRoot, 'config', 'rate-card.json') },
     fx: { extractor: 'fake' },
     supervisor: { workspacesDir: join(cwd, 'workspaces') },
+    selfModification: { aocRepoPaths: [repoRoot], externalAuditLog: join(cwd, 'selfmod-audit.log') },
   });
 
   it('refuses a KEK from AOC_MASTER_KEY even beside a valid key file, without echoing it', async () => {
@@ -73,4 +75,21 @@ describe('production mode refuses unsafe secrets handling (R6, O-1, O-13)', () =
     expect(r.code).toBe(1);
     expect(r.stderr).toContain('needs supervisor.sessionUser');
   }, 90_000);
+
+  // The refusal needs a real checkout (a git directory beside packages/kernel); a source export has neither.
+  it.skipIf(!existsSync(join(repoRoot, '.git')))(
+    'refuses to run from a source checkout of AOC while selfModification.aocRepoPaths is empty (P-18)',
+    async () => {
+      const cwd = tempDir();
+      const kek = join(cwd, 'kek');
+      writeFileSync(kek, `${randomBytes(32).toString('hex')}\n`, { mode: 0o400 });
+      const { selfModification: _listed, ...unprotected } = production(cwd, kek);
+      const r = await runAocd(cwd, unprotected);
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain('selfModification.aocRepoPaths is empty');
+      expect(r.stderr).toContain('docs/compliance/self-modification-boundary.md');
+      expect(r.stdout).not.toContain('aocd listening');
+    },
+    90_000,
+  );
 });

@@ -355,6 +355,23 @@ describe('attention queue: ranked by cost of delay', () => {
     });
   });
 
+  it('reads a protected operation like an agent decision: the test it tripped, and the 1h SLA those cards always had', async () => {
+    h = await setup();
+    decide(h, 'dec_po', 'protected_operation', { at: ago(h, minutes(90)), test: 'production' });
+    decide(h, 'dec_po_ok', 'protected_operation', { at: ago(h, minutes(10)), test: 'main' });
+    const s = await h.snap();
+    expect(byId(s.attention, 'decision:dec_po')).toMatchObject({
+      detail: 'Touches production / deploy',
+      costOfDelay: { basis: 'Protected operation (test 2: production) · 1h 30m · past the 1h SLA' },
+      chips: ['test production', 'Past SLA'],
+    });
+    expect(byId(s.attention, 'decision:dec_po_ok')).toMatchObject({
+      detail: 'Touches main / protected branch',
+      costOfDelay: { basis: 'Protected operation (test 1: main) · 10m' },
+      chips: ['test main'],
+    });
+  });
+
   it('decisions past their approved SLA (or their own due time) say so in the basis', async () => {
     h = await setup();
     decide(h, 'dec_rb', 'rollback', { at: ago(h, minutes(47)) });

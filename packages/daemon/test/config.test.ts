@@ -3,7 +3,13 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { AocConfigSchema } from '@aoc/contracts';
-import { ConfigError, loadConfig, parseDaemonArgs, resolveHelperCommands } from '../src/config';
+import {
+  ConfigError,
+  checkSelfModificationBoundary,
+  loadConfig,
+  parseDaemonArgs,
+  resolveHelperCommands,
+} from '../src/config';
 import { removeTempDirs, repoRoot, tempDir } from './helpers';
 
 afterEach(() => removeTempDirs());
@@ -206,6 +212,47 @@ describe('loadConfig', () => {
     ]);
   });
 
+  it('reads the promotion section, defaults it, and refuses a remote aocd would not push to or one that carries a credential', () => {
+    const cwd = tempDir();
+    const load = () => loadConfig({ cwd, env: {}, ...detached() });
+    expect(load().config.promotion).toEqual({ promoteCredentialProfile: 'prod-promote', projects: {} });
+
+    const promotion = (p: unknown) => writeJson(join(cwd, 'aoc.config.json'), { promotion: p });
+    promotion({
+      '//': 'documentation',
+      promoteCredentialProfile: 'release-bot',
+      projects: {
+        prj_web: { promotionRemote: 'git@github.com:acme/web.git', promoteCredentialProfile: 'web-promote' },
+        prj_api: { '//': 'documentation', promotionRemote: '/srv/git/api.git' },
+      },
+      typo: true,
+    });
+    const { config, warnings } = load();
+    expect(config.promotion).toEqual({
+      promoteCredentialProfile: 'release-bot',
+      projects: {
+        prj_web: { promotionRemote: 'git@github.com:acme/web.git', promoteCredentialProfile: 'web-promote' },
+        prj_api: { promotionRemote: '/srv/git/api.git' },
+      },
+    });
+    expect(warnings.filter((w) => w.startsWith('unknown'))).toEqual(['unknown config key "promotion.typo" is ignored']);
+
+    const secret = 'https://x-access-token:ghs_SECRET@github.com/acme/web.git';
+    promotion({ projects: { prj_web: { promotionRemote: secret } } });
+    expect(load).toThrow(/promotion\.projects\.prj_web\.promotionRemote: must not embed credentials/);
+    let refusal = '';
+    try {
+      load();
+    } catch (err) {
+      refusal = (err as Error).message;
+    }
+    expect(refusal).not.toContain('ghs_SECRET'); // the message names the key, never the URL
+    promotion({ projects: { prj_web: { promotionRemote: 'http://github.com/acme/web.git' } } });
+    expect(load).toThrow(/promotion\.projects\.prj_web\.promotionRemote: must be an ssh, https or absolute local-path remote/);
+    promotion({ projects: { prj_web: { promotionRemotee: '/srv/git/web.git' } } });
+    expect(load).toThrow(/promotion\.projects\.prj_web: Unrecognized key/);
+  });
+
   it('fails loudly on a missing explicit file, bad JSON, schema violations and a bad AOC_PORT', () => {
     const cwd = tempDir();
     const load =
@@ -350,6 +397,56 @@ describe('resolveHelperCommands', () => {
     expect(
       resolveHelperCommands(once.config, { repoRoot: null, binDir: tempDir() }).config.supervisor,
     ).toEqual(once.config.supervisor);
+  });
+});
+
+describe('checkSelfModificationBoundary (gap P-18)', () => {
+  /** A directory shaped like a checkout of the AOC repository: a git directory and packages/kernel. */
+  const checkout = () => {
+    const dir = tempDir('aoc-checkout-');
+    mkdirSync(join(dir, '.git'));
+    mkdirSync(join(dir, 'packages', 'kernel'), { recursive: true });
+    return dir;
+  };
+  const loaded = (config: Record<string, unknown>, root: string | null) => ({
+    config: AocConfigSchema.parse(config),
+    repoRoot: root,
+  });
+  const production = { mode: 'production' };
+
+  it('refuses production from a source checkout while aocRepoPaths is empty, naming the key, the checkout and the boundary document', () => {
+    const root = checkout();
+    const check = () => checkSelfModificationBoundary(loaded(production, root));
+    expect(check).toThrow(ConfigError);
+    expect(check).toThrow(/selfModification\.aocRepoPaths is empty/);
+    expect(check).toThrow(/docs\/compliance\/self-modification-boundary\.md/);
+    expect(check).toThrow(root);
+  });
+
+  it('accepts it once the AOC clones are listed', () => {
+    const config = { ...production, selfModification: { aocRepoPaths: ['/var/lib/aoc/workspaces/aoc'] } };
+    expect(() => checkSelfModificationBoundary(loaded(config, checkout()))).not.toThrow();
+  });
+
+  it('does not ask development, whatever the checkout', () => {
+    expect(() => checkSelfModificationBoundary(loaded({}, checkout()))).not.toThrow();
+  });
+
+  it('does not ask an installed bundle: no checkout, a tree without git history, or a repository that is not AOC', () => {
+    expect(() => checkSelfModificationBoundary(loaded(production, null))).not.toThrow();
+    const exported = checkout();
+    rmSync(join(exported, '.git'), { recursive: true });
+    expect(() => checkSelfModificationBoundary(loaded(production, exported))).not.toThrow();
+    const other = tempDir('aoc-other-');
+    mkdirSync(join(other, '.git'));
+    expect(() => checkSelfModificationBoundary(loaded(production, other))).not.toThrow();
+  });
+
+  it('is told by loadConfig which checkout aocd runs from: the one found from the daemon code, none when detached', () => {
+    const cwd = tempDir();
+    const fromSource = loadConfig({ cwd, env: {}, binDir: join(repoRoot, 'packages', 'daemon', 'src') });
+    expect(fromSource.repoRoot).toBe(repoRoot);
+    expect(loadConfig({ cwd, env: {}, ...detached() }).repoRoot).toBeNull();
   });
 });
 

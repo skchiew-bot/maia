@@ -22,7 +22,7 @@ function prePush(stdin: string, env: Record<string, string> = {}) {
 }
 
 describe('git/pre-push', () => {
-  it('refuses a push to main without AOC_SUPERVISOR_PUSH', () => {
+  it('refuses a push to main', () => {
     const r = prePush(`${pushLine('refs/heads/main')}\n`);
     expect(r.code).toBe(1);
     expect(r.stderr).toContain("AOC: refusing to push to protected ref 'refs/heads/main'");
@@ -32,9 +32,14 @@ describe('git/pre-push', () => {
     expect(prePush(`${pushLine('refs/heads/feature/login')}\n`)).toEqual({ code: 0, stderr: '' });
   });
 
-  it('allows protected refs only for the supervisor promotion executor', () => {
-    expect(prePush(`${pushLine('refs/heads/main')}\n`, { AOC_SUPERVISOR_PUSH: '1' }).code).toBe(0);
-    expect(prePush(`${pushLine('refs/heads/main')}\n`, { AOC_SUPERVISOR_PUSH: 'true' }).code).toBe(1);
+  it('is not unlocked by any environment variable: AOC pushes from a service-owned clone, never through this hook', () => {
+    const main = `${pushLine('refs/heads/main')}\n`;
+    const envs: Record<string, string>[] = [
+      { AOC_SUPERVISOR_PUSH: '1' },
+      { AOC_SUPERVISOR_PUSH: 'true' },
+      { AOC_SESSION_ID: 'ses_1', AOC_MODE: 'managed', AOC_CHANGE_ID: 'chg_1' },
+    ];
+    for (const env of envs) expect(prePush(main, env).code, JSON.stringify(env)).toBe(1);
   });
 
   it('refuses deleting a protected branch and any multi-ref push that includes one', () => {
@@ -72,7 +77,7 @@ describe('git/pre-push', () => {
     for (const ref of refs) {
       const script = prePush(`${pushLine(ref)}\n`).code === 1;
       expect({ ref, blocked: script }).toEqual({ ref, blocked: isProtectedRef(ref) });
-      expect(evaluatePrePush(`${pushLine(ref)}\n`, {}).allowed, ref).toBe(!script);
+      expect(evaluatePrePush(`${pushLine(ref)}\n`).allowed, ref).toBe(!script);
     }
     expect(refs.filter(isProtectedRef)).toEqual([
       'refs/heads/main',
@@ -85,18 +90,15 @@ describe('git/pre-push', () => {
     ]);
   });
 
-  it('evaluatePrePush lists the protected refs and honours the supervisor override', () => {
+  it('evaluatePrePush lists the protected refs and allows a push only when there are none', () => {
     const stdin = [
       pushLine('refs/heads/main'),
       pushLine('refs/heads/feat'),
       pushLine('refs/heads/main'),
       '',
     ].join('\n');
-    expect(evaluatePrePush(stdin, {})).toEqual({ allowed: false, protectedRefs: ['refs/heads/main'] });
-    expect(evaluatePrePush(stdin, { AOC_SUPERVISOR_PUSH: '1' })).toEqual({
-      allowed: true,
-      protectedRefs: ['refs/heads/main'],
-    });
+    expect(evaluatePrePush(stdin)).toEqual({ allowed: false, protectedRefs: ['refs/heads/main'] });
+    expect(evaluatePrePush(`${pushLine('refs/heads/feat')}\n`)).toEqual({ allowed: true, protectedRefs: [] });
   });
 });
 

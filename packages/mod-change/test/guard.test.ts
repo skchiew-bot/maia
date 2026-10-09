@@ -157,12 +157,12 @@ describe('protected-op guard in the policy (order 30)', () => {
     cwd: '/nonexistent',
   });
 
-  it('denies with a decision card (agent_decision, test, approve/reject, the command as context)', async () => {
+  it('denies with a decision card (protected_operation, test, approve/reject, the command as context)', async () => {
     h = await harness();
     const r = h.t.rt.policy.evaluate(ctx('git push origin HEAD:main'));
     expect(r).toMatchObject({ decision: 'deny', guard: 'protected-op', blockReason: 'protected_operation' });
     expect(r.raiseDecision).toMatchObject({
-      kind: 'agent_decision',
+      kind: 'protected_operation',
       test: 'main',
       options: [{ id: 'approve' }, { id: 'reject' }],
       context: 'git push origin HEAD:main',

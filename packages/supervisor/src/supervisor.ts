@@ -28,11 +28,13 @@ import {
   claudeConfigDir,
   modelTierOf,
   newId,
+  promotionProfilesOf,
   transcriptPathFor,
   type Actor,
   type DecisionCard,
   type EventType,
   type HandoffBrief,
+  type IsolatedRunInput,
   type LaunchRequest,
   type LessonInfo,
   type MetaOf,
@@ -72,6 +74,7 @@ import {
   keyFileSecrets,
   readCredentialProfile,
   readCredentialProfileSpec,
+  readCredentialProfiles,
   redactArgv,
   redactSecrets,
   resolveFileRefs,
@@ -84,6 +87,7 @@ import {
   type ProfileCredentials,
 } from './launch-config';
 import { killProcessGroup, processMatches, runCommand, signalProcess, signalTree } from './process-utils';
+import { checkPromotionProfiles } from './promotion-profiles';
 import { PushGateway, expandPattern, type PushPrincipal, type PushRecord } from './push-gateway';
 import { handOver, isolatedRunEnv, secretValues } from './sandbox';
 import { SupervisorView, TERMINAL_LIFECYCLES, type SupervisedSession } from './projection';
@@ -298,6 +302,8 @@ export class Supervisor implements SupervisorService {
   readonly gateway: PushGateway;
   private readonly gatewayRoot: string;
   private readonly ownsGatewayRoot: boolean;
+  /** Credential profiles of the push to a protected remote: aocd's own, never handed to a session (R1). */
+  private readonly promotionProfiles: ReadonlySet<string>;
   private stopping = false;
   private shutdownRun: Promise<void> | null = null;
 
@@ -312,6 +318,21 @@ export class Supervisor implements SupervisorService {
     const { isolation, warnings } = resolveIsolation(ctx.config);
     this.isolation = isolation;
     for (const w of warnings) this.log.warn(w);
+    this.promotionProfiles = new Set(promotionProfilesOf(ctx.config));
+    checkPromotionProfiles(
+      ctx.config,
+      {
+        definedProfiles: (file) => Object.keys(readCredentialProfiles(resolve(file))),
+        types: () => {
+          try {
+            return this.registry.listTypes();
+          } catch {
+            return null;
+          }
+        },
+      },
+      this.log,
+    );
     this.ownsSessionsRoot = !opts.sessionsDir && ctx.dataDir === ':memory:';
     this.sessionsRoot = opts.sessionsDir
       ? resolve(opts.sessionsDir)
@@ -515,14 +536,7 @@ export class Supervisor implements SupervisorService {
    * caller's `env`, then the credential profile when one is named. A `sandbox` run is code AOC does not trust and
    * never gets a credential profile.
    */
-  async runIsolated(input: {
-    cwd: string;
-    command: string[];
-    credentialProfile: string | null;
-    timeoutMs: number;
-    env?: Record<string, string>;
-    sandbox?: { handOver?: string[] };
-  }): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  async runIsolated(input: IsolatedRunInput): Promise<{ exitCode: number; stdout: string; stderr: string }> {
     const sup = this.ctx.config.supervisor;
     if (input.sandbox && input.credentialProfile)
       throw new Error('runIsolated: a sandboxed run never gets a credential profile');
@@ -561,13 +575,7 @@ export class Supervisor implements SupervisorService {
    */
   private async runAsSessionUser(
     iso: SessionIsolation,
-    input: {
-      cwd: string;
-      command: string[];
-      timeoutMs: number;
-      env?: Record<string, string>;
-      sandbox?: { handOver?: string[] };
-    },
+    input: Omit<IsolatedRunInput, 'credentialProfile'>,
   ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
     const [bin, ...args] = input.command;
     if (!bin) throw new Error('runIsolated: command is required');
@@ -2017,6 +2025,7 @@ export class Supervisor implements SupervisorService {
             prompt: rolloverPrompt(s.sessionId, s.threadId),
             cwd: s.cwd,
             ticketId: s.ticketId,
+            changeId: s.changeId,
             parentSessionId: s.sessionId,
             brief: brief.text,
             idempotencyKey: `rollover:${startedEvent.id}`,
@@ -2234,7 +2243,18 @@ export class Supervisor implements SupervisorService {
 
   // ── environment, files, helpers ───────────────────────────────────────────
 
+  /**
+   * The profile a session of a process type holds, read by every path that serves a session (launch, turn start,
+   * system prompt, push gateway). The promotion credential is refused here whatever the registry says: it is aocd's
+   * own push's, and a registry edit after start would otherwise hand it to every session of a type (R1).
+   */
   private credentialsFor(profile: string): CredentialProfile | null {
+    if (this.promotionProfiles.has(profile))
+      throw new HttpError(
+        500,
+        'promotion_profile_forbidden',
+        `Credential profile "${profile}" is the promotion profile: only aocd's own push holds it, so no process type may name it`,
+      );
     const file = this.ctx.config.supervisor.credentialProfilesFile;
     if (!file) {
       this.warnOnce(

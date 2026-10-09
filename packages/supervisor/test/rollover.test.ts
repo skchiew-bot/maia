@@ -108,6 +108,22 @@ describe('context rollover (§5, R16)', () => {
     ).toBe(404);
   });
 
+  it('the successor works under the change and the ticket its predecessor did, in its record and in its env', async () => {
+    h = await createHarness();
+    const id = await h.launch('Work', { threadId: 'thr_c', changeId: 'chg_7', ticketId: 'tkt_9' });
+    await h.waitLifecycle(id, 'idle');
+    const { newSessionId } = (await h.sup.rollover('thr_c', h.ownerActor)) as { newSessionId: string };
+    await h.waitLifecycle(newSessionId, 'idle');
+    expect(h.events('session.launch_requested', newSessionId)[0]!.meta).toMatchObject({
+      changeId: 'chg_7',
+      ticketId: 'tkt_9',
+      parentSessionId: id,
+    });
+    expect(h.sup.session(newSessionId)).toMatchObject({ changeId: 'chg_7', ticketId: 'tkt_9' });
+    // Its commits carry the AOC-Change trailer too (the git hook reads these from the session's env).
+    expect(h.callsFor(newSessionId)[0]!.env).toMatchObject({ AOC_CHANGE_ID: 'chg_7', AOC_TICKET_ID: 'tkt_9' });
+  });
+
   it('refuses when not at a clean task boundary, and never rolls over automatically then', async () => {
     h = await createHarness();
     h.ledger.boundary = { atBoundary: false, reason: 'task t2 in progress', openTasks: 2 };
