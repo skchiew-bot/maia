@@ -42,7 +42,7 @@ import { isEnded, livenessDetail, modelLabel, sessionLiveness, shortId } from '.
 import { ThreadLineage } from './ThreadLineage';
 import './session.css';
 
-const FEED_PAGE = 50;
+const FEED_PAGE = 25;
 const FEED_MAX = 500;
 
 const enc = encodeURIComponent;
@@ -214,7 +214,8 @@ export default function SessionPage() {
                 {thread.data && (
                   <>
                     {' · '}
-                    {thread.data.title}, {formatInteger(thread.data.sessionIds.length)} sessions
+                    {thread.data.title}, {formatInteger(thread.data.sessionIds.length)}{' '}
+                    {thread.data.sessionIds.length === 1 ? 'session' : 'sessions'}
                   </>
                 )}
               </span>
@@ -249,7 +250,6 @@ export default function SessionPage() {
             : 'Phases to scale by elapsed time'
         }
         className="session-hero"
-        busy={timeline.loading && timeline.data !== undefined}
       >
         {hero ? (
           <>
@@ -339,7 +339,7 @@ export default function SessionPage() {
           )}
         </Widget>
         <div className="session-body__side">
-          <Widget span={12} title="Metering" subtitle="Notional API-equivalent · Max plan, so not a bill" busy={metering.loading && metering.data !== undefined}>
+          <Widget span={12} title="Metering" subtitle="Notional API-equivalent · Max plan, so not a bill">
             {metering.error && !metering.data ? (
               <ErrorState size="sm" title="Couldn't load metering" error={metering.error} onRetry={metering.reload} />
             ) : (
@@ -391,7 +391,6 @@ export default function SessionPage() {
             <EventFeed
               events={events.data}
               limit={feedLimit}
-              busy={events.loading}
               nameOf={nameOf}
               onMore={feedLimit < FEED_MAX ? () => setFeedLimit((n) => Math.min(FEED_MAX, n * 4)) : null}
             />

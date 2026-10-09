@@ -71,11 +71,10 @@ export interface EventFeedProps {
   limit: number;
   onMore: (() => void) | null;
   nameOf: (id: string) => string | null;
-  busy: boolean;
 }
 
 /** The session's slice of the hash-chained log, newest first: what happened, who did it, and the chain hash. */
-export function EventFeed({ events, limit, onMore, nameOf, busy }: EventFeedProps) {
+export function EventFeed({ events, limit, onMore, nameOf }: EventFeedProps) {
   const columns = useMemo<DataTableColumn<FeedEvent>[]>(
     () => [
       { id: 'seq', header: 'Seq', numeric: true, width: '64px', cell: (e) => formatInteger(e.seq) },
@@ -126,7 +125,6 @@ export function EventFeed({ events, limit, onMore, nameOf, busy }: EventFeedProp
         columns={columns}
         rows={events}
         rowKey={(e) => String(e.seq)}
-        busy={busy}
         maxHeight={520}
         empty={<EmptyState size="sm" title="No events yet" body="Events appear here as the session works." />}
       />
