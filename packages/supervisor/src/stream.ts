@@ -3,13 +3,21 @@
  * facts the supervisor acts on (init/MCP state, result, rate-limit event, context size).
  */
 import type { SessionOutputItem } from '@aoc/contracts';
+import type { ModelTokens } from './reconcile';
 
 export type OutputDraft = Omit<SessionOutputItem, 'at'>;
 
 export interface StreamFacts {
   items: OutputDraft[];
   init: { model: string | null; mcpServers: { name: string; status: string }[] } | null;
-  result: { isError: boolean; subtype: string; text: string; apiErrorStatus: number | null } | null;
+  result: {
+    isError: boolean;
+    subtype: string;
+    text: string;
+    apiErrorStatus: number | null;
+    /** The process's own token figures per model, cumulative for the conversation (research §3.3). */
+    modelUsage: ModelTokens | null;
+  } | null;
   rateLimit: { status: string; resetsAtMs: number | null; window: string | null } | null;
   /** Context size implied by the latest assistant message (input + cache read + cache write tokens). */
   contextTokens: number | null;
@@ -17,6 +25,8 @@ export interface StreamFacts {
   cliText: string | null;
   /** The model produced output, so the conversation exists on disk and later turns must `--resume` it. */
   conversation: boolean;
+  /** The context was compacted: that usage reaches the result's modelUsage, never the transcript. */
+  compacted: boolean;
 }
 
 const MAX_TEXT = 4000;
@@ -42,6 +52,7 @@ export function readStreamLine(line: string): StreamFacts {
     contextTokens: null,
     cliText: null,
     conversation: false,
+    compacted: false,
   };
   let parsed: unknown;
   try {
@@ -88,6 +99,7 @@ function system(o: Obj, f: StreamFacts): void {
     return;
   }
   if (sub === 'compact_boundary') {
+    f.compacted = true;
     const m = rec(o.compact_metadata);
     const post = num(m?.post_tokens);
     if (post !== null) f.contextTokens = post;
@@ -152,8 +164,32 @@ function result(o: Obj, f: StreamFacts): void {
     .filter((s): s is string => !!s);
   const text = str(o.result) ?? errors.join('\n');
   const subtype = str(o.subtype) ?? 'unknown';
-  f.result = { isError: o.is_error === true, subtype, text, apiErrorStatus: num(o.api_error_status) };
+  f.result = {
+    isError: o.is_error === true,
+    subtype,
+    text,
+    apiErrorStatus: num(o.api_error_status),
+    modelUsage: modelUsageOf(o.modelUsage),
+  };
   f.items.push({ kind: 'result', text: clip(text || subtype) });
+}
+
+function modelUsageOf(v: unknown): ModelTokens | null {
+  const byModel = rec(v);
+  if (!byModel) return null;
+  const tokens = (x: unknown) => Math.max(0, num(x) ?? 0);
+  const out: ModelTokens = {};
+  for (const [model, u] of Object.entries(byModel)) {
+    const r = rec(u);
+    if (!r) continue;
+    out[model] = {
+      input: tokens(r.inputTokens),
+      output: tokens(r.outputTokens),
+      cacheRead: tokens(r.cacheReadInputTokens),
+      cacheWrite: tokens(r.cacheCreationInputTokens),
+    };
+  }
+  return out;
 }
 
 function rateLimit(o: Obj, f: StreamFacts): void {

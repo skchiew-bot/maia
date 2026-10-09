@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AocConfigSchema, type AocConfig } from '@aoc/contracts';
 import { AocRuntime, FakeClock, sha256hex, silentLogger } from '@aoc/kernel';
-import { ABSENT_HASH, createAuditModule } from '../src';
+import { ABSENT_HASH, createAuditModule, governedSources } from '../src';
 
 let dir: string;
 let config: AocConfig;
@@ -145,5 +145,18 @@ describe('governed config change detection', () => {
     const run = await boot();
     expect(run.changes.map((c) => c.key)).not.toContain('iso42001_mapping');
     await run.stop();
+  });
+
+  it('governs the mapping file the configuration names (compliance.mappingFile), wherever aocd was installed', () => {
+    // A relocated aocd resolves its mapping to the packaged copy; the watch must hash that file, not a default path.
+    writeFileSync(f('packaged-mapping.json'), '{"version":"packaged"}');
+    const relocated = { ...config, compliance: { mappingFile: f('packaged-mapping.json') } };
+    const source = (c: AocConfig, opts = {}) =>
+      governedSources(c, opts).find((s) => s.key === 'iso42001_mapping')!;
+    expect(source(relocated).current()).toBe(sha256hex('{"version":"packaged"}'));
+    // The module option still wins (embedding, tests).
+    expect(source(relocated, { mappingFile: f('iso42001-mapping.json') }).current()).toBe(
+      sha256hex('{"version":"draft"}'),
+    );
   });
 });

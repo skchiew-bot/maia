@@ -3,16 +3,17 @@
  * liveness states, and Working / Thinking / Stalled come from real claude-sim processes the supervisor launched.
  */
 import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { demoLayout, type DemoTokens, type LiveKind } from '../src/layout';
+import { groupExited } from '../src/process-group';
 import { CLAUDE_SIM_BIN } from '../src/sim-guard';
-import { REPO, childEnv, claudeTripwire, daemonChildEnv, eventsAfter, freePort, launchedArgv, seedDemo, stopChild, tsxImport, waitFor } from './helpers';
+import { REPO, childEnv, claudeTripwire, daemonChildEnv, eventsAfter, freePort, launchedArgv, removeTree, seedDemo, stopChild, tsxImport, waitFor } from './helpers';
 
 const dir = mkdtempSync(join(tmpdir(), 'aoc-demo-seed-'));
-afterAll(() => rmSync(dir, { recursive: true, force: true }));
+afterAll(() => removeTree(dir));
 
 const EXPECTED: Partial<Record<LiveKind, string>> = {
   working: 'working',
@@ -43,6 +44,7 @@ describe('seed + aocd', () => {
       cwd: REPO,
       env: daemonChildEnv(layout, port, trip.binDir),
       stdio: ['ignore', 'pipe', 'pipe'],
+      detached: true, // its own process group: the sidecars it leaves behind are found through it
     });
     aocd.stdout!.on('data', (d: Buffer) => (log += d.toString()));
     aocd.stderr!.on('data', (d: Buffer) => (log += d.toString()));
@@ -69,6 +71,8 @@ describe('seed + aocd', () => {
       expect(snapshot.observed).toBe('stalled');
     } finally {
       stopped = await stopChild(aocd, 'SIGTERM', 60_000);
+      // aocd's sidecars outlive it for a final flush that writes a spool file into the data directory.
+      await groupExited(aocd.pid!, 20_000);
     }
     expect(stopped, log).toEqual({ code: 0, signal: null });
 

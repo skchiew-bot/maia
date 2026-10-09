@@ -39,18 +39,18 @@ belongs to it, including the code that loads, wires or feeds the parts.
 | `packages/mod-identity/` | Users, roles, tokens, passkeys, ingest principals | Yes |
 | `packages/hooks/` | Relay of enforcement decisions into Claude Code | Yes |
 | `config/` | The process registry (models, credential profiles), the rate card, the ISO mapping | Yes |
-| `packages/supervisor/` | Credential injection, `envAllowlist`, model at launch, promotion and rollback execution | **No: add it** |
-| `packages/mod-change/` | Change control, the provenance gate, rollback, break-glass | **No: add it** |
-| `packages/mod-sessions/` | Ingest authentication, guard dispatch, the read-only guard | **No: add it** |
-| `packages/mod-ledger/` | The evidence rule, progress, boundaries, the writer lock, handoff briefs | **No: add it** |
-| `packages/mod-metering/` | The notional cost that credits consume; rollups | **No: add it** |
-| `packages/mod-registry/` | Model routing and playbook binding | **No: add it** |
-| `packages/distill/` | The shared distillation core: the Approver gate and the rule that only a person picking the binding option binds a playbook or lesson | **No: add it** |
-| `packages/mod-evidence/` | Evidence packs and the mapping stamp | **No: add it** |
-| `packages/daemon/` | Which modules and guards are loaded at all | **No: add it** |
-| `packages/client/`, `packages/mcp-server/`, `packages/sidecar/` | Ingest authentication and the telemetry that metering and credits trust | **No: add them** |
-| `package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `scripts/`, `.github/` | Dependencies, build and CI: a supply-chain path into everything above | **No: add them** |
-| `CLAUDE.md`, `docs/spec/`, `docs/compliance/` | The rules every building agent follows; the binding spec; the cited control mapping | **No: add them** |
+| `packages/supervisor/` | Credential injection, `envAllowlist`, model at launch, promotion and rollback execution | Yes |
+| `packages/mod-change/` | Change control, the provenance gate, rollback, break-glass | Yes |
+| `packages/mod-sessions/` | Ingest authentication, guard dispatch, the read-only guard | Yes |
+| `packages/mod-ledger/` | The evidence rule, progress, boundaries, the writer lock, handoff briefs | Yes |
+| `packages/mod-metering/` | The notional cost that credits consume; rollups | Yes |
+| `packages/mod-registry/` | Model routing and playbook binding | Yes |
+| `packages/distill/` | The shared distillation core: the Approver gate and the rule that only a person picking the binding option binds a playbook or lesson | Yes |
+| `packages/mod-evidence/` | Evidence packs and the mapping stamp | Yes |
+| `packages/daemon/` | Which modules and guards are loaded at all | Yes |
+| `packages/client/`, `packages/mcp-server/`, `packages/sidecar/` | Ingest authentication and the telemetry that metering and credits trust | Yes |
+| `package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `scripts/`, `.github/` | Dependencies, build and CI: a supply-chain path into everything above | Yes |
+| `CLAUDE.md`, `docs/spec/`, `docs/compliance/` | The rules every building agent follows; the binding spec; the cited control mapping | Yes |
 
 ### Tier 2: features (AOC may build them through normal change control)
 
@@ -61,9 +61,10 @@ Tier 1.
 Tier 2 changes still get a change record and normal human review. They simply may be produced by AOC-managed
 sessions.
 
-The extended list is a **CEO decision** (threat model O-10, gap P-18). The default
-`selfModification.protectedPaths` in `packages/contracts/src/config.ts` lists only the first eight rows. Set the
-full list in the production configuration, and ask the lead to update the default.
+The default `selfModification.protectedPaths` (`DEFAULT_PROTECTED_PATHS` in `packages/contracts/src/config.ts`)
+lists every row above, plus `packages/*/package.json` so that a feature package cannot add a dependency unseen.
+The production list remains a **CEO decision** (threat model O-10, gap P-18): remove nothing without a recorded
+decision, and add any path the CEO classes as core. None of it protects anything until `aocRepoPaths` is set.
 
 **AOC's audit state** is protected separately, for every managed session, whatever repository it works in: the
 data directory, the anchor repository, the RFC 3161 token directory, the external audit log, the KEK file and the
@@ -117,11 +118,12 @@ For the **AOC repository itself**, configure the `main` ruleset differently from
 
 - Require a pull request, **require review from Code Owners**, and dismiss stale approvals.
 - `.github/CODEOWNERS` assigns every Tier 1 path to the designated human reviewers (at least two people; never a
-  machine user).
+  machine user). Start from `.github/CODEOWNERS.example`, which a mod-audit test keeps identical to the default
+  `protectedPaths`.
 - **No bypass actors at all, including AOC's supervisor machine user.** In product repositories the supervisor is
   the only bypass actor, because AOC's go-live gate is the review of record there. In AOC's own repository that
   would let AOC approve its own core, which is exactly what §13 forbids.
-- Required status checks: `scripts/check.sh` (typecheck and tests).
+- Required status checks: `scripts/check.sh` (typecheck, tests and the packaging smoke test); `.github/workflows/ci.yml.example` runs it.
 
 Built (threat model O-10, gap G-41): AOC's own promotion gate refuses any candidate for an AOC repository whose
 commits touch Tier 1 paths and trace to a managed session (`promotion.refused {reason: self_modification}`), after

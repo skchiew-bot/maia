@@ -88,6 +88,7 @@ export function loadConfig(opts: LoadConfigOptions = {}): LoadedConfig {
     {
       registryFile: parsed.data.registryFile !== defaults.registryFile,
       rateCardFile: parsed.data.metering.rateCardFile !== defaults.metering.rateCardFile,
+      mappingFile: parsed.data.compliance.mappingFile !== defaults.compliance.mappingFile,
     },
     binDir,
     repoRoot,
@@ -199,6 +200,7 @@ function resolvePaths(c: AocConfig, baseDir: string): AocConfig {
       credentialProfilesFile: optPath(c.supervisor.credentialProfilesFile),
     },
     metering: { ...c.metering, rateCardFile: path(c.metering.rateCardFile) },
+    compliance: { ...c.compliance, mappingFile: path(c.compliance.mappingFile) },
     audit: {
       ...c.audit,
       anchorRepoPath: path(c.audit.anchorRepoPath),
@@ -241,10 +243,13 @@ function deriveUrls(c: AocConfig, given: { publicUrl: boolean; origin: boolean; 
   };
 }
 
-/** The default data files fall back to the packaged copies (dist/config or the checkout) when absent next to the config. */
+/**
+ * The default data files (registry, rate card, ISO 42001 mapping) fall back to the packaged copies (dist/config or the
+ * checkout) when absent next to the config.
+ */
 function withPackagedDefaults(
   c: AocConfig,
-  custom: { registryFile: boolean; rateCardFile: boolean },
+  custom: { registryFile: boolean; rateCardFile: boolean; mappingFile: boolean },
   binDir: string,
   repoRoot: string | null,
 ): AocConfig {
@@ -259,6 +264,10 @@ function withPackagedDefaults(
     metering: {
       ...c.metering,
       rateCardFile: packaged(c.metering.rateCardFile, custom.rateCardFile, 'rate-card.json'),
+    },
+    compliance: {
+      ...c.compliance,
+      mappingFile: packaged(c.compliance.mappingFile, custom.mappingFile, 'iso42001-mapping.json'),
     },
   };
 }

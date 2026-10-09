@@ -15,9 +15,35 @@ import {
 import { HttpError, readJson, requireIngest, sha256hex, type App, type Ctx, type ModuleContext } from '@aoc/kernel';
 import { z } from 'zod';
 import type { SessionsEngine } from './engine';
+import type { ObserverLimiter } from './rate-limit';
 
 /** Chained as the event's sourceTs: a timestamp, never free text. */
 const zSentAt = z.string().min(10).max(40).refine((s) => !Number.isNaN(Date.parse(s)), 'must be an ISO-8601 timestamp');
+
+/** How far before its receipt a usage batch may be dated: the sidecar ships every 10 s, a spool replay later. */
+export const USAGE_MAX_AGE_MS = 3_600_000;
+
+/**
+ * Usage times decide the credit period and the metering day a batch counts in, and the client chooses them: they
+ * are kept within [max(session start, receipt − USAGE_MAX_AGE_MS), receipt], so usage can neither be backdated into
+ * a closed period nor dated into a future one. Times are returned as UTC ISO strings.
+ */
+export function boundUsageTimes(
+  claimed: { firstAt: string; lastAt: string },
+  bounds: { receivedAt: number; sessionStartedAt: number | null },
+): { firstAt: string; lastAt: string; clamped: boolean } {
+  const hi = bounds.receivedAt;
+  const lo = Math.min(hi, Math.max(bounds.sessionStartedAt ?? -Infinity, hi - USAGE_MAX_AGE_MS));
+  const clamp = (ms: number) => Math.min(hi, Math.max(lo, ms));
+  const first = Date.parse(claimed.firstAt);
+  const last = clamp(Date.parse(claimed.lastAt));
+  const firstAt = Math.min(clamp(first), last);
+  return {
+    firstAt: new Date(firstAt).toISOString(),
+    lastAt: new Date(last).toISOString(),
+    clamped: firstAt !== first || last !== Date.parse(claimed.lastAt),
+  };
+}
 
 const HookIngestSchema = z.object({
   mode: z.enum(['managed', 'observed']),
@@ -59,8 +85,8 @@ const UsageSchema = z.object({
         cacheWrite5mTokens: z.number().min(0),
         cacheWrite1hTokens: z.number().min(0),
         messageIds: z.array(z.string()).min(1).max(5000),
-        firstAt: z.string(),
-        lastAt: z.string(),
+        firstAt: zSentAt,
+        lastAt: zSentAt,
         contextTokens: z.number().min(0),
       }),
     )
@@ -115,6 +141,12 @@ export function isReadOnlyBash(command: string): boolean {
 export interface IngestDeps {
   ctx: ModuleContext;
   engine: SessionsEngine;
+  observerLimiter: ObserverLimiter;
+}
+
+function rateLimited(c: Ctx | null, waitMs: number, what: string): HttpError {
+  c?.header('retry-after', String(Math.max(1, Math.ceil(waitMs / 1000))));
+  return new HttpError(429, 'rate_limited', `Observer token rate limit: too many ${what}`, { retryAfterMs: waitMs });
 }
 
 export class HookDispatcher {
@@ -157,6 +189,8 @@ export class HookDispatcher {
 
   /** Resolve (or create, for observed) the session a hook belongs to. */
   private resolve(req: HookIngestRequest, p: IngestPrincipal): SessionInfo | { error: HookIngestResponse } {
+    // Hook events come from the hook binary: never from a sidecar, whose principal reports telemetry only.
+    if (p.kind === 'sidecar') throw new HttpError(403, 'forbidden', 'Sidecar tokens cannot post hook events');
     if (req.mode === 'managed') {
       if (p.kind === 'observer') throw new HttpError(403, 'forbidden', 'Observer tokens cannot post managed events');
       const s = req.aocSessionId ? this.d.engine.get(req.aocSessionId) : null;
@@ -171,6 +205,10 @@ export class HookDispatcher {
     // reach them, or any holder of the shared observer token could forge a managed session's audit trail.
     if (existing && existing.mode !== 'observed') throw new HttpError(403, 'forbidden', 'Observed events cannot target a managed session');
     if (existing) return existing;
+    if (p.kind === 'observer') {
+      const wait = this.d.observerLimiter.newSession(p.tokenId);
+      if (wait) throw rateLimited(null, wait, 'new observed sessions');
+    }
     const sessionId = newId('session', this.ctx.clock.now());
     this.ctx.store.append({
       type: 'session.observed',
@@ -350,8 +388,25 @@ export class HookDispatcher {
 export function registerIngestRoutes(app: App, d: IngestDeps): void {
   const { ctx, engine } = d;
   const hooks = new HookDispatcher(d);
+  /** One request off an observer token's budget (`cost` for a spool flush), before its body is parsed. */
+  const chargeObserver = (c: Ctx, cost = 1) => {
+    const p = c.get('ingest');
+    if (p?.kind !== 'observer') return;
+    const wait = d.observerLimiter.request(p.tokenId, cost);
+    if (wait) throw rateLimited(c, wait, 'requests');
+  };
+  app.use('/ingest/*', async (c, next) => {
+    chargeObserver(c);
+    await next();
+  });
 
-  /** The session an ingest body is about, as the principal may address it (observers only know the claude session id). */
+  /**
+   * The session a sidecar report (heartbeat, activity, usage, throttle, process exit) is about, as the principal may
+   * address it. A managed session takes these only from its own sidecar principal: its session token sits in the
+   * model's environment, so with it the model could forge its own liveness and metering (G-44). Observed sessions
+   * report with the observer token, which only knows the claude session id. replay() applies the same rule to every
+   * spooled report, item by item, under the principal that flushes the spool.
+   */
   const sessionOf = (p: IngestPrincipal, sessionId: string, opts: { allowObserver?: boolean } = {}): string => {
     if (p.kind === 'observer') {
       if (!opts.allowObserver) throw new HttpError(403, 'forbidden', 'Token kind not allowed here');
@@ -359,13 +414,14 @@ export function registerIngestRoutes(app: App, d: IngestDeps): void {
       if (!s || s.mode !== 'observed') throw new HttpError(404, 'not_found', 'Unknown observed session');
       return s.sessionId;
     }
-    if (p.kind === 'session' && p.sessionId !== sessionId) throw new HttpError(403, 'forbidden', 'Token not valid for this session');
-    if (!engine.row(sessionId)) throw new HttpError(404, 'not_found', 'Unknown session');
+    if (p.kind !== 'sidecar') throw new HttpError(403, 'sidecar_token_required', 'Only the session’s sidecar reports this');
+    if (p.sessionId !== sessionId) throw new HttpError(403, 'forbidden', 'Token not valid for this session');
+    if (engine.row(sessionId)?.mode !== 'managed') throw new HttpError(404, 'not_found', 'Unknown session');
     return sessionId;
   };
 
   const sessionFor = (c: Ctx, sessionId: string, opts: { allowObserver?: boolean } = {}): string =>
-    sessionOf(requireIngest(c, { sessionId, allowObserver: opts.allowObserver }), sessionId, opts);
+    sessionOf(requireIngest(c, { sessionId, allowObserver: opts.allowObserver, allowSidecar: true }), sessionId, opts);
 
   const handleHook = (body: HookIngestRequest, p: IngestPrincipal): HookIngestResponse => {
     if (body.mode === 'observed' && p.kind === 'session') throw new HttpError(403, 'forbidden', 'Session tokens post managed events only');
@@ -376,6 +432,7 @@ export function registerIngestRoutes(app: App, d: IngestDeps): void {
   const recordUsage = (b: z.infer<typeof UsageSchema>, sessionId: string): { recorded: number; skipped: number } => {
     const row = engine.row(sessionId)!;
     const seen = ctx.db.prepare('SELECT 1 FROM sess_seen_messages WHERE session_id = ? AND message_id = ?');
+    const bounds = { receivedAt: ctx.clock.now(), sessionStartedAt: Date.parse(row.started_at) };
     let recorded = 0;
     let skipped = 0;
     b.batches.forEach((batch, i) => {
@@ -384,6 +441,7 @@ export function registerIngestRoutes(app: App, d: IngestDeps): void {
         skipped++;
         return;
       }
+      const at = boundUsageTimes(batch, bounds);
       ctx.store.append({
         type: 'usage.recorded',
         actor: { kind: 'agent', id: sessionId },
@@ -398,10 +456,10 @@ export function registerIngestRoutes(app: App, d: IngestDeps): void {
           cacheWrite1hTokens: batch.cacheWrite1hTokens,
           messages: batch.messageIds.length,
           contextTokens: batch.contextTokens,
-          firstAt: batch.firstAt,
-          lastAt: batch.lastAt,
+          firstAt: at.firstAt,
+          lastAt: at.lastAt,
         },
-        payload: { messageIds: batch.messageIds },
+        payload: { messageIds: batch.messageIds, ...(at.clamped ? { claimed: { firstAt: batch.firstAt, lastAt: batch.lastAt } } : {}) },
         source: row.mode === 'observed' ? 'hook' : 'sidecar',
         idempotencyKey: usageKey(sessionId, b.idempotencyKey, i),
       });
@@ -480,7 +538,9 @@ export function registerIngestRoutes(app: App, d: IngestDeps): void {
 
   app.post(INGEST_PATHS.spool, async (c) => {
     const body = await readJson(c, SpoolSchema);
-    const p = requireIngest(c, { allowObserver: true });
+    // Hooks, observed hooks and sidecars all spool; replay() holds each item to its live route's principal rules.
+    const p = requireIngest(c, { allowObserver: true, allowSidecar: true });
+    if (body.items.length > 1) chargeObserver(c, body.items.length - 1);
     const res: SpoolFlushResponse = { accepted: 0, duplicates: 0, rejected: 0 };
     for (const item of body.items as SpoolItem[]) {
       try {

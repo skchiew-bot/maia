@@ -26,8 +26,14 @@ export interface AuthContext {
   tokenId: string;
   method: 'bearer' | 'cookie';
 }
+/**
+ * `session`: the managed session's token — in the claude environment, so the model can use it (hooks, MCP).
+ * `sidecar`: the same session's sidecar — only the sidecar process holds it; it alone reports heartbeats, activity,
+ * usage, throttles and process exits for a managed session (G-44).
+ */
 export type IngestPrincipal =
   | { kind: 'session'; sessionId: string; tokenId: string }
+  | { kind: 'sidecar'; sessionId: string; tokenId: string }
   | { kind: 'observer'; tokenId: string }
   | { kind: 'system'; tokenId: string };
 
@@ -39,7 +45,10 @@ export interface IdentityService {
   can(user: User, perm: Permission): boolean;
   /** Per-session ingest token (supervisor issues at launch; revoked when the session ends). */
   issueIngestToken(sessionId: string, actor: Actor): string;
-  revokeIngestTokensFor(sessionId: string, actor: Actor): void;
+  /** The session's sidecar token: the supervisor passes it to the sidecar process only, never to claude. */
+  issueSidecarToken(sessionId: string, actor: Actor): string;
+  /** Revoke the session's ingest tokens: both kinds, or only the `session` or the `sidecar` one. */
+  revokeIngestTokensFor(sessionId: string, actor: Actor, kind?: 'session' | 'sidecar'): void;
   verifyIngestToken(token: string): IngestPrincipal | null;
   /**
    * Verify a WebAuthn assertion for a specific decision. The challenge was bound to
@@ -233,8 +242,13 @@ export interface LaunchRequest {
   /** Change record the session works under: exported as AOC_CHANGE_ID in that session's env only. */
   changeId?: string | null;
   parentSessionId?: string | null;
-  /** For rollover: brief injected as the opening context. */
+  /** For rollover: brief injected as the opening context (fenced untrusted data in the first turn, never the system prompt). */
   brief?: string | null;
+  /**
+   * Same key from the same actor → the same session, and no second process. Reactors derive it from the event they
+   * react to, so an at-least-once redelivery never launches twice. Internal callers only (not the HTTP launch body).
+   */
+  idempotencyKey?: string | null;
 }
 export interface SupervisorService {
   launch(req: LaunchRequest, actor: Actor): Promise<{ sessionId: string }>;
