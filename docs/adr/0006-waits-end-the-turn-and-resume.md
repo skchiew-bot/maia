@@ -32,10 +32,11 @@
    Restart means resuming a dead or stalled session from its transcript. Throttle resets, top-ups and
    auto-continue (`autoContinueLimit`) work the same way. A stop is honoured at the next task boundary, or at once if
    the session is idle.
-4. **`defer`, where the agent should perform the approved action itself.** For example: a migration on a dev
-   database. A guard may return `defer`; on approval the supervisor resumes without a prompt and the hook allows that
-   `tool_use_id`. This does not depend on the model choosing to stop. It is **not** used where the approved action is
-   performed by the supervisor, such as a promotion to main, because the session has no rights for it.
+4. **`defer`, where the agent should perform the approved action itself** (an option the design keeps open; no
+   guard uses it yet). For example: a migration on a dev database. A guard may return `defer`; on approval the
+   supervisor resumes without a prompt and the hook allows that `tool_use_id`. This does not depend on the model
+   choosing to stop. It is **not** for cases where the approved action is performed by the supervisor, such as a
+   promotion to main, because the session has no rights for it.
 
 ## Consequences
 
@@ -43,7 +44,10 @@
   with a reason. Waiting on you is unambiguous because no process is alive. Decision age is meaningful (R15).
 - **Bad: cooperation.** "End your turn" depends on the agent complying. If it carries on, it can only do work that
   is not blocked, and the decision stays open. Guards still stop protected operations, and `defer` removes the
-  dependency where it applies.
+  dependency where it applies. Gap G-48 proposes answering `defer` for every guard denial that raises a card, so
+  that those turns end without relying on the agent. That needs a rule for the deferred call when the session
+  resumes (a resume without a prompt re-runs it): right for item 4, but wrong where the supervisor performs the
+  approved action itself (a promotion), where the guard must deny the re-run.
 - **Bad: cache cost.** A resume after a long wait re-reads the context, and the prompt cache has probably expired
   (`prompt_cache_likely_expired`). Metering shows the resulting cache writes.
 - **Bad: turns are not tasks.** A turn can end mid-task (waiting for a decision), so turn boundaries are not task

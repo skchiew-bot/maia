@@ -29,6 +29,7 @@
     "@aoc/mod-metering": "workspace:*",
     "@aoc/mod-registry": "workspace:*",
     "@aoc/mod-sessions": "workspace:*",
+    "@aoc/mod-tower": "workspace:*",
     "hono": "4.13.13"
   }
 }

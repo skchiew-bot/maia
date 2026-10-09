@@ -5,7 +5,9 @@
   and the GitHub repositories it promotes to.
 - Method: STRIDE per component (§3), then abuse and gaming scenarios (§4), then the risk register R1 to R17
   cross-referenced to controls (§5), then the requested changes and open decisions this review produced (§6).
-- Date: 2026-10-09, at commit `fb97e98`. Re-review triggers are in §7.
+- Date: 2026-10-09. First written at commit `fb97e98`, and brought up to date the same day at integration commit
+  `a1c8a0c`: the supervisor, `mod-audit`, the ingest hardening, projection back-fill and the CEO decisions of
+  2026-10-09. Re-review triggers are in §7.
 - Companion documents: [architecture](../architecture.md), [ADRs](../adr/README.md),
   [credential isolation runbook](../runbooks/credential-isolation.md),
   [key custody runbook](../runbooks/key-custody.md), [anchoring runbook](../runbooks/anchoring.md),
@@ -15,7 +17,7 @@
 
 | Status | Meaning |
 | --- | --- |
-| **Built** | Implemented and tested in the repository at the commit above. Not yet independently reviewed |
+| **Built** | Implemented and tested in the repository at `a1c8a0c`. Not yet independently reviewed |
 | **Contracted** | Specified in the contracts (events, config, service interfaces); implementation in progress |
 | **Required** | Not yet specified anywhere. This review requires it; tracked in §6 |
 | **Ops** | An operational control, defined in a runbook and carried out by people |
@@ -123,7 +125,7 @@ unprivileged OS user (O-1).
 | API calls by an authenticated person (decisions, change records) | The holder of that person's token or cookie | Attributed in v1; signed for passkey kinds | Yes, within the routing rules |
 | Managed hooks (`/ingest/hook`, session token) | The hook binary, **and anything else in Zone 3, including the model** | Agent-asserted | No |
 | MCP calls (`/ingest/mcp/*`, session token) | The MCP server, **and the model directly** (with `curl` and the token) | Agent-asserted, schema-validated | Only as claims that AOC verifies (evidence against git) |
-| Sidecar (`/ingest/heartbeat`, `usage`, `throttle`, `process`) | The sidecar, **and the model whenever it can reach the token** | Agent-reachable until O-1 and O-3 are done | No. Metering is reconciled against the supervisor's figures |
+| Sidecar (`/ingest/heartbeat`, `usage`, `throttle`, `process`) | The sidecar, **and the model whenever it can reach the token** | Agent-reachable until O-1 and O-3 are done | No. Reconciliation against the supervisor's figures is still required (O-5) |
 | Observed hooks (observer token) | Any holder of the observer token | Unverified | Never |
 | Scheduler jobs | aocd, with untrusted inputs (the BNM page, LLM output) | Trusted code, untrusted data | Only after validation and reconciliation |
 
@@ -137,33 +139,37 @@ unprivileged OS user (O-1).
 | --- | --- | --- | --- | --- |
 | S | A stolen bearer token or session cookie is used to approve a gate | Token hashes only; cookie TTL 12 h; `token.revoked`; WebAuthn passkey bound to the decision, the option, the user and a hash of the card, for go-live, rollback and break-glass; the signed assertion is kept (`passkey.asserted`) | Built | Other Approver gates are attribution-only in v1 (O-19) |
 | S | Cross-site request forgery against a logged-in Approver (the console uses the `aoc_session` cookie) | `SameSite=Strict` and `HttpOnly` cookies, `Secure` when `publicUrl` is HTTPS; cookie-authenticated writes must come from AOC's own origin | Built | Production must use an HTTPS `publicUrl` (O-22) |
-| T | Malformed or oversized input | zod validation on every route (`readJson` → 422); strict meta schemas reject unknown keys | Built | — |
+| T | Malformed or oversized input | zod validation on every route (`readJson` → 422); strict meta schemas reject unknown keys; body caps checked before authentication or parsing (4 MiB for the API, 16 MiB for ingest, 64 MiB for a spool flush, the attachment allowance plus 1 MiB for the portal; 413 above them) | Built | — |
 | R | "I didn't approve that" | Every event carries the actor; passkey resolutions record `passkeyVerified`; the chain is anchored | Built | v1 bearer tokens prove which token, not who (§6) |
 | I | Over-broad reads | A permission check per route (`requirePermission`); Requesters see only their own tickets (404 otherwise); internal notifications are never sent to Requesters | Built | Builders see everything internal by design (a transparent team console, §6) |
 | I | aocd exposed beyond localhost | The default bind is `127.0.0.1:7420`. Any wider exposure goes through a TLS reverse proxy with a host allowlist; `publicUrl` and the WebAuthn origin must match | Ops | — |
 | D | Slow handlers block the single event loop, so managed hooks time out and fail closed | Bounded and indexed queries; projection rebuilds only in maintenance; request rate limits | Required (O-16) | aocd remains one process (ADR-0001) |
-| E | Role confusion | `hasPermission(role, perm, flags)`; `mapping.stamp` also needs `complianceLead`; only the Approver manages users | Built (contracts) | — |
+| E | Role confusion | `hasPermission(role, perm, flags)`; `mapping.stamp` comes only from the `complianceLead` flag, never from a role; only the Approver manages users | Built | — |
 
 ### 3.2 aocd: ingest
 
 | | Threat | Control | Status | Residual |
 | --- | --- | --- | --- | --- |
-| S | The model forges hook, MCP or sidecar events with its own session token | Tokens are scoped to one session (403 otherwise); unknown managed session → exit 2; observer tokens cannot post managed events (403) | Built | Forgery **within its own session** remains possible ([T-3](#t-3-the-model-reads-its-own-environment)) |
-| T | Replays and duplicate flushes | Idempotency keys; spool replays deduplicated | Built | — |
+| S | The model forges hook, MCP or sidecar events with its own session token | Tokens are scoped to one session (403 otherwise); unknown managed session → exit 2; observer tokens cannot post managed events, nor observed events that name a managed session (403); a request to `/ingest/*` without a valid token gets 401 before its body is read | Built | Forgery **within its own session** remains possible ([T-3](#t-3-the-model-reads-its-own-environment)) |
+| T | Replays and duplicate flushes | Idempotency keys; spool replays deduplicated. Chained keys are derived from the session and the client's key, so one session cannot pre-claim another's | Built | — |
 | R | A hook-relayed event is taken for a supervisor fact | Hook-sourced events must carry the agent as actor. Today a managed `UserPromptSubmit` is recorded as `{kind: system, id: supervisor}` | Required (O-4) | — |
-| I | Ingest responses leak data | Responses are acknowledgements and hook decisions; `get_status` returns only the caller's own session | Built / Contracted | — |
-| D | Event floods, decision-card spam through forged `PreToolUse` | Batch caps (spool ≤ 500 items, usage ≤ 200 batches); duplicate agent decisions collapse into one open card; per-session rate limits | Built / Required (O-16) | — |
+| I | Ingest responses leak data | Responses are acknowledgements and hook decisions; `get_status` returns only the caller's own session | Built | — |
+| D | Event floods, decision-card spam through forged `PreToolUse` | Body caps (16 MiB per ingest request, 64 MiB per spool flush); batch caps (spool ≤ 500 items, usage ≤ 200 batches); duplicate agent decisions collapse into one open card; per-session rate limits | Built / Required (O-16) | — |
 | E | System-token theft gives write access to every session | System tokens never leave aocd | Required | — |
 
 ### 3.3 The event store, body store and files on disk
 
 | | Threat | Control | Status | Residual |
 | --- | --- | --- | --- | --- |
-| T | Someone with file access drops the triggers, edits an event and recomputes the chain | Off-host anchors; Verify compares against the external records ([T-13](#t-13-hash-chain-recomputation)) | Built (primitives) / Contracted (`mod-audit`) | Events newer than the last anchor (O-11) |
+| T | Someone with file access drops the triggers, edits an event and recomputes the chain | Off-host anchors; Verify compares against the external records ([T-13](#t-13-hash-chain-recomputation)) | Built (`mod-audit`) | Events newer than the last anchor; everything, while no off-host remote or verified TSA is configured (O-11) |
+| T | The indexed copies of an event's scope (which queries and erasure filter on) are edited, leaving the chained JSON intact | `verifyChain` checks every indexed scope column against the chained scope | Built | — |
 | T | A body is swapped or edited | Blinded hash chained; AES-GCM AAD binds each ciphertext to its event; `verifyBody` | Built | — |
+| T | A crafted scope or blob id (`..`, separators) makes a blob write or an erasure reach outside the blob directory | A path segment that is not a plain name becomes a hash, so every blob path stays inside `blobs/` | Built | — |
 | I | KEK disclosure | [Key custody](../runbooks/key-custody.md): a KEK outside the data directory, mode 0400, owned by the service user, never in the environment in production | Ops / Required (O-13) | The dev default writes the KEK next to the data |
 | I | Plaintext survives erasure | `bodies.db`: `secure_delete = ON` and `wal_checkpoint(TRUNCATE)` after an erasure. Projectors scrub their decrypted copies (`onErase`) | Built | `aoc.db` also runs with `secure_delete`, its WAL is truncated after an erasure, and the knowledge index is merged so erased FTS5 terms leave its pages (O-24, done). Backups taken earlier (T-18) |
 | I | Personal data or secrets in clear-text meta | Strict meta schemas (ids, enums, numbers, hashes, labels only) | Built | A badly chosen field passes schema checks: review each new event type |
+| I | Free text smuggled into the clear-text chain through `sourceTs` or `idempotencyKey`, which no meta schema covers | The kernel bounds both: `sourceTs` is an ISO timestamp of 10 to 40 characters; an idempotency key has at most 512 characters and no control characters | Built | — |
+| R | A scope is crypto-shredded without an approved request, destroying evidence bodies | `POST /api/audit/erase` needs `audit.erase` (Approver only); `body.erased` records who, the reason (an enum) and the decision id; the chain and meta stay | Built | The decision id is optional, and is only checked to be resolved, not to approve this erasure (O-28) |
 | I | Personal data written under the shared `global` scope cannot be erased per person | Writers choose `bodyScope`; identity events use `user:<userId>` | Built (identity) / review rule (O-7) | Every new event type needs the same care |
 | D | Disk full stops all ingestion | Disk monitoring; WAL checkpoints; retention of blobs | Ops | — |
 
@@ -171,7 +177,8 @@ unprivileged OS user (O-1).
 
 | | Threat | Control | Status | Residual |
 | --- | --- | --- | --- | --- |
-| D | A poisoned event crashes a projector | A SAVEPOINT per projector; marked `degraded`; ingestion continues | Built | The read model is stale until a rebuild. The Control Tower shows `projection_degraded` (Contracted) |
+| D | A poisoned event crashes a projector | A SAVEPOINT per projector; marked `degraded`; ingestion continues; degraded projectors are rebuilt from the log at the next start | Built | The read model is stale until then, and a deterministic bug degrades it again. The Control Tower shows `projection_degraded` (Contracted) |
+| T | An upgrade changes a projector, but its existing rows keep the old semantics | A fingerprint per projector (tables, DDL, handled types, `version`) in `projection_state`; a changed or new projector is rebuilt from the log at startup | Built | A change to `apply` alone needs a `version` bump: a code-review rule |
 | D | A reactor keeps failing | 3 attempts, then a `reactor_failures` row and the cursor advances | Built | The follow-up (for example a resume) never happens until an operator re-drives it ([operations](../runbooks/operations.md#5-reactor-failures)) |
 | T | A reaction is applied twice | Reactors check `findByCausation` before appending | Built (kernel rule) | Every new reactor must follow the rule; review it |
 | T | A job runs twice or never | `job_runs` records each run per local date | Built | — |
@@ -189,21 +196,21 @@ unprivileged OS user (O-1).
 
 | | Threat | Control | Status | Residual |
 | --- | --- | --- | --- | --- |
-| E | A credential profile reaches the wrong session | The profile comes from the process type only; the registry schema forbids credentials on read-only types | Built (schema) / Contracted | — |
-| I | aocd secrets leak into sessions | `envAllowlist` copies only named variables | Contracted | The allowlist includes the Claude credentials (O-14) |
-| E | **The agent runs code as the supervisor or aocd** through git hooks or config in its workspace, or through acceptance tests the supervisor executes | Never run privileged git or tests in an agent-writable tree ([T-2](#t-2-code-execution-through-git-configuration-in-agent-workspaces)) | Required (O-2) | — |
-| T | Invalid generated settings disable every hook silently | Validate settings before launch; no `SessionStart` within N seconds → launch failure | Required (O-15) | — |
-| S | The `aoc` MCP server fails and the session runs without its structured voice | Abort unless `aoc` is `connected` in `system/init` | Required (O-15) | — |
-| D | Runaway sessions | `maxConcurrentSessions` (8), diagnosis budgets, stall detection, credits at boundaries | Contracted | — |
-| R | "Who launched, resumed or stopped this?" | Every launch, turn, resume, nudge, restart and stop is an event with an actor and a reason | Contracted | — |
+| E | A credential profile reaches the wrong session | The profile comes from the process type only; the registry schema forbids credentials on read-only types, and the supervisor drops them for read-only sessions anyway | Built | — |
+| I | aocd secrets leak into sessions | `envAllowlist` copies only named variables, and never an `AOC_*` variable of aocd's own | Built | The default allowlist includes the Claude credentials (O-14) and `HOME`, so a session shares the service user's home directory: its SSH keys, git and `gh` credentials and Claude login state (O-1) |
+| E | **The agent runs code as the supervisor or aocd** through git hooks or config in its workspace, or through acceptance tests the supervisor executes | Never run privileged git or tests in an agent-writable tree ([T-2](#t-2-code-execution-through-git-configuration-in-agent-workspaces)) | Required (O-2) | `runIsolated` (built) runs as the aocd user, in the repository the sessions work in |
+| T | Invalid generated settings disable every hook silently | The generated settings are validated against a schema before launch; no `SessionStart` within N seconds → launch failure | Built / Required (O-15) | Until the `SessionStart` check exists, a Claude Code version that rejects settings AOC considers valid runs without hooks, unnoticed |
+| S | The `aoc` MCP server fails and the session runs without its structured voice | The turn is aborted unless `aoc` is `connected` in `system/init` | Built | — |
+| D | Runaway sessions | `maxConcurrentSessions` (8), `autoContinueLimit`, diagnosis budgets, stall detection, credits at boundaries | Built | — |
+| R | "Who launched, resumed or stopped this?" | Every launch, turn, resume, nudge, restart and stop is an event with an actor and a reason | Built | — |
 
 ### 3.7 Per-session sidecar
 
 | | Threat | Control | Status | Residual |
 | --- | --- | --- | --- | --- |
-| S | The model forges heartbeats or usage | Process liveness from the supervisor wins; usage reconciled against supervisor-observed totals; a separate sidecar token outside the `claude` environment ([T-4](#t-4-sidecar-spoofing)) | Required (O-3, O-5) | — |
+| S | The model forges heartbeats or usage | Process liveness from the supervisor wins (Built); usage reconciled against supervisor-observed totals, and a separate sidecar token outside the `claude` environment ([T-4](#t-4-sidecar-spoofing)) | Built / Required (O-3, O-5) | — |
 | T | The model edits its transcript | Continuous tailing with persisted offsets; reconciliation ([T-5](#t-5-transcript-tampering)) | Built / Required (O-5) | A few seconds' window |
-| I | The token is passed in argv and is readable by every local user through `ps` | Pass tokens through the environment or a 0600 file, never argv | Required (O-3) | — |
+| I | The token is passed in argv and is readable by every local user through `ps` | The supervisor passes the sidecar's token in its environment, never argv | Built | The sidecar still uses the session's own token (O-3) |
 | D | The model kills the sidecar | Heartbeats stop, so the session shows Dead while the supervisor knows the process is alive. That mismatch is a signal; the supervisor restarts the sidecar | Required | — |
 
 ### 3.8 AOC MCP server
@@ -228,11 +235,11 @@ unprivileged OS user (O-1).
 
 | | Threat | Control | Status | Residual |
 | --- | --- | --- | --- | --- |
-| E | Stored XSS through untrusted text (transcripts, ticket text, file names, decision context) | Escape everything; no raw HTML rendering; file names sanitised | Built (file names) / Required (UI) | — |
+| E | Stored XSS through untrusted text (transcripts, ticket text, file names, decision context) | Escape everything: React escapes text, and the console has no raw HTML rendering; file names sanitised; a Content-Security-Policy with `script-src 'self'`, `object-src 'none'` and `frame-ancestors 'none'` | Built | The UI is still being built: keep "no raw HTML" a code-review rule for every new view |
 | I | Raw media served inline and executed by the browser | `content-disposition: attachment`, `nosniff`, `no-store` | Built | — |
 | I | Requesters learn internal state (gate names, approver identity, queue depth, timelines) | `PublicTicket` DTO with abstracted status; no SSE for Requesters | Built | — |
 | I | Builders browse raw media without need | Media only while one of their own active sessions works on that ticket; every access logged (`intake.media_accessed`) | Built | — |
-| D | Upload flooding | At most 6 files, 10 MB per image, 200 MB per video; scan required; per-requester rate limits | Built / Required (O-16) | — |
+| D | Upload flooding | At most 6 files, 10 MB per image, 200 MB per video; the request body is capped at that allowance plus 1 MiB, and the Requester is authenticated before the form is read; scan required; per-requester rate limits | Built / Required (O-16) | One request can still carry about 1.2 GB, and the form is parsed in memory: stream uploads to disk or lower the caps (O-16) |
 | E | CSRF on cookie sessions | See §3.1 | Built | — |
 
 ### 3.11 CLI and developer machines
@@ -250,18 +257,19 @@ unprivileged OS user (O-1).
 | --- | --- | --- | --- | --- |
 | E | A feature or UAT deploy key pushes to `main` | Rulesets restrict updates of `main` and `release/*` to the supervisor machine user; a push drill proves it | Ops | GitHub admins can change rulesets: watch the audit log |
 | T | Force-push or tag deletion rewrites pinned history | Block force-pushes and deletions on `main` and `release/*`; protect the `aoc/*` pin tags | Ops | — |
-| I | Agents read the credential profiles file | The file is owned by the service user, mode 0600, and agents run as a different OS user | Ops / Required (O-1) | Void while agents and aocd share a user |
+| I | Agents read the credential profiles file | The file is owned by the service user, mode 0600, and agents run as a different OS user. The self-modification guard denies tool writes to it, not reads | Ops / Required (O-1) | Void while agents and aocd share a user, which they do today: the supervisor spawns `claude` as the aocd user |
 | E | An agent pushes a branch whose name matches a protected pattern | Rulesets on patterns; creation of `release/*` restricted to the machine user | Ops | — |
 
 ### 3.13 Anchoring
 
 | | Threat | Control | Status | Residual |
 | --- | --- | --- | --- | --- |
-| T | Rewrite of anchored events | Detected by Verify against the external records | Contracted | — |
-| T | Rewrite of events newer than the last anchor | Hourly anchors plus anchors after high-value events | Required (O-11) | The window between anchors |
+| T | Rewrite of anchored events | Detected by Verify against the external records: the anchor commits, fetched from the remote when one is configured, or the RFC 3161 tokens | Built | Only as strong as the record's independence: a local anchor repository, or a token whose signature is not checked, can be rewritten by the same attacker (O-11) |
+| T | Rewrite of events newer than the last anchor | A nightly anchor (`audit.anchor`, 02:00 local) and `aoc anchor` on demand (Built); hourly anchors and anchors after high-value events (Required) | Built / Required (O-11) | Up to a day of events |
 | T | The anchor repository's history is force-pushed | Remote rules forbid force-pushes and deletions; the remote is owned by another account | Ops | — |
-| D | Anchoring fails silently | `anchor.failed`, an `anchor.missed` notification, and the Tower's `anchor_missed` item | Contracted | — |
-| S | A fake TSA or response | Verify the TSA certificate chain; use a qualified or commercial TSA | Ops | — |
+| D | Anchoring fails silently | Two retries 30 s apart, then `anchor.failed` and a notification; audit health warns `anchor_stale` after 26 h and `anchor_failed`; the Tower's `anchor_missed` item | Built / Contracted (Tower) | — |
+| T | An evidence pack vouches for a forged chain | Packs recompute the chain and compare each anchor with the `anchor.created` event in that same chain | Built | A full-chain forgery that also rewrites `anchor.created` yields a pack that says every anchor matched: packs must check the off-host records (O-29). Until then, run `aoc verify` alongside every pack |
+| S | A fake TSA or response | Check the token's imprint, and reject a TSA time more than 1 h from the anchor record (Built); verify the TSA certificate chain against a pinned CA file (Built, but see residual); use a qualified or commercial TSA (Ops) | Built / Ops | The CA file and the OpenPGP key that signs anchor commits are `mod-audit` options that `aocd` cannot be configured to pass yet, so no TSA signature is checked and no anchor commit is signed (O-11) |
 
 ### 3.14 LLM-assisted functions
 
@@ -285,8 +293,8 @@ A developer pushes from a laptop, holds a deploy key, or runs Claude Code with `
 advisory, and the audit trail and metering have holes (R1, §3).
 
 - **Controls:** deploy credentials and protected-branch rights exist only in supervisor-controlled session
-  environments (Contracted); GitHub rulesets restrict updates of `main` and `release/*` to the supervisor machine
-  user (Ops); the provenance guarantee refuses orphan commits at promotion (Built); observed-session hooks
+  environments (Built, supervisor); GitHub rulesets restrict updates of `main` and `release/*` to the supervisor
+  machine user (Ops); the provenance guarantee refuses orphan commits at promotion (Built); observed-session hooks
   give visibility (Built); a pre-push speed bump and `aoc doctor` (Built). Full procedure:
   [credential isolation runbook](../runbooks/credential-isolation.md).
 - **Residual:** off-platform code can still reach a feature branch. It cannot reach `main` except through the
@@ -304,22 +312,32 @@ advisory, and the audit trail and metering have holes (R1, §3).
 - hooks run on commit, checkout, merge and push;
 - `core.sshCommand`, `credential.helper` and `url.<base>.insteadOf` take effect on fetch and push.
 
-Where AOC runs git or repository code today (commit `fb97e98`):
+Where AOC runs git or repository code today (commit `a1c8a0c`):
 
 - **Evidence checks.** At every `task_done`, `mod-ledger` fingerprints the session's repository through the
   kernel's git wrapper (`git status` and `git diff HEAD`). The wrapper runs as the aocd user and passes aocd's whole
   environment.
-- **Promotion.** `mod-change` pushes through `supervisor.runIsolated` in the project repository, with the
-  promotion credential profile. It sets `AOC_SUPERVISOR_PUSH=1` precisely so that the repository's `pre-push` guard
-  lets the push through, which means that the repository's `pre-push` hook **runs**, with the promotion credential
-  in its environment.
-- **Rollback verification.** `mod-change` runs the repository's acceptance command (`npm test` by default) through
-  `runIsolated`, without credentials. That is code the agents wrote.
+- **Promotion.** `mod-change` merges and pushes through `supervisor.runIsolated` in the project repository, with
+  the promotion credential profile. That is the repository the managed sessions work in: a session's working
+  directory defaults to its project's repository. `mod-change` sets `AOC_SUPERVISOR_PUSH=1` precisely so that the
+  repository's `pre-push` guard lets the push through, which means that the repository's `pre-push` hook **runs**,
+  with the promotion credential in its environment.
+- **Rollback verification.** `mod-change` checks the target commit out into a temporary worktree of the project
+  repository and runs the acceptance command there through `runIsolated`, as `sh -c`, without a credential profile
+  but with the allowlisted environment (Claude credentials, `HOME`). The command comes from the change record's
+  `acceptanceTest` field (drafted by AI, affirmed by a Builder), from the project's `acceptanceCommand`, or is
+  `npm test`. Only its first word is checked against a list of known runners, so `npm test; <anything>` passes.
+  Either way it runs code the agents wrote.
 
 So an agent that plants a config entry or a hook gets code execution **as whatever user runs those commands**. If
 that is the aocd user, the agent can reach the KEK and `aoc.db` (drop the triggers, recompute the chain). If it is
-the promotion step, it gets the protected-branch credential. `runIsolated` belongs to the supervisor, which has not
-landed yet. It must not run as the aocd user, and it must not run in a tree an agent can write.
+the promotion step, it gets the protected-branch credential. `runIsolated` has now landed in the supervisor, and it
+does what this finding warns against: it runs as the aocd user, in a tree an agent can write. It narrows only the
+environment.
+
+While O-1 is open, agents already run as the aocd user, so today this grants nothing they do not already have: an
+agent can read the KEK and the credential profiles file directly (§3.12). It becomes the main escalation path the
+day O-1 is done, unless O-2 is done with it.
 
 - **Controls (all Required, O-2):**
   - Never run git as a privileged user in an agent-writable tree. Inspect workspaces as the sandbox user, with a
@@ -327,7 +345,8 @@ landed yet. It must not run as the aocd user, and it must not run in a tree an a
     `-c core.hooksPath=/dev/null`, `--no-ext-diff`, `--no-textconv`).
   - Promote, tag and roll back from a **service-owned clone** that fetches the candidate commits by SHA, never from
     the agent's working copy.
-  - Run acceptance tests as the sandbox user with no credentials.
+  - Run acceptance tests as the sandbox user with no credentials, and without a shell: a fixed runner and its
+    arguments, not a free command line.
   - Do not set `safe.directory=*` to silence git's ownership check. The check is helping.
 - **Residual:** low, once the sandbox user (O-1) and O-2 are in place.
 
@@ -335,7 +354,9 @@ landed yet. It must not run as the aocd user, and it must not run in a tree an a
 
 The `claude` environment holds the per-session ingest token (needed by the hooks and the MCP server) and, through
 `envAllowlist`, the Claude credentials (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`).
-The model can print and use them.
+The model can print and use them. The default allowlist also passes `HOME` and `CLAUDE_CONFIG_DIR`, so the session
+works in the service user's home directory, with whatever SSH keys, git and `gh` credentials and Claude login
+state that holds.
 
 - **With the ingest token**, the model can post forged events **for its own session only**. Examples:
   - a `UserPromptSubmit` hook payload, which today is recorded as a **supervisor** prompt
@@ -350,7 +371,9 @@ The model can print and use them.
     state, and human decisions (design rule, ADR-0004).
   - Record hook-relayed events with the agent as actor (O-4).
   - Compute "file changed" from git, never from `tool.used` (Built: the ledger compares working-tree fingerprints, `task.done.treeChanged`, §4).
-  - Give the sidecar its own token, outside the `claude` environment (O-3).
+  - Give the sidecar its own token, outside the `claude` environment (O-3). The sidecar now receives its token in
+    its environment instead of argv (Built), but it is still the session's token.
+  - Give sessions a home directory of their own, holding no credentials (O-1).
   - Restrict network egress from build sessions and review how Claude credentials reach sessions (O-14).
 - **Residual:** an agent can always lie about **itself**: its own liveness and its own telemetry. It cannot
   approve, promote or forge another session's events.
@@ -363,7 +386,8 @@ includes the model, if the sidecar runs as the same user or its token is visible
 - **Controls:**
   - The supervisor is the parent of `claude` and knows process exit authoritatively; that wins over a heartbeat.
   - Usage is deduplicated by message id (Built).
-  - A distinct sidecar principal, with the token passed through the environment or a file, never argv (O-3).
+  - A distinct sidecar principal (O-3). The token already travels in the sidecar's environment, never argv
+    (Built).
   - Reconciliation of transcript usage against the supervisor's stream-json `result.modelUsage` (O-5).
   - Run the sidecar as the service user, with read-only access to the session's transcript directory (O-1).
 - **Residual:** while the sidecar shares a user with the agent, liveness and metering of that one session are
@@ -380,7 +404,7 @@ agent can edit it to hide usage or to plant throttle text.
   - The audit record is the chain, not the transcript.
   - Per-invocation reconciliation against supervisor-observed totals (O-5).
   - Throttle state prefers structured signals from the supervisor's stream (`rate_limit_event`) over transcript
-    text (Contracted).
+    text (Built).
 - **Residual:** a few seconds' window before a line is shipped. Throttle text planted in the transcript can only
   make the session look Throttled, which is visible and harmless.
 
@@ -419,15 +443,25 @@ Someone approves their own request, directly or by escalation.
 - **Controls:**
   - The requester is always excluded and can never resolve their own card. For agent cards, the requester is the
     session owner (Built, `mod-decisions`).
-  - A card whose eligible users are all excluded is refused at creation (Built).
+  - A card that names its eligible users, all of them excluded, is refused at creation (Built). A card routed to a
+    role is created and waits for an eligible member of that role.
   - Escalation goes to the Approver role only (Built).
   - UAT sign-off is limited to the ticket's own requester (Built).
   - The credit auto-grant is the only policy resolution, once per requester per period (Built).
   - Self-approval exists only for reversible off-main change requests, and is recorded (Built).
   - The Tower tracks `self_approval_rate` (Contracted).
+- **Decided (CEO, 2026-10-09): a single Approver gets no exception.** The sole-Approver fallback is off
+  (`decisions.soleApproverFallback: false`). With one Approver, an Approver-level card raised by the Approver,
+  including one from the Approver's own sessions, has no eligible resolver and waits until a second Approver
+  exists. Separation of duties wins over throughput. If the flag is ever turned on, the only active Approver may
+  resolve their own request, recorded `selfApproved: true`, never for a credit top-up and only while no second
+  Approver is active; review the Tower's `self_approval_rate` if that happens. Turning the flag on is not itself
+  recorded yet: `decisions` is not among the governed settings that `mod-audit` hashes into `config.changed`
+  (O-8).
 - **Residual:**
-  - **Single-Approver deadlock.** With one Approver, any Approver-level card raised from the Approver's own
-    sessions has no eligible resolver (O-8).
+  - **The cost of that decision.** The CEO's own Approver-level requests wait, including a break-glass the CEO
+    invokes. Appoint a second Approver, with a passkey, before the CEO runs sessions that raise such gates, and
+    let a Builder invoke break-glass ([incident runbook](../runbooks/incident-break-glass.md)) (O-8).
   - Two Builders can collude on each other's Builder-level cards.
   - v1 button approvals are attribution, not signatures (O-19).
 
@@ -461,9 +495,9 @@ the environment").
 
 - **Controls:**
   - Triage runs read-only: `--tools Read,Glob,Grep`, `dontAsk`, Bash, Edit, Write, WebFetch and Agent denied, no
-    credentials, and the `read-only` guard as defence in depth (Built/Contracted).
+    credentials, and the `read-only` guard as defence in depth (Built).
   - Ticket text is fenced inside a per-ticket random delimiter that the user's text cannot forge, and labelled as
-    untrusted data (Built).
+    untrusted data. UAT feedback gets the same framing in the build session (Built).
   - Media is never shown to agents; they get metadata only (Built).
   - A diagnosis budget applies (Built).
   - Low confidence or disagreement goes to a human (Built).
@@ -480,7 +514,8 @@ The observer token sits on every developer machine. With it, anyone can create o
 hook events, and post usage or throttle reports for any observed session.
 
 - **Controls:**
-  - Observer tokens cannot post managed events or block anything (Built).
+  - Observer tokens cannot post managed events, cannot post observed events that name a managed session (403),
+    and cannot block anything (Built).
   - Observed data is labelled `observed` and never feeds gates, credits or evidence (design rule).
   - Issue observer tokens **per person** (`token.issued {kind: observer, userId}`), so observed events can be
     attributed and revoked individually; add rate limits (O-6).
@@ -495,10 +530,15 @@ later hash. `verifyChain()` passes, because the genesis value depends only on th
 - **Controls:**
   - Off-host anchors: a git remote that forbids force-pushes, or RFC 3161 tokens.
   - Verify compares recomputed hashes with the **external** records, never with `anchor.created` rows inside the
-    database under test (Contracted, ADR-0010).
+    database under test (Built, `mod-audit`, ADR-0010). With a remote configured, `aoc verify` fetches it
+    into `refs/aoc/anchor-remote` and checks the anchors found there. RFC 3161 tokens are checked against their
+    imprint and time, and against the TSA's certificate chain only when a CA file is configured.
   - Separate OS users so agents cannot reach the file (O-1).
-- **Residual:** events newer than the last anchor. Anchor hourly and after high-value events (O-11). With default
-  settings (no `anchorRemote`), R2 is **not mitigated at all**.
+- **Residual:** events newer than the last anchor: up to a day with the nightly default. Anchor hourly and after
+  high-value events (O-11). With default settings (no `anchorRemote`), R2 is **not mitigated at all**: the anchor
+  repository is a local directory that the same attacker can rewrite. The same holds for RFC 3161 tokens whose
+  signatures are not verified, and `aocd` cannot be configured to verify them yet (O-11). Evidence packs compare
+  anchors only with the chain's own `anchor.created` events, so they do not detect this attack (O-29).
 
 ### T-14. Credit gaming
 
@@ -557,7 +597,8 @@ Forged or runaway `PreToolUse` attempts raise many cards; or one card waits for 
   - The Tower ranks the attention queue by cost of delay (Contracted).
   - Waiting costs nothing, because the turn has ended (ADR-0006).
   - Per-session rate limits on card creation (O-16).
-- **Residual:** a single Approver is the bottleneck (O-8).
+- **Residual:** a single Approver is the bottleneck, and by the CEO's decision their own Approver-level requests
+  wait for a second Approver (O-8).
 
 ### T-18. Backups resurrect crypto-shredded data, and the KEK sits with the data
 
@@ -595,10 +636,12 @@ traversal.
 Generated settings that fail validation are ignored in `-p` mode, so every hook disappears and nothing complains.
 The MCP server can also fail to start without stopping the session.
 
-- **Controls (Required, O-15):** validate the settings before launch; treat a missing `SessionStart` within N
-  seconds as a failed launch; abort unless `aoc` is `connected`. Also: unknown managed session ids fail closed
-  (Built).
-- **Residual:** none, once O-15 is in place for managed sessions. Observed sessions are best-effort by design.
+- **Controls:** the supervisor validates the generated settings against a schema before launch, and aborts the
+  turn unless `aoc` is `connected` in `system/init` (Built). Unknown managed session ids fail closed (Built). A
+  missing `SessionStart` within N seconds should fail the launch (Required, O-15).
+- **Residual:** until the `SessionStart` check exists, a Claude Code version that rejects settings AOC's schema
+  accepts would run without hooks. Re-run the research captures on every upgrade (§7). Observed sessions are
+  best-effort by design.
 
 ### T-21. Self-modification of the governance core
 
@@ -606,28 +649,39 @@ AOC's own agents build AOC features. One of them could weaken the core: who appr
 charged (R14).
 
 - **Controls:**
-  - The `self-modification` guard denies edits to protected paths of the AOC repository and records
-    `selfmod.blocked` plus a line in an external audit log (Contracted).
+  - The `self-modification` guard (`mod-audit`, managed sessions only) denies file-changing tool calls, and Bash
+    commands that write, move, delete, patch or redirect into protected paths. It protects two areas: the
+    governance core of every repository listed in `aocRepoPaths`, and, for every managed session, AOC's own
+    audit state (the data directory, the anchor repository and tokens, the external audit log, the KEK file and
+    the credential profiles file). Each denial first writes a line to an external audit log (hash-chained JSON
+    lines, fsync'd, mode 0600), then appends `selfmod.blocked` (Built).
   - Credential isolation means agents cannot push to AOC's `main`.
   - CODEOWNERS and required human review for core paths (Ops).
 - **Residual and findings (O-10):**
-  - `selfModification.aocRepoPaths` defaults to empty, which leaves the guard inert.
+  - `selfModification.aocRepoPaths` defaults to empty, which leaves the core protection inert. The audit-state
+    protection applies regardless.
   - The default `protectedPaths` list omits packages that enforce governance.
-  - Bash can change files without touching the path guard, so the guard is a speed bump.
-  - Details: [self-modification boundary](../compliance/self-modification-boundary.md).
+  - The Bash analysis is a speed bump: a script, a build step or an interpreter fed from a file changes files
+    the guard never sees. While agents run as the aocd user (O-1), nothing at the file-system level stops them.
+  - The external log is on the same host by default and writable by the aocd user. Its hash chain shows edits
+    and deletions in the middle, but not lines cut from the end: compare its line count with the chained
+    `selfmod.blocked {externalLogged: true}` events.
+  - Details: [self-modification boundary](../compliance/self-modification-boundary.md); gaps P-06 (human review of
+    the core) and P-07 (an external log off the host).
 
 ### T-22. Forged provenance trailers
 
 **A finding of this review.** The provenance gate (§14: "no orphan commits to main") classifies a commit as
 traced when its **message** carries an `AOC-Session: <id>` or `AOC-Change: <id>` trailer that leads to an approved
-change record or an approved fix plan (`mod-change`, `provenance.ts`). In managed workspaces the
-`prepare-commit-msg` hook writes those trailers. But a trailer is plain text: anyone can type it. Approved change ids
+change record or an approved fix plan (`mod-change`, `provenance.ts`). Managed sessions are told to add those
+trailers by their system prompt; the `prepare-commit-msg` hook that would write them is not installed in managed
+workspaces yet (gap G-37). Either way a trailer is plain text: anyone can type it. Approved change ids
 are visible to every Builder. A commit written on a laptop, or by an agent outside its change, passes the gate by
 copying a trailer.
 
 - **Controls today:** the go-live decision is a human gate with a passkey, and the Approver sees the diff (Built);
   only the supervisor can move `main` (Ops).
-- **Required (O-27):** cross-check every traced commit against AOC's **own records**, not the message. For
+- **Required (O-27, gap G-25):** cross-check every traced commit against AOC's **own records**, not the message. For
   example, require each commit to be reachable from a HEAD that AOC recorded for a managed session linked to that
   change or ticket (`task.done.headSha`, `change.completed.pinnedSha`, `phase.completed.pinnedSha`), and not
   reachable from the base. A stronger option: per-session commit-signing keys issued by the supervisor, verified at
@@ -641,10 +695,10 @@ copying a trailer.
 
 | # | Risk (§16) | Severity | Controls (where) | Status | Residual / open items |
 | --- | --- | --- | --- | --- | --- |
-| R1 | Work bypasses the platform | Critical | Credential profiles only in supervisor-run sessions; `envAllowlist`; no credentials for read-only types (registry schema); GitHub rulesets; provenance gate; observed hooks; `aoc doctor` (T-1) | Built (provenance gate, `aoc doctor`) + Contracted (supervisor) + Ops | Agents must run as a separate OS user (O-1); privileged git out of workspaces (O-2); Claude credentials in env (O-14); provenance trusts trailers (O-27) |
-| R2 | The in-file chain is defeatable | High | Off-host anchors; Verify against the external records (T-13, ADR-0010) | Contracted | Default config is local only; anchor cadence (O-11) |
+| R1 | Work bypasses the platform | Critical | Credential profiles only in supervisor-run sessions; `envAllowlist`; no credentials for read-only types (registry schema); GitHub rulesets; provenance gate; observed hooks; `aoc doctor` (T-1) | Built (supervisor, provenance gate, `aoc doctor`) + Ops | Agents must run as a separate OS user with their own home directory (O-1); privileged git out of workspaces (O-2); Claude credentials in env (O-14); provenance trusts trailers (O-27) |
+| R2 | The in-file chain is defeatable | High | Off-host anchors; Verify against the external records (T-13, ADR-0010) | Built (`mod-audit`) | Default config is local only; nightly cadence; TSA chain check and anchor signing cannot be configured yet (O-11) |
 | R3 | ISO 42001 mapping wrong in ≥ 5 rows | High | Provisional corrected mapping (`docs/compliance/iso42001-annex-a.md`); compliance-lead stamp; evidence packs provisional until stamped | Provisional | The mapping was compiled from secondary sources; the compliance lead must review it against the purchased standard |
-| R4 | Intake uploads are an attack and PDPA surface | High | Magic bytes, size caps, scan, encrypted blobs, hashes only in the chain, abstracted status, media access log, read-only triage, untrusted framing, budget, human gates (T-11, T-19) | Built | `builtin` scanner is not AV; the UAT feedback path (O-9) |
+| R4 | Intake uploads are an attack and PDPA surface | High | Magic bytes, size caps, scan, encrypted blobs, hashes only in the chain, abstracted status, media access log, read-only triage, untrusted framing, budget, human gates (T-11, T-19) | Built | `builtin` scanner is not AV; the UAT feedback path (O-9); uploads parsed in memory (O-16) |
 | R5 | Scope sprawl with weak auth bolted on | High | §15 sequencing; identity before any non-CEO surface; per-stage sign-off | Process | Modules exist before their stage: gate **enablement** (O-21) |
 | R6 | Audit log and keys are a single point of total loss | High | [Key custody](../runbooks/key-custody.md): KEK custody, separate off-host backups, restore drill | Ops | KEK next to the data by default; KEK in env (O-13); backups versus erasure (O-12); no KEK rotation tool (O-23); erasure gaps in `aoc.db` (O-24) |
 | R7 | A credit cap kills a session mid-task | Medium | Enforcement only at task boundaries; no guard, no usage reactor in `mod-credits`; 25 %-once grant (ADR-0007) | Built | Overspend within a task |
@@ -654,47 +708,59 @@ copying a trailer.
 | R11 | Repeat detection becomes per-person blame | Medium | No user id in error events; class-level aggregation; Tower scope never a person (T-16) | Built + Contracted (Tower) | The session-owner join exists; enforced by policy |
 | R12 | A rate edit restates closed days | Medium | Rate cards apply forward only; `rollup.closed` carries its figures and rate-card version, so a rebuild reproduces them | Built | — |
 | R13 | BNM scrape fragility writes a bad rate | Low | Sanity bounds; Haiku → Sonnet once; carry forward; reconciliation; discrepancy decision | Built | Defaults differ from the research (O-18) |
-| R14 | Self-build corrupts the governance core | High | Self-modification guard; external audit log; human review of core changes (T-21) | Contracted + Ops | Guard inert by default; incomplete path list; the AI-built core needs human review before go-live (O-10) |
-| R15 | Indefinite decision waits stall the system | Medium | Age on every card; reminders; webhook; Tower attention queue; end-turn waits (T-17) | Built + Contracted | The single Approver (O-8) |
-| R16 | Rollover mid-risky-operation loses a constraint | Medium | Clean boundaries only; risky types never mid-operation; a deterministic brief validated against the manifest and decisions (ADR-0008) | Built (ledger) + Contracted (supervisor) | Constraints never written down are lost |
+| R14 | Self-build corrupts the governance core | High | Self-modification guard; external audit log; human review of core changes (T-21) | Built (guard, external log) + Ops | Core protection inert until `aocRepoPaths` is set; incomplete path list; the external log is on the same host; the AI-built core needs human review before go-live (O-10) |
+| R15 | Indefinite decision waits stall the system | Medium | Age on every card; reminders; webhook; Tower attention queue; end-turn waits (T-17) | Built + Contracted (Tower) | The single Approver: by decision, their own Approver-level requests wait for a second Approver (O-8) |
+| R16 | Rollover mid-risky-operation loses a constraint | Medium | Clean boundaries only; risky types never mid-operation; a deterministic brief validated against the manifest and decisions (ADR-0008) | Built (ledger, supervisor) | Constraints never written down are lost; Claude Code's own auto-compaction is not yet pushed above the rollover threshold (ADR-0008) |
 | R17 | Parallel triage agents disagree | Medium | Same root-cause class, or a model same-check; otherwise a `triage_reconciliation` decision; the fix-plan gate | Built | A wrong "same" judgement is caught at the fix-plan gate |
 
 ---
 
 ## 6. Requested changes and open decisions
 
-"Change" means engineering work on a named package. "Decision" needs the CEO (or the named role) to choose. Items
-are ordered by importance within the table.
+"Change" means engineering work on a named package. "Decision" needs the CEO (or the named role) to choose. The
+numbers are stable identifiers that other documents cite; they are not a ranking. "Gap G-n" and "gap P-n" point to
+the [gap list](../compliance/gaps.md), which tracks owners and acceptance tests.
+
+**Highest priority, before any real credential or real data:**
+
+1. O-1 and O-2: a separate sandbox user, and no privileged git or repository code in agent-writable trees.
+2. O-27: provenance from AOC's own records, not from commit messages.
+3. O-8, decided (no sole-Approver exception): appoint a second Approver with a passkey, or the CEO's own
+   Approver-level gates wait indefinitely.
+4. O-10: the self-modification boundary switched on and complete, plus the human review of the core.
+5. O-11, O-12 and O-13: an off-host anchor, backup retention, and proper KEK custody.
 
 | # | Item | Type | Owner | Related |
 | --- | --- | --- | --- | --- |
-| O-1 | Run every managed session (`claude`, hooks, MCP server, the model's tools) as a separate unprivileged OS user, or in a per-session container. aocd, the supervisor and the sidecar run as the service user that owns the KEK, the databases and the credential profiles. Without this, file permissions protect nothing from agents | Change + decision | `supervisor`, Ops | T-2, T-3, T-4, R1, R6 |
-| O-2 | Never run privileged git or tests in agent-writable trees. Inspect as the sandbox user with hardened flags; promote, tag and roll back from a service-owned clone fetched by SHA; never set `safe.directory=*` | Change | `kernel` (git), `supervisor`, `mod-change`, `mod-ledger` | T-2 |
-| O-3 | Give the sidecar its own principal, outside the `claude` environment, and pass every token through the environment or a 0600 file, never argv (`aoc-sidecar --token` is visible in `ps`) | Change | `supervisor`, `sidecar`, `mod-identity`, `mod-sessions` | T-3, T-4, T-14 |
-| O-4 | Record hook-relayed events with the agent as actor. A managed `UserPromptSubmit` is recorded today as a supervisor prompt; the supervisor already records what it injects (`session.turn_started.injectedText`) | Change | `mod-sessions` | T-3 |
-| O-5 | Count usage only from the sidecar principal; record only the unseen part of a partially seen batch; reconcile each invocation against the supervisor-observed `result.modelUsage` (cumulative, so take differences) | Change | `mod-sessions`, `supervisor`, `mod-metering` | T-4, T-5, T-14 |
+| O-1 | Run every managed session (`claude`, hooks, MCP server, the model's tools) as a separate unprivileged OS user, or in a per-session container, with a home directory of its own that holds no credentials (today the default `envAllowlist` passes aocd's `HOME` and `CLAUDE_CONFIG_DIR`). aocd, the supervisor and the sidecar run as the service user that owns the KEK, the databases and the credential profiles. Without this, file permissions protect nothing from agents | Change + decision | `supervisor`, Ops | T-2, T-3, T-4, R1, R6, gaps G-01, P-13 |
+| O-2 | Never run privileged git or tests in agent-writable trees. Inspect as the sandbox user with hardened flags; promote, tag and roll back from a service-owned clone fetched by SHA; never set `safe.directory=*` | Change | `kernel` (git), `supervisor`, `mod-change`, `mod-ledger` | T-2, gap G-04 |
+| O-3 | Give the sidecar its own principal, outside the `claude` environment. **Partly done:** the supervisor passes the token in the sidecar's environment, never argv; it is still the session's own token | Change | `supervisor`, `sidecar`, `mod-identity`, `mod-sessions` | T-3, T-4, T-14, gap G-44 |
+| O-4 | Record hook-relayed events with the agent as actor. A managed `UserPromptSubmit` is recorded today as a supervisor prompt; the supervisor already records what it injects (`session.turn_started.injectedText`) | Change | `mod-sessions` | T-3, gap G-47 |
+| O-5 | Count usage only from the sidecar principal; record only the unseen part of a partially seen batch; reconcile each invocation against the supervisor-observed `result.modelUsage` (cumulative, so take differences) | Change | `mod-sessions`, `supervisor`, `mod-metering` | T-4, T-5, T-14, gap G-44 |
 | O-6 | Bind each observer token to a person (today the Approver issues them with a label and an expiry, but no user id), and rate-limit observed ingest | Change | `mod-identity`, `cli` | T-12 |
 | O-7 | **Done for identity events**, which use the scope `user:<userId>`. It remains a review rule: every event type that carries personal data needs a scope that can be erased on its own, because the kernel default falls back to `global` | Review rule | Lead, module owners | ADR-0003, PDPA |
-| O-8 | Separation of duties with a single Approver: appoint a deputy Approver (with a passkey), or define an audited self-approval exception for Approver-owned sessions | **Decision (CEO)** | CEO | T-8, R15 |
-| O-9 | Route Requester UAT feedback through a human or a read-only triage pass before it reaches a credentialed build session; restrict build-session network egress | Change + decision | `mod-intake`, CEO | T-11, R4 |
-| O-10 | Self-modification boundary: set `aocRepoPaths` in production; extend `protectedPaths`; CODEOWNERS with required human review; complete the human review of the AI-built core before go-live | **Decision (CEO)** + change | CEO, lead, `mod-audit` | T-21, R14 |
-| O-11 | Configure an off-host anchor remote that forbids force-pushes and deletions, owned by another account; anchor hourly and after high-value events; use a qualified TSA | Ops + change | Platform architect, `mod-audit` | T-13, R2 |
-| O-12 | Set backup retention within the PDPA erasure promise, and state "erased from backups within N days" in erasure responses | **Decision (CEO, DPO)** | CEO | T-18, R6 |
-| O-13 | Production KEK from a file (for example a systemd credential), never `AOC_MASTER_KEY`; strip secrets from the environment of aocd's child processes (the git wrapper passes all of `process.env` today) | Change + Ops | `kernel`, Ops | T-18, R6 |
-| O-14 | Claude credentials reach every session through `envAllowlist` and are readable by the model. Restrict egress, prefer per-host login state over environment tokens where possible, and evaluate Claude Code's tool sandboxing on the deployed version | **Decision** + change | CEO, `supervisor` | T-3 |
-| O-15 | Launch fail-closed checks: validate generated settings; fail a launch with no `SessionStart` within N seconds; abort unless `aoc` is `connected` | Change | `supervisor`, `hooks` | T-20 |
-| O-16 | Rate limits: per-session decision-card creation, ingest, uploads per Requester, SSE connections per user | Change | `mod-sessions`, `mod-decisions`, `mod-intake`, `daemon` | T-17, §3 |
-| O-17 | Lesson and playbook hygiene: provenance on the card, text length caps, highlighted invisible characters, no auto-proposal from untrusted-input sessions | Change | `mod-learning`, `mod-registry` | T-15 |
-| O-18 | FX defaults: session 1700 middle rate at 17:45 MYT; explicit `?session=`; compare at 4 dp; alert after 3 weekdays without a live rate | Decision (FinOps) + change | `mod-fx`, lead | R13 |
-| O-19 | Extend passkeys beyond go-live, rollback and break-glass to every Approver gate (fix plan, main/production/data change requests, protected operations, lesson binding, top-ups) | **Decision (CEO)** | CEO, `mod-identity` | T-8 |
-| O-20 | Durability: keep `synchronous = NORMAL` (may lose the last transactions on power loss) or switch `aoc.db` to `FULL` | Decision (architect) | Platform architect | ADR-0002 |
-| O-21 | Enablement gates: keep the intake portal and Builder surfaces switched off in production until the identity stage (§15.3) is signed off, even though the code exists | **Decision (CEO)** + change | CEO, `daemon` | R5 |
-| O-22 | **Done** in `mod-identity`: `SameSite=Strict`, `HttpOnly`, `Secure` on HTTPS, and an `Origin` check on cookie-authenticated writes. Production must set an HTTPS `publicUrl`, or the `Secure` flag is off | Ops | Ops | §3.1 |
-| O-23 | KEK rotation tool: an offline command that unwraps every DEK with the old KEK and re-wraps it with the new one (bodies are untouched, key ids and AAD unchanged), then verifies by sampling. Nothing in the kernel does this today | Change | `kernel`, `cli` | R6, [key custody](../runbooks/key-custody.md#5-rotation) |
-| O-24 | Erasure completeness in `aoc.db`: enable `secure_delete` on `aoc.db` too, and checkpoint its WAL (`TRUNCATE`) after `eraseScope`, because read models hold decrypted copies of text. **Done** (`63331da`; FTS5 index merge in `503b8df`) | Change | `kernel` | T-18, ADR-0003 |
-| O-25 | Observed sessions whose working directory maps to no project should be dropped, or reduced to metering only, by default. Global hooks otherwise capture personal and unrelated use (PDPA) | Change + decision | `mod-sessions`, `hooks`, CEO | [Observed sessions](../runbooks/observed-sessions.md) |
-| O-26 | Admin actions that do not exist yet: re-drive one dead-lettered event for one reactor (to replace the manual cursor reset in the [operations runbook](../runbooks/operations.md#5-reactor-failures)), rebuild named projections, and run a job by name. Each is an audited operator action | Change | `daemon`, `kernel`, `cli` | §3.4 |
-| O-27 | Provenance from records, not messages: a traced commit must be reachable from a HEAD that AOC recorded for a managed session linked to the approved change or ticket (or carry a per-session signature issued by the supervisor), not merely carry an `AOC-Session` / `AOC-Change` trailer | Change | `mod-change`, `mod-ledger`, `supervisor` | T-22, T-1, R1 |
+| O-8 | Separation of duties with a single Approver. **Decided by the CEO on 2026-10-09:** no exception; `decisions.soleApproverFallback` stays `false`, so the Approver's own Approver-level requests wait for a second Approver. Remaining actions: appoint a second Approver with a passkey; add the `decisions` settings to the governed configuration, so that turning the flag on is chained as `config.changed` | **Decided (CEO)**; follow-up Ops + change | CEO, `mod-audit` | T-8, R15, gaps G-35, P-11 |
+| O-9 | Route Requester UAT feedback through a human or a read-only triage pass before it reaches a credentialed build session; restrict build-session network egress. The feedback is already fenced in a random delimiter | Change + decision | `mod-intake`, CEO | T-11, R4, gap G-45 |
+| O-10 | Self-modification boundary (the guard and external log are built): set `aocRepoPaths` in production; extend `protectedPaths`; put the external log off-host; CODEOWNERS with required human review; complete the human review of the AI-built core before go-live | **Decision (CEO)** + change | CEO, lead, `mod-audit` | T-21, R14, gaps G-41, P-06, P-07, P-18 |
+| O-11 | Configure an off-host anchor remote that forbids force-pushes and deletions, owned by another account; anchor hourly and after high-value events (today nightly and on demand); use a qualified TSA; let `aocd`'s config pass the TSA CA file and the anchor signing key to `mod-audit` (today only code can) | Ops + change | Platform architect, `mod-audit`, `daemon` | T-13, R2, gaps G-40, G-42, P-04 |
+| O-12 | Set backup retention within the PDPA erasure promise, and state "erased from backups within N days" in erasure responses | **Decision (CEO, DPO)** | CEO | T-18, R6, gap P-03 |
+| O-13 | Production KEK from a file (for example a systemd credential), never `AOC_MASTER_KEY`; strip secrets from the environment of aocd's child processes (the git wrapper passes all of `process.env` today) | Change + Ops | `kernel`, Ops | T-18, R6, gap G-46 |
+| O-14 | Claude credentials reach every session through `envAllowlist` and are readable by the model. Restrict egress, prefer per-host login state over environment tokens where possible, and evaluate Claude Code's tool sandboxing on the deployed version | **Decision** + change | CEO, `supervisor` | T-3, gap P-20 |
+| O-15 | Launch fail-closed checks. **Partly done:** generated settings are validated and a turn aborts unless `aoc` is `connected`. Remaining: fail a launch with no `SessionStart` within N seconds | Change | `supervisor`, `hooks` | T-20, gap G-47 |
+| O-16 | Rate limits: per-session decision-card creation, ingest, uploads per Requester, SSE connections per user. Also stream portal uploads to disk instead of parsing up to about 1.2 GB in memory. Body caps are done | Change | `mod-sessions`, `mod-decisions`, `mod-intake`, `daemon` | T-17, §3, gap G-47 |
+| O-17 | Lesson and playbook hygiene: provenance on the card, text length caps, highlighted invisible characters, no auto-proposal from untrusted-input sessions | Change | `mod-learning`, `mod-registry` | T-15, gap G-47 |
+| O-18 | FX defaults: session 1700 middle rate at 17:45 MYT; explicit `?session=`; compare at 4 dp; alert after 3 weekdays without a live rate | Decision (FinOps) + change | `mod-fx`, lead | R13, gaps G-36, P-19 |
+| O-19 | Extend passkeys beyond go-live, rollback and break-glass to every Approver gate (fix plan, main/production/data change requests, protected operations, lesson binding, top-ups) | **Decision (CEO)** | CEO, `mod-identity` | T-8, gap P-20 |
+| O-20 | Durability: keep `synchronous = NORMAL` (may lose the last transactions on power loss) or switch `aoc.db` to `FULL` | Decision (architect) | Platform architect | ADR-0002, gap P-20 |
+| O-21 | Enablement gates: keep the intake portal and Builder surfaces switched off in production until the identity stage (§15.3) is signed off, even though the code exists | **Decision (CEO)** + change | CEO, `daemon` | R5, gap P-10 |
+| O-22 | **Done** in `mod-identity`: `SameSite=Strict`, `HttpOnly`, `Secure` on HTTPS, and an `Origin` check on cookie-authenticated writes. Production must set an HTTPS `publicUrl`, or the `Secure` flag is off | Ops | Ops | §3.1, gap P-21 |
+| O-23 | KEK rotation tool: an offline command that unwraps every DEK with the old KEK and re-wraps it with the new one (bodies are untouched, key ids and AAD unchanged), then verifies by sampling. Nothing in the kernel does this today | Change | `kernel`, `cli` | R6, [key custody](../runbooks/key-custody.md#5-rotation), gap G-47 |
+| O-24 | Erasure completeness in `aoc.db`: enable `secure_delete` on `aoc.db` too, and checkpoint its WAL (`TRUNCATE`) after `eraseScope`, because read models hold decrypted copies of text. **Done** (`63331da`; FTS5 index merge in `503b8df`) | Change | `kernel` | T-18, ADR-0003, gap G-39 |
+| O-25 | Observed sessions whose working directory maps to no project should be dropped, or reduced to metering only, by default. Global hooks otherwise capture personal and unrelated use (PDPA) | Change + decision | `mod-sessions`, `hooks`, CEO | [Observed sessions](../runbooks/observed-sessions.md), gaps G-47, P-20 |
+| O-26 | Admin actions that do not exist yet: re-drive one dead-lettered event for one reactor (to replace the manual cursor reset in the [operations runbook](../runbooks/operations.md#5-reactor-failures)), rebuild named projections on demand, and run a job by name. Each is an audited operator action. Changed and degraded projectors already rebuild at startup | Change | `daemon`, `kernel`, `cli` | §3.4, gap G-47 |
+| O-27 | Provenance from records, not messages: a traced commit must be reachable from a HEAD that AOC recorded for a managed session linked to the approved change or ticket (or carry a per-session signature issued by the supervisor), not merely carry an `AOC-Session` / `AOC-Change` trailer | Change | `mod-change`, `mod-ledger`, `supervisor` | T-22, T-1, R1, gap G-25 |
+| O-28 | Erasure needs an approved request: make `decisionId` mandatory on `POST /api/audit/erase`, and check that the decision approved erasing that scope, by someone other than the person erasing. Today it is optional and only checked to be resolved | Change + decision (CEO, DPO) | `mod-audit`, `mod-decisions` | §3.3, ADR-0003, PDPA |
+| O-29 | Evidence packs must verify anchors against the off-host records, as `aoc verify` does (reuse `mod-audit`'s Verify), and say "not verifiable" when those records are unavailable. Today a pack compares anchors with `anchor.created` in the chain under test | Change | `mod-evidence`, `mod-audit` | T-13, R2, gap G-42 |
 
 ## 7. When to review this document again
 
