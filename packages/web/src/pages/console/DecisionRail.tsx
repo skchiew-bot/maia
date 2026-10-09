@@ -179,8 +179,15 @@ export function DecisionCard({ decision: d, session, onResolved }: DecisionCardP
       )}
       <div className="console-dcard__actions">
         {d.viewer.canResolve && rec && !d.requiresPasskey ? (
-          <Button size="sm" variant="primary" loading={busy} loadingText="Approving…" onClick={() => void approve()}>
-            Approve<span className="aoc-sr-only">: {recOption?.label ?? rec.optionId}</span>
+          <Button
+            size="sm"
+            variant="primary"
+            loading={busy}
+            loadingText="Approving…"
+            aria-label={`Approve: ${recOption?.label ?? rec.optionId}`}
+            onClick={() => void approve()}
+          >
+            Approve
           </Button>
         ) : d.viewer.canResolve ? (
           <ButtonLink size="sm" variant="primary" to={`/decisions#${encodeURIComponent(d.id)}`} icon={d.requiresPasskey ? 'key' : undefined}>
