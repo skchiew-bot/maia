@@ -2,12 +2,13 @@
  * Accessibility and UI quality gate against the real app (G-32, §12).
  *
  *   pnpm --filter @aoc/web a11y [-- --no-seed] [--no-build] [--routes /tower,/console] [--roles approver]
- *                                  [--variants "1440 light,360 dark"] [--concurrency 4] [--port 7530]
+ *                                  [--variants "1440 light,360 dark"] [--concurrency 2] [--port 7530]
  *
  * Seeds the demo data (`@aoc/demo seed --reset`), builds the UI, starts aocd from source with the seeded
  * AOC_CONFIG (managed sessions run on claude-sim), signs in as each role and visits every route in
  * src/routes.tsx at 1440 and 360 px in light and dark. Writes test/a11y/report.md (and the raw results to
- * <data dir>/a11y-results.json) and exits 1 when any gate fails. Stops only the daemon it started.
+ * <data dir>/a11y-results.json) and exits 1 when any gate fails. Runs one daemon and one browser, two pages
+ * at a time by default (shared hosts), and stops only the daemon it started.
  */
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { createWriteStream, existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -78,7 +79,7 @@ function parseArgs(argv: readonly string[]): Options {
     port: Number(value('port') ?? 7530),
     seed: !args.includes('--no-seed'),
     build: !args.includes('--no-build'),
-    concurrency: Math.max(1, Number(value('concurrency') ?? 4)),
+    concurrency: Math.max(1, Number(value('concurrency') ?? 2)),
     routes: list('routes'),
     roles: roles as Role[] | null,
     variants: list('variants'),
