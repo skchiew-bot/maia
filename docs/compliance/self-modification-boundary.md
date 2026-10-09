@@ -122,8 +122,9 @@ For the **AOC repository itself**, configure the `main` ruleset differently from
   would let AOC approve its own core, which is exactly what §13 forbids.
 - Required status checks: `scripts/check.sh` (typecheck and tests).
 
-Requested change (threat model O-10, gap G-41): AOC's own promotion gate should additionally refuse any candidate
-for the AOC repository whose commits touch Tier 1 paths and trace to a managed session.
+Built (threat model O-10, gap G-41): AOC's own promotion gate refuses any candidate for an AOC repository whose
+commits touch Tier 1 paths and trace to a managed session (`promotion.refused {reason: self_modification}`), after
+writing the attempt to the external log (Layer 4). It fails closed when an AOC repository cannot be checked.
 
 ### Layer 4: audit outside AOC
 
@@ -136,8 +137,9 @@ the chain is part of what is being protected. Three external records:
      mode 0600. Each line carries the SHA-256 of the previous line (`prev`), so an edit or a deletion in the
      middle shows when the file is re-hashed. Lines cut from the end do not: compare the line count with the
      chained `selfmod.blocked {externalLogged: true}` events.
-   - **Not built:** a line per merged change to Tier 1 (gap G-41). Until then, step 5 of the human path (§4)
-     records each merge outside AOC by other means.
+   - **Built (G-41):** one line per promotion through AOC's gate that touches Tier 1 in an AOC repository:
+     `selfmod.promotion_refused` (commits, sessions, files) and `selfmod.promoted` (landed, break-glass included).
+     Merges made outside AOC (the human path, §4) are recorded by the merging human (step 5).
    - **A local file on the AOC host is not "outside AOC"**, and the aocd user can rewrite it. Ship it off-host as
      it is written: to the central log service, to an append-only bucket, or as commits to the anchor repository
      (gap P-07).
@@ -167,8 +169,8 @@ the chain is part of what is being protected. Three external records:
 3. **Pull request** on GitHub. CI must be green. **A Code Owner other than the author approves.**
 4. **A human merges.** No AOC bypass exists in the AOC repository (Layer 3).
 5. **External record.** The merge and its review are recorded outside AOC (Layer 4), with the pull-request link and
-   the reviewers. AOC does not write these lines itself yet (gap G-41): the merging human does, in the off-host
-   copy of the log or the organisation's change log.
+   the reviewers. AOC writes lines only for promotions through its own gate: for a merge on GitHub the merging
+   human does, in the off-host copy of the log or the organisation's change log.
 6. **Deploy** following the [operations upgrade procedure](../runbooks/operations.md#8-upgrades). Config changes
    appear as `config.changed` or `registry.changed` at startup. Each one must match an approved change request.
 

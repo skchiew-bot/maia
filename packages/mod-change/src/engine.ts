@@ -3,7 +3,7 @@
  * gated rollback, break-glass and the provenance-guaranteed promotion path. Every state change is an event.
  */
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import {
   BLIND_AFFIRM_DWELL_MS,
   CHANGE_FIELDS,
@@ -52,7 +52,14 @@ import {
   type PromotionRow,
   type RollbackRow,
 } from './projection';
-import { LOG_FORMAT, classifyCommit, parseLog, type ProvenanceLookups } from './provenance';
+import {
+  FILES_LOG_ARGS,
+  LOG_FORMAT,
+  classifyCommit,
+  parseFilesLog,
+  parseLog,
+  type ProvenanceLookups,
+} from './provenance';
 import {
   RepoOpError,
   createRestoreCommit,
@@ -1314,6 +1321,58 @@ export class ChangeEngine implements ChangeService {
     };
   }
 
+  /**
+   * AOC's own governance core (§13, R14): when `repo` is an AOC repo, the commits of `range` that change
+   * selfModification.protectedPaths, with those files; null when it is not one. 'unchecked' when an AOC repo cannot
+   * be checked (callers fail closed).
+   */
+  private coreChanges(repo: string, range: string): { sha: string; files: string[] }[] | null | 'unchecked' {
+    const selfmod = this.ctx.services.maybe('selfmod');
+    if (!selfmod) {
+      const listed = this.ctx.config.selfModification.aocRepoPaths.some((p) => resolve(p) === resolve(repo));
+      return listed ? 'unchecked' : null;
+    }
+    if (selfmod.coreFiles(repo, []) === null) return null;
+    const log = this.ctx.services.get('git').run(repo, [...FILES_LOG_ARGS, range]);
+    if (log.code !== 0) return 'unchecked';
+    const byCommit = parseFilesLog(log.stdout);
+    const core = new Set(selfmod.coreFiles(repo, [...new Set([...byCommit.values()].flat())]) ?? []);
+    return [...byCommit].flatMap(([sha, files]) => {
+      const touched = files.filter((f) => core.has(f));
+      return touched.length ? [{ sha, files: touched }] : [];
+    });
+  }
+
+  /** Sessions named by the commit that are not observed (a developer's own Claude Code); unknown ones count as managed. */
+  private managedSessions(c: ProvenanceDTO['commits'][number] | undefined): string[] {
+    if (!c) return ['unknown'];
+    const sessions = this.ctx.services.maybe('sessions');
+    return c.sessionIds.filter((id) => sessions?.get(id)?.mode !== 'observed');
+  }
+
+  private recordSelfChange(entry: Record<string, JsonValue>): void {
+    if (!this.ctx.services.maybe('selfmod')?.recordExternal(entry))
+      this.ctx.log.error('self-modification: external log entry not written', { kind: String(entry.kind) });
+  }
+
+  /** Every promotion that lands core changes in an AOC repo (break-glass included) is recorded outside AOC (§13). */
+  private recordCorePromotion(p: PromotionRow, before: string, after: string, decisionId: string | null): void {
+    const repo = this.repoPath(p.project_id);
+    const core = repo ? this.coreChanges(repo, `${before}..${after}`) : null;
+    if (core === null || (core !== 'unchecked' && !core.length)) return;
+    this.recordSelfChange({
+      kind: 'selfmod.promoted',
+      projectId: p.project_id,
+      promotionId: p.promotion_id,
+      mainShaBefore: before,
+      mainShaAfter: after,
+      breakglass: !!p.breakglass_id,
+      decisionId,
+      commits: core === 'unchecked' ? null : core.map((c) => c.sha),
+      files: core === 'unchecked' ? null : [...new Set(core.flatMap((c) => c.files))],
+    });
+  }
+
   async requestPromotion(
     input: { projectId: string; fromRef: string; ticketId?: string | null; changeId?: string | null },
     actor: Actor,
@@ -1351,6 +1410,35 @@ export class ChangeEngine implements ChangeService {
     }
     const prov = this.provenanceDetail(input.projectId, fromSha);
     if (!prov.ok) return refuse('provenance_gap', prov.orphanShas, prov.reasons);
+    // §13: AOC's own agents never change its governance core; such a promotion is refused and recorded outside AOC.
+    const core = this.coreChanges(repo, `${prov.baseRef}..${fromSha}`);
+    if (core === 'unchecked')
+      return refuse('self_modification', [], [
+        'the self-modification boundary could not be checked for this AOC repository',
+      ]);
+    const byManaged = (core ?? []).flatMap((c) => {
+      const sessionIds = this.managedSessions(prov.commits.find((x) => x.sha === c.sha));
+      return sessionIds.length ? [{ ...c, sessionIds }] : [];
+    });
+    if (byManaged.length) {
+      this.recordSelfChange({
+        kind: 'selfmod.promotion_refused',
+        projectId: input.projectId,
+        promotionId,
+        fromSha,
+        commits: byManaged.map((c) => c.sha),
+        sessionIds: [...new Set(byManaged.flatMap((c) => c.sessionIds))],
+        files: [...new Set(byManaged.flatMap((c) => c.files))],
+      });
+      return refuse(
+        'self_modification',
+        byManaged.map((c) => c.sha),
+        byManaged.map(
+          (c) =>
+            `${short(c.sha)}: managed session ${c.sessionIds.join(', ')} changed AOC's governance core (${c.files.slice(0, 3).join(', ')}${c.files.length > 3 ? ', …' : ''}); the core is human-built and reviewed outside AOC (§13)`,
+        ),
+      );
+    }
     if (ticketId && this.read.ticketUat(ticketId) !== 'pass')
       return refuse('uat_missing', [], [`ticket ${ticketId} has no passing UAT sign-off`]);
     if (head === fromSha || git.isAncestor(repo, fromSha, head))
@@ -1450,6 +1538,7 @@ export class ChangeEngine implements ChangeService {
             ticketId: p.ticket_id,
           },
         });
+        this.recordCorePromotion(p, ff.before, ff.after, decisionId);
         if (ff.warning)
           this.ctx.notify({
             kind: 'info',

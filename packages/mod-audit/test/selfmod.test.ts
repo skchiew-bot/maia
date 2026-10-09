@@ -399,3 +399,45 @@ describe('self-modification guard: degraded external log', () => {
     }
   });
 });
+
+describe('self-modification service for the promotion gate (G-41)', () => {
+  it('names the core files of an AOC repo only (not of another or a nested repo)', () => {
+    const svc = a.t.rt.services.get('selfmod');
+    expect(svc.coreFiles(other, FILES)).toBeNull();
+    expect(svc.coreFiles(root, [])).toEqual([]);
+    expect(svc.coreFiles(root, FILES)).toEqual([
+      'packages/kernel/src/store.ts',
+      'packages/mod-audit/src/index.ts',
+      'config/rate-card.json',
+    ]);
+    const nested = join(root, 'nested-ws');
+    mkdirSync(join(nested, '.git'), { recursive: true });
+    try {
+      expect(svc.coreFiles(nested, ['packages/kernel/src/store.ts'])).toBeNull();
+    } finally {
+      rmSync(nested, { recursive: true, force: true });
+    }
+  });
+
+  it('appends hash-chained lines to the external log; callers cannot set ts or chainId', () => {
+    const svc = a.t.rt.services.get('selfmod');
+    expect(
+      svc.recordExternal({
+        kind: 'selfmod.promotion_refused',
+        commits: ['abc1234'],
+        ts: 'forged',
+        chainId: 'x',
+      }),
+    ).toBe(true);
+    const text = readFileSync(a.t.config.selfModification.externalAuditLog, 'utf8');
+    expect(verifyExternalAuditLog(text)).toBeNull();
+    const last = JSON.parse(text.trim().split('\n').at(-1)!) as Record<string, unknown>;
+    expect(last).toMatchObject({
+      kind: 'selfmod.promotion_refused',
+      commits: ['abc1234'],
+      v: 1,
+      ts: a.t.clock.iso(),
+      chainId: a.t.rt.store.chainId,
+    });
+  });
+});

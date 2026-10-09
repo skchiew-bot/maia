@@ -2,7 +2,14 @@ import { spawn } from 'node:child_process';
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import type { ChangeScope, LearningService, LedgerService, SupervisorService, User } from '@aoc/contracts';
+import type {
+  ChangeScope,
+  LearningService,
+  LedgerService,
+  SelfModificationService,
+  SupervisorService,
+  User,
+} from '@aoc/contracts';
 import {
   createGitService,
   createTestRuntime,
@@ -171,6 +178,8 @@ export async function harness(
     supervisor?: boolean;
     ledger?: Partial<LedgerService>;
     learning?: Partial<LearningService>;
+    selfmod?: SelfModificationService;
+    config?: Parameters<typeof createTestRuntime>[0]['config'];
   } = {},
 ): Promise<Harness> {
   const sup = new FakeSupervisor();
@@ -179,7 +188,8 @@ export async function harness(
   if (opts.supervisor !== false) services.supervisor = sup;
   if (opts.ledger) services.ledger = opts.ledger;
   if (opts.learning) services.learning = opts.learning;
-  const t = await createTestRuntime({ modules: [mod], services });
+  if (opts.selfmod) services.selfmod = opts.selfmod;
+  const t = await createTestRuntime({ modules: [mod], services, config: opts.config });
   const notifications: Harness['notifications'] = [];
   t.rt.broadcaster.subscribe({
     role: 'approver',

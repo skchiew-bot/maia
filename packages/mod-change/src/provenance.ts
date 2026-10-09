@@ -30,6 +30,32 @@ export function parseLog(stdout: string): LoggedCommit[] {
     });
 }
 
+/**
+ * `git log` arguments (a range follows) listing the files each commit changes: merges against their first parent,
+ * renames as delete + add (moving a file out of a protected tree changes it), NUL-separated so no path is quoted.
+ */
+export const FILES_LOG_ARGS = [
+  'log',
+  '-z',
+  '--no-renames',
+  '--name-only',
+  '--diff-merges=first-parent',
+  '--format=%x1e%H',
+];
+
+export function parseFilesLog(stdout: string): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const rec of stdout.split('\x1e')) {
+    const [sha, ...files] = rec.split('\0');
+    if (!sha?.trim()) continue;
+    out.set(
+      sha.trim(),
+      files.map((f) => f.replace(/^\n/, '')).filter((f) => f !== ''),
+    );
+  }
+  return out;
+}
+
 const TRAILER = /^AOC-(Session|Change):[ \t]*([A-Za-z0-9_.:-]{1,64})[ \t]*$/gim;
 
 export function parseTrailers(message: string): { sessionIds: string[]; changeIds: string[] } {

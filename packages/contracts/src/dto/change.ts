@@ -117,7 +117,12 @@ export interface RollbackDTO {
 export const PROMOTION_STATUSES = ['requested', 'completed', 'refused', 'rejected', 'failed'] as const;
 export type PromotionStatus = (typeof PROMOTION_STATUSES)[number];
 export type PromotionRefusalReason =
-  'provenance_gap' | 'uat_missing' | 'gate_missing' | 'tests_failed' | 'not_fast_forward';
+  | 'provenance_gap'
+  | 'uat_missing'
+  | 'gate_missing'
+  | 'tests_failed'
+  | 'not_fast_forward'
+  | 'self_modification';
 
 export interface PromotionDTO {
   promotionId: string;
