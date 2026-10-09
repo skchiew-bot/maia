@@ -12,6 +12,7 @@ import { createLedgerModule } from '@aoc/mod-ledger';
 import { createMeteringModule } from '@aoc/mod-metering';
 import { createRegistryModule } from '@aoc/mod-registry';
 import { createSessionsModule } from '@aoc/mod-sessions';
+import { createTowerModule } from '@aoc/mod-tower';
 import { createSupervisorModule } from '@aoc/supervisor';
 
 export const MODULE_ORDER = [
@@ -28,6 +29,7 @@ export const MODULE_ORDER = [
   'audit',
   'evidence',
   'intake',
+  'tower',
   'supervisor',
 ] as const;
 
@@ -51,6 +53,7 @@ export function createDefaultModules(): AocModule[] {
     createAuditModule(),
     createEvidenceModule(),
     createIntakeModule(),
+    createTowerModule(),
     createSupervisorModule(),
   ];
 }
