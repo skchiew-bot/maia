@@ -83,8 +83,13 @@
   color: var(--text);
   font-weight: 600;
 }
-.tkt-gate--blocked .aoc-icon {
+.tkt-gate--blocked .aoc-icon,
+.tkt-gate--failed .aoc-icon {
   color: var(--danger);
+}
+.tkt-gate--failed {
+  color: var(--text);
+  font-weight: 600;
 }
 .tkt-gate--not_reached,
 .tkt-gate--skipped {
@@ -147,6 +152,16 @@
 .tkt-cell-diag {
   display: grid;
   gap: 2px;
+}
+.tkt-cell-diag__cause {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
 }
 .tkt-cell-diag__class {
   color: var(--text-2);
