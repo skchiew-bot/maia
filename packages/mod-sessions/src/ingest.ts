@@ -15,6 +15,7 @@ import {
 import { HttpError, readJson, requireIngest, sha256hex, type App, type Ctx, type ModuleContext } from '@aoc/kernel';
 import { z } from 'zod';
 import type { SessionsEngine } from './engine';
+import type { ObserverLimiter } from './rate-limit';
 
 /** Chained as the event's sourceTs: a timestamp, never free text. */
 const zSentAt = z.string().min(10).max(40).refine((s) => !Number.isNaN(Date.parse(s)), 'must be an ISO-8601 timestamp');
@@ -132,6 +133,12 @@ export function isReadOnlyBash(command: string): boolean {
 export interface IngestDeps {
   ctx: ModuleContext;
   engine: SessionsEngine;
+  observerLimiter: ObserverLimiter;
+}
+
+function rateLimited(c: Ctx | null, waitMs: number, what: string): HttpError {
+  c?.header('retry-after', String(Math.max(1, Math.ceil(waitMs / 1000))));
+  return new HttpError(429, 'rate_limited', `Observer token rate limit: too many ${what}`, { retryAfterMs: waitMs });
 }
 
 export class HookDispatcher {
@@ -188,6 +195,10 @@ export class HookDispatcher {
     // reach them, or any holder of the shared observer token could forge a managed session's audit trail.
     if (existing && existing.mode !== 'observed') throw new HttpError(403, 'forbidden', 'Observed events cannot target a managed session');
     if (existing) return existing;
+    if (p.kind === 'observer') {
+      const wait = this.d.observerLimiter.newSession(p.tokenId);
+      if (wait) throw rateLimited(null, wait, 'new observed sessions');
+    }
     const sessionId = newId('session', this.ctx.clock.now());
     this.ctx.store.append({
       type: 'session.observed',
@@ -367,6 +378,17 @@ export class HookDispatcher {
 export function registerIngestRoutes(app: App, d: IngestDeps): void {
   const { ctx, engine } = d;
   const hooks = new HookDispatcher(d);
+  /** One request off an observer token's budget (`cost` for a spool flush), before its body is parsed. */
+  const chargeObserver = (c: Ctx, cost = 1) => {
+    const p = c.get('ingest');
+    if (p?.kind !== 'observer') return;
+    const wait = d.observerLimiter.request(p.tokenId, cost);
+    if (wait) throw rateLimited(c, wait, 'requests');
+  };
+  app.use('/ingest/*', async (c, next) => {
+    chargeObserver(c);
+    await next();
+  });
 
   const sessionFor = (c: Ctx, sessionId: string, opts: { allowObserver?: boolean } = {}): { p: IngestPrincipal; sessionId: string } => {
     const p = requireIngest(c, { sessionId, allowObserver: opts.allowObserver });
@@ -394,6 +416,7 @@ export function registerIngestRoutes(app: App, d: IngestDeps): void {
   app.post(INGEST_PATHS.spool, async (c) => {
     const body = await readJson(c, SpoolSchema);
     const p = requireIngest(c, { allowObserver: true });
+    if (body.items.length > 1) chargeObserver(c, body.items.length - 1);
     const res: SpoolFlushResponse = { accepted: 0, duplicates: 0, rejected: 0 };
     for (const item of body.items as SpoolItem[]) {
       try {

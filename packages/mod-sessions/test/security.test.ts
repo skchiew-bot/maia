@@ -163,6 +163,40 @@ describe('usage timestamps are bounded by the receipt time and the session (R-08
   });
 });
 
+describe('observer tokens are rate limited per token (R-13)', () => {
+  const observed = (claudeId: string) =>
+    hook(null, claudeId, 'PostToolUse', { tool_name: 'Read', tool_input: { file_path: '/x' }, tool_response: {} }, 'observed');
+
+  it('answers 429 with Retry-After once a token spends its budget, leaving other tokens alone', async () => {
+    t = await createTestRuntime({ modules: [createSessionsModule({ sweepIntervalMs: 0, observerLimits: { requestsPerMinute: 60, requestBurst: 3 } })] });
+    const a = t.ingestHeaders('observer');
+    const b = t.ingestHeaders('observer');
+    const claudeId = randomUUID();
+    for (let i = 0; i < 3; i++) expect((await t.request('POST', '/ingest/hook', { headers: a, body: observed(claudeId) })).status).toBe(200);
+    const limited = await t.request('POST', '/ingest/hook', { headers: a, body: observed(claudeId) });
+    expect(limited.status).toBe(429);
+    expect(limited.headers.get('retry-after')).toBe('1');
+    // the other routes an observer token reaches share the budget; spool items count one each
+    expect((await t.request('POST', '/ingest/usage', { headers: a, body: { sessionId: claudeId, idempotencyKey: 'usage-key-x', batches: [] } })).status).toBe(429);
+    expect((await t.request('POST', '/ingest/spool', { headers: b, body: { items: [1, 2, 3, 4].map(() => ({ path: '/ingest/hook', body: observed(claudeId), queuedAt: t.clock.iso() })) } })).status).toBe(429);
+    expect((await t.request('POST', '/ingest/hook', { headers: b, body: observed(claudeId) })).status).toBe(200);
+    t.clock.advance(1000); // one request per second refills
+    expect((await t.request('POST', '/ingest/hook', { headers: a, body: observed(claudeId) })).status).toBe(200);
+  });
+
+  it('caps the observed sessions one token can create', async () => {
+    t = await createTestRuntime({ modules: [createSessionsModule({ sweepIntervalMs: 0, observerLimits: { newSessionsPerHour: 2 } })] });
+    const a = t.ingestHeaders('observer');
+    const [s1, s2, s3] = [randomUUID(), randomUUID(), randomUUID()];
+    expect((await t.request('POST', '/ingest/hook', { headers: a, body: observed(s1) })).status).toBe(200);
+    expect((await t.request('POST', '/ingest/hook', { headers: a, body: observed(s2) })).status).toBe(200);
+    expect((await t.request('POST', '/ingest/hook', { headers: a, body: observed(s3) })).status).toBe(429);
+    // sessions it already has keep reporting
+    expect((await t.request('POST', '/ingest/hook', { headers: a, body: observed(s1) })).status).toBe(200);
+    expect(t.rt.store.list({ types: ['session.observed'] })).toHaveLength(2);
+  });
+});
+
 describe('observer tokens never write into managed sessions', () => {
   it('rejects observed-mode events that address a managed session by its claude session id', async () => {
     await setup();
