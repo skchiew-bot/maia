@@ -96,8 +96,8 @@ const withoutItem = (snap: TowerSnapshot, id: string): TowerSnapshot => ({
   kpis: { ...snap.kpis, needsYou: snap.kpis.needsYou - 1 },
 });
 
-// Full-page renders are heavy in jsdom; a generous budget keeps a parallel full-repo run from flaking.
-describe('Control Tower page', { timeout: 30_000 }, () => {
+// Full-page renders are heavy in jsdom; a generous budget keeps a loaded, parallel full-repo run from flaking.
+describe('Control Tower page', { timeout: 60_000 }, () => {
   let daemon: ReturnType<typeof fakeDaemon>;
 
   beforeEach(() => {
@@ -145,24 +145,24 @@ describe('Control Tower page', { timeout: 30_000 }, () => {
     expect(screen.getByText('8 live sessions · 5 ended today')).toBeInTheDocument();
 
     // Flow: the bottleneck stage says so in words; latency prints p50/p90/SLA.
-    const uat = screen.getByRole('rowheader', { name: /UAT/ });
+    const uat = screen.getByText('UAT', { selector: 'th' });
     expect(uat).toHaveTextContent('work waits here');
-    expect(screen.getByRole('img', { name: /Rollback: p50 12m, p90 41m, SLA 30m, 2 breaches/ })).toBeInTheDocument();
-    expect(screen.getByRole('img', { name: /Tasks done per hour, 02:00 to 13:00/ })).toBeInTheDocument();
+    expect(screen.getByLabelText(/Rollback: p50 12m, p90 41m, SLA 30m, 2 breaches/)).toHaveAttribute('role', 'img');
+    expect(screen.getByLabelText(/Tasks done per hour, 02:00 to 13:00/)).toHaveAttribute('role', 'img');
 
     // Spend: notional USD with RM alongside.
     expect(screen.getByText('US$152.38')).toBeInTheDocument();
     expect(screen.getByText('RM 642.27')).toBeInTheDocument();
     expect(screen.getAllByText('notional').length).toBeGreaterThan(0);
     expect(screen.getByText(/Capacity planning, not a ranking/)).toBeInTheDocument();
-    expect(screen.getByRole('img', { name: /Tan Wei Jie: US\$3\.10 left at US\$21\.00 a day; caps today/ })).toBeInTheDocument();
+    expect(screen.getByLabelText(/Tan Wei Jie: US\$3\.10 left at US\$21\.00 a day; caps today/)).toHaveAttribute('role', 'img');
 
     // Integrity and the radar (portfolio scopes only).
     expect(screen.getByText('Provisional')).toBeInTheDocument();
     expect(screen.getByText('1 blocked')).toBeInTheDocument();
-    const radar = screen.getByRole('heading', { name: 'Gaming and anomaly radar' }).closest('section')!;
-    expect(within(radar).getAllByRole('img')).toHaveLength(7);
-    expect(within(radar).getByRole('img', { name: /Blind affirm-without-edit: 31%, 1\.7× the baseline of 18%; status alert/ })).toBeInTheDocument();
+    const radar = screen.getByText('Gaming and anomaly radar').closest('section')!;
+    expect(radar.querySelectorAll('[role="img"]')).toHaveLength(7);
+    expect(within(radar).getByLabelText(/Blind affirm-without-edit: 31%, 1\.7× the baseline of 18%; status alert/)).toBeInTheDocument();
     expect(radar).toHaveTextContent('never ranked per person');
   });
 

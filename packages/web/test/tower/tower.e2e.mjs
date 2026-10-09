@@ -26,7 +26,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_PATH ?? '/opt/node22/lib/nod
 
 const arg = (name, fallback) => {
   const i = process.argv.indexOf(`--${name}`);
-  return i >= 0 ? process.argv[i + 1] : fallback;
+  const value = i >= 0 ? process.argv[i + 1] : undefined;
+  return value !== undefined && !value.startsWith('--') ? value : fallback;
 };
 const base = arg('base', 'http://localhost:7512').replace(/\/+$/, '');
 const dataDir = resolve(arg('data-dir', '/tmp/aoc-ui-tower'));
@@ -79,8 +80,12 @@ async function openTower(browser, { width, height, colorScheme }, onRoute) {
   page.on('console', (m) => m.type() === 'error' && problems.push(`console error: ${m.text()}`));
   page.on('pageerror', (e) => problems.push(`page error: ${e.message}`));
   page.on('requestfailed', (r) => {
-    // Closing the page aborts the event stream; that is not a failed request.
-    if (!r.url().includes('/api/stream')) problems.push(`request failed: ${r.url()} (${r.failure()?.errorText})`);
+    // Client-side aborts are not failures: closing the page drops the event stream, and the data layer cancels a
+    // superseded or unmounted fetch on purpose.
+    const error = r.failure()?.errorText ?? '';
+    if (!r.url().includes('/api/stream') && !error.includes('ERR_ABORTED')) {
+      problems.push(`request failed: ${r.url()} (${error})`);
+    }
   });
   page.on('response', (r) => {
     if (r.url().includes('/api/') && r.status() >= 400) problems.push(`HTTP ${r.status()} ${r.request().method()} ${r.url()}`);
@@ -265,6 +270,8 @@ async function actions(browser) {
     (p) => !/HTTP 409 POST .*\/restart/.test(p) && !/console error: Failed to load resource: .*409/.test(p),
   );
   check(unexpected.length === 0, `actions: no console errors or unexpected failed requests ${unexpected.join('; ')}`);
+  // A stream-triggered refetch may still be inside the route handler.
+  await page.unrouteAll({ behavior: 'ignoreErrors' });
   await context.close();
 }
 

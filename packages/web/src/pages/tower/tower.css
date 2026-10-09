@@ -432,6 +432,14 @@
 .tower-fleet__counts li.is-zero b {
   color: var(--text-3);
 }
+/* A state with no sessions keeps its icon and word but drops its colour: nothing there needs a human. */
+.tower-fleet__counts li.is-zero .aoc-liveness {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+.tower-fleet__counts li.is-zero .aoc-liveness :is(.aoc-liveness__icon, .aoc-liveness__word) {
+  color: var(--text-3);
+}
 .tower-fleet__trend {
   display: grid;
   gap: var(--sp-2);
@@ -1474,7 +1482,8 @@
     align-items: flex-end;
     margin-left: auto;
   }
-  .tower-q__act .aoc-btn {
+  .tower-q__act .aoc-btn,
+  .tower-q__panel .aoc-btn {
     --btn-h: 32px;
   }
   .tower-q__why-not,

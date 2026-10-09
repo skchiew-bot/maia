@@ -25,7 +25,7 @@ export const SEVERITY_WORD: Record<AttentionSeverity, string> = {
   low: 'Low',
 };
 
-export const ATTENTION_KIND_LABEL: Record<AttentionKind, string> = {
+const ATTENTION_KIND_LABEL: Record<AttentionKind, string> = {
   decision: 'Decision',
   session_dead: 'Dead session',
   session_stalled: 'Stalled session',
@@ -78,7 +78,7 @@ const LATENCY_KIND_LABEL: Partial<Record<string, string>> = {
   uat_signoff: 'UAT sign-off',
 };
 
-export const TICKET_STAGE_LABEL: Record<TicketStage, string> = {
+const TICKET_STAGE_LABEL: Record<TicketStage, string> = {
   received: 'Received',
   triage: 'Triage',
   awaiting_human: 'Awaiting human',
@@ -100,12 +100,12 @@ export const ANOMALY_STATUS_WORD: Record<TowerAnomaly['status'], string> = {
 };
 
 /** `snake_case` machine label → "Sentence case" text, for kinds this page has no label for. */
-export function humanize(label: string): string {
+function humanize(label: string): string {
   const s = label.replace(/[_-]+/g, ' ').trim();
   return s ? s[0]!.toUpperCase() + s.slice(1) : label;
 }
 
-export function decisionKindLabel(kind: string): string {
+function decisionKindLabel(kind: string): string {
   return (DECISION_ROW_LABEL as Partial<Record<string, string>>)[kind] ?? humanize(kind);
 }
 
@@ -134,9 +134,9 @@ export function rankAttention(items: readonly TowerAttentionItem[]): TowerAttent
 }
 
 /** Below this score an item is "lower-cost" and folds behind a disclosure so the queue stays scannable. */
-export const FOLD_BELOW_SCORE = 10;
+const FOLD_BELOW_SCORE = 10;
 /** Even high-cost items fold past this many rows. */
-export const MAX_VISIBLE_ROWS = 12;
+const MAX_VISIBLE_ROWS = 12;
 
 export function foldAttention(
   ranked: readonly TowerAttentionItem[],
@@ -306,7 +306,7 @@ export function latencyMarks(row: { p50Ms: number | null; p90Ms: number | null; 
 }
 
 /** Radar scale: value indexed to its baseline on 0–3×; the baseline sits at a third. */
-export const RADAR_MAX_RATIO = 3;
+const RADAR_MAX_RATIO = 3;
 
 export interface RadarMarks {
   /** value ÷ baseline, when the baseline is a usable (positive) number. */
@@ -436,7 +436,7 @@ export function bulletScale(value: number, marker: number): number {
 }
 
 /** Post-incident change records are due 24h after a break-glass promotion (§8). */
-export const POST_INCIDENT_WINDOW_MS = 24 * 3600_000;
+const POST_INCIDENT_WINDOW_MS = 24 * 3600_000;
 
 export function breakglassDueIn(since: string, now: number): number {
   return Date.parse(since) + POST_INCIDENT_WINDOW_MS - now;

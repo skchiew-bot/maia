@@ -74,7 +74,7 @@ export interface AttentionQueueProps {
   driveBlock: (sessionId: string) => string | null;
 }
 
-export function SeverityMark({ severity }: { severity: AttentionSeverity }) {
+function SeverityMark({ severity }: { severity: AttentionSeverity }) {
   return (
     <span className={cx('tower-sev', `tower-sev--${severity}`)}>
       <TowerIcon name={SEV_ICON[severity]} size={13} />
@@ -218,8 +218,8 @@ function QueueRow({ item, rank, scoreMax, card, cardsLoaded, cardsFailed, pendin
           {item.projectName && <span className="tower-q__project">{item.projectName}</span>}
           {sessionState && <LivenessBadge state={sessionState} size="sm" />}
           {passkey && <Chip icon="key">passkey</Chip>}
-          {chips.map((c) => (
-            <Chip key={c}>{c}</Chip>
+          {chips.map((c, i) => (
+            <Chip key={`${i}:${c}`}>{c}</Chip>
           ))}
         </p>
         <h3 className="tower-q__title" id={titleId}>
@@ -341,7 +341,7 @@ function CostOfDelay({
         type="button"
         className="tower-cod"
         aria-expanded={expanded}
-        aria-controls={controls}
+        aria-controls={expanded ? controls : undefined}
         onClick={onToggle}
       >
         <span className="tower-cod__bar" aria-hidden="true">

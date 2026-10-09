@@ -18,9 +18,9 @@ export interface PendingAction {
   /** Decision option applied by approve / deny. */
   optionLabel?: string;
   error?: unknown;
-  /** Log sequence of the event that confirmed the action (absent when reconciled by a refetch instead). */
+  /** Log sequence of the event that confirmed the action. */
   seq?: number;
-  /** Confirmed long enough ago that the next snapshot is the truth, even if it still lists the item. */
+  /** Waited long enough (for its event, or after it) that the next snapshot is the truth, listed or not. */
   settled?: boolean;
 }
 
@@ -36,13 +36,13 @@ interface Watch {
   id: string;
 }
 
-/** No confirming event this long after the API accepted (stream down?): reconcile with one refetch. */
-export const CONFIRM_TIMEOUT_MS = 8000;
+/** No confirming event this long after the API accepted (stream down?): one refetch decides instead. */
+const CONFIRM_TIMEOUT_MS = 8000;
 /**
  * A confirmed item may legitimately stay listed for a moment (a restarted session is still "dead" until its
  * new turn starts). After this long the snapshot wins again and the row is actionable.
  */
-export const SETTLE_MS = 20_000;
+const SETTLE_MS = 20_000;
 
 export interface AttentionActions {
   pending: Readonly<Record<string, PendingAction>>;
@@ -98,7 +98,7 @@ export function useAttentionActions(snapshot: TowerSnapshot | undefined, reload:
   );
 
   const confirm = useCallback(
-    (id: string, seq?: number) => {
+    (id: string, seq: number) => {
       watches.current.delete(id);
       const p = pendingRef.current[id];
       if (!p || (p.phase !== 'sending' && p.phase !== 'sent')) return;
@@ -156,8 +156,10 @@ export function useAttentionActions(snapshot: TowerSnapshot | undefined, reload:
           const p = pendingRef.current[itemId];
           if (p?.phase !== 'sending') return;
           write(itemId, { ...p, phase: 'sent' });
+          // No event yet (stream down?): never claim it was recorded — refetch and let the snapshot decide.
           setTimer(itemId, CONFIRM_TIMEOUT_MS, () => {
-            if (pendingRef.current[itemId]?.phase === 'sent') confirm(itemId);
+            const q = pendingRef.current[itemId];
+            if (q?.phase === 'sent') write(itemId, { ...q, settled: true });
             reloadRef.current();
           });
         },

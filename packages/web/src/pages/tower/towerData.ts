@@ -9,7 +9,7 @@ import {
 } from '../../api';
 import { useLatest } from '../../lib/dom';
 
-export const TOWER_PATH = '/api/tower';
+const TOWER_PATH = '/api/tower';
 
 /**
  * Event families that can move a Control Tower number: decisions, liveness, credits, change control, rollups,
@@ -55,9 +55,9 @@ export function isTowerRefreshEvent(msg: StreamMessage): boolean {
 }
 
 /** First refetch waits this long so a burst of events (one commit, several headers) costs one request. */
-export const TOWER_BURST_MS = 150;
+const TOWER_BURST_MS = 150;
 /** At most one snapshot refetch per this interval, however busy the event stream is. */
-export const TOWER_MIN_INTERVAL_MS = 1000;
+const TOWER_MIN_INTERVAL_MS = 1000;
 
 /**
  * Calls `reload` for matching stream events with coalescing: a burst window, then at most one call per

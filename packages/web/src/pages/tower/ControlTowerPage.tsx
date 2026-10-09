@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { TowerSnapshot } from '@aoc/contracts';
-import { useAuth } from '../../api';
-import { ApiError } from '../../api/client';
+import { ApiError, useAuth } from '../../api';
 import {
   ButtonLink,
   EmptyState,
