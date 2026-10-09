@@ -9,8 +9,9 @@ import { randomBytes } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
-import { EventStore, FakeClock, forSeeds, silentLogger, type Projector, type Rng } from '../src';
+import { EventStore, FakeClock, createLogger, forSeeds, silentLogger, type Projector, type Rng } from '../src';
 
 /** What the sessions projector does with message ids: one row per id, keyed by the owning scope. */
 const rows: Projector = {
@@ -106,4 +107,48 @@ describe('erasing a scope leaves nothing of its rows in the database file', () =
       { count: 25, pinned: [187, 269] },
     );
   }, 300_000);
+
+  it('says so when a reader holds an older snapshot, because the WAL cannot be truncated then; the text goes with the next checkpoint', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'aoc-residue-'));
+    const logged: string[] = [];
+    const log = createLogger({ level: 'warn', sink: (line) => logged.push(line) });
+    const s = new EventStore({ dataDir: dir, clock: new FakeClock(), log, masterKey: randomBytes(32) });
+    const reader = new DatabaseSync(join(dir, 'aoc.db'), { readOnly: true });
+    try {
+      s.registerProjector(rows);
+      const secret = 'NRIC 850101-14-5555 and a note nobody else may keep';
+      s.append({ type: 'session.nudged', actor: { kind: 'human', id: 'usr_1' }, scope: { sessionId: 'ses_a' }, meta: { sessionId: 'ses_a' }, payload: { text: secret }, source: 'api' });
+      s.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+      // A backup copying the database holds a snapshot like this one for as long as it takes.
+      reader.exec('BEGIN');
+      reader.prepare('SELECT count(*) FROM res_rows').get();
+
+      s.eraseScope('ses_a', { actor: { kind: 'human', id: 'usr_approver' }, reason: 'pdpa_request' });
+      expect(logged.join('\n')).toMatch(/WAL could not be truncated/);
+      expect(onDisk(dir).some((b) => b.includes(Buffer.from('850101-14-5555')))).toBe(true);
+
+      reader.exec('COMMIT');
+      s.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+      expect(onDisk(dir).some((b) => b.includes(Buffer.from('850101-14-5555')))).toBe(false);
+    } finally {
+      reader.close();
+      s.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('says nothing when nobody is reading', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'aoc-residue-'));
+    const logged: string[] = [];
+    const s = new EventStore({ dataDir: dir, clock: new FakeClock(), log: createLogger({ level: 'warn', sink: (line) => logged.push(line) }), masterKey: randomBytes(32) });
+    try {
+      s.registerProjector(rows);
+      s.append({ type: 'session.nudged', actor: { kind: 'human', id: 'usr_1' }, scope: { sessionId: 'ses_a' }, meta: { sessionId: 'ses_a' }, payload: { text: 'a note' }, source: 'api' });
+      s.eraseScope('ses_a', { actor: { kind: 'human', id: 'usr_approver' }, reason: 'pdpa_request' });
+      expect(logged).toEqual([]);
+    } finally {
+      s.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

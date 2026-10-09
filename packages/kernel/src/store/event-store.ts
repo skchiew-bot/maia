@@ -602,8 +602,11 @@ export class EventStore {
     } catch (err) {
       this.opts.log.error('VACUUM after an erasure failed: erased text may remain in aoc.db until the next one', { err: String(err) });
     }
-    // The WAL still holds page images from before the scrub: fold it into the main file and truncate it.
-    this.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+    // The WAL still holds page images from before the scrub: fold it into the main file and truncate it. A reader
+    // holding an older snapshot (a backup copying the database) stops that: the pages stay until the next checkpoint.
+    const checkpoint = this.db.prepare('PRAGMA wal_checkpoint(TRUNCATE)').get() as { busy: number } | undefined;
+    if (checkpoint?.busy)
+      this.opts.log.warn('the WAL could not be truncated after an erasure: a reader holds an older snapshot, so pre-erasure pages stay in aoc.db and its WAL until the next checkpoint');
   }
 
   /**
