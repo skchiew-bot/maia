@@ -19,7 +19,7 @@ hardening.
 | F-03 | High | No body caps; ingest parsed before auth; intake buffered before size checks | Fixed `8f41cf7`, `e637e1f` |
 | F-04 | High | `eraseScope('..')` deletes the whole data directory; blob paths collide/escape | Fixed `896bd5c` |
 | F-05 | High | Workspace `.claude/settings*.json` switches off AOC hooks / overrides the session env | Fixed `4dc51ef` |
-| F-06 | High | Session credentials and ingest token reach every builder through session output | Fixed `122a713` (verbatim); R-02 remains |
+| F-06 | High | Session credentials and ingest token reach every builder through session output | Fixed `122a713` (verbatim); R-02 fixed in [wave 2](review-wave2.md) |
 | F-07 | High | Self-modification analyzer ReDoS stalls the daemon (all managed sessions fail closed) | Fixed `6dfe11f` |
 | F-08 | Medium | Erasure residue in `aoc.db` free pages / WAL and in FTS5 index segments (G-39) | Fixed `63331da`, `503b8df`, docs `6aeae69` |
 | F-09 | Medium | Ticket erasure leaves triage diagnoses readable | Fixed `e91f745` |
@@ -142,6 +142,8 @@ failed delivery.
 middleware); removed. Ingest tokens carry ~208 secret bits; user-token guessing is still throttled.
 
 ## Reported (not fixed here)
+
+Wave 2 ([`review-wave2.md`](review-wave2.md)) fixed R-02, R-05, R-07, R-08, R-09, R-10, R-11, R-12 and R-13.
 
 | # | Sev | Finding | Location | Owner / tracking |
 | --- | --- | --- | --- | --- |
