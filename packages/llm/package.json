@@ -12,8 +12,9 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@aoc/contracts": "workspace:*",
     "@anthropic-ai/sdk": "0.132.1",
+    "@aoc/contracts": "workspace:*",
+    "@aoc/kernel": "workspace:*",
     "zod": "3.25.76"
   }
 }
