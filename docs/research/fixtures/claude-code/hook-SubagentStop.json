@@ -1,0 +1,18 @@
+{
+  "session_id": "7a5e1b62-9fa6-4253-8fae-2d6b8a7b4e56",
+  "transcript_path": "/tmp/aoc-capture/cfg/projects/-tmp-aoc-capture-work/7a5e1b62-9fa6-4253-8fae-2d6b8a7b4e56.jsonl",
+  "cwd": "/tmp/aoc-capture/work",
+  "prompt_id": "3bc934f4-422c-4c40-ac6f-0d05050be952",
+  "permission_mode": "acceptEdits",
+  "agent_id": "a3e0385ed503597cc",
+  "agent_type": "general-purpose",
+  "effort": {
+    "level": "medium"
+  },
+  "hook_event_name": "SubagentStop",
+  "stop_hook_active": false,
+  "agent_transcript_path": "/tmp/aoc-capture/cfg/projects/-tmp-aoc-capture-work/7a5e1b62-9fa6-4253-8fae-2d6b8a7b4e56/subagents/agent-a3e0385ed503597cc.jsonl",
+  "last_assistant_message": "PONG",
+  "background_tasks": [],
+  "session_crons": []
+}

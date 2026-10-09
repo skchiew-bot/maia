@@ -1,0 +1,18 @@
+{
+  "data": {
+    "currency_code": "USD",
+    "unit": 1,
+    "rate": {
+      "date": "2026-10-08",
+      "buying_rate": 4.084,
+      "selling_rate": 4.089,
+      "middle_rate": 4.0865
+    }
+  },
+  "meta": {
+    "quote": "rm",
+    "session": "0900",
+    "last_updated": "2026-10-08 23:01:23",
+    "total_result": 1
+  }
+}

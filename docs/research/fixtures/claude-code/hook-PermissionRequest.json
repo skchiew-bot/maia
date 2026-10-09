@@ -1,0 +1,30 @@
+{
+  "session_id": "e51bab11-3f41-49a2-afff-44a835bd434b",
+  "transcript_path": "/tmp/aoc-capture/cfg/projects/-tmp-aoc-capture-work/e51bab11-3f41-49a2-afff-44a835bd434b.jsonl",
+  "cwd": "/tmp/aoc-capture/work",
+  "prompt_id": "a1f94de7-34a7-4617-86bc-117bb5374a2d",
+  "permission_mode": "default",
+  "effort": {
+    "level": "medium"
+  },
+  "hook_event_name": "PermissionRequest",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "touch bash-manual.txt",
+    "description": "Create empty file bash-manual.txt"
+  },
+  "permission_suggestions": [
+    {
+      "type": "addDirectories",
+      "directories": [
+        "/tmp/aoc-capture/work"
+      ],
+      "destination": "session"
+    },
+    {
+      "type": "setMode",
+      "mode": "acceptEdits",
+      "destination": "session"
+    }
+  ]
+}

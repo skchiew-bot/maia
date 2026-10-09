@@ -1,0 +1,62 @@
+{
+  "note": "claude was launched with a scrubbed env plus AOC_PROBE_PARENT; the MCP config env added AOC_PROBE_MCPCONF.",
+  "hookSessionStart": {
+    "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
+    "CLAUDE_CODE_MESSAGING_TOKEN": "<redacted>",
+    "CLAUDE_CODE_SESSION_ATTENDED": "0",
+    "CLAUDE_CODE_CHILD_SESSION": "1",
+    "CLAUDE_CONFIG_DIR": "/tmp/aoc-capture/cfg",
+    "AOC_PROBE_PARENT": "set-on-claude-process",
+    "CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST": "1",
+    "CLAUDE_PID": "3389",
+    "CLAUDE_CODE_SESSION_ID": "59c4a8a4-23c6-45c0-9e98-92ae3305068d",
+    "CLAUDE_ENV_FILE": "/tmp/aoc-capture/cfg/session-env/59c4a8a4-23c6-45c0-9e98-92ae3305068d/sessionstart-hook-0.sh",
+    "CLAUDECODE": "1",
+    "CLAUDE_PROJECT_DIR": "/tmp/aoc-capture/work",
+    "CLAUDE_CODE_MESSAGING_SOCKET": "/tmp/cc-socks/3389.sock"
+  },
+  "hookPreToolUse": {
+    "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
+    "CLAUDE_CODE_MESSAGING_TOKEN": "<redacted>",
+    "CLAUDE_CODE_SESSION_ATTENDED": "0",
+    "CLAUDE_CODE_CHILD_SESSION": "1",
+    "CLAUDE_CONFIG_DIR": "/tmp/aoc-capture/cfg",
+    "AOC_PROBE_PARENT": "set-on-claude-process",
+    "CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST": "1",
+    "CLAUDE_EFFORT": "medium",
+    "CLAUDE_PID": "3389",
+    "CLAUDE_CODE_SESSION_ID": "59c4a8a4-23c6-45c0-9e98-92ae3305068d",
+    "CLAUDECODE": "1",
+    "CLAUDE_PROJECT_DIR": "/tmp/aoc-capture/work",
+    "CLAUDE_CODE_MESSAGING_SOCKET": "/tmp/cc-socks/3389.sock"
+  },
+  "mcpServer": {
+    "CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST": "1",
+    "CLAUDE_CONFIG_DIR": "/tmp/aoc-capture/cfg",
+    "AOC_PROBE_PARENT": "set-on-claude-process",
+    "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
+    "CLAUDE_CODE_MESSAGING_SOCKET": "/tmp/cc-socks/3389.sock",
+    "CLAUDE_CODE_MESSAGING_TOKEN": "<redacted>",
+    "CLAUDE_PROJECT_DIR": "/tmp/aoc-capture/work",
+    "CLAUDE_CODE_SESSION_ID": "59c4a8a4-23c6-45c0-9e98-92ae3305068d",
+    "CLAUDECODE": "1",
+    "AOC_PROBE_MCPCONF": "set-in-mcp-config-env"
+  },
+  "bashToolCallNames": [
+    "AOC_PROBE_PARENT",
+    "CLAUDECODE",
+    "CLAUDE_CODE_CHILD_SESSION",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CLAUDE_CODE_EXECPATH",
+    "CLAUDE_CODE_MESSAGING_SOCKET",
+    "CLAUDE_CODE_MESSAGING_TOKEN",
+    "CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST",
+    "CLAUDE_CODE_SESSION_ATTENDED",
+    "CLAUDE_CODE_SESSION_ID",
+    "CLAUDE_CONFIG_DIR",
+    "CLAUDE_EFFORT",
+    "CLAUDE_PID",
+    "HTTPS_PROXY",
+    "IS_SANDBOX"
+  ]
+}
