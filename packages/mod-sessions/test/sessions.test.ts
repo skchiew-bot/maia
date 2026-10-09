@@ -179,6 +179,48 @@ describe('hook ingest', () => {
     expect(await t.json('POST', '/ingest/spool', { headers, body: { items: [item] } })).toEqual({ accepted: 0, duplicates: 1, rejected: 0 });
     expect(t.rt.store.list({ types: ['tool.used'] })).toHaveLength(1);
   });
+
+  it('replays everything clients spool: observed usage, and the sidecar’s usage, throttle and process exit', async () => {
+    // Regression: only /ingest/hook items were replayed; the rest were counted rejected and the client then
+    // deleted them, so usage and throttles that happened during an outage were lost.
+    await setup();
+    const owner = t.user('builder');
+    launch(owner);
+    const usage = (sessionId: string, ids: string[], key: string) => ({
+      path: '/ingest/usage',
+      queuedAt: t.clock.iso(),
+      body: {
+        sessionId,
+        idempotencyKey: key,
+        batches: [{ model: 'claude-opus-5-5', inputTokens: 5, outputTokens: 7, cacheReadTokens: 0, cacheWrite5mTokens: 0, cacheWrite1hTokens: 0, messageIds: ids, firstAt: t.clock.iso(), lastAt: t.clock.iso(), contextTokens: 900 }],
+      },
+    });
+    const sidecar = t.ingestHeaders('ses_A');
+    const items = [
+      usage('ses_A', ['m1'], 'sidecar-usage-1'),
+      { path: '/ingest/throttle', queuedAt: t.clock.iso(), body: { sessionId: 'ses_A', resetAt: '2026-10-09T07:00:00.000Z', message: "You've hit your session limit · resets 3pm (Asia/Kuala_Lumpur)", source: 'transcript' } },
+      { path: '/ingest/process', queuedAt: t.clock.iso(), body: { sessionId: 'ses_A', event: 'exited', exitCode: null, signal: null, at: t.clock.iso() } },
+    ];
+    expect(await t.json('POST', '/ingest/spool', { headers: sidecar, body: { items } })).toEqual({ accepted: 3, duplicates: 0, rejected: 0 });
+    expect(t.rt.store.list({ types: ['usage.recorded'], sessionId: 'ses_A' })).toHaveLength(1);
+    expect(t.rt.store.list({ types: ['throttle.hit'], sessionId: 'ses_A' })[0]!.meta).toMatchObject({ resetAt: '2026-10-09T07:00:00.000Z', source: 'transcript' });
+    expect(engine().signalsOf('ses_A').processAlive).toBe(false);
+    // A second replay of the same items changes nothing.
+    expect(await t.json('POST', '/ingest/spool', { headers: sidecar, body: { items: items.slice(0, 2) } })).toEqual({ accepted: 0, duplicates: 2, rejected: 0 });
+    expect(t.rt.store.list({ types: ['usage.recorded', 'throttle.hit'], sessionId: 'ses_A' })).toHaveLength(2);
+    // A session token never replays another session's items.
+    expect(await t.json('POST', '/ingest/spool', { headers: sidecar, body: { items: [usage('ses_B', ['m9'], 'other-session')] } })).toEqual({ accepted: 0, duplicates: 0, rejected: 1 });
+
+    // Observed hooks spool usage keyed by the claude session id, replayed with the observer token.
+    const claudeObs = randomUUID();
+    const observer = t.ingestHeaders('observer');
+    await t.json('POST', '/ingest/hook', { headers: observer, body: hook(null, claudeObs, 'SessionStart', { source: 'startup' }, 'observed') });
+    const obs = engine().byClaudeSessionId(claudeObs)!;
+    expect(await t.json('POST', '/ingest/spool', { headers: observer, body: { items: [usage(claudeObs, ['o1'], 'observed-usage-1')] } })).toEqual({ accepted: 1, duplicates: 0, rejected: 0 });
+    expect(t.rt.store.list({ types: ['usage.recorded'], sessionId: obs.sessionId })[0]!.source).toBe('hook');
+    // Observer tokens cannot replay a managed session's process exit.
+    expect(await t.json('POST', '/ingest/spool', { headers: observer, body: { items: [items[2]] } })).toEqual({ accepted: 0, duplicates: 0, rejected: 1 });
+  });
 });
 
 describe('usage + throttle ingest', () => {
