@@ -119,6 +119,40 @@ describe('drain', () => {
     await expect(busy.rt.drain().then(() => 'idle again')).resolves.toBe('idle again');
     await Promise.all([t.close(), busy.close()]);
   });
+
+  it('returns the in-flight promise to a caller that arrives while a drain is running', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const t = await createTestRuntime({
+      modules: [
+        {
+          name: 'gated',
+          reactors: [{ name: 'gated.react', handles: ['session.nudged'], react: () => gate }],
+        },
+      ],
+    });
+    // The append starts a drain that parks on the reactor, so one is in flight when append() returns.
+    t.rt.store.append({
+      type: 'session.nudged',
+      actor: { kind: 'human', id: 'usr_1' },
+      meta: { sessionId: 'ses_g' },
+      payload: { text: 'x' },
+      source: 'api',
+    });
+
+    const first = t.rt.drain();
+    expect(t.rt.drain()).toBe(first);
+
+    let settled = false;
+    void first.then(() => (settled = true));
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(settled).toBe(false); // the live loop's promise, not one that is already resolved
+
+    release();
+    await first;
+    expect(settled).toBe(true);
+    await t.close();
+  });
 });
 
 describe('projection back-fill on an existing log', () => {
