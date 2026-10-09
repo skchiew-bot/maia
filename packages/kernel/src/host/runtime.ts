@@ -73,7 +73,7 @@ export class AocRuntime {
   private readonly runningJobs = new Set<Promise<unknown>>();
   /** stop() was called: no job starts from then on. */
   private stopRequested = false;
-  private shutdown: Promise<void> | null = null;
+  private stopRun: Promise<void> | null = null;
   /** Reactors are off: the modules are stopping. */
   private stopped = false;
   /** The store is closed: nothing may be written any more. */
@@ -308,11 +308,11 @@ export class AocRuntime {
    */
   stop(): Promise<void> {
     this.stopRequested = true;
-    this.shutdown ??= this.shutDown();
-    return this.shutdown;
+    this.stopRun ??= this.runShutdown();
+    return this.stopRun;
   }
 
-  private async shutDown(): Promise<void> {
+  private async runShutdown(): Promise<void> {
     if (this.jobTimer) clearInterval(this.jobTimer);
     this.jobTimer = null;
     await this.drain();
