@@ -1,0 +1,56 @@
+{
+  "name": "crash",
+  "description": "Declares a plan, does some work, then the process dies mid-response (exit 1, no result line, no Stop/SessionEnd hooks). Resuming continues after the crash and finishes.",
+  "steps": [
+    { "kind": "think", "ms": 1200, "outputTokens": 300 },
+    { "kind": "text", "text": "Declaring the plan." },
+    {
+      "kind": "mcp",
+      "server": "aoc",
+      "tool": "declare_plan",
+      "args": {
+        "phases": [
+          {
+            "id": "p1",
+            "name": "Build",
+            "tasks": [
+              { "id": "t1", "title": "Add the CSV parser", "size": "m" },
+              { "id": "t2", "title": "Add the CSV writer", "size": "s" }
+            ]
+          }
+        ]
+      }
+    },
+    { "kind": "think", "ms": 1000, "outputTokens": 260 },
+    {
+      "kind": "tool",
+      "name": "Write",
+      "input": { "file_path": "src/csv/parse.ts", "content": "export const parseCsv = (text: string) => text.split('\\n').map((line) => line.split(','));\n" }
+    },
+    { "kind": "think", "ms": 1500, "outputTokens": 900 },
+    { "kind": "crash", "exitCode": 1, "stderr": "Error: simulated crash (ECONNRESET while streaming the response)" },
+    { "kind": "text", "text": "Picking up after the restart: the parser is written, closing its task." },
+    {
+      "kind": "mcp",
+      "server": "aoc",
+      "tool": "task_done",
+      "args": { "task_id": "t1", "evidence": { "kind": "diff", "ref": "src/csv/parse.ts" } }
+    },
+    {
+      "kind": "tool",
+      "name": "Write",
+      "input": {
+        "file_path": "src/csv/write.ts",
+        "content": "export const writeCsv = (rows: string[][]) => rows.map((row) => row.join(',')).join('\\n');\n"
+      }
+    },
+    {
+      "kind": "mcp",
+      "server": "aoc",
+      "tool": "task_done",
+      "args": { "task_id": "t2", "evidence": { "kind": "diff", "ref": "src/csv/write.ts" } }
+    },
+    { "kind": "text", "text": "Both CSV tasks are done." },
+    { "kind": "endTurn", "final": true }
+  ]
+}

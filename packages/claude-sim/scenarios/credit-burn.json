@@ -1,0 +1,77 @@
+{
+  "name": "credit-burn",
+  "description": "Token-heavy work: large think steps between task_done calls. Ends its turn as soon as task_done returns boundary.continue=false; resuming continues with the remaining tasks.",
+  "steps": [
+    { "kind": "think", "ms": 2000, "outputTokens": 1200 },
+    { "kind": "text", "text": "Declaring the plan for the engine rewrite." },
+    {
+      "kind": "mcp",
+      "server": "aoc",
+      "tool": "declare_plan",
+      "args": {
+        "phases": [
+          {
+            "id": "p1",
+            "name": "Rewrite",
+            "tasks": [
+              { "id": "t1", "title": "Rewrite the tokenizer", "size": "l" },
+              { "id": "t2", "title": "Rewrite the parser", "size": "l" },
+              { "id": "t3", "title": "Rewrite the evaluator", "size": "m" },
+              { "id": "t4", "title": "Rewrite the printer", "size": "m" }
+            ]
+          }
+        ]
+      }
+    },
+    { "kind": "think", "ms": 6000, "outputTokens": 48000, "inputTokens": 12, "cacheWrite": 36000 },
+    {
+      "kind": "tool",
+      "name": "Write",
+      "input": { "file_path": "src/engine/tokenizer.ts", "content": "export const tokenize = (src: string) => src.split(/\\s+/).filter(Boolean);\n" }
+    },
+    {
+      "kind": "mcp",
+      "server": "aoc",
+      "tool": "task_done",
+      "args": { "task_id": "t1", "evidence": { "kind": "diff", "ref": "src/engine/tokenizer.ts" } }
+    },
+    { "kind": "think", "ms": 6000, "outputTokens": 52000, "inputTokens": 12, "cacheWrite": 41000 },
+    {
+      "kind": "tool",
+      "name": "Write",
+      "input": { "file_path": "src/engine/parser.ts", "content": "export const parse = (tokens: string[]) => ({ type: 'program', tokens });\n" }
+    },
+    {
+      "kind": "mcp",
+      "server": "aoc",
+      "tool": "task_done",
+      "args": { "task_id": "t2", "evidence": { "kind": "diff", "ref": "src/engine/parser.ts" } }
+    },
+    { "kind": "think", "ms": 5000, "outputTokens": 45000, "inputTokens": 12, "cacheWrite": 38000 },
+    {
+      "kind": "tool",
+      "name": "Write",
+      "input": { "file_path": "src/engine/evaluate.ts", "content": "export const evaluate = (program: unknown) => program;\n" }
+    },
+    {
+      "kind": "mcp",
+      "server": "aoc",
+      "tool": "task_done",
+      "args": { "task_id": "t3", "evidence": { "kind": "diff", "ref": "src/engine/evaluate.ts" } }
+    },
+    { "kind": "think", "ms": 5000, "outputTokens": 47000, "inputTokens": 12, "cacheWrite": 40000 },
+    {
+      "kind": "tool",
+      "name": "Write",
+      "input": { "file_path": "src/engine/print.ts", "content": "export const print = (value: unknown) => JSON.stringify(value);\n" }
+    },
+    {
+      "kind": "mcp",
+      "server": "aoc",
+      "tool": "task_done",
+      "args": { "task_id": "t4", "evidence": { "kind": "diff", "ref": "src/engine/print.ts" } }
+    },
+    { "kind": "text", "text": "All four engine tasks are done." },
+    { "kind": "endTurn", "final": true }
+  ]
+}

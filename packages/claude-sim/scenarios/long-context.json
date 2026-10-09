@@ -1,0 +1,52 @@
+{
+  "name": "long-context",
+  "description": "Grows the cached context to ~75% of the 1M-token window, then closes a task — a rollover candidate at a clean task boundary.",
+  "steps": [
+    { "kind": "think", "ms": 1200, "outputTokens": 300 },
+    { "kind": "text", "text": "Declaring the plan." },
+    {
+      "kind": "mcp",
+      "server": "aoc",
+      "tool": "declare_plan",
+      "args": {
+        "phases": [
+          {
+            "id": "p1",
+            "name": "Migrate",
+            "tasks": [
+              { "id": "t1", "title": "Inventory the legacy reports", "size": "m" },
+              { "id": "t2", "title": "Port the first report", "size": "l" }
+            ]
+          }
+        ]
+      }
+    },
+    { "kind": "think", "ms": 1500, "outputTokens": 500 },
+    {
+      "kind": "tool",
+      "name": "Write",
+      "input": { "file_path": "docs/reports-inventory.md", "content": "# Legacy reports\n\n- monthly-revenue\n- churn\n- cohort\n" }
+    },
+    {
+      "kind": "mcp",
+      "server": "aoc",
+      "tool": "task_done",
+      "args": { "task_id": "t1", "evidence": { "kind": "diff", "ref": "docs/reports-inventory.md" } }
+    },
+    { "kind": "contextGrowth", "tokens": 740000 },
+    { "kind": "think", "ms": 3000, "outputTokens": 900 },
+    {
+      "kind": "tool",
+      "name": "Write",
+      "input": { "file_path": "src/reports/monthly-revenue.ts", "content": "export const monthlyRevenue = (rows: number[]) => rows.reduce((a, b) => a + b, 0);\n" }
+    },
+    {
+      "kind": "mcp",
+      "server": "aoc",
+      "tool": "task_done",
+      "args": { "task_id": "t2", "evidence": { "kind": "diff", "ref": "src/reports/monthly-revenue.ts" } }
+    },
+    { "kind": "text", "text": "The first report is ported; the context is now very large." },
+    { "kind": "endTurn", "final": true }
+  ]
+}

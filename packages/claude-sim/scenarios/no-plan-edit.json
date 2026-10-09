@@ -1,0 +1,67 @@
+{
+  "name": "no-plan-edit",
+  "description": "Tries an Edit before declaring a plan (a governed session should block it in PreToolUse), notices the outcome, declares the plan and proceeds.",
+  "steps": [
+    { "kind": "think", "ms": 800, "outputTokens": 180 },
+    { "kind": "text", "text": "This is a one-line fix, so I'll make it straight away." },
+    {
+      "kind": "tool",
+      "name": "Edit",
+      "input": { "file_path": "src/greeting.ts", "old_string": "", "new_string": "export const greeting = 'Hello';\n" }
+    },
+    { "kind": "branch", "onLastToolError": true, "goto": "blocked" },
+    { "kind": "text", "text": "The edit went through without a declared plan; declaring the plan now to cover it." },
+    { "kind": "branch", "goto": "declare" },
+    {
+      "kind": "text",
+      "label": "blocked",
+      "text": "The edit was blocked: a plan has to be declared before changing files. Declaring it now."
+    },
+    { "kind": "think", "label": "declare", "ms": 900, "outputTokens": 240 },
+    {
+      "kind": "mcp",
+      "server": "aoc",
+      "tool": "declare_plan",
+      "args": {
+        "phases": [
+          {
+            "id": "p1",
+            "name": "Fix",
+            "tasks": [
+              { "id": "t1", "title": "Fix the greeting text", "size": "xs" },
+              { "id": "t2", "title": "Export a default greeting", "size": "s" }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "kind": "tool",
+      "name": "Write",
+      "input": { "file_path": "src/greeting.ts", "content": "export const greeting = 'Hello';\n" }
+    },
+    {
+      "kind": "mcp",
+      "server": "aoc",
+      "tool": "task_done",
+      "args": { "task_id": "t1", "evidence": { "kind": "diff", "ref": "src/greeting.ts" } }
+    },
+    {
+      "kind": "tool",
+      "name": "Edit",
+      "input": {
+        "file_path": "src/greeting.ts",
+        "old_string": "export const greeting = 'Hello';",
+        "new_string": "export const greeting = 'Hello';\nexport default greeting;"
+      }
+    },
+    {
+      "kind": "mcp",
+      "server": "aoc",
+      "tool": "task_done",
+      "args": { "task_id": "t2", "evidence": { "kind": "diff", "ref": "src/greeting.ts" } }
+    },
+    { "kind": "text", "text": "Both tasks are done, under a declared plan." },
+    { "kind": "endTurn", "final": true }
+  ]
+}

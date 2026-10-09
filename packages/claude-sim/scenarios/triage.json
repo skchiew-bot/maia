@@ -1,0 +1,26 @@
+{
+  "name": "triage",
+  "description": "Read-only triage: Glob, Grep and Read only, then report_diagnosis with confidence 0.82 and end the turn without touching code.",
+  "steps": [
+    { "kind": "think", "ms": 1500, "outputTokens": 420 },
+    { "kind": "text", "text": "Investigating the report read-only." },
+    { "kind": "tool", "name": "Glob", "input": { "pattern": "**/*.{ts,js}" }, "saveAs": "files" },
+    { "kind": "tool", "name": "Grep", "input": { "pattern": "expire|Date\\.now|session", "-i": true } },
+    { "kind": "tool", "name": "Read", "input": { "file_path": "{{files.filenames.0}}" } },
+    { "kind": "think", "ms": 2200, "outputTokens": 760 },
+    {
+      "kind": "mcp",
+      "server": "aoc",
+      "tool": "report_diagnosis",
+      "args": {
+        "root_cause": "The session-expiry check compares a seconds timestamp with Date.now() milliseconds, so sessions expire right after login.",
+        "confidence": 0.82,
+        "fix_plan": "Normalise both values to milliseconds in auth/session.ts, add a regression test for expiry, then re-run the login flow on UAT.",
+        "affected_areas": ["auth/session.ts", "auth/session.test.ts"],
+        "root_cause_class": "unit-mismatch"
+      }
+    },
+    { "kind": "text", "text": "Diagnosis reported with confidence 0.82. No code was changed; ending my turn." },
+    { "kind": "endTurn", "final": true }
+  ]
+}

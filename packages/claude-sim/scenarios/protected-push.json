@@ -1,0 +1,94 @@
+{
+  "name": "protected-push",
+  "description": "Finishes a task, then tries `git push origin main` (never executed for real). If PreToolUse denies it, raises request_decision (test=main) and ends its turn; on resume \"option b\" opens a PR, anything else leaves the push to the supervisor.",
+  "steps": [
+    { "kind": "think", "ms": 1000, "outputTokens": 260 },
+    { "kind": "text", "text": "Declaring the plan." },
+    {
+      "kind": "mcp",
+      "server": "aoc",
+      "tool": "declare_plan",
+      "args": {
+        "phases": [
+          {
+            "id": "p1",
+            "name": "Release",
+            "tasks": [
+              { "id": "t1", "title": "Bump the version", "size": "xs" },
+              { "id": "t2", "title": "Publish the release to main", "size": "s" }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "kind": "tool",
+      "name": "Write",
+      "input": { "file_path": "VERSION", "content": "1.4.0\n" }
+    },
+    {
+      "kind": "mcp",
+      "server": "aoc",
+      "tool": "task_done",
+      "args": { "task_id": "t1", "evidence": { "kind": "diff", "ref": "VERSION" } }
+    },
+    { "kind": "think", "ms": 700, "outputTokens": 160 },
+    { "kind": "text", "text": "Pushing the release commit to main." },
+    {
+      "kind": "bash",
+      "command": "git push origin main",
+      "description": "Push the release to main",
+      "stdout": "To github.com:acme/app.git\n   1a2b3c4..5d6e7f8  main -> main"
+    },
+    { "kind": "branch", "onLastToolError": false, "goto": "pushed" },
+    { "kind": "text", "text": "Pushing to main was blocked; this needs a human decision." },
+    {
+      "kind": "mcp",
+      "server": "aoc",
+      "tool": "request_decision",
+      "saveAs": "decision",
+      "args": {
+        "test": "main",
+        "question": "Release 1.4.0 is ready. How should it reach main?",
+        "options": [
+          { "id": "a", "label": "Supervisor pushes", "description": "Let the supervisor push the release commit to main." },
+          { "id": "b", "label": "Open a pull request", "description": "Push a release branch and open a PR for review." }
+        ],
+        "recommendation": { "option_id": "a", "rationale": "The release only bumps the version file." }
+      }
+    },
+    { "kind": "text", "text": "Decision {{decision.decision_id}} raised; ending my turn until it is answered." },
+    { "kind": "endTurn" },
+    { "kind": "branch", "onResumeTextIncludes": ["option b"], "goto": "pr" },
+    { "kind": "text", "text": "Understood: the supervisor pushes the release." },
+    {
+      "kind": "mcp",
+      "server": "aoc",
+      "tool": "task_done",
+      "args": { "task_id": "t2", "evidence": { "kind": "commit", "ref": "5d6e7f8", "detail": "Pushed by the supervisor after approval." } }
+    },
+    { "kind": "endTurn", "final": true },
+    { "kind": "text", "label": "pr", "text": "Opening a pull request instead." },
+    {
+      "kind": "bash",
+      "command": "git push origin HEAD:release/1.4.0 && gh pr create --base main --head release/1.4.0 --title \"Release 1.4.0\" --body \"Version bump\"",
+      "description": "Push a release branch and open a PR",
+      "stdout": "https://github.com/acme/app/pull/42"
+    },
+    {
+      "kind": "mcp",
+      "server": "aoc",
+      "tool": "task_done",
+      "args": { "task_id": "t2", "evidence": { "kind": "commit", "ref": "5d6e7f8", "detail": "Release PR #42 opened." } }
+    },
+    { "kind": "endTurn", "final": true },
+    { "kind": "text", "label": "pushed", "text": "The push went through." },
+    {
+      "kind": "mcp",
+      "server": "aoc",
+      "tool": "task_done",
+      "args": { "task_id": "t2", "evidence": { "kind": "commit", "ref": "5d6e7f8" } }
+    },
+    { "kind": "endTurn", "final": true }
+  ]
+}
