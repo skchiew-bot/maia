@@ -4,7 +4,7 @@
  * through the API, operator nudge / stop / restart, plan-limit throttles resumed by the throttle job, and context
  * rollover to a successor session on the same thread.
  */
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -66,8 +66,24 @@ const SUCCESSOR = {
   ],
 };
 
+/** A writer that commits through Bash and closes its task with that commit, as the real model does (real-CLI check). */
+const COMMIT = {
+  name: 'e2e-commit',
+  steps: [
+    { kind: 'think', ms: 300, outputTokens: 100 },
+    { kind: 'mcp', server: 'aoc', tool: 'declare_plan', args: { phases: [{ id: 'p1', name: 'Hello', tasks: [{ id: 't1', title: 'Create hello.txt and commit it', size: 'xs' }] }] } },
+    { kind: 'tool', name: 'Write', input: { file_path: 'hello.txt', content: 'hi\n' } },
+    { kind: 'bash', command: 'git add hello.txt && git commit -q -m "Add hello.txt" && git rev-parse HEAD', stdout: '', saveAs: 'sha', exec: true },
+    { kind: 'mcp', server: 'aoc', tool: 'task_done', args: { task_id: 't1', evidence: { kind: 'commit', ref: '{{sha.stdout}}' } } },
+    { kind: 'text', text: 'Committed.' },
+    { kind: 'endTurn', final: true },
+  ],
+};
+
 const scenarioDir = mkdtempSync(join(tmpdir(), 'aoc-e2e-scenarios-'));
 const ROLLOVER_FILE = join(scenarioDir, 'rollover.json');
+const COMMIT_FILE = join(scenarioDir, 'commit.json');
+writeFileSync(COMMIT_FILE, JSON.stringify(COMMIT));
 const SUCCESSOR_FILE = join(scenarioDir, 'successor.json');
 writeFileSync(ROLLOVER_FILE, JSON.stringify(ROLLOVER));
 writeFileSync(SUCCESSOR_FILE, JSON.stringify(SUCCESSOR));
@@ -91,6 +107,14 @@ const payload = (e: StoredEvent) => h.store.readPayload(e) as Record<string, unk
 const turnsOf = (sessionId: string) => simTurnsOf(h, sessionId);
 const outcomesOf = (sessionId: string) => simOutcomesOf(h, sessionId);
 const typesOf = (sessionId: string) => h.events({ sessionId }).map((e) => e.type);
+/** The tool results the model was shown (Claude Code's transcript, as claude-sim writes it): [tool_use_id, content]. */
+const shownToModel = (sessionId: string): [string, unknown][] => {
+  const launched = h.events({ types: ['session.launched'], sessionId })[0]!;
+  const lines = readFileSync(payload(launched)!.transcriptPath as string, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l) as Record<string, any>);
+  return lines
+    .filter((l) => l.type === 'user' && Array.isArray(l.message?.content))
+    .flatMap((l) => l.message.content.filter((b: Record<string, unknown>) => b.type === 'tool_result').map((b: Record<string, any>) => [b.tool_use_id, b.content] as [string, unknown]));
+};
 
 // ── scenarios ───────────────────────────────────────────────────────────────
 
@@ -110,6 +134,13 @@ describe('supervisor + claude-sim: a managed session end to end', () => {
     expect(argv).toEqual(expect.arrayContaining(['--allowedTools', 'mcp__aoc', '--strict-mcp-config', '--include-partial-messages']));
     const output = await h.api<{ items: { kind: string; text: string }[] }>('GET', `/api/sessions/${sessionId}/output`, { as: dev });
     expect(output.items.map((i) => i.text)).toContain('Session started · model claude-opus-5-5 · MCP aoc:connected');
+
+    // Claude Code shows the model the structured data of an MCP result and drops its text, so the order to end the
+    // turn must be in the data itself — first (real-CLI check).
+    const shown = shownToModel(sessionId).map(([, content]) => content).find((c) => typeof c === 'string' && c.includes('decision_id'))!;
+    const seen = JSON.parse(shown as string) as Record<string, unknown>;
+    expect(Object.keys(seen)[0]).toBe('notice');
+    expect(seen).toMatchObject({ ok: true, notice: 'END YOUR TURN NOW. The supervisor will resume this session with the human answer.' });
 
     const open = await h.api<DecisionListResponse>('GET', `/api/decisions?sessionId=${sessionId}&status=open`, { as: ceo });
     expect(open.decisions).toHaveLength(1);
@@ -156,6 +187,29 @@ describe('supervisor + claude-sim: a managed session end to end', () => {
   });
 });
 
+describe('supervisor + claude-sim: what a writer may run (print mode cannot prompt)', () => {
+  // Real Claude Code 2.1.295 answered `git add` / `git commit` / `npm test` with "This command requires approval" under
+  // -p acceptEdits, so a managed writer could not commit. The supervisor now grants writers Bash; claude-sim refuses
+  // exactly like the real CLI without it, so this fails if the grant is lost.
+  it('a writer commits through Bash and closes its task with that commit', async () => {
+    const dev = await h.user('builder', 'Committer');
+    const { projectId, repo } = await h.project(dev, 'Hello');
+    const sessionId = await launch(dev, projectId, COMMIT_FILE);
+    await until(sessionId, dev, (d) => d.lifecycle === 'ended', 'the committing session to complete');
+
+    const argv = payload(h.events({ types: ['session.launched'], sessionId })[0]!)!.argv as string[];
+    const grants = argv.slice(argv.indexOf('--allowedTools') + 1, argv.indexOf('--allowedTools') + 3);
+    expect(grants).toEqual(['mcp__aoc', 'Bash']);
+    const done = h.events({ types: ['task.done'], sessionId });
+    expect(done.map((e) => [e.meta.evidenceKind, e.meta.evidenceVerified, e.meta.flag])).toEqual([['commit', true, null]]);
+    const bashResult = shownToModel(sessionId).map(([, content]) => String(content)).find((c) => /^[0-9a-f]{40}/.test(c));
+    expect(bashResult).toBeTruthy();
+    expect(done[0]!.meta.headSha).toBe(bashResult!.trim());
+    expect(readFileSync(join(repo, 'hello.txt'), 'utf8')).toBe('hi\n');
+
+  });
+});
+
 describe('supervisor + claude-sim: operator controls', () => {
   it('nudge interrupts a stuck turn and resumes with the operator text; stop ends the session', async () => {
     const dev = await h.user('builder', 'Nudger');
@@ -170,6 +224,8 @@ describe('supervisor + claude-sim: operator controls', () => {
     expect(turns[1]).toMatchObject({ turn: 2, reason: 'nudge' });
     expect(turns[1]!.text).toContain('Skip the importer polish; write the tests first.');
     expect(outcomesOf(sessionId)[0]).toBe('interrupted');
+    // Real claude ends a SIGINTed turn cleanly: a result line (error_during_execution) and exit 0 — not a crash.
+    expect(h.events({ types: ['session.turn_ended'], sessionId })[0]!.meta.exitCode).toBe(0);
     expect(h.events({ types: ['session.nudged'], sessionId })).toHaveLength(1);
 
     await h.api('POST', `/api/sessions/${sessionId}/stop`, { as: dev, body: { immediate: true, reason: 'Superseded' } });
