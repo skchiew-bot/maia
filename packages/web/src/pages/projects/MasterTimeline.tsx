@@ -21,6 +21,7 @@ import {
   isFlagged,
   isLiveTask,
   phaseStatsFromManifest,
+  taskChangeText,
   totalsOf,
   weightText,
   type Contributor,
@@ -189,7 +190,7 @@ export function MasterTimeline({
         id: `a${s.seq}`,
         kind: 'amendment',
         at: Date.parse(s.at),
-        title: `Amendment v${s.manifestVersion}: +${s.added} −${s.removed} ~${s.resized}`,
+        title: `Amendment v${s.manifestVersion}: ${taskChangeText(s)}`,
         detail: `${s.ownerName ?? 'unknown'} · ${s.weightDelta >= 0 ? '+' : '−'}${weightText(Math.abs(s.weightDelta))} weight`,
       });
     }
@@ -384,10 +385,12 @@ export function MasterTimeline({
                     weight · {formatInteger(stat.doneTasks)}/{formatInteger(stat.totalTasks)} tasks ·{' '}
                     {formatPercent(stat.totalWeight > 0 ? stat.doneWeight / stat.totalWeight : 0)}
                     {stat.flaggedTasks > 0 && (
-                      <span className="prj-mt__flagged">
-                        {' '}
-                        · <FlagGlyph size={11} /> {formatInteger(stat.flaggedTasks)}
-                      </span>
+                      <>
+                        {' · '}
+                        <span className="prj-mt__flagged">
+                          <FlagGlyph size={11} /> {formatInteger(stat.flaggedTasks)} flagged
+                        </span>
+                      </>
                     )}
                   </p>
                   <p className="prj-mt__contribs">

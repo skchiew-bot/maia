@@ -454,7 +454,19 @@ export const CX_HISTORY: ProjectHistory = {
       detail: 'Edit changed files before a plan manifest was declared.',
     },
   ],
-  enhancements: [],
+  enhancements: [
+    {
+      eventId: 'evt_enh_1',
+      projectId: 'prj_cx',
+      sessionId: null,
+      changeId: null,
+      at: iso(90 * 60_000),
+      by: 'usr_ceo',
+      byName: 'Chiew Sin Kwang',
+      title: 'Supervisor whisper on mobile',
+      detail: 'Requested by the CX ops lead after UAT',
+    },
+  ],
   pins: [
     {
       phaseId: 'design',

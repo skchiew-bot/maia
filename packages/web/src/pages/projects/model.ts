@@ -9,6 +9,7 @@ import type {
   ProjectPhaseRollup,
   ProjectRollup,
   ProjectSummary,
+  ScopeChangeDTO,
   SessionSummary,
 } from '@aoc/contracts';
 import { LIVENESS_PRECEDENCE, type LivenessState } from '../../components/liveness/liveness';
@@ -390,6 +391,23 @@ export function isSha(ref: string): boolean {
 /** Weight with one decimal only when needed. */
 export function weightText(n: number): string {
   return Number.isInteger(n) ? String(n) : n.toFixed(1);
+}
+
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+/** What a declaration or amendment did to the task list, naming only the parts that changed. */
+export function taskChangeText(
+  s: Pick<ScopeChangeDTO, 'kind' | 'added' | 'removed' | 'resized' | 'carriedOver'>,
+): string {
+  const carried = s.carriedOver > 0 ? `${s.carriedOver} carried over` : null;
+  if (s.kind === 'declared') return [plural(s.added, 'task', 'tasks'), carried].filter(Boolean).join(', ');
+  const parts = [
+    s.added > 0 ? `+${s.added} added` : null,
+    s.removed > 0 ? `−${s.removed} removed` : null,
+    s.resized > 0 ? `${s.resized} resized` : null,
+    carried,
+  ].filter(Boolean);
+  return parts.length > 0 ? parts.join(' · ') : 'no task changes';
 }
 
 /** Calendar day key in local time (YYYY-MM-DD) — matches how daily rollups are dated. */

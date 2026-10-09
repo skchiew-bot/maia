@@ -42,6 +42,7 @@ import {
   sessionBadgeState,
   sessionRank,
   shortId,
+  taskChangeText,
   weightText,
   type People,
 } from './model';
@@ -93,7 +94,7 @@ export function ScopePanel({
   const amendments = history.scope.filter((s) => s.kind === 'amended');
   return (
     <>
-      <BurnUp scope={history.scope} manifest={manifest} scale={scale} />
+      {history.scope.length > 0 && <BurnUp scope={history.scope} manifest={manifest} scale={scale} />}
       {history.scope.length === 0 ? (
         <EmptyState
           size="sm"
@@ -142,11 +143,7 @@ export function ScopePanel({
                           'Plan declared'
                         )}
                       </span>
-                      <span className="prj-log__tasks aoc-num">
-                        {s.kind === 'declared'
-                          ? `${formatInteger(s.added)} ${s.added === 1 ? 'task' : 'tasks'}${s.carriedOver ? `, ${formatInteger(s.carriedOver)} carried over` : ''}`
-                          : `+${s.added} added · −${s.removed} removed · ~${s.resized} resized`}
-                      </span>
+                      <span className="prj-log__tasks aoc-num">{taskChangeText(s)}</span>
                       <Link to={`/sessions/${encodeURIComponent(s.sessionId)}`} className="prj-log__session">
                         {shortId(s.sessionId)}
                       </Link>
@@ -189,7 +186,7 @@ export function ScopePanel({
                 <div>
                   <p className="prj-enh__title">{e.title}</p>
                   <p className="prj-enh__meta">
-                    {people.resolve(e.by).name} · <RelativeTime value={e.at} suffix=" ago" />
+                    {e.byName ?? people.resolve(e.by).name} · <RelativeTime value={e.at} suffix=" ago" />
                     {e.sessionId && (
                       <>
                         {' '}

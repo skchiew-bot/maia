@@ -210,7 +210,9 @@ describe('GET /api/projects/:id/history', () => {
         detail: expect.stringMatching(/before a plan manifest was declared/),
       },
     ]);
-    expect(history.enhancements.map((e) => [e.title, e.by])).toEqual([['Bulk import', h.owner.user.id]]);
+    expect(history.enhancements.map((e) => [e.title, e.by, e.byName])).toEqual([
+      ['Bulk import', h.owner.user.id, 'Dev One'],
+    ]);
     expect(history.pins).toEqual([
       {
         phaseId: 'P1',

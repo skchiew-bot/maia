@@ -41,12 +41,9 @@ export function eventsMatching(
 const PROGRESS_EVENTS = ['plan.', 'task.', 'phase.'];
 const SESSION_EVENTS = ['session.', 'throttle.', 'decision.'];
 
-const refreshProjects = eventsMatching(
-  ['project.', 'thread.', ...PROGRESS_EVENTS, ...SESSION_EVENTS],
-  {
-    liveness: true,
-  },
-);
+const refreshProjects = eventsMatching(['project.', 'thread.', ...PROGRESS_EVENTS, ...SESSION_EVENTS], {
+  liveness: true,
+});
 const refreshRollups = eventsMatching(['project.', 'drift.', ...PROGRESS_EVENTS]);
 const refreshSessions = eventsMatching([...SESSION_EVENTS, ...PROGRESS_EVENTS, 'usage.'], {
   liveness: true,

@@ -3,7 +3,7 @@ import type { ManifestPhaseDTO, ScopeChangeDTO } from '@aoc/contracts';
 import { HitLayer, MarkShape, useElementWidth, type HitItem } from '../../charts';
 import { formatDateTime, formatInteger, formatPercent, formatShortDate } from '../../lib/format';
 import { dayTicks, xAt, type TimeScale } from './lanes';
-import { isLiveTask, weightText } from './model';
+import { isLiveTask, taskChangeText, weightText } from './model';
 
 const H = 150;
 const TOP = 14;
@@ -38,13 +38,8 @@ export function niceMax(v: number): number {
 function scopeDescription(s: ScopeChangeDTO): string {
   const who = s.ownerName ?? 'unknown developer';
   const delta = `${s.weightDelta >= 0 ? '+' : '−'}${weightText(Math.abs(s.weightDelta))}`;
-  if (s.kind === 'declared')
-    return `${who} declared ${formatInteger(s.added)} ${s.added === 1 ? 'task' : 'tasks'}${
-      s.carriedOver ? ` (${formatInteger(s.carriedOver)} carried over)` : ''
-    }: ${delta} → ${weightText(s.projectWeightAfter)}`;
-  return `${who} amended v${s.manifestVersion} (+${s.added} −${s.removed} ~${s.resized}): ${delta} → ${weightText(
-    s.projectWeightAfter,
-  )}`;
+  const verb = s.kind === 'declared' ? 'declared' : `amended v${s.manifestVersion}`;
+  return `${who} ${verb} (${taskChangeText(s)}): ${delta} → ${weightText(s.projectWeightAfter)}`;
 }
 
 /**

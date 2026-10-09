@@ -214,12 +214,16 @@ export interface PhasePinDTO {
   sha: string | null;
   at: string;
 }
+/** An enhancement with its recorder's display name (null when `by` is not a known user). */
+export interface ProjectEnhancementDTO extends EnhancementDTO {
+  byName: string | null;
+}
 /** `GET /api/projects/:id/history`: the marks behind the master timeline, oldest first. */
 export interface ProjectHistory {
   projectId: string;
   scope: ScopeChangeDTO[];
   drift: ProjectDriftDTO[];
-  enhancements: EnhancementDTO[];
+  enhancements: ProjectEnhancementDTO[];
   pins: PhasePinDTO[];
 }
 

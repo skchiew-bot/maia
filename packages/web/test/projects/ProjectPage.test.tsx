@@ -97,9 +97,14 @@ describe('Project page: master timeline', { timeout: 30_000 }, () => {
     const log = within(scope).getByRole('table', { name: /denominator, newest first/ });
     const [, newest] = within(log).getAllByRole('row');
     expect(newest).toHaveTextContent('Amendment v2');
-    expect(newest).toHaveTextContent('+1 added · −1 removed · ~0 resized');
+    expect(newest).toHaveTextContent('+1 added · −1 removed');
+    expect(newest).not.toHaveTextContent('resized');
     expect(newest).toHaveTextContent('17 → 17');
     expect(newest).toHaveTextContent('UAT feedback from the CX ops lead');
+    // The recorder is not a session owner here: the name comes with the history read.
+    const enhancement = within(scope).getByText('Supervisor whisper on mobile').closest('li')!;
+    expect(enhancement).toHaveTextContent('Chiew Sin Kwang');
+    expect(enhancement).toHaveTextContent('Requested by the CX ops lead after UAT');
 
     const drift = section('Drift');
     expect(

@@ -186,6 +186,7 @@ export function projectHistory(core: LedgerCore, projectId: string): ProjectHist
       changeId: e.change_id,
       at: e.at,
       by: e.by_id,
+      byName: core.userName(e.by_id),
       title: e.title ?? ERASED,
       detail: e.detail,
     })),

@@ -17,6 +17,7 @@ import {
   phaseStatsFromManifest,
   phaseStatsFromRollup,
   shortId,
+  taskChangeText,
   totalsOf,
 } from '../../src/pages/projects/model';
 import { matchesTaskFilter } from '../../src/pages/projects/TaskTable';
@@ -225,6 +226,17 @@ describe('tasks, values and forms', () => {
       from: '2026-10-03',
       to: '2026-10-09',
     });
+  });
+
+  it('describes a plan change by the parts that changed', () => {
+    const change = { kind: 'amended' as const, added: 0, removed: 0, resized: 0, carriedOver: 0 };
+    expect(taskChangeText({ ...change, added: 1, resized: 1 })).toBe('+1 added · 1 resized');
+    expect(taskChangeText({ ...change, removed: 2 })).toBe('−2 removed');
+    expect(taskChangeText(change)).toBe('no task changes');
+    expect(taskChangeText({ ...change, kind: 'declared', added: 6, carriedOver: 2 })).toBe(
+      '6 tasks, 2 carried over',
+    );
+    expect(taskChangeText({ ...change, kind: 'declared', added: 1 })).toBe('1 task');
   });
 
   it('sends only changed project fields and never clears one with a blank', () => {
