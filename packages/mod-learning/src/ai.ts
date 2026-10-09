@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { LESSON_SCOPE_TYPES, ROOT_CAUSE_DIMENSIONS, type LlmService } from '@aoc/contracts';
+import { distill } from '@aoc/distill';
 import { HttpError } from '@aoc/kernel';
 import { AI_ACTOR, clip, type ClassRow, type ErrorRow, type LearningEngine } from './engine';
 import { areasOverlap, normalizeScopeValue } from './scope';
@@ -274,32 +275,30 @@ export class LearningAi {
           .slice(-5)
           .map((t) => `- ${clip(t, 200)}`),
       ].join('\n');
-      let data: unknown;
-      try {
-        data = (
-          await llm.completeJson({
-            model: engine.opts.distillModel,
-            purpose: 'learning.distill',
-            system: DISTILL_SYSTEM,
-            prompt,
-            schema: DISTILL_SCHEMA,
-            maxTokens: 1024,
-          })
-        ).data;
-      } catch (err) {
+      const outcome = await distill(llm, {
+        purpose: 'learning.distill',
+        model: engine.opts.distillModel,
+        system: DISTILL_SYSTEM,
+        prompt,
+        schema: DISTILL_SCHEMA,
+        maxTokens: 1024,
+        output: DistillResult,
+      });
+      // No deterministic fallback: a lesson needs the model's judgement that one reusable rule fits.
+      if (!outcome.ok) {
         engine.ctx.log.warn('learning.distill failed', {
           offenceId: r.offence_id,
-          err: String(err).slice(0, 200),
+          reason: outcome.reason,
+          detail: outcome.detail.slice(0, 200),
         });
         continue;
       }
-      const d = DistillResult.safeParse(data);
-      if (!d.success || d.data.skip || !d.data.scopeType || !d.data.scopeValue || !d.data.rule || !d.data.fix)
-        continue;
-      const scopeValue = normalizeScopeValue(d.data.scopeType, d.data.scopeValue);
+      const d = outcome.value;
+      if (d.skip || !d.scopeType || !d.scopeValue || !d.rule || !d.fix) continue;
+      const scopeValue = normalizeScopeValue(d.scopeType, d.scopeValue);
       const inEvidence =
         scopeValue !== null &&
-        (d.data.scopeType === 'process_type'
+        (d.scopeType === 'process_type'
           ? processTypes.some(([v]) => v === scopeValue)
           : codeAreas.some(([v]) => areasOverlap(v, scopeValue)));
       if (!inEvidence) continue; // the scope must come from where the class actually recurred
@@ -307,11 +306,11 @@ export class LearningAi {
         engine.proposeLesson(
           {
             classId: r.class_id,
-            scopeType: d.data.scopeType,
+            scopeType: d.scopeType,
             scopeValue: scopeValue!,
-            rule: d.data.rule,
-            fix: d.data.fix,
-            rationale: d.data.rationale ?? null,
+            rule: d.rule,
+            fix: d.fix,
+            rationale: d.rationale ?? null,
           },
           AI_ACTOR,
           { source: 'system', causationId: r.event_id },

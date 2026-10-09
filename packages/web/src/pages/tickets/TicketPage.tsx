@@ -46,6 +46,7 @@ import {
   budgetsFrom,
   diagnosisOf,
   gatesOf,
+  latestPromotion,
   stageSpans,
   timelineEvents,
   type CloseResolution,
@@ -279,6 +280,7 @@ export default function TicketPage() {
     [decisions.data],
   );
   const timeline = useMemo(() => timelineEvents(evts).reverse(), [evts]);
+  const promotion = useMemo(() => latestPromotion(evts), [evts]);
 
   if (ticket.data === undefined) {
     const notFound = ticket.error instanceof ApiError && ticket.error.status === 404;
@@ -335,7 +337,7 @@ export default function TicketPage() {
         breadcrumbs={[{ label: 'Tickets', to: '/tickets' }, { label: shortId(t.ticketId) }]}
         actions={
           !done && (
-            <Button variant="danger" icon="close" onClick={() => setClosing(true)}>
+            <Button icon="close" onClick={() => setClosing(true)}>
               Close ticket…
             </Button>
           )
@@ -386,6 +388,14 @@ export default function TicketPage() {
           <div className="tkt-next">
             <p className="tkt-next__hint">{STAGE_HINT[t.stage]}</p>
             <GateTrail gates={gates} />
+            {promotion && (promotion.status === 'failed' || promotion.status === 'refused') && !done && (
+              <InlineAlert tone="danger" title={`Go-live promotion ${promotion.status}`}>
+                Promotion {shortId(promotion.promotionId)} {promotion.status} (
+                {(promotion.reason ?? 'no reason').replace(/_/g, ' ')}) at{' '}
+                {formatDateTime(promotion.at).slice(11, 16)}. Nothing reached main; the timeline has the
+                detail.
+              </InlineAlert>
+            )}
             {gates.goLive === 'blocked' && (
               <InlineAlert tone="danger" title="UAT passed, but go-live did not start">
                 The requester signed off UAT and no go-live decision or promotion was recorded, so nothing

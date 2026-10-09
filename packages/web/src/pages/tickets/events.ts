@@ -175,6 +175,12 @@ export function describeEvent(
         tone: 'danger',
         text: `Promotion refused: ${str(m.reason).replace(/_/g, ' ')}`,
       };
+    case 'promotion.failed':
+      return {
+        icon: 'danger',
+        tone: 'danger',
+        text: `Promotion ${shortId(str(m.promotionId))} failed (${str(m.reason).replace(/_/g, ' ')}): nothing reached main`,
+      };
     case 'ticket.public_status_changed':
       return {
         icon: 'user',
