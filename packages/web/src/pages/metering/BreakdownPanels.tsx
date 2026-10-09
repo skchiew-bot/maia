@@ -116,6 +116,12 @@ export function BreakdownPanel({ dim, onDim, summary, labelOf }: BreakdownPanelP
   );
 }
 
+/** "<0.1%" for slivers, one decimal below 1%, whole percents above. */
+export function shareText(share: number): string {
+  if (share > 0 && share < 0.001) return '<0.1%';
+  return formatPercent(share, share > 0 && share < 0.01 ? 1 : 0);
+}
+
 /** Token types (§10): input, output, cache read and cache write (5-minute and 1-hour), with shares. */
 export function TokenTypesPanel({ totals }: { totals: MeteringCostRow }) {
   const rows = tokenTypes(totals);
@@ -137,7 +143,7 @@ export function TokenTypesPanel({ totals }: { totals: MeteringCostRow }) {
             </span>
             <span className="met-bars__value aoc-num">
               <b>{formatTokens(r.tokens)}</b>
-              <span className="met-sub">{formatPercent(r.share, r.share > 0 && r.share < 0.01 ? 1 : 0)}</span>
+              <span className="met-sub">{shareText(r.share)}</span>
             </span>
           </li>
         ))}

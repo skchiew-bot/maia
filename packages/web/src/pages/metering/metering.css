@@ -234,8 +234,10 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-bottom: var(--sp-3);
   font-weight: 600;
+}
+.met-verdict__basis {
+  margin: 2px 0 var(--sp-3);
 }
 .met-verdict.is-ok .aoc-icon {
   color: var(--ok);

@@ -37,6 +37,11 @@ export function MigrationPanel({ m }: { m: MigrationRecommendationDTO }) {
         <Icon name={favourable ? 'ok' : m.verdict === 'depends_on_assumptions' ? 'warn' : 'info'} size={14} />
         {VERDICT_TEXT[m.verdict]}
       </p>
+      <p className="met-quiet met-verdict__basis">
+        On {m.assumptions.filter((a) => a.source === 'default').length} placeholder assumptions (not a quote) and{' '}
+        {m.inputs.notionalUsd30d.coveredDays} day{m.inputs.notionalUsd30d.coveredDays === 1 ? '' : 's'} of metered
+        history; replace the seat price with a real quote before deciding.
+      </p>
       <div className="met-range" role="img" aria-label={summary}>
         <div className="met-range__track">
           <span className="met-range__zero" style={{ '--x': `${pos(0)}%` } as CSSProperties} />
