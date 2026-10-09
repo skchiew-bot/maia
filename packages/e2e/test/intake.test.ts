@@ -2,9 +2,13 @@
  * (i) Intake portal end to end: a multipart upload over real HTTP → the triage reactor → the real supervisor launches
  * a read-only triage session on claude-sim → report_diagnosis through the real MCP server → the fix-plan gate.
  */
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { DecisionCardView, InternalTicket, PublicTicket, StoredEvent } from '@aoc/contracts';
-import { Harness, waitFor } from './harness';
+import { Harness, waitFor, type TestUser } from './harness';
+import { sessionDetail, untilSession } from './sim';
 
 let h: Harness;
 beforeAll(async () => {
@@ -72,6 +76,11 @@ describe('(i) intake portal', () => {
     ]);
     const reported = h.events({ types: ['ticket.diagnosis_reported'] })[0]!;
     expect(reported).toMatchObject({ source: 'mcp', actor: { kind: 'agent', id: triage.sessionId } });
+    // The diagnosis is where triage ends: this scenario declares no plan, and the session still completes on its own
+    // turn end instead of being auto-continued and parked as Waiting on you.
+    const ended = await waitFor(() => h.events({ types: ['session.ended'], sessionId: triage.sessionId })[0], { what: 'the triage session to end' });
+    expect(ended.meta).toEqual({ sessionId: triage.sessionId, outcome: 'completed' });
+    expect(h.events({ types: ['session.turn_started'], sessionId: triage.sessionId }).map((e) => e.meta.reason)).toEqual(['launch']);
 
     // The fix-plan gate is an Approver decision; the requester only ever sees abstracted status.
     expect(gated.openDecisionIds).toHaveLength(1);
@@ -92,6 +101,98 @@ describe('(i) intake portal', () => {
     }, { timeout: 30_000, what: 'the build session' });
     const build = h.events({ types: ['session.launch_requested'], sessionId: building.buildSessionId! })[0]!;
     expect(build.meta).toMatchObject({ processType: 'bug-fix', readOnly: false, ticketId: ticket.ticketId });
+    expect(h.store.verifyChain().ok).toBe(true);
+  });
+});
+
+/** The ticket text is untrusted input that reaches the triage prompt: claude-sim reads a scenario marker from it. */
+const scenarioDir = mkdtempSync(join(tmpdir(), 'aoc-e2e-triage-'));
+afterAll(() => rmSync(scenarioDir, { recursive: true, force: true }));
+function scenarioFile(name: string, steps: unknown[]): string {
+  const file = join(scenarioDir, `${name}.json`);
+  writeFileSync(file, JSON.stringify({ name, steps }));
+  return file;
+}
+const DIAGNOSE = {
+  kind: 'mcp',
+  server: 'aoc',
+  tool: 'report_diagnosis',
+  args: {
+    root_cause: 'The session-expiry check compares seconds with milliseconds.',
+    confidence: 0.9,
+    fix_plan: 'Normalise both values to milliseconds and add a regression test.',
+    root_cause_class: 'unit-mismatch',
+  },
+};
+
+async function submit(requester: TestUser, projectId: string, title: string, scenario: string): Promise<string> {
+  const form = new FormData();
+  form.set('title', title);
+  form.set('description', `I get kicked out at once after logging in. [[scenario:${scenario}]]`);
+  form.set('severity', 'medium');
+  form.set('projectId', projectId);
+  const res = await fetch(`${h.url}/portal/api/intakes`, { method: 'POST', headers: requester.headers, body: form });
+  expect(res.status).toBe(201);
+  return ((await res.json()) as PublicTicket).ticketId;
+}
+
+describe('(i) triage sessions end at their diagnosis', () => {
+  it('a declared plan that triage never closes does not keep the session alive: it completes, and the ticket moves on', async () => {
+    const requester = await h.user('requester', 'Aziz');
+    const dev = await h.user('builder', 'Dev');
+    const { projectId } = await h.project(dev, 'Plan Portal');
+    // What the platform's triage prompt asks for: declare a diagnosis plan, inspect, report, end the turn.
+    const file = scenarioFile('plan-then-diagnose', [
+      { kind: 'think', ms: 300, outputTokens: 100 },
+      {
+        kind: 'mcp',
+        server: 'aoc',
+        tool: 'declare_plan',
+        args: { phases: [{ id: 'd', name: 'Diagnose', tasks: [{ id: 'd1', title: 'Find the root cause', size: 's' }, { id: 'd2', title: 'Confirm it', size: 's' }] }] },
+      },
+      { kind: 'tool', name: 'Grep', input: { pattern: 'session' } },
+      DIAGNOSE,
+      { kind: 'text', text: 'Diagnosis reported; ending my turn.' },
+      { kind: 'endTurn', final: true },
+    ]);
+    const ticketId = await submit(requester, projectId, 'Kicked out after login (plan)', file);
+
+    const gated = await waitFor(async () => {
+      const t = await h.api<InternalTicket>('GET', `/api/tickets/${ticketId}`, { as: dev });
+      return t.stage === 'fix_plan_gate' && t;
+    }, { timeout: 60_000, interval: 100, what: 'the fix-plan gate' });
+    const sessionId = gated.diagnoses[0]!.sessionId;
+    const ended = await waitFor(() => h.events({ types: ['session.ended'], sessionId })[0], { what: 'the triage session to end' });
+    expect(ended.meta).toEqual({ sessionId, outcome: 'completed' });
+    // The plan was declared and left open, and nothing asked the session to continue it.
+    expect(h.events({ types: ['plan.declared'], sessionId })).toHaveLength(1);
+    expect(h.events({ types: ['task.done'], sessionId })).toEqual([]);
+    expect(h.events({ types: ['session.turn_started'], sessionId }).map((e) => e.meta.reason)).toEqual(['launch']);
+    expect(h.events({ types: ['session.turn_ended'], sessionId }).map((e) => e.meta.outcome)).toEqual(['end_turn']);
+    const detail = await sessionDetail(h, sessionId, dev);
+    expect(detail.lifecycle).toBe('ended');
+    expect(detail.liveness?.state ?? null).toBeNull(); // no badge: not Waiting on you
+  });
+
+  it('a triage turn that ends without a diagnosis is unfinished: auto-continued once, then waiting on the operator, ticket still in triage', async () => {
+    const requester = await h.user('requester', 'Bao');
+    const dev = await h.user('builder', 'Dev 2');
+    const { projectId } = await h.project(dev, 'Silent Portal');
+    const file = scenarioFile('no-diagnosis', [
+      { kind: 'text', text: 'I read the code but I am not ready to say what is wrong.' },
+      { kind: 'endTurn' },
+      { kind: 'text', text: 'Still looking.' },
+      { kind: 'endTurn', final: true },
+    ]);
+    const ticketId = await submit(requester, projectId, 'Kicked out after login (silent)', file);
+
+    const launch = await waitFor(() => h.events({ types: ['session.launch_requested'], ticketId })[0], { what: 'the triage session' });
+    const sessionId = String(launch.meta.sessionId);
+    await untilSession(h, sessionId, dev, (d) => d.lifecycle === 'idle', 'the session to wait on the operator');
+    expect(h.events({ types: ['session.turn_started'], sessionId }).map((e) => e.meta.reason)).toEqual(['launch', 'continue']);
+    expect(h.events({ types: ['session.ended'], sessionId })).toEqual([]);
+    expect(h.events({ types: ['ticket.diagnosis_reported'], ticketId })).toEqual([]);
+    expect((await h.api<InternalTicket>('GET', `/api/tickets/${ticketId}`, { as: dev })).stage).toBe('triage');
     expect(h.store.verifyChain().ok).toBe(true);
   });
 });

@@ -1,8 +1,10 @@
-import type { Actor, GitService, ProcessType, SessionInfo, SessionLifecycle, TaskSize } from '@aoc/contracts';
+import type { Actor, ProcessType, SessionInfo, SessionLifecycle, TaskSize } from '@aoc/contracts';
 import type { Clock, EventStore, ModuleContext } from '@aoc/kernel';
 import { LedgerReadModel } from './read-model';
+import { RepoGit } from './repo-git';
 import {
   DEFAULT_DRIFT_DEDUP_MS,
+  DEFAULT_GIT_TIMEOUT_MS,
   DEFAULT_OVERRUN_BUDGET_MIN,
   DEFAULT_ROLLOVER_CONTEXT_PCT,
   DEFAULT_SCOPE_GROWTH_THRESHOLD,
@@ -20,6 +22,8 @@ export interface LedgerModuleOptions {
   overrunScanEveryMs?: number;
   /** Rollover threshold when the registry has no process type (default 70%). */
   defaultRolloverContextPct?: number;
+  /** Time each git call may take before the check it serves is recorded as unknown (default 5 s). */
+  gitTimeoutMs?: number;
 }
 
 export interface ResolvedLedgerOptions {
@@ -28,6 +32,7 @@ export interface ResolvedLedgerOptions {
   overrunBudgetMinutes: Record<TaskSize, number>;
   overrunScanEveryMs: number;
   defaultRolloverContextPct: number;
+  gitTimeoutMs: number;
 }
 
 export function resolveOptions(o: LedgerModuleOptions): ResolvedLedgerOptions {
@@ -37,6 +42,7 @@ export function resolveOptions(o: LedgerModuleOptions): ResolvedLedgerOptions {
     overrunBudgetMinutes: { ...DEFAULT_OVERRUN_BUDGET_MIN, ...o.overrunBudgetMinutes },
     overrunScanEveryMs: o.overrunScanEveryMs ?? 60_000,
     defaultRolloverContextPct: o.defaultRolloverContextPct ?? DEFAULT_ROLLOVER_CONTEXT_PCT,
+    gitTimeoutMs: o.gitTimeoutMs ?? DEFAULT_GIT_TIMEOUT_MS,
   };
 }
 
@@ -64,6 +70,7 @@ export class LedgerError extends Error {
 export class LedgerCore {
   private context: ModuleContext | null = null;
   private model: LedgerReadModel | null = null;
+  private repos: RepoGit | null = null;
 
   constructor(readonly opts: ResolvedLedgerOptions) {}
 
@@ -86,8 +93,14 @@ export class LedgerCore {
   get clock(): Clock {
     return this.ctx.clock;
   }
-  get git(): GitService {
-    return this.ctx.services.get('git');
+  /** Every git call of the ledger goes through this: async, with a timeout each (see repo-git.ts). */
+  get repoGit(): RepoGit {
+    this.repos ??= new RepoGit(
+      this.ctx.services.get('git'),
+      this.opts.gitTimeoutMs,
+      this.ctx.log.child({ module: 'ledger' }),
+    );
+    return this.repos;
   }
   service<
     K extends 'sessions' | 'registry' | 'decisions' | 'learning' | 'credits' | 'supervisor' | 'identity',
@@ -117,13 +130,13 @@ export class LedgerCore {
     return s !== null && !TERMINAL_LIFECYCLES.has(s.lifecycle);
   }
 
-  /** The git working copy for a session: its cwd if that is a repo, else the project's repo. */
-  repoFor(sessionId: string, projectId: string | null): string | null {
-    const git = this.git;
+  /** The git working copy for a session: the one its cwd is in, else the project's repo. */
+  async repoFor(sessionId: string, projectId: string | null): Promise<string | null> {
     const cwd = this.session(sessionId)?.cwd ?? null;
-    if (cwd && git.isRepo(cwd)) return cwd;
+    const own = cwd ? await this.repoGit.find(cwd) : null;
+    if (own) return own;
     const repoPath = projectId ? (this.read.project(projectId)?.repo_path ?? null) : null;
-    return repoPath && git.isRepo(repoPath) ? repoPath : null;
+    return repoPath ? this.repoGit.find(repoPath) : null;
   }
 
   userName(userId: string | null): string | null {

@@ -121,6 +121,8 @@ export class StubLedger implements LedgerService {
   defaultPct = 50;
   briefProblems: string[] = [];
   readonly repoPaths = new Map<string, string>();
+  /** The projects that exist: the real ledger would conjure any other on a launch, the supervisor must not let it. */
+  readonly projects = new Set<string>(['prj_demo']);
   private n = 0;
 
   hasManifest(): boolean {
@@ -149,6 +151,9 @@ export class StubLedger implements LedgerService {
   }
   getThread(threadId: string): ThreadInfo | null {
     return this.threads.get(threadId) ?? null;
+  }
+  hasProject(projectId: string): boolean {
+    return this.projects.has(projectId);
   }
   ensureThread(input: { projectId: string; threadId?: string | null; title?: string }): ThreadInfo {
     const threadId = input.threadId ?? `thr_test${++this.n}`;

@@ -52,8 +52,9 @@ sidecar stays with aocd. Development keeps `isolation: "none"` as the default, w
   `/proc/<pid>/environ` (a `git-feature` session can reach a `bug-fix` session's `uat-deploy` key while it runs).
   Per-session uids or containers (`supervisor.runner`) close this.
 - **With aocd as root, privileged git fails closed in agent-owned repositories** until G-04: root's git refuses them
-  (dubious ownership), so promotion pushes, pin tags, rollback checkouts and the ledger's commit-evidence check do
-  not work there. Never work around it with `safe.directory`.
+  (dubious ownership), so promotion pushes, pin tags, rollback checkouts and the ledger's working-tree fingerprint do
+  not work there. The ledger's commit-evidence check does: HEAD and "is this commit new?" are read with a hardened
+  plumbing command that trusts exactly that path. Never work around the rest with `safe.directory`.
 - The ingest token is still in the session's environment (G-44 / O-3).
 - A non-root aocd with a `sudo` runner is not supported: the sidecar cannot read the 0600 transcript and aocd cannot
   SIGKILL another user's process.

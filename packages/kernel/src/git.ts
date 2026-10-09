@@ -1,23 +1,123 @@
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { GitCommit, GitService } from '@aoc/contracts';
+import type { GitAsyncResult, GitCommit, GitService } from '@aoc/contracts';
 import { childEnv } from './child-env';
+
+const MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
 
 /**
  * git sees an allowlisted environment (no AOC_*, keys or tokens, and no inherited GIT_DIR / GIT_WORK_TREE that
  * would redirect it) plus what the caller passes explicitly.
  */
+function gitEnv(extra?: Record<string, string>): Record<string, string> {
+  return childEnv(process.env, { GIT_TERMINAL_PROMPT: '0', ...extra });
+}
+
 function git(dir: string, args: string[], opts: { env?: Record<string, string>; timeoutMs?: number } = {}) {
   const r = spawnSync('git', args, {
     cwd: dir,
     encoding: 'utf8',
-    env: childEnv(process.env, { GIT_TERMINAL_PROMPT: '0', ...opts.env }),
+    env: gitEnv(opts.env),
     timeout: opts.timeoutMs ?? 60_000,
-    maxBuffer: 64 * 1024 * 1024,
+    maxBuffer: MAX_OUTPUT_BYTES,
   });
   return { code: r.status ?? 1, stdout: r.stdout ?? '', stderr: r.stderr ?? (r.error ? String(r.error) : '') };
+}
+
+/**
+ * `git()` for callers on aocd's single thread: the event loop keeps serving while git runs, and a timeout kills git
+ * together with whatever it started (a filter, ssh, a hook) instead of waiting for them. Never rejects: a spawn
+ * failure is code 1; a timeout is code 124 with `timedOut` and no stdout, because half an answer must not pass for one.
+ */
+function gitAsync(
+  dir: string,
+  args: string[],
+  opts: { env?: Record<string, string>; timeoutMs?: number } = {},
+): Promise<GitAsyncResult> {
+  const timeoutMs = opts.timeoutMs ?? 60_000;
+  const verb = args.find((a) => !a.startsWith('-') && !a.includes('=')) ?? 'git';
+  return new Promise((resolve) => {
+    let child: ChildProcess;
+    try {
+      child = spawn('git', args, {
+        cwd: dir,
+        env: gitEnv(opts.env),
+        stdio: ['ignore', 'pipe', 'pipe'],
+        // Its own process group: one signal then reaches everything git started.
+        detached: true,
+      });
+    } catch (err) {
+      resolve({ code: 1, stdout: '', stderr: String(err), timedOut: false });
+      return;
+    }
+    const out: string[] = [];
+    const err: string[] = [];
+    let bytes = 0;
+    let settled = false;
+    let timer: NodeJS.Timeout | undefined;
+    const killTree = () => {
+      try {
+        process.kill(-child.pid!, 'SIGKILL');
+      } catch {
+        child.kill('SIGKILL');
+      }
+    };
+    const settle = (r: GitAsyncResult) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      // A grandchild can hold the pipes open after git is gone: do not wait for it.
+      child.stdout?.destroy();
+      child.stderr?.destroy();
+      resolve(r);
+    };
+    const fail = (stderr: string, more: Partial<GitAsyncResult> = {}) =>
+      settle({ code: 1, stdout: '', stderr, timedOut: false, ...more });
+    timer = setTimeout(() => {
+      killTree();
+      fail(`git ${verb} timed out after ${timeoutMs} ms`, { code: 124, timedOut: true });
+    }, timeoutMs);
+    for (const [stream, into] of [
+      [child.stdout!, out],
+      [child.stderr!, err],
+    ] as const) {
+      stream.setEncoding('utf8');
+      stream.on('error', () => undefined);
+      stream.on('data', (chunk: string) => {
+        bytes += chunk.length;
+        if (bytes <= MAX_OUTPUT_BYTES) {
+          into.push(chunk);
+          return;
+        }
+        killTree();
+        fail(`git ${verb} wrote more than ${MAX_OUTPUT_BYTES} bytes`);
+      });
+    }
+    child.once('error', (e) => fail(String(e)));
+    child.once('close', (code) =>
+      settle({ code: code ?? 1, stdout: out.join(''), stderr: err.join(''), timedOut: false }),
+    );
+  });
+}
+
+/**
+ * The working-tree fingerprint: changes when HEAD, the status or the diff against HEAD changes. One definition for
+ * the sync and async readers, and for the baselines already in the log.
+ */
+export function workingTreeFingerprintOf(parts: {
+  head: string | null;
+  status: string;
+  diff: string;
+}): string {
+  return createHash('sha256')
+    .update(parts.head ?? 'no-head')
+    .update('\0')
+    .update(parts.status)
+    .update('\0')
+    .update(parts.diff)
+    .digest('hex');
 }
 
 /** Thin wrapper over the git CLI (argument arrays only — never a shell). */
@@ -38,8 +138,7 @@ export function createGitService(): GitService {
       if (!svc.isRepo(dir)) return null;
       const status = git(dir, ['status', '--porcelain=v1', '--untracked-files=all']).stdout;
       const diff = git(dir, ['diff', 'HEAD', '--no-color']).stdout;
-      const head = svc.head(dir) ?? 'no-head';
-      return createHash('sha256').update(head).update('\0').update(status).update('\0').update(diff).digest('hex');
+      return workingTreeFingerprintOf({ head: svc.head(dir), status, diff });
     },
     tag: (dir, name, sha, message) => {
       const r = git(dir, ['tag', '-a', name, sha, '-m', message]);
@@ -63,6 +162,7 @@ export function createGitService(): GitService {
         });
     },
     run: (dir, args, opts) => git(dir, args, opts),
+    runAsync: (dir, args, opts) => gitAsync(dir, args, opts),
   };
   return svc;
 }

@@ -348,6 +348,13 @@ day O-1 is done, unless O-2 is done with it.
   - Run acceptance tests as the sandbox user with no credentials, and without a shell: a fixed runner and its
     arguments, not a free command line.
   - Do not set `safe.directory=*` to silence git's ownership check. The check is helping.
+  - The one exception is narrow and built: the ledger's commit-evidence check reads HEAD and asks "is this commit
+    new?" with one plumbing command each, trusting exactly the session's working-copy path
+    (`-c safe.directory=<path>`), with `core.hooksPath=/dev/null`, `core.fsmonitor=false`, no system or user config,
+    no lazy fetch and no transport. Hooks and fsmonitor alone are not enough: a missing commit in a partial clone
+    makes git run the repository's promisor transport, as root, so `GIT_NO_LAZY_FETCH=1` and an empty
+    `GIT_ALLOW_PROTOCOL` are part of the read (`packages/mod-ledger/src/repo-git.ts`, tested against a planted
+    transport, fsmonitor and hook). `status`, `diff`, `ls-files` and `tag` stay plain and are refused there.
 - **Residual:** low, once the sandbox user (O-1) and O-2 are in place.
 
 ### T-3. The model reads its own environment

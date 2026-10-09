@@ -305,9 +305,11 @@ The host that runs aocd and the supervisor. Items 1–3 are enforced by aocd whe
    - `runIsolated` commands **without** a credential profile (acceptance tests for rollback verification, git
      reads) run as `aoc-agent` with a throwaway `HOME`, never as root;
    - root's git refuses repositories owned by `aoc-agent` (dubious ownership), so promotion pushes, pin tags,
-     rollback checkouts and the ledger's commit-evidence check **fail closed** on them. Do not "fix" this with
-     `safe.directory`: that would run agent-planted hooks and `core.fsmonitor` as root. G-04 (a service-owned
-     clone, inspection as the session user) is the fix.
+     rollback checkouts and the ledger's working-tree fingerprint **fail closed** on them (a phase is then pinned by
+     its sha, without a tag). The ledger's commit-evidence check does work there: it reads HEAD and "is this commit
+     new?" with one hardened plumbing command each, trusting exactly that repository's path and nothing its config
+     says. Do not "fix" the rest with `safe.directory`: that would run agent-planted hooks and `core.fsmonitor` as
+     root. G-04 (a service-owned clone, inspection as the session user) is the fix.
 10. **Read-only types** never receive credentials. The registry schema refuses a read-only type with a
    `credentialProfile`. Do not work around it.
 
