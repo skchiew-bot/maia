@@ -12,9 +12,10 @@ import { simStatePathFor, type SimState } from '@aoc/claude-sim';
 import { newId, transcriptPathFor } from '@aoc/contracts';
 import type { LiveKind } from '../layout';
 import { simPrompt } from '../scenarios';
+import { ensureWorkspace, workspaceDir } from '../workspaces';
 import { planFor } from './plans';
 import type { WaitingBuild } from './tickets';
-import { MINUTE, agent, sys, type SeedWorld } from './world';
+import { MINUTE, agent, sys, type ProjectInfo, type SeedWorld } from './world';
 
 /**
  * The waiting build's turn ended on a decision, so the supervisor resumes its conversation (`--resume`) once the
@@ -51,12 +52,16 @@ export function seedNow(w: SeedWorld): NowSessions {
   const { cx, aoc, claims } = w.projects;
   const now = w.now;
   const owner = (k: 'aisyah' | 'weijie' | 'priya') => w.people[k].userId;
+  // These sessions edit files when they run on claude-sim, so each works in a workspace of its own (the names are the
+  // fleet slots they belong to): the checkouts that promotions and rollbacks move stay clean.
+  const workspace = (project: ProjectInfo, name: string) => ensureWorkspace(project.repo, workspaceDir(w.layout, project.id, name));
 
   // Throttled: the plan limit hit 22 minutes ago, with a reset time; the supervisor resumes the session after it.
   w.at(now - 52 * MINUTE);
   const throttled = w.kit.launch(owner('weijie'), cx, 'feature-build', simPrompt('Real-time CSAT sentiment overlay', 'Show a rolling sentiment colour on the agent desktop while the call is live.', 'demo-csat-resume'), {
     thread: 'thr_cx-copilot_csat',
     plan: planFor('feature', 'csat'),
+    cwd: workspace(cx, 'csat'),
   });
   w.kit.workedUntil(throttled, now - 24 * MINUTE);
   w.at(now - 22 * MINUTE);
@@ -76,6 +81,7 @@ export function seedNow(w: SeedWorld): NowSessions {
   const dead = w.kit.launch(owner('priya'), aoc, 'docs', simPrompt('Document the rollback runbook', 'Add the rollback flow diagram and check every link in docs/runbooks/rollback.md.', 'demo-runbook-restart'), {
     thread: 'thr_aoc-platform_rollback-docs',
     plan: planFor('docs', 'runbook'),
+    cwd: workspace(aoc, 'runbook'),
   });
   w.kit.workedUntil(dead, now - 14 * MINUTE);
   w.at(now - 12 * MINUTE);
@@ -89,9 +95,9 @@ export function seedNow(w: SeedWorld): NowSessions {
   // Working / Thinking / Stalled: launches requested while aocd was down; aocd starts them on claude-sim at boot.
   w.at(now - 3 * MINUTE);
   const queued = {
-    working: w.kit.queue(owner('aisyah'), cx, 'feature-build', simPrompt('Add supervisor whisper suggestions to the agent desktop', 'Rank reply suggestions by live intent confidence, show at most three cards in the agent panel and emit whisper telemetry.', 'demo-feature-build'), 'thr_cx-copilot_whisper'),
-    thinking: w.kit.queue(owner('weijie'), claims, 'discovery', simPrompt('Design an OCR fallback for handwritten claim forms', 'Handwritten claim forms fail the printed-text OCR engine. Find the cheapest safe fallback and prototype it.', 'demo-deep-think'), 'thr_claims-bot_ocr'),
-    stalled: w.kit.queue(owner('priya'), cx, 'migration', simPrompt('Migrate interaction history to the partitioned table', 'Move interaction history to monthly partitions without downtime: migration, resumable backfill, dual-write, read switch.', 'demo-stall'), 'thr_cx-copilot_history'),
+    working: w.kit.queue(owner('aisyah'), cx, 'feature-build', simPrompt('Add supervisor whisper suggestions to the agent desktop', 'Rank reply suggestions by live intent confidence, show at most three cards in the agent panel and emit whisper telemetry.', 'demo-feature-build'), 'thr_cx-copilot_whisper', workspace(cx, 'feature')),
+    thinking: w.kit.queue(owner('weijie'), claims, 'discovery', simPrompt('Design an OCR fallback for handwritten claim forms', 'Handwritten claim forms fail the printed-text OCR engine. Find the cheapest safe fallback and prototype it.', 'demo-deep-think'), 'thr_claims-bot_ocr', workspace(claims, 'discovery')),
+    stalled: w.kit.queue(owner('priya'), cx, 'migration', simPrompt('Migrate interaction history to the partitioned table', 'Move interaction history to monthly partitions without downtime: migration, resumable backfill, dual-write, read switch.', 'demo-stall'), 'thr_cx-copilot_history', workspace(cx, 'stall')),
   };
 
   return { ids: { ...queued, throttled: throttled.sessionId, dead: dead.sessionId, observed } };

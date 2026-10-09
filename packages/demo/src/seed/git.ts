@@ -50,9 +50,6 @@ const identity = (a: Author, at: number): Record<string, string> => ({
   GIT_COMMITTER_DATE: stamp(at),
 });
 
-/** What `git commit` needs in the environment to record `author` at `at` (also used for the platform's own commits). */
-export const commitEnv = identity;
-
 /** A repository with one dated commit on `main`; the repository-level identity is the one `initRepo` gives test repos. */
 export function initDemoRepo(dir: string, files: Record<string, string>, at: number, author: Author): string {
   mkdirSync(dir, { recursive: true });
@@ -115,17 +112,4 @@ export function commitFiles(repo: string, c: CommitInput): string {
 /** An annotated tag (the platform's pins are annotated, immutable tags). */
 export function annotatedTag(repo: string, name: string, sha: string, message: string, tagger: Author, at: number): void {
   git(repo, ['tag', '-a', name, sha, '-m', message], { env: identity(tagger, at) });
-}
-
-/**
- * Gives a pin the platform made while seeding the time of its record. The platform stamps tags it creates itself
- * (the change record's completion pin) with the wall clock, which the seeded history is not living in; the name,
- * target, message and tagger stay as the platform made them.
- */
-export function redateTag(repo: string, name: string, at: number): void {
-  const ref = `refs/tags/${name}`;
-  const sha = git(repo, ['rev-parse', `${ref}^{}`]);
-  const [taggerName, taggerEmail] = git(repo, ['for-each-ref', '--format=%(taggername)%09%(taggeremail)', ref]).split('\t');
-  const message = git(repo, ['for-each-ref', '--format=%(contents)', ref]);
-  git(repo, ['tag', '-f', '-a', name, sha, '-m', message], { env: identity({ name: taggerName!, email: taggerEmail!.replace(/^<|>$/g, '') }, at) });
 }

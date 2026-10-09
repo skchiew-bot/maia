@@ -27,6 +27,8 @@ export interface IsolatedRun {
 
 export class SeedSupervisor implements SupervisorService {
   readonly runs: IsolatedRun[] = [];
+  /** Sessions launched under an idempotency key (the same key from the same actor is the same session). */
+  private readonly keyed = new Map<string, string>();
 
   constructor(
     private readonly clock: FakeClock,
@@ -37,7 +39,12 @@ export class SeedSupervisor implements SupervisorService {
   ) {}
 
   async launch(req: LaunchRequest, actor: Actor): Promise<{ sessionId: string }> {
-    return { sessionId: this.queueLaunch(req, actor) };
+    const key = req.idempotencyKey ? `${actor.kind}:${actor.id}:${req.idempotencyKey}` : null;
+    const known = key ? this.keyed.get(key) : undefined;
+    if (known) return { sessionId: known };
+    const sessionId = this.queueLaunch(req, actor);
+    if (key) this.keyed.set(key, sessionId);
+    return { sessionId };
   }
 
   async stop(): Promise<void> {}

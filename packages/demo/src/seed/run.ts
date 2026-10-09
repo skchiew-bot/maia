@@ -9,13 +9,13 @@
  *   learning.ts  credits, error learning, the lesson and the top-up waiting for the Approver
  *   now.ts       one session per liveness state
  */
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Hono } from 'hono';
-import { AocConfigSchema, defaultConfig, newId, type Actor, type LaunchRequest } from '@aoc/contracts';
+import { AocConfigSchema, defaultConfig, newId, type Actor, type AocConfig, type LaunchRequest } from '@aoc/contracts';
 import { AocRuntime, FakeClock, createLogger, localDate, type AocModule, type AppEnv } from '@aoc/kernel';
 import { createAuditModule } from '@aoc/mod-audit';
-import { createChangeModule } from '@aoc/mod-change';
+import { createChangeModule, type ChangeModule } from '@aoc/mod-change';
 import { createCreditsModule } from '@aoc/mod-credits';
 import { createDecisionsModule } from '@aoc/mod-decisions';
 import { createEvidenceModule } from '@aoc/mod-evidence';
@@ -30,7 +30,7 @@ import { createSessionsModule } from '@aoc/mod-sessions';
 import { createTowerModule } from '@aoc/mod-tower';
 import { SECRET_ENV, simEnv } from '../daemon-env';
 import { defaultScenario } from '../default-scenario';
-import { demoLayout, type DemoTokens, type DemoUser, type LiveKind } from '../layout';
+import { PROJECT_SLUGS, demoLayout, type DemoTokens, type DemoUser, type LiveKind } from '../layout';
 import { ACCEPTANCE_COMMAND, PROJECT_FILES } from '../repos';
 import { CLAUDE_SIM_BIN } from '../sim-guard';
 import { initDemoRepo, type Author } from './git';
@@ -142,6 +142,28 @@ export async function runSeed(opts: SeedOptions): Promise<SeedResult> {
   ];
   // 'error': a seeding step that cannot work (e.g. intake without a supervisor) is reported by the step itself.
   const rt = await AocRuntime.create({ config, modules, clock, log: createLogger({ level: 'error' }) });
+  try {
+    return await seedRuntime(rt, { layout, clock, config, rawConfig, change, now, days, t0, keepOpen: opts.keepOpen ?? false });
+  } catch (err) {
+    await rt.stop().catch(() => undefined); // a failed seed leaves no runtime open behind it
+    throw err;
+  }
+}
+
+interface SeedContext {
+  layout: ReturnType<typeof demoLayout>;
+  clock: FakeClock;
+  config: AocConfig;
+  rawConfig: ReturnType<typeof demoConfig>;
+  change: ChangeModule;
+  now: number;
+  days: number;
+  t0: number;
+  keepOpen: boolean;
+}
+
+async function seedRuntime(rt: AocRuntime, c: SeedContext): Promise<SeedResult> {
+  const { layout, clock, config, rawConfig, change, now, days, t0 } = c;
   const app = rt.mount(new Hono<AppEnv>());
   const store = rt.store;
 
@@ -186,9 +208,9 @@ export async function runSeed(opts: SeedOptions): Promise<SeedResult> {
   // ── projects with real git repositories (phase pins, provenance and evidence need commits) ───────────────────
   const project = (id: string, slug: keyof typeof PROJECT_FILES, name: string, description: string) => ({ id, slug, name, description, repo: join(layout.repos, slug) });
   const projects: SeedWorld['projects'] = {
-    cx: project('prj_cxcopilot', 'cx-copilot', 'CX Copilot', 'Agent-assist copilot for the Daythree contact centre'),
-    claims: project('prj_claims', 'claims-bot', 'Claims Intake Bot', 'Insurance claims intake and triage assistant'),
-    aoc: project('prj_aoc', 'aoc-platform', 'AOC Platform', 'This console — features only; the governance core is human-built'),
+    cx: project('prj_cxcopilot', PROJECT_SLUGS.cx, 'CX Copilot', 'Agent-assist copilot for the Daythree contact centre'),
+    claims: project('prj_claims', PROJECT_SLUGS.claims, 'Claims Intake Bot', 'Insurance claims intake and triage assistant'),
+    aoc: project('prj_aoc', PROJECT_SLUGS.aoc, 'AOC Platform', 'This console — features only; the governance core is human-built'),
   };
   for (const p of Object.values(projects)) {
     initDemoRepo(p.repo, PROJECT_FILES[p.slug as keyof typeof PROJECT_FILES], t0, IMPORT_AUTHOR);
@@ -328,9 +350,8 @@ export async function runSeed(opts: SeedOptions): Promise<SeedResult> {
   const ticket = (key: string) => intake.tickets.find((t) => t.key === key)!.ticketId;
   writeFileSync(layout.simDefaultScenario, JSON.stringify(defaultScenario({ receipts: ticket('receipts'), transferBlank: ticket('transfer-blank') }), null, 2));
   // Every credential profile the demo can request (the registry's, plus mod-change's promotion profile), each with an
-  // empty env: never a real credential (the promotion credential stays empty until G-04, credential-isolation runbook).
+  // empty env: never a real credential (the projects have no remote, so a promotion moves the repository's own main).
   writeFileSync(layout.credentialProfiles, JSON.stringify({ profiles: Object.fromEntries([...profiles].map((p) => [p, { env: {} }])) }, null, 2), { mode: 0o600 });
-  chmodSync(layout.credentialProfiles, 0o600);
 
   let closed = false;
   const close = async (): Promise<void> => {
@@ -338,7 +359,7 @@ export async function runSeed(opts: SeedOptions): Promise<SeedResult> {
     closed = true;
     await rt.stop();
   };
-  if (!opts.keepOpen) await close();
+  if (!c.keepOpen) await close();
   return { tokens, world, close };
 }
 

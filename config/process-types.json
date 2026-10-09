@@ -31,10 +31,10 @@
           "Bash(git checkout -b:*)",
           "Bash(git switch -c:*)",
           "Bash(git switch uat/*)",
-          "Bash(git switch -)"
+          "Bash(git switch -)",
+          "Bash(git push aoc:*)"
         ],
         "deny": [
-          "Bash(git push:*)",
           "Bash(git merge:*)",
           "Bash(git rebase:*)",
           "Bash(git reset:*)"
@@ -93,10 +93,10 @@
           "Bash(git checkout -b:*)",
           "Bash(git switch -c:*)",
           "Bash(git switch uat/*)",
-          "Bash(git switch -)"
+          "Bash(git switch -)",
+          "Bash(git push aoc:*)"
         ],
         "deny": [
-          "Bash(git push:*)",
           "Bash(git merge:*)",
           "Bash(git rebase:*)",
           "Bash(git reset:*)"

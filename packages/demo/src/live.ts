@@ -15,9 +15,10 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { AocConfigSchema } from '@aoc/contracts';
 import { daemonEnv } from './daemon-env';
 import { DEFAULT_TIMING, launchBody, loadFleet, nextAction, saveFleet, selectSlots, type FleetState, type KeeperTiming, type SessionStatus, type SlotSpec } from './fleet';
-import { demoLayout, isSeeded, readDemoTokens, resetDemoDir, type DemoLayout, type DemoTokens } from './layout';
+import { PROJECT_SLUGS, demoLayout, isSeeded, readDemoTokens, resetDemoDir, type DemoLayout, type DemoTokens } from './layout';
 import { groupExited } from './process-group';
 import { claudeSimProblem } from './sim-guard';
+import { ensureWorkspace, workspaceDir } from './workspaces';
 
 const REPO = fileURLToPath(new URL('../../..', import.meta.url));
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -181,7 +182,7 @@ class Keeper {
   constructor(
     private readonly api: Api,
     private readonly tokens: DemoTokens,
-    private readonly file: string,
+    private readonly layout: DemoLayout,
     private readonly timing: KeeperTiming,
     private readonly state: FleetState,
     private readonly slots: readonly SlotSpec[],
@@ -200,7 +201,7 @@ class Keeper {
       }
     }
     this.firstTick = false;
-    saveFleet(this.file, this.state);
+    saveFleet(this.layout.fleet, this.state);
   }
 
   private async step(slot: SlotSpec): Promise<void> {
@@ -237,7 +238,15 @@ class Keeper {
   }
 
   private async launch(slot: SlotSpec): Promise<void> {
-    const r = await this.api.call<{ sessionId: string }>('POST', '/api/sessions', this.tokens.tokens[slot.owner].token, launchBody(slot, this.tokens));
+    let cwd: string | undefined;
+    if (slot.workspace) {
+      try {
+        cwd = ensureWorkspace(join(this.layout.repos, PROJECT_SLUGS[slot.project]), workspaceDir(this.layout, this.tokens.projects[slot.project], slot.key));
+      } catch (err) {
+        return this.complain(slot, `no workspace for the next run: ${(err as Error).message}`);
+      }
+    }
+    const r = await this.api.call<{ sessionId: string }>('POST', '/api/sessions', this.tokens.tokens[slot.owner].token, launchBody(slot, this.tokens, cwd));
     if (r.status !== 201 || !r.data?.sessionId) {
       return this.complain(slot, `launch refused: HTTP ${r.status} ${JSON.stringify(r.data).slice(0, 300)}`);
     }
@@ -364,7 +373,7 @@ async function main(): Promise<void> {
   });
 
   await waitHealthy(base, daemon, logFile);
-  const keeper = new Keeper(api, tokens, layout.fleet, o.timing, fleet, o.slots);
+  const keeper = new Keeper(api, tokens, layout, o.timing, fleet, o.slots);
   console.log(banner(o, layout, tokens, daemon));
   await keeper.tick();
   timer = setInterval(() => void keeper.tick(), TICK_MS);

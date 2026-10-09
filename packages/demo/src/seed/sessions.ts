@@ -32,6 +32,8 @@ export interface QueuedLaunch {
   thread: string;
   ticketId: string | null;
   changeId: string | null;
+  /** The directory the session works in: the project's checkout, or a workspace of its own (../workspaces.ts). */
+  cwd: string;
 }
 
 export interface SimSession {
@@ -46,6 +48,8 @@ export interface SimSession {
   thread: string;
   /** The git branch the session's phase pins and work commits live on (never `main`). */
   branch: string;
+  /** The directory it works in (a session that works again on claude-sim edits files there). */
+  cwd: string;
 }
 
 /** Repo state the ledger diffs `diff` evidence against; recorded for sessions that will work again. */
@@ -54,7 +58,7 @@ export interface TreeState {
   fingerprint: string | null;
 }
 
-export const TOOLS = ['Read', 'Read', 'Grep', 'Edit', 'Bash', 'Read', 'Write', 'Bash', 'Glob'];
+const TOOLS = ['Read', 'Read', 'Grep', 'Edit', 'Bash', 'Read', 'Write', 'Bash', 'Glob'];
 export const READ_ONLY_TOOLS = ['Read', 'Read', 'Grep', 'Glob'];
 
 const PROJECT_CODE: Record<string, string> = { 'cx-copilot': 'cx', 'claims-bot': 'cb', 'aoc-platform': 'ap' };
@@ -101,7 +105,7 @@ export class SessionKit {
     type: string,
     prompt: string,
     thread: string,
-    o: { ticketId?: string | null; changeId?: string | null } = {},
+    o: { ticketId?: string | null; changeId?: string | null; cwd?: string } = {},
   ): QueuedLaunch {
     const w = this.w;
     const registry = w.rt.services.get('registry');
@@ -141,7 +145,7 @@ export class SessionKit {
         ownerId: owner,
         changeId: o.changeId ?? null,
       },
-      payload: { prompt, cwd: project.repo },
+      payload: { prompt, cwd: o.cwd ?? project.repo },
       source: 'supervisor',
     });
     w.store.append({
@@ -151,7 +155,7 @@ export class SessionKit {
       meta: { sessionId, from: null, to: 'launching', reason: 'launch_requested' },
       source: 'supervisor',
     });
-    const q: QueuedLaunch = { sessionId, owner, project, type, model, prompt, thread, ticketId, changeId: o.changeId ?? null };
+    const q: QueuedLaunch = { sessionId, owner, project, type, model, prompt, thread, ticketId, changeId: o.changeId ?? null, cwd: o.cwd ?? project.repo };
     this.queued.set(sessionId, q);
     return q;
   }
@@ -174,15 +178,15 @@ export class SessionKit {
       scope: { sessionId },
       meta: { sessionId, claudeSessionId: claude, pid: ++this.pid, model: q.model, turn: 1 },
       payload: {
-        cwd: q.project.repo,
+        cwd: q.cwd,
         argv: [process.execPath, CLAUDE_SIM_BIN, '-p', '@prompt'],
-        transcriptPath: transcriptPathFor(q.project.repo, claude, w.layout.claudeConfig),
+        transcriptPath: transcriptPathFor(q.cwd, claude, w.layout.claudeConfig),
       },
       source: 'supervisor',
     });
     w.store.append({ type: 'session.turn_started', actor: sys('supervisor'), scope: { sessionId }, meta: { sessionId, turn: 1, reason: 'launch' }, payload: {}, source: 'supervisor' });
     w.store.append({ type: 'session.lifecycle_changed', actor: sys('supervisor'), scope: { sessionId }, meta: { sessionId, from: 'launching', to: 'running', reason: 'launched' }, source: 'supervisor' });
-    return { sessionId, claude, owner: q.owner, project: q.project, type: q.type, model: q.model, plan, thread: q.thread, branch: `aoc/session/${sessionId}` };
+    return { sessionId, claude, owner: q.owner, project: q.project, type: q.type, model: q.model, plan, thread: q.thread, branch: `aoc/session/${sessionId}`, cwd: q.cwd };
   }
 
   /** Request, then start at once: a session that ran from request to now. */
@@ -191,21 +195,22 @@ export class SessionKit {
     project: ProjectInfo,
     type: string,
     prompt: string,
-    o: { thread?: string; ticketId?: string | null; changeId?: string | null; plan?: Plan; tag?: string } = {},
+    o: { thread?: string; ticketId?: string | null; changeId?: string | null; cwd?: string; plan?: Plan; tag?: string } = {},
   ): SimSession {
     const q = this.request(owner, project, type, prompt, o.thread ?? `thr_${project.slug}_main`, o);
     return this.begin(q.sessionId, o.plan ?? planFor(planKindOf(type), o.tag ?? this.nextTag(project)));
   }
 
   /** A launch requested while aocd was down: aocd's startup recovery starts it on claude-sim (a real process). */
-  queue(owner: string, project: ProjectInfo, type: string, prompt: string, thread: string): string {
-    return this.request(owner, project, type, prompt, thread).sessionId;
+  queue(owner: string, project: ProjectInfo, type: string, prompt: string, thread: string, cwd?: string): string {
+    return this.request(owner, project, type, prompt, thread, { cwd }).sessionId;
   }
 
   // ── work ──────────────────────────────────────────────────────────────────
 
-  treeOf(project: ProjectInfo): TreeState {
-    return { head: git.head(project.repo), fingerprint: git.workingTreeFingerprint(project.repo) };
+  /** The repository state in `dir` (a checkout or a workspace): what a plan is declared against. */
+  treeOf(dir: string): TreeState {
+    return { head: git.head(dir), fingerprint: git.workingTreeFingerprint(dir) };
   }
 
   declare(s: SimSession, tree?: TreeState): void {
@@ -286,7 +291,7 @@ export class SessionKit {
    * whose next diff evidence is checked against the repository state recorded with its plan. Returns the context it had.
    */
   workedUntil(s: SimSession, activityEnd: number): number {
-    const tree = this.treeOf(s.project);
+    const tree = this.treeOf(s.cwd);
     this.tools(s, 5, 2 * MINUTE);
     this.declare(s, tree);
     this.tools(s, between(10, 25), Math.max(MINUTE, activityEnd - this.w.clock.now()));

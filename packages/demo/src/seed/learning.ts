@@ -19,7 +19,7 @@ const CLASSES = [
   { classId: 'rcc_haiku_sql', name: 'Malformed SQL migrations on the cheap model', dimension: 'model_capability' },
 ] as const;
 
-export const LESSON_CLASS = 'rcc_missing_env_guard';
+const LESSON_CLASS = 'rcc_missing_env_guard';
 
 /** Root-cause classes and the error occurrences assigned to them (the recurrence trend of §11). */
 export function seedErrorLearning(w: SeedWorld): void {

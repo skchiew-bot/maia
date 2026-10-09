@@ -157,7 +157,7 @@ export function scheduleTickets(w: SeedWorld): TicketOutput {
     w.at(at);
     const s = w.kit.begin(buildLaunch(ticketId).sessionId, plan);
     s.branch = `uat/${ticketId}`;
-    w.kit.declare(s, w.kit.treeOf(project));
+    w.kit.declare(s, w.kit.treeOf(project.repo));
     w.kit.tools(s, 9, 11 * MINUTE);
     const trailers = [`AOC-Ticket: ${ticketId}`];
     const fix = w.kit.commit(s, steps[0]!.message, steps[0]!.files, trailers);
@@ -224,10 +224,11 @@ export function scheduleTickets(w: SeedWorld): TicketOutput {
   });
 
   w.timeline.schedule(workday(now, 3, '14:00'), 'ticket dup-of: closed as a duplicate before triage', async () => {
-    // Nothing is looking at the queue yet (no supervisor), so a person spots the duplicate first.
+    // Nothing is looking at the queue yet (no supervisor), so an Approver spots the duplicate first. (Only an Approver,
+    // or the owner of a session working on the ticket, may close one: nobody owns a session on this ticket.)
     const id = await w.withoutSupervisor(() => file('dup-of', workday(now, 3, '14:00')));
     w.at(workday(now, 3, '14:40'));
-    await w.ok('POST', `/api/tickets/${id}/close`, 'priya', { resolution: 'duplicate', note: 'Same cause as the report about sideways receipt photos.' });
+    await w.ok('POST', `/api/tickets/${id}/close`, 'ceo', { resolution: 'duplicate', note: 'Same cause as the report about sideways receipt photos.' });
     await w.settle();
   });
 

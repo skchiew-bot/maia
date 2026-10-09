@@ -1,6 +1,6 @@
 {
   "name": "demo-triage",
-  "description": "Demo read-only triage of the \"my claim was submitted twice\" intake ticket: declares a short diagnosis plan, inspects the claim submission path with Glob, Grep and Read only, reports a diagnosis with confidence 0.84 and closes its plan without touching a file.",
+  "description": "Demo read-only investigation of the \"my claim was submitted twice\" intake ticket, launched by a Builder: declares a short plan, inspects the claim submission path with Glob, Grep and Read only, closes its plan with test evidence and summarises the root cause and a fix in text without touching a file. It files no diagnosis on the ticket: only the triage agents intake itself launches can (report_diagnosis refuses other sessions).",
   "steps": [
     {"kind":"think","ms":5000,"outputTokens":833},
     {"kind":"text","text":"Triaging the ticket read-only."},
@@ -14,9 +14,8 @@
     {"kind":"tool","name":"Read","input":{"file_path":"test/claims/submit.test.ts"}},
     {"kind":"mcp","server":"aoc","tool":"task_done","args":{"task_id":"dup-triage-1","evidence":{"kind":"test","ref":"test/claims/submit.test.ts > submits a claim"}}},
     {"kind":"think","ms":10000,"outputTokens":1667},
-    {"kind":"mcp","server":"aoc","tool":"report_diagnosis","args":{"root_cause":"submitClaim() wraps the POST in withRetry() without an idempotency key, so when a slow first attempt succeeds after the app has given up on it, the retry files a second claim.","confidence":0.84,"fix_plan":"Send an idempotency key with every claim submission and have the claims API return the first claim for a repeated key; add a regression test that retries a slow submission; verify on UAT with the reporter's flow.","affected_areas":["src/claims/submit.ts","src/claims/retry.ts","test/claims/submit.test.ts"],"root_cause_class":"missing-idempotency-key"}},
     {"kind":"mcp","server":"aoc","tool":"task_done","args":{"task_id":"dup-triage-2","evidence":{"kind":"test","ref":"test/claims/submit.test.ts > submits a claim","detail":"The existing test never retries a slow submission: the gap that let this through"}}},
-    {"kind":"text","text":"Diagnosis reported (confidence 0.84). No file was changed."},
+    {"kind":"text","text":"Findings (read-only, confidence 0.84): submitClaim() retries a slow first attempt without an idempotency key, so a success after the app gave up files a second claim. Fix: send an idempotency key with every submission and return the first claim for a repeated key, with a regression test that retries a slow submission. No file was changed."},
     {"kind":"endTurn","final":true}
   ]
 }

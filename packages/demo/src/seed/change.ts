@@ -8,7 +8,7 @@
 import { CHANGE_FIELDS, type BreakglassDTO, type ChangeField, type ChangeRequestDTO, type PromotionDTO, type RollbackDTO } from '@aoc/contracts';
 import { FakeLlm } from '@aoc/kernel';
 import { CHANGES, CHANGE_COMMITS, HOTFIXES, POST_INCIDENT, type ChangeKey } from './content';
-import { commitFiles, redateTag, revParse } from './git';
+import { commitFiles, revParse } from './git';
 import type { SimSession } from './sessions';
 import { workday } from './time';
 import { HOUR, MINUTE, setService, type PersonKey, type ProjectInfo, type SeedWorld } from './world';
@@ -128,7 +128,7 @@ export function scheduleChangeControl(w: SeedWorld): void {
     });
     s.branch = branch;
     await w.ok('POST', `/api/changes/${changeId}/start`, spec.owner, { sessionId: s.sessionId });
-    w.kit.declare(s, w.kit.treeOf(project));
+    w.kit.declare(s, w.kit.treeOf(project.repo));
     w.kit.tools(s, 7, 14 * MINUTE);
     const sha = w.kit.commit(s, commit.message, commit.files, [`AOC-Change: ${changeId}`]);
     w.kit.usage(s, 9, 80_000);
@@ -141,11 +141,6 @@ export function scheduleChangeControl(w: SeedWorld): void {
     return { session: s, branch, sha };
   }
 
-  /** Completes the record. The platform pins it with the wall clock, so the tag is re-dated to the moment of the record. */
-  async function complete(id: string, project: ProjectInfo, who: PersonKey, body: { ref?: string } = {}): Promise<void> {
-    await w.ok('POST', `/api/changes/${id}/complete`, who, body);
-    redateTag(project.repo, `aoc/change/${id}`, w.clock.now());
-  }
 
   async function submitAndApprove(id: string, owner: PersonKey, comment: string): Promise<ChangeRequestDTO> {
     const submitted = await w.ok<ChangeRequestDTO>('POST', `/api/changes/${id}/submit`, owner);
@@ -186,7 +181,7 @@ export function scheduleChangeControl(w: SeedWorld): void {
       await submitAndApprove(id, spec.owner, 'Approved: the rollback point is recorded and the cap is a one-line change.');
       w.at(w.clock.now() + 12 * MINUTE);
       const done = await work(key, id, w.clock.now());
-      await complete(id, claims, spec.owner, { ref: done.branch });
+      await w.ok('POST', `/api/changes/${id}/complete`, spec.owner, { ref: done.branch });
       w.at(w.clock.now() + 6 * MINUTE);
       const promotion = await requestPromotion(claims.id, spec.owner, done.branch, id);
       w.at(w.clock.now() + 41 * MINUTE);
@@ -230,7 +225,7 @@ export function scheduleChangeControl(w: SeedWorld): void {
       }
       await submitAndApprove(id, 'aisyah', 'Reviewed: the record matches what the hotfix changed.');
       w.at(w.clock.now() + 14 * MINUTE);
-      await complete(id, claims, 'aisyah');
+      await w.ok('POST', `/api/changes/${id}/complete`, 'aisyah', {});
       ref.breakglassClaims = bg.breakglassId;
     }),
   );
@@ -257,7 +252,7 @@ export function scheduleChangeControl(w: SeedWorld): void {
       await submitAndApprove(id, CHANGES[key].owner, '');
       w.at(w.clock.now() + 9 * MINUTE);
       const done = await work(key, id, w.clock.now());
-      await complete(id, cx, CHANGES[key].owner, { ref: done.branch });
+      await w.ok('POST', `/api/changes/${id}/complete`, CHANGES[key].owner, { ref: done.branch });
     }),
   );
 
@@ -282,7 +277,7 @@ export function scheduleChangeControl(w: SeedWorld): void {
       await submitAndApprove(id, spec.owner, 'Approved for data: dry run first, backup verified.');
       w.at(w.clock.now() + 10 * MINUTE);
       const done = await work(key, id, w.clock.now());
-      await complete(id, aoc, spec.owner, { ref: done.branch });
+      await w.ok('POST', `/api/changes/${id}/complete`, spec.owner, { ref: done.branch });
       ref.rollupBackfill = id;
     }),
   );

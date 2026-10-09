@@ -44,6 +44,9 @@ export function demoLayout(dir: string): DemoLayout {
   };
 }
 
+/** The directory under `repos/` of each demo project's repository. */
+export const PROJECT_SLUGS = { cx: 'cx-copilot', claims: 'claims-bot', aoc: 'aoc-platform' } as const;
+
 export type LiveKind = 'working' | 'thinking' | 'stalled' | 'waiting' | 'throttled' | 'dead' | 'observed';
 
 export interface DemoUser {
