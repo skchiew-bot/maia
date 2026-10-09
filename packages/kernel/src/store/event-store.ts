@@ -475,13 +475,18 @@ export class EventStore {
     return (JSON.parse(text) as { b: string; p: JsonValue }).p;
   }
 
-  /** Check a body against its chained blinded hash (false if tampered; null if erased/absent). */
+  /** Check a body against its chained blinded hash (false if tampered or unreadable; null if erased/absent). */
   verifyBody(e: Pick<StoredEvent, 'id' | 'payloadHash'>): boolean | null {
     if (!e.payloadHash) return null;
-    const text = this.bodies.get(e.id);
-    if (text === null) return null;
-    const { b, p } = JSON.parse(text) as { b: string; p: JsonValue };
-    return sha256hex(`${b}:${canonicalJson(p)}`) === e.payloadHash;
+    try {
+      const text = this.bodies.get(e.id);
+      if (text === null) return null;
+      const { b, p } = JSON.parse(text) as { b: string; p: JsonValue };
+      return sha256hex(`${b}:${canonicalJson(p)}`) === e.payloadHash;
+    } catch {
+      // AES-GCM refuses a ciphertext that was edited or moved to another event: that is the finding, not a crash.
+      return false;
+    }
   }
 
   static headerOf(e: StoredEvent): EventHeader {
@@ -535,9 +540,21 @@ export class EventStore {
   }
 
   // ── erasure & rebuild ─────────────────────────────────────────────────────
-  /** Crypto-shred a body scope and scrub projections; the chain remains valid. Appends body.erased. */
+  /**
+   * Crypto-shred a body scope and scrub projections; the chain remains valid. Appends body.erased.
+   * Write-ahead: everything that can refuse (the record's validity, a projector that cannot scrub) and the record
+   * itself come before the irreversible shred, so a body is never destroyed without its body.erased event.
+   */
   eraseScope(scopeId: string, input: { actor: Actor; reason: 'pdpa_request' | 'secret_leak' | 'retention' | 'other'; decisionId?: string | null }): StoredEvent {
-    const n = this.bodies.eraseScope(scopeId, this.opts.clock.iso());
+    const meta = {
+      scopeId,
+      reason: input.reason,
+      erasedBy: input.actor.id,
+      bodyCount: this.bodies.countScope(scopeId),
+      decisionId: input.decisionId ?? null,
+    };
+    const problems = validateEvent('body.erased', meta, null);
+    if (problems.length) throw new EventValidationError('body.erased', problems);
     this.db.exec('BEGIN IMMEDIATE');
     try {
       for (const p of this.projectors) p.onErase?.(this.db, scopeId);
@@ -546,12 +563,8 @@ export class EventStore {
       this.db.exec('ROLLBACK');
       throw err;
     }
-    const erased = this.append({
-      type: 'body.erased',
-      actor: input.actor,
-      meta: { scopeId, reason: input.reason, erasedBy: input.actor.id, bodyCount: n, decisionId: input.decisionId ?? null },
-      source: 'api',
-    });
+    const erased = this.append({ type: 'body.erased', actor: input.actor, meta, source: 'api' });
+    this.bodies.eraseScope(scopeId, this.opts.clock.iso());
     // The WAL still holds page images from before the scrub: fold it into the main file and truncate it.
     this.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
     return erased;
@@ -623,10 +636,38 @@ class ChainVerifier {
   }
 
   add(r: EventRow): void {
-    const e = rowToEvent(r);
+    let e: StoredEvent;
+    let recomputed: string;
+    try {
+      e = rowToEvent(r);
+      recomputed = this.hashOf(e);
+    } catch {
+      // A column the chain hashes is not JSON (or holds a number JSON cannot carry): the row cannot be recomputed.
+      // That is itself the finding. Report it at its seq instead of letting the verifier die, and keep linking on
+      // the stored hashes so rows after it are still checked.
+      if (r.seq !== this.expectSeq) this.problem(r.seq, `gap: expected seq ${this.expectSeq}, found ${r.seq}`);
+      if (r.prev_hash !== this.prev) this.problem(r.seq, `seq ${r.seq}: prevHash does not link`);
+      this.problem(r.seq, `seq ${r.seq}: row cannot be read (scope or meta is not valid JSON)`);
+      this.prev = r.hash;
+      this.expectSeq = r.seq + 1;
+      this.checked++;
+      return;
+    }
     if (e.seq !== this.expectSeq) this.problem(e.seq, `gap: expected seq ${this.expectSeq}, found ${e.seq}`);
     if (e.prevHash !== this.prev) this.problem(e.seq, `seq ${e.seq}: prevHash does not link`);
-    const recomputed = sha256hex(
+    if (recomputed !== e.hash) this.problem(e.seq, `seq ${e.seq}: hash mismatch`);
+    // Queries filter on the indexed copies of the scope, which the hash does not cover: they must agree with it.
+    if (SCOPE_COLUMNS.some(([k, col]) => ((e.scope as Record<string, string | undefined>)[k] ?? null) !== (r[col] ?? null))) {
+      this.problem(e.seq, `seq ${e.seq}: indexed scope columns disagree with the chained scope`);
+    }
+    if (this.want.has(e.seq)) this.hashesAt[e.seq] = recomputed;
+    this.prev = e.hash;
+    this.expectSeq = e.seq + 1;
+    this.checked++;
+  }
+
+  private hashOf(e: StoredEvent): string {
+    return sha256hex(
       canonicalJson({
         v: 1,
         chainId: this.chainId,
@@ -646,15 +687,6 @@ class ChainVerifier {
         prevHash: e.prevHash,
       }),
     );
-    if (recomputed !== e.hash) this.problem(e.seq, `seq ${e.seq}: hash mismatch`);
-    // Queries filter on the indexed copies of the scope, which the hash does not cover: they must agree with it.
-    if (SCOPE_COLUMNS.some(([k, col]) => ((e.scope as Record<string, string | undefined>)[k] ?? null) !== (r[col] ?? null))) {
-      this.problem(e.seq, `seq ${e.seq}: indexed scope columns disagree with the chained scope`);
-    }
-    if (this.want.has(e.seq)) this.hashesAt[e.seq] = recomputed;
-    this.prev = e.hash;
-    this.expectSeq = e.seq + 1;
-    this.checked++;
   }
 
   private problem(seq: number, text: string): void {
