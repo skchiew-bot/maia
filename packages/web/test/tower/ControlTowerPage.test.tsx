@@ -414,7 +414,7 @@ describe('Control Tower page', { timeout: 60_000 }, () => {
           since: new Date(FIXTURE_NOW - 4 * HOUR).toISOString(),
           ageMs: 4 * HOUR,
           costOfDelay: { score: 60, basis: 'Break-glass · 4h · post-incident record due' },
-          action: { kind: 'open', label: 'Open', href: '/changes/bg_77' },
+          action: { kind: 'open', recommendedOptionId: null, label: 'Open', href: '/changes/bg_77' },
           chips: ['break-glass'],
         },
       ],

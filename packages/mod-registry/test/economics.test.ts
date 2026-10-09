@@ -192,7 +192,7 @@ describe('registry economics (Registry hero)', () => {
     };
     const fx: FxService = {
       rateFor: (date) =>
-        rates[date] === undefined ? null : { rate: rates[date]!, status: 'live', sourceDate: date },
+        rates[date] === undefined ? null : { rate: rates[date]!, status: 'live', sourceDate: date, session: null },
     };
     const t = await start({ services: { metering: stubMetering(costs), fx }, now: NOW });
     const at = (iso: string, sessionId: string, processType: string, tokens: number, hours: number) => {
@@ -242,7 +242,7 @@ describe('registry economics (Registry hero)', () => {
 
   it('leaves RM empty when a contributing day has no FX rate', async () => {
     const fx: FxService = {
-      rateFor: (date) => (date === '2026-10-06' ? { rate: 4.5, status: 'live', sourceDate: date } : null),
+      rateFor: (date) => (date === '2026-10-06' ? { rate: 4.5, status: 'live', sourceDate: date, session: null } : null),
     };
     const t = await start({ services: { metering: stubMetering({ b1: 8, b2: 8 }), fx }, now: NOW });
     run(t, '2026-10-05T02:00:00.000Z', 'b1', 'bug-fix');

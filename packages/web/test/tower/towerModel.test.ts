@@ -85,7 +85,7 @@ describe('attention ranking and folding', () => {
     // The backend links decisions as ?id=; the Decisions page reads ?focus=.
     const fromServer: TowerAttentionItem = {
       ...item(`decision:${FIXTURE_IDS.mainMerge}`),
-      action: { kind: 'resolve_decision', label: 'Approve', href: '/decisions?id=dec_x', decisionId: 'dec_x' },
+      action: { kind: 'resolve_decision', recommendedOptionId: null, label: 'Approve', href: '/decisions?id=dec_x', decisionId: 'dec_x' },
     };
     expect(subjectHref(fromServer)).toBe('/decisions?focus=dec_x');
     expect(subjectHref(item('ticket_waiting:tkt_1162'))).toBe('/tickets/tkt_1162');

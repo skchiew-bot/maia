@@ -154,11 +154,12 @@ describe('Metering page', { timeout: 30_000 }, () => {
   it('warns after consecutive carried-forward weekdays and shows both figures of an open discrepancy', async () => {
     const status: FxStatusDTO = {
       ...FX_STATUS,
-      current: { rate: 4.2427, status: 'inherited', sourceDate: '2026-10-02' },
+      current: { rate: 4.2427, status: 'inherited', sourceDate: '2026-10-02', session: null },
       carryForward: { days: 3, since: '2026-10-07', alertAfterDays: 3, alerted: true },
       openDiscrepancy: {
         date: '2026-10-06',
         decisionId: 'dec_fx',
+        bnmSession: '1700',
         scraped: 4.25,
         official: 4.2294,
         scrapedDate: '2026-10-06',
