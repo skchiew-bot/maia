@@ -120,7 +120,7 @@ export interface SeededSession {
 /** A running managed session in the log, as the supervisor would have recorded its launch. */
 export function seedSession(
   p: Pick<Prod, 'store'>,
-  o: { sessionId: string; ownerId: string | null; projectId?: string; threadId?: string; claudeSessionId?: string; processType?: string },
+  o: { sessionId: string; ownerId: string | null; projectId?: string; threadId?: string; claudeSessionId?: string; processType?: string; ticketId?: string; readOnly?: boolean },
 ): SeededSession {
   const projectId = o.projectId ?? 'prj_seed';
   const threadId = o.threadId ?? `thr_${o.sessionId}`;
@@ -138,9 +138,9 @@ export function seedSession(
       threadId,
       processType: o.processType ?? 'discovery',
       model: 'claude-opus-5-5',
-      readOnly: false,
+      readOnly: o.readOnly ?? false,
       credentialProfile: null,
-      ticketId: null,
+      ticketId: o.ticketId ?? null,
       parentSessionId: null,
       phaseId: null,
       ownerId: o.ownerId,
