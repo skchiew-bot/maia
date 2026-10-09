@@ -232,7 +232,7 @@ describe('integrity', () => {
         action: {
           kind: 'open',
           label: 'Open promotion',
-          href: '/changes?promotionId=prm_1',
+          href: '/rollbacks?promotionId=prm_1',
           recommendedOptionId: null,
         },
       }),

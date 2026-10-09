@@ -26,3 +26,10 @@ export { claudeConfigDir, projectSlug, simStatePathFor, transcriptPathFor } from
 export { resolveModel, type Usage } from './usage';
 export { loadState, type SimState } from './state';
 export { mcpToolName } from './mcp';
+export {
+  decidePermission,
+  parseRules,
+  type PermissionMode,
+  type PermissionPolicy,
+  type PermissionVerdict,
+} from './permissions';

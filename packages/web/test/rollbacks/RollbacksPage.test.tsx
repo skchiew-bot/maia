@@ -132,6 +132,12 @@ describe('Rollbacks', { timeout: 30_000 }, () => {
     expect(within(promotions).getByText('every commit traced through an approved gate')).toBeInTheDocument();
   });
 
+  it('opens the promotion a Control Tower link names, once the list has loaded', async () => {
+    installApi(routes({ 'GET /api/provenance': { ok: true, commits: [], orphanShas: [], reasons: [], baseRef: 'main' } }));
+    renderPage(<RollbacksPage />, { path: '/rollbacks?promotionId=prm_completed', route: '/rollbacks' });
+    expect(await screen.findByRole('dialog', { name: 'Promotion prm_…pleted' })).toBeInTheDocument();
+  });
+
   it('requests a rollback to a pinned state that still resolves, never to one that does not', async () => {
     const calls = installApi(
       routes({

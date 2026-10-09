@@ -8,7 +8,28 @@
       "class": "discovery",
       "model": "opus",
       "credentialProfile": "git-feature",
-      "permissionMode": "acceptEdits"
+      "permissionMode": "acceptEdits",
+      "tools": {
+        "allow": [
+          "Bash(git status:*)",
+          "Bash(git diff:*)",
+          "Bash(git log:*)",
+          "Bash(git show:*)",
+          "Bash(git rev-parse:*)",
+          "Bash(git add:*)",
+          "Bash(git commit:*)",
+          "Bash(git checkout -b:*)",
+          "Bash(git switch -c:*)",
+          "Bash(git switch uat/*)",
+          "Bash(git switch -)",
+          "Bash(git push aoc:*)"
+        ],
+        "deny": [
+          "Bash(git merge:*)",
+          "Bash(git rebase:*)",
+          "Bash(git reset:*)"
+        ]
+      }
     },
     {
       "id": "feature-build",
@@ -18,7 +39,28 @@
       "model": "opus",
       "executionModel": "sonnet",
       "credentialProfile": "git-feature",
-      "permissionMode": "acceptEdits"
+      "permissionMode": "acceptEdits",
+      "tools": {
+        "allow": [
+          "Bash(git status:*)",
+          "Bash(git diff:*)",
+          "Bash(git log:*)",
+          "Bash(git show:*)",
+          "Bash(git rev-parse:*)",
+          "Bash(git add:*)",
+          "Bash(git commit:*)",
+          "Bash(git checkout -b:*)",
+          "Bash(git switch -c:*)",
+          "Bash(git switch uat/*)",
+          "Bash(git switch -)",
+          "Bash(git push aoc:*)"
+        ],
+        "deny": [
+          "Bash(git merge:*)",
+          "Bash(git rebase:*)",
+          "Bash(git reset:*)"
+        ]
+      }
     },
     {
       "id": "bug-triage",
@@ -59,7 +101,28 @@
       "model": "opus",
       "executionModel": "sonnet",
       "credentialProfile": "uat-deploy",
-      "permissionMode": "acceptEdits"
+      "permissionMode": "acceptEdits",
+      "tools": {
+        "allow": [
+          "Bash(git status:*)",
+          "Bash(git diff:*)",
+          "Bash(git log:*)",
+          "Bash(git show:*)",
+          "Bash(git rev-parse:*)",
+          "Bash(git add:*)",
+          "Bash(git commit:*)",
+          "Bash(git checkout -b:*)",
+          "Bash(git switch -c:*)",
+          "Bash(git switch uat/*)",
+          "Bash(git switch -)",
+          "Bash(git push aoc:*)"
+        ],
+        "deny": [
+          "Bash(git merge:*)",
+          "Bash(git rebase:*)",
+          "Bash(git reset:*)"
+        ]
+      }
     },
     {
       "id": "migration",
@@ -70,7 +133,28 @@
       "credentialProfile": "git-feature",
       "permissionMode": "acceptEdits",
       "risky": true,
-      "rolloverContextPct": 85
+      "rolloverContextPct": 85,
+      "tools": {
+        "allow": [
+          "Bash(git status:*)",
+          "Bash(git diff:*)",
+          "Bash(git log:*)",
+          "Bash(git show:*)",
+          "Bash(git rev-parse:*)",
+          "Bash(git add:*)",
+          "Bash(git commit:*)",
+          "Bash(git checkout -b:*)",
+          "Bash(git switch -c:*)",
+          "Bash(git switch uat/*)",
+          "Bash(git switch -)",
+          "Bash(git push aoc:*)"
+        ],
+        "deny": [
+          "Bash(git merge:*)",
+          "Bash(git rebase:*)",
+          "Bash(git reset:*)"
+        ]
+      }
     },
     {
       "id": "test-repair",
@@ -80,7 +164,28 @@
       "model": "sonnet",
       "executionModel": "haiku",
       "credentialProfile": "git-feature",
-      "permissionMode": "acceptEdits"
+      "permissionMode": "acceptEdits",
+      "tools": {
+        "allow": [
+          "Bash(git status:*)",
+          "Bash(git diff:*)",
+          "Bash(git log:*)",
+          "Bash(git show:*)",
+          "Bash(git rev-parse:*)",
+          "Bash(git add:*)",
+          "Bash(git commit:*)",
+          "Bash(git checkout -b:*)",
+          "Bash(git switch -c:*)",
+          "Bash(git switch uat/*)",
+          "Bash(git switch -)",
+          "Bash(git push aoc:*)"
+        ],
+        "deny": [
+          "Bash(git merge:*)",
+          "Bash(git rebase:*)",
+          "Bash(git reset:*)"
+        ]
+      }
     },
     {
       "id": "docs",
@@ -90,7 +195,28 @@
       "model": "sonnet",
       "executionModel": "haiku",
       "credentialProfile": "git-feature",
-      "permissionMode": "acceptEdits"
+      "permissionMode": "acceptEdits",
+      "tools": {
+        "allow": [
+          "Bash(git status:*)",
+          "Bash(git diff:*)",
+          "Bash(git log:*)",
+          "Bash(git show:*)",
+          "Bash(git rev-parse:*)",
+          "Bash(git add:*)",
+          "Bash(git commit:*)",
+          "Bash(git checkout -b:*)",
+          "Bash(git switch -c:*)",
+          "Bash(git switch uat/*)",
+          "Bash(git switch -)",
+          "Bash(git push aoc:*)"
+        ],
+        "deny": [
+          "Bash(git merge:*)",
+          "Bash(git rebase:*)",
+          "Bash(git reset:*)"
+        ]
+      }
     },
     {
       "id": "rollback-verify",

@@ -5,14 +5,13 @@ export const SECRET_ENV: ReadonlySet<string> = new Set(['ANTHROPIC_API_KEY', 'AN
 
 /**
  * claude-sim settings every managed session of a demo needs (the demo config allowlists them): transcripts stay in
- * the demo, prompts without a scenario marker run the demo's default scenario, and the git steps of intake builds
- * really run (allowed only for git checkout/add/commit/rev-parse by the sim's user settings).
+ * the demo, prompts without a scenario marker run the demo's default scenario, and the git steps of builds really run
+ * (a session may run only what its process type grants: config/process-types.json, `tools`).
  */
 export function simEnv(layout: DemoLayout): Record<string, string> {
   return {
     CLAUDE_CONFIG_DIR: layout.claudeConfig,
     CLAUDE_SIM_SCENARIO: layout.simDefaultScenario,
-    CLAUDE_SIM_USER_SETTINGS: layout.simSettings,
     CLAUDE_SIM_EXEC: '1',
   };
 }

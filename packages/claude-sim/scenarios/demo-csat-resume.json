@@ -1,6 +1,6 @@
 {
   "name": "demo-csat-resume",
-  "description": "Continuation of the seeded \"real-time CSAT sentiment overlay\" feature build (plan t1 done; t2-t6 open) once its plan limit resets: reads its status and closes the remaining five tasks with diff and test evidence.",
+  "description": "Continuation of the seeded \"real-time CSAT sentiment overlay\" feature build (plan csat-1 done; csat-2 to csat-6 open) once its plan limit resets: reads its status and closes the remaining five tasks with diff and test evidence.",
   "steps": [
     {"kind":"think","ms":4000,"outputTokens":667},
     {"kind":"text","text":"The plan limit has reset; picking the CSAT overlay back up."},
@@ -8,20 +8,20 @@
     {"kind":"tool","name":"Read","input":{"file_path":"src/csat/contract.ts"}},
     {"kind":"tool","name":"Write","input":{"file_path":"src/csat/contract.ts","content":"// CSAT overlay API contract\n// build {{sim.sessionId}}\nexport interface SentimentSample {\n  callId: string;\n  score: number;\n  at: string;\n}\n"}},
     {"kind":"tool","name":"Write","input":{"file_path":"test/csat/overlay.test.ts","content":"// CSAT overlay acceptance tests\n// build {{sim.sessionId}}\nimport { expect, it } from 'vitest';\nimport { overlayColour } from '../../src/csat/overlay';\n\nit('marks negative sentiment', () => {\n  expect(overlayColour(-0.6)).toBe('negative');\n});\n"}},
-    {"kind":"mcp","server":"aoc","tool":"task_done","args":{"task_id":"t2","evidence":{"kind":"test","ref":"test/csat/overlay.test.ts > marks negative sentiment"}}},
+    {"kind":"mcp","server":"aoc","tool":"task_done","args":{"task_id":"csat-2","evidence":{"kind":"test","ref":"test/csat/overlay.test.ts > marks negative sentiment"}}},
     {"kind":"think","ms":8000,"outputTokens":1333},
     {"kind":"tool","name":"Read","input":{"file_path":"src/csat/sentiment.ts"}},
     {"kind":"tool","name":"Write","input":{"file_path":"src/csat/sentiment.ts","content":"// Rolling sentiment score\n// build {{sim.sessionId}}\nexport function rolling(scores: number[], window = 5): number {\n  const tail = scores.slice(-window);\n  return tail.length ? tail.reduce((a, b) => a + b, 0) / tail.length : 0;\n}\n"}},
-    {"kind":"mcp","server":"aoc","tool":"task_done","args":{"task_id":"t3","evidence":{"kind":"diff","ref":"src/csat/sentiment.ts"}}},
+    {"kind":"mcp","server":"aoc","tool":"task_done","args":{"task_id":"csat-3","evidence":{"kind":"diff","ref":"src/csat/sentiment.ts"}}},
     {"kind":"think","ms":7000,"outputTokens":1167},
     {"kind":"tool","name":"Read","input":{"file_path":"src/csat/overlay.ts"}},
     {"kind":"tool","name":"Write","input":{"file_path":"src/csat/overlay.ts","content":"// CSAT overlay\n// build {{sim.sessionId}}\nexport function overlayColour(score: number): 'negative' | 'neutral' | 'positive' {\n  return score < -0.3 ? 'negative' : score > 0.3 ? 'positive' : 'neutral';\n}\n"}},
-    {"kind":"mcp","server":"aoc","tool":"task_done","args":{"task_id":"t4","evidence":{"kind":"diff","ref":"src/csat/overlay.ts"}}},
+    {"kind":"mcp","server":"aoc","tool":"task_done","args":{"task_id":"csat-4","evidence":{"kind":"diff","ref":"src/csat/overlay.ts"}}},
     {"kind":"tool","name":"Edit","input":{"file_path":"src/csat/overlay.ts","old_string":"export function overlayColour(score: number)","new_string":"/** NaN (no samples yet) renders neutral. */\nexport function overlayColour(score: number)"}},
-    {"kind":"mcp","server":"aoc","tool":"task_done","args":{"task_id":"t5","evidence":{"kind":"diff","ref":"src/csat/overlay.ts","detail":"No-sample state renders neutral"}}},
+    {"kind":"mcp","server":"aoc","tool":"task_done","args":{"task_id":"csat-5","evidence":{"kind":"diff","ref":"src/csat/overlay.ts","detail":"No-sample state renders neutral"}}},
     {"kind":"think","ms":6000,"outputTokens":1000},
     {"kind":"tool","name":"Read","input":{"file_path":"test/csat/overlay.test.ts"}},
-    {"kind":"mcp","server":"aoc","tool":"task_done","args":{"task_id":"t6","evidence":{"kind":"test","ref":"test/csat/overlay.test.ts > marks negative sentiment","detail":"Suite reviewed after the overlay change"}}},
+    {"kind":"mcp","server":"aoc","tool":"task_done","args":{"task_id":"csat-6","evidence":{"kind":"test","ref":"test/csat/overlay.test.ts > marks negative sentiment","detail":"Suite reviewed after the overlay change"}}},
     {"kind":"text","text":"The CSAT overlay is finished."},
     {"kind":"endTurn","final":true}
   ]
