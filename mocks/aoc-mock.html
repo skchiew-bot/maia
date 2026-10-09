@@ -1,0 +1,1979 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Agent Ops Console Mock</title>
+<meta name="description" content="Static design mock of the AOC operator console (Console, Session and Registry views) for CEO approval under AOC-SPEC-003 §12. Sample data only.">
+<style>
+/* ===== AOC design tokens — verbatim copy of packages/web/src/design/tokens.css ===== */
+/*
+ * AOC design tokens — one token set, light + dark, following the OS setting (no manual toggle in v1, §12).
+ * Brand: Daythree purple is the interactive accent. Brand red is reserved for the wordmark only — red in an
+ * ops console means "Dead / error", so it is never used as a brand fill on operational surfaces.
+ * Liveness colours are semantic and always paired with an icon and a word (never colour alone).
+ */
+:root {
+  color-scheme: light dark;
+
+  /* surfaces */
+  --bg: #f5f6f8;
+  --surface: #ffffff;
+  --surface-2: #f0f2f5;
+  --surface-3: #e6e9ee;
+  --border: #dde1e7;
+  --border-strong: #c3c9d2;
+
+  /* text (AA on --surface) */
+  --text: #1b1f24;
+  --text-2: #48515e;
+  --text-3: #66707d;
+  --text-inverse: #ffffff;
+
+  /* brand */
+  --accent: #5d3fd3;
+  --accent-hover: #4c31b8;
+  --accent-contrast: #ffffff;
+  --accent-soft: #ece8fb;
+  --brand-red: #c8102e;
+  --brand-grey: #58595b;
+
+  /* liveness (precedence: waiting > throttled > dead > stalled > thinking > working) */
+  --live-working: #17804a;
+  --live-working-soft: #e3f4ea;
+  --live-thinking: #5b6675;
+  --live-thinking-soft: #eceff3;
+  --live-stalled: #9a5800;
+  --live-stalled-soft: #fdf0dc;
+  --live-dead: #b42318;
+  --live-dead-soft: #fde7e5;
+  --live-throttled: #1f5fbf;
+  --live-throttled-soft: #e3edfb;
+  --live-waiting: #5d3fd3;
+  --live-waiting-soft: #ece8fb;
+
+  /* marks */
+  --mark-drift: #d97706;
+  --mark-decision: #5d3fd3;
+  --mark-tool: #8a94a3;
+  --mark-rollback: #b42318;
+  --mark-enhancement: #0e7c86;
+
+  /* status */
+  --ok: #17804a;
+  --warn: #9a5800;
+  --danger: #b42318;
+  --info: #1f5fbf;
+
+  /* categorical series (paired: discovery = series-1, execution = series-2) */
+  --series-1: #5d3fd3;
+  --series-2: #0e7c86;
+  --series-3: #c2410c;
+  --series-4: #2563eb;
+  --series-5: #a21caf;
+  --series-6: #4d7c0f;
+  --grid: #e3e6eb;
+
+  /* type */
+  --font-sans: 'Source Sans 3', 'Source Sans Pro', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+  --fs-xs: 12px;
+  --fs-sm: 13px;
+  --fs-md: 14px;
+  --fs-lg: 16px;
+  --fs-xl: 20px;
+  --fs-2xl: 24px;
+  --fs-3xl: 32px;
+  --lh-tight: 1.2;
+  --lh: 1.45;
+
+  /* space / shape */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+  --radius-sm: 4px;
+  --radius: 8px;
+  --radius-lg: 12px;
+  --row-h: 32px;
+  --shadow: 0 1px 2px rgb(16 24 40 / 6%), 0 1px 3px rgb(16 24 40 / 8%);
+  --focus: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent);
+
+  /* motion (collapsed to 0 under reduced motion) */
+  --dur-fast: 120ms;
+  --dur: 200ms;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0e1014;
+    --surface: #161920;
+    --surface-2: #1d2129;
+    --surface-3: #262b35;
+    --border: #2b313c;
+    --border-strong: #3b4350;
+
+    --text: #e8ebef;
+    --text-2: #b5bdc9;
+    --text-3: #8d97a5;
+    --text-inverse: #0e1014;
+
+    --accent: #a593f2;
+    --accent-hover: #b8a9f6;
+    --accent-contrast: #0e1014;
+    --accent-soft: #2a2350;
+    --brand-grey: #a7a9ac;
+
+    --live-working: #3fcf8a;
+    --live-working-soft: #12301f;
+    --live-thinking: #a3adbb;
+    --live-thinking-soft: #232833;
+    --live-stalled: #f5b443;
+    --live-stalled-soft: #3a2a0c;
+    --live-dead: #ff7a6e;
+    --live-dead-soft: #3d1714;
+    --live-throttled: #72aaff;
+    --live-throttled-soft: #142a4a;
+    --live-waiting: #b7a8ff;
+    --live-waiting-soft: #2a2350;
+
+    --mark-drift: #f59e0b;
+    --mark-decision: #b7a8ff;
+    --mark-tool: #6f7988;
+    --mark-rollback: #ff7a6e;
+    --mark-enhancement: #2bb3bf;
+
+    --ok: #3fcf8a;
+    --warn: #f5b443;
+    --danger: #ff7a6e;
+    --info: #72aaff;
+
+    --series-1: #a593f2;
+    --series-2: #2bb3bf;
+    --series-3: #f08a4b;
+    --series-4: #72aaff;
+    --series-5: #e07ae6;
+    --series-6: #9bc53d;
+    --grid: #262b35;
+
+    --shadow: 0 1px 2px rgb(0 0 0 / 40%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-fast: 0ms;
+    --dur: 0ms;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0ms !important;
+  }
+}
+/* ===== end of tokens ===== */
+
+/* Layout: a sticky app bar over three views. Each view opens with its hero chart; every mark prints
+   its number beside it. Colour carries meaning only: liveness, decisions, marks, the paired series. */
+
+[hidden] { display: none !important; }
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: var(--fs-sm);
+  line-height: var(--lh);
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+}
+h1, h2, h3, p, ol, ul, dl, dd, figure { margin: 0; }
+ol, ul { padding: 0; list-style: none; }
+h1, h2, h3 { line-height: var(--lh-tight); text-wrap: balance; }
+h1 { font-size: var(--fs-xl); font-weight: 600; letter-spacing: -0.01em; }
+h2, h3 { font-size: var(--fs-md); font-weight: 600; }
+code { font-family: var(--font-mono); font-size: var(--fs-xs); }
+b, strong { font-weight: 600; }
+a { color: inherit; }
+button { font: inherit; }
+:focus-visible { outline: 2px solid transparent; outline-offset: 2px; box-shadow: var(--focus); border-radius: var(--radius-sm); }
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+.i { display: inline-block; flex: none; width: 14px; height: 14px; fill: currentColor; vertical-align: -2px; }
+.i--warn { color: var(--warn); }
+.i--thr { color: var(--live-throttled); }
+.muted { color: var(--text-3); }
+.sm-only { display: none; }
+.mockfoot { margin-top: var(--sp-6); font-size: var(--fs-xs); color: var(--text-3); }
+.minihead { font-size: var(--fs-xs); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-2); }
+.eyebrow { font-size: var(--fs-xs); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-2); }
+.cell-sub { display: block; font-size: var(--fs-xs); font-weight: 400; color: var(--text-2); }
+
+/* ---- skip link + app bar ---- */
+.skip {
+  position: absolute; left: var(--sp-4); top: -100px; z-index: 30;
+  padding: var(--sp-2) var(--sp-3); border-radius: var(--radius-sm);
+  background: var(--surface); color: var(--text); font-weight: 600; text-decoration: none; box-shadow: var(--focus);
+}
+.skip:focus { top: var(--sp-2); }
+.appbar { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20; background: var(--surface); border-bottom: 1px solid var(--border); }
+.appbar__in {
+  max-width: 1600px; margin-inline: auto; padding-inline: var(--sp-6);
+  min-height: 52px; display: flex; align-items: stretch; gap: var(--sp-8);
+}
+.brand { display: flex; align-items: center; gap: var(--sp-4); flex: none; }
+.brand__logo { display: block; height: 24px; width: auto; }
+.brand__logo--dark { display: none; }
+@media (prefers-color-scheme: dark) {
+  .brand__logo--light { display: none; }
+  .brand__logo--dark { display: block; }
+}
+.brand__rule { width: 1px; height: 22px; background: var(--border-strong); }
+.brand__name { font-size: var(--fs-md); font-weight: 600; white-space: nowrap; }
+.tabs { display: flex; align-items: stretch; gap: var(--sp-2); }
+.tab {
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--sp-2);
+  padding-inline: var(--sp-2); margin-bottom: -1px; border-bottom: 2px solid transparent;
+  color: var(--text-2); font-size: var(--fs-md); font-weight: 600; text-decoration: none; white-space: nowrap;
+}
+.tab:hover { color: var(--text); }
+.tab[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
+.tab:focus-visible { border-radius: var(--radius-sm); box-shadow: inset 0 0 0 2px var(--accent); }
+.tab__count {
+  display: inline-grid; place-items: center; min-width: 20px; height: 18px; padding-inline: 5px; border-radius: 9px;
+  background: var(--live-waiting); color: var(--text-inverse); font-size: var(--fs-xs); font-weight: 700; line-height: 1;
+}
+.appbar__meta { margin-left: auto; display: flex; align-items: center; gap: var(--sp-4); font-size: var(--fs-xs); color: var(--text-2); white-space: nowrap; }
+.appbar__meta > span { display: inline-flex; align-items: center; gap: 6px; }
+.appbar__meta .i--ok { color: var(--ok); }
+.mockflag { padding: 2px 8px; border: 1px dashed var(--border-strong); border-radius: var(--radius-sm); color: var(--text-2); }
+.avatar {
+  display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 50%;
+  background: var(--accent-soft); color: var(--text); font-size: var(--fs-xs); font-weight: 700;
+}
+
+/* ---- page frame ---- */
+.page { max-width: 1600px; margin-inline: auto; padding-inline: var(--sp-6); padding-block: var(--sp-5) var(--sp-8); }
+.page:focus { outline: none; }
+.view { display: grid; gap: var(--sp-4); }
+.pagehead { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--sp-1) var(--sp-4); }
+.pagehead__sub { color: var(--text-2); }
+.panel { min-width: 0; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+.panel__head {
+  display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--sp-1) var(--sp-3);
+  padding: var(--sp-3) var(--sp-4); border-bottom: 1px solid var(--border);
+}
+.panel__head h2 { display: flex; align-items: center; gap: var(--sp-2); }
+.panel__meta { font-size: var(--fs-xs); color: var(--text-3); }
+.panel__body { padding: var(--sp-3) var(--sp-4) var(--sp-4); }
+
+/* ---- liveness badge: colour + icon + word. Healthy states are soft; states that need a look are solid. ---- */
+.badge {
+  display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px 0 6px; border-radius: 11px;
+  font-size: var(--fs-xs); font-weight: 600; line-height: 1; white-space: nowrap;
+}
+.badge .i { width: 12px; height: 12px; }
+.badge--working { background: var(--live-working-soft); color: var(--text); }
+.badge--working .i { color: var(--live-working); }
+.badge--thinking { background: var(--live-thinking-soft); color: var(--text); }
+.badge--thinking .i { color: var(--live-thinking); }
+.badge--stalled { background: var(--live-stalled); color: var(--text-inverse); }
+.badge--dead { background: var(--live-dead); color: var(--text-inverse); }
+.badge--throttled { background: var(--live-throttled); color: var(--text-inverse); }
+.badge--waiting { background: var(--live-waiting); color: var(--text-inverse); }
+
+/* ---- chips, buttons, meters ---- */
+.chip {
+  display: inline-flex; align-items: center; gap: 4px; height: 20px; padding-inline: 6px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border); background: var(--surface-2); color: var(--text-2);
+  font-size: var(--fs-xs); font-weight: 600; line-height: 1; white-space: nowrap;
+}
+.chip .i { width: 12px; height: 12px; }
+.chip--model { background: var(--surface); color: var(--text); border-color: var(--border-strong); }
+.chip--test { background: var(--surface); color: var(--text); border-color: var(--border-strong); }
+.chip__k { font-weight: 400; color: var(--text-2); }
+.chip--policy { background: var(--surface); color: var(--text); border: 1px dashed var(--border-strong); }
+.nowrap { white-space: nowrap; }
+.chip--amend { background: var(--surface); border-color: var(--mark-enhancement); color: var(--text); margin-left: 4px; }
+.btn {
+  display: inline-flex; align-items: center; gap: 6px; height: 30px; padding-inline: 12px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong); background: var(--surface); color: var(--text);
+  font-size: var(--fs-sm); font-weight: 600; white-space: nowrap; cursor: pointer;
+  transition: background-color var(--dur-fast), border-color var(--dur-fast);
+}
+.btn:hover { background: var(--surface-2); }
+.btn--primary { background: var(--accent); border-color: var(--accent); color: var(--accent-contrast); }
+.btn--primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.btn[aria-disabled="true"] { cursor: not-allowed; background: var(--surface-2); border-color: var(--border); color: var(--text-3); }
+.meter { position: relative; display: block; height: 4px; margin-block: 5px 3px; border-radius: 2px; background: var(--surface-3); }
+.meter__fill { position: absolute; inset: 0 auto 0 0; border-radius: 2px; background: var(--text-2); }
+.meter__mark { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; border-radius: 1px; background: var(--text-3); }
+.meter--warn .meter__fill { background: var(--warn); }
+
+/* ---- view 1: KPI strip ---- */
+.kpis {
+  display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 1px; overflow: hidden;
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--border);
+}
+.kpi { display: grid; align-content: start; gap: 2px; min-width: 0; padding: var(--sp-3) var(--sp-4); background: var(--surface); }
+.kpi__label { display: flex; align-items: center; gap: 6px; font-size: var(--fs-xs); font-weight: 600; color: var(--text-2); }
+.kpi__ic { display: inline-grid; }
+.kpi__ic--waiting { color: var(--live-waiting); }
+.kpi__ic--throttled { color: var(--live-throttled); }
+.kpi__value { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px var(--sp-2); font-size: var(--fs-2xl); font-weight: 600; line-height: 1.2; }
+.kpi__unit { font-size: var(--fs-sm); font-weight: 600; color: var(--text-2); }
+.kpi__meta { font-size: var(--fs-xs); color: var(--text-2); }
+.kpi__meta b { color: var(--text); }
+.kpi__meta--meter .meter { margin-block: 4px 3px; }
+
+/* ---- view 1: small multiples + decisions rail ---- */
+.console {
+  display: grid; grid-template-columns: minmax(0, 1fr) 392px; grid-template-rows: auto 1fr;
+  grid-template-areas: "mult rail" "ended rail"; gap: var(--sp-5); align-items: start;
+}
+.multiples { grid-area: mult; min-width: 0; }
+.rail { grid-area: rail; }
+.ended { grid-area: ended; }
+.sectionhead { display: grid; gap: var(--sp-2); margin-bottom: var(--sp-3); }
+.sectionhead__top { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-1) var(--sp-4); }
+.sectionhead__note { font-size: var(--fs-xs); color: var(--text-2); }
+.prec { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); font-size: var(--fs-xs); }
+.prec li { display: inline-flex; align-items: center; gap: 6px; }
+.prec__n { font-weight: 700; }
+.prec__sep { margin-left: 2px; color: var(--text-3); }
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(284px, 1fr)); gap: var(--sp-3); }
+.tile {
+  display: grid; align-content: start; gap: var(--sp-2); min-width: 0;
+  padding: var(--sp-3) var(--sp-4); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+}
+.tile__top { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--sp-2); }
+.tile__name { min-width: 0; font-size: var(--fs-md); overflow-wrap: anywhere; }
+.tile__name a { text-decoration-color: var(--border-strong); text-underline-offset: 3px; }
+.tile__name a:hover { text-decoration-color: currentColor; }
+.tile__sess { font-weight: 500; color: var(--text-3); }
+.tile__chips { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; flex: none; }
+.tile__ctx { margin-top: -6px; font-size: var(--fs-xs); color: var(--text-2); }
+.tile__state { display: flex; flex-wrap: wrap; align-items: center; gap: 4px var(--sp-2); }
+.tile__statemeta { font-size: var(--fs-xs); font-weight: 600; color: var(--text); }
+.tile__dev { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; font-size: var(--fs-xs); color: var(--text-2); }
+.tile__act { display: grid; grid-template-columns: minmax(0, 1fr) 56px; align-items: end; gap: var(--sp-3); padding-top: 2px; }
+.spark { display: block; width: 100%; height: auto; overflow: visible; }
+.spark__base { stroke: var(--border-strong); stroke-width: 1; }
+.spark__area { fill: var(--text-2); fill-opacity: 0.1; }
+.spark__line { fill: none; stroke: var(--text-2); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.spark__dot { fill: var(--text); stroke: var(--surface); stroke-width: 2; }
+.spark__x { fill: none; stroke: var(--live-dead); stroke-width: 2; stroke-linecap: round; }
+.apm { text-align: right; line-height: 1.1; }
+.apm__v { display: block; font-size: var(--fs-xl); font-weight: 600; }
+.apm__u { font-size: var(--fs-xs); color: var(--text-3); white-space: nowrap; }
+.tile__stats { display: grid; grid-template-columns: 1.2fr 1.1fr 0.9fr; gap: var(--sp-3); padding-top: var(--sp-2); border-top: 1px solid var(--border); }
+.tstat { min-width: 0; }
+.tstat dt { font-size: var(--fs-xs); color: var(--text-3); }
+.tstat dd { display: flex; justify-content: space-between; gap: 4px; font-weight: 600; }
+.tstat__pct { font-weight: 400; color: var(--text-2); }
+.tstat dd.tstat__bar { display: block; }
+.tstat dd.sub { display: flex; align-items: center; gap: 4px; justify-content: flex-start; font-size: var(--fs-xs); font-weight: 400; color: var(--text-2); }
+.count {
+  display: inline-grid; place-items: center; min-width: 22px; height: 20px; padding-inline: 6px; border-radius: 10px;
+  background: var(--live-waiting); color: var(--text-inverse); font-size: var(--fs-xs); font-weight: 700; line-height: 1;
+}
+.dlist > li + li { border-top: 1px solid var(--border); }
+.dcard { display: grid; gap: 6px; padding: var(--sp-3) var(--sp-4); }
+.dcard__top { display: flex; flex-wrap: wrap; align-items: center; gap: 6px var(--sp-2); font-size: var(--fs-xs); color: var(--text-2); }
+.dcard__age { display: inline-flex; align-items: center; gap: 4px; font-weight: 700; color: var(--text); }
+.dcard__kind { font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; }
+.dcard__pk { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; font-weight: 600; color: var(--text); }
+.dcard__q { font-size: var(--fs-sm); line-height: 1.35; }
+.dcard__src { margin-top: -3px; font-size: var(--fs-xs); color: var(--text-3); }
+.rec { display: grid; gap: 1px; padding: 6px var(--sp-3); border-radius: var(--radius-sm); background: var(--accent-soft); line-height: 1.4; }
+.rec__by { display: flex; align-items: center; gap: 4px; font-size: var(--fs-xs); font-weight: 600; color: var(--text-2); }
+.rec__by .i { width: 12px; height: 12px; color: var(--accent); }
+.rec__what { font-weight: 600; }
+.rec__why { font-size: var(--fs-xs); color: var(--text-2); }
+.dcard__actions { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin-top: 2px; }
+.dcard__actions .btn { height: 28px; }
+
+/* ---- view 2: header + operator actions ---- */
+.shead { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: var(--sp-4) var(--sp-6); align-items: start; }
+.crumbs ol { display: flex; flex-wrap: wrap; gap: 4px; font-size: var(--fs-xs); color: var(--text-2); }
+.crumbs li + li::before { content: "/"; margin-right: 4px; color: var(--text-3); }
+.crumbs a { color: var(--accent); text-decoration: none; }
+.crumbs a:hover { text-decoration: underline; }
+.shead__title { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) var(--sp-3); margin-top: var(--sp-2); }
+.shead__title h1 span { font-weight: 500; color: var(--text-3); }
+.alive { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-xs); color: var(--text-2); }
+.alive__dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); }
+/* The app adds .is-event for exactly one activity event; nothing in this mock pulses on its own. */
+@keyframes alive-event { from { box-shadow: 0 0 0 0 var(--ok); } to { box-shadow: 0 0 0 6px transparent; } }
+.alive__dot.is-event { animation: alive-event 600ms ease-out 1; }
+.shead__facts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px var(--sp-3); margin-top: var(--sp-3); font-size: var(--fs-xs); color: var(--text-2); }
+.shead__facts > span:not(.chip) { display: inline-flex; align-items: center; gap: 4px; }
+.shead__facts .chip + span:not(.chip) { margin-left: var(--sp-1); }
+.chip--managed .i { color: var(--ok); }
+.ops { display: grid; gap: var(--sp-2); padding: var(--sp-3) var(--sp-4); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+.ops__btns { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.ops__help { display: grid; gap: 2px; font-size: var(--fs-xs); color: var(--text-2); }
+.ops__help b { color: var(--text); }
+.ops__blocked { display: flex; gap: 6px; align-items: flex-start; margin-top: 2px; }
+.ops__blocked .i { margin-top: 1px; color: var(--text-2); }
+
+/* ---- view 2: timeline hero ---- */
+.hero-tl .panel__body { display: grid; gap: var(--sp-4); }
+.tlstats { display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-6); }
+.tlstats dt { font-size: var(--fs-xs); color: var(--text-3); }
+.tlstats dd { font-size: var(--fs-lg); font-weight: 600; }
+.tlstats dd span { font-size: var(--fs-xs); font-weight: 400; color: var(--text-2); }
+.tl { position: relative; margin-top: var(--sp-2); }
+.tl__marks { position: relative; height: 28px; }
+.mk {
+  position: absolute; top: 3px; left: var(--x); z-index: 2; transform: translateX(-50%);
+  display: grid; place-items: center; width: 22px; height: 22px; padding: 0;
+  border: 0; border-radius: var(--radius-sm); background: transparent; cursor: help; color: var(--text-2);
+}
+.mk .i { width: 14px; height: 14px; }
+.mk:hover { background: var(--surface-2); }
+.mk--decision { color: var(--mark-decision); }
+.mk--drift { color: var(--mark-drift); }
+.mk--rollback { color: var(--mark-rollback); }
+.mk--enh { color: var(--mark-enhancement); }
+.tl__wait { position: absolute; top: 13px; left: var(--x); width: var(--w); height: 2px; background: var(--mark-decision); }
+.tl__wait::after { content: ""; position: absolute; right: 0; top: -4px; width: 2px; height: 10px; background: var(--mark-decision); }
+.tip {
+  display: none; position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%); z-index: 5;
+  width: max-content; max-width: 264px; padding: var(--sp-2) var(--sp-3); border-radius: var(--radius-sm);
+  background: var(--text); color: var(--surface); box-shadow: var(--shadow);
+  font-size: var(--fs-xs); font-weight: 400; line-height: 1.4; text-align: left; white-space: normal;
+}
+.tip b { display: block; font-weight: 700; }
+.tip--start { left: 0; transform: none; }
+.tip--end { left: auto; right: 0; transform: none; }
+.mk:hover .tip, .mk:focus-visible .tip { display: block; }
+.tl__bands { position: relative; height: 36px; }
+.band {
+  position: absolute; top: 0; bottom: 0; left: calc(var(--x) + 1px); width: calc(var(--w) - 2px);
+  display: flex; align-items: center; gap: 6px; padding-inline: var(--sp-2); overflow: hidden; white-space: nowrap;
+  background: var(--surface-3); color: var(--text-2); font-size: var(--fs-xs);
+}
+.band:first-child { left: var(--x); width: calc(var(--w) - 1px); border-radius: 4px 0 0 4px; }
+.band:last-child { width: calc(var(--w) - 1px); border-radius: 0 4px 4px 0; }
+.band b { color: var(--text); }
+.band__name { font-weight: 600; color: var(--text); }
+.band--current { background: var(--border-strong); color: var(--text); }
+.band__now { margin-left: auto; }
+.tl__ticklane { position: relative; }
+.tl__ticks { display: block; width: 100%; height: 36px; margin-top: 4px; }
+.tl__ticks path { fill: var(--mark-tool); }
+.tl__thr { fill: var(--live-throttled); }
+.tl__thrlabel {
+  position: absolute; left: var(--x); width: var(--w); bottom: 6px;
+  font-size: var(--fs-xs); font-weight: 600; color: var(--text-2); text-align: center; white-space: nowrap;
+}
+.tl__axis { position: relative; height: 22px; border-top: 1px solid var(--border-strong); }
+.tl__hr { position: absolute; top: 4px; left: var(--x); transform: translateX(-50%); font-size: var(--fs-xs); color: var(--text-3); white-space: nowrap; }
+.tl__hr::before { content: ""; position: absolute; top: -5px; left: 50%; width: 1px; height: 4px; background: var(--border-strong); }
+.tl__hr--start { transform: none; }
+.tl__hr--start::before { left: 0; }
+.tl__hr--end { transform: translateX(-100%); font-weight: 600; color: var(--text); }
+.tl__hr--end::before { left: auto; right: 0; }
+.tl__now { position: absolute; top: 0; bottom: 22px; right: 0; width: 2px; background: var(--text); pointer-events: none; }
+.legend { display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-4); font-size: var(--fs-xs); color: var(--text-2); }
+.legend li { display: inline-flex; align-items: center; gap: 6px; }
+.lg { display: inline-block; flex: none; }
+.lg--band { width: 18px; height: 10px; border-radius: 2px; background: var(--surface-3); }
+.lg--current { background: var(--border-strong); }
+.lg--ticks { display: inline-flex; align-items: flex-end; gap: 2px; height: 12px; }
+.lg--ticks i { display: block; width: 2px; background: var(--mark-tool); }
+.lg--ticks i:nth-child(1) { height: 6px; } .lg--ticks i:nth-child(2) { height: 12px; } .lg--ticks i:nth-child(3) { height: 8px; }
+.lg--thr { width: 18px; height: 3px; background: var(--live-throttled); }
+.lg--now { width: 2px; height: 14px; background: var(--text); }
+.lg--trend { width: 18px; height: 2px; border-radius: 1px; background: var(--text-2); }
+.lg-ic { display: inline-grid; color: var(--text-2); }
+.lg-ic--decision { color: var(--mark-decision); }
+.lg-ic--drift { color: var(--mark-drift); }
+.lg-ic--rollback { color: var(--mark-rollback); }
+.lg-ic--enh { color: var(--mark-enhancement); }
+.tl-summary { max-width: 120ch; font-size: var(--fs-xs); color: var(--text-2); }
+.tl-summary b { color: var(--text); }
+
+/* ---- view 2: stacked per-phase completion bar ---- */
+.pbar { display: grid; gap: var(--sp-2); padding-top: var(--sp-3); border-top: 1px solid var(--border); }
+.pbar__head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-1) var(--sp-4); }
+.pbar__total { font-size: var(--fs-xs); color: var(--text-2); }
+.pbar__total b { font-size: var(--fs-md); color: var(--text); }
+.pbar__track { display: flex; gap: 2px; height: 16px; }
+.pbar__seg { position: relative; flex: var(--w) 1 0; min-width: 0; background: var(--surface-3); }
+.pbar__seg:first-child { border-radius: 4px 0 0 4px; }
+.pbar__seg:last-child { border-radius: 0 4px 4px 0; }
+.pbar__done { position: absolute; inset: 0 auto 0 0; width: var(--d); border-radius: inherit; background: var(--text-2); }
+.pbar__labels { display: flex; gap: 2px; }
+.pbar__labels li { flex: var(--w) 1 0; min-width: 0; padding-right: var(--sp-2); font-size: var(--fs-xs); color: var(--text-2); }
+.pbar__labels b { display: block; color: var(--text); }
+
+/* ---- view 2: panels ---- */
+.sgrid { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: var(--sp-4); align-items: start; }
+.sgrid--even { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.scol { display: grid; gap: var(--sp-4); min-width: 0; }
+.manifest { display: grid; }
+.phase + .phase { border-top: 1px solid var(--border); }
+.phase > summary {
+  display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; align-items: center; gap: var(--sp-2) var(--sp-3);
+  padding: var(--sp-2) var(--sp-4); cursor: pointer; list-style: none;
+}
+.phase > summary::-webkit-details-marker { display: none; }
+.phase > summary:hover { background: var(--surface-2); }
+.phase > summary:hover .phase__note { color: var(--text-2); }
+.chev { color: var(--text-3); transition: transform var(--dur-fast); }
+.phase[open] > summary .chev { transform: rotate(90deg); }
+.phase__title { min-width: 0; font-weight: 600; }
+.phase__id { margin-right: 6px; color: var(--text-3); }
+.phase__note { display: block; font-size: var(--fs-xs); font-weight: 400; color: var(--text-3); }
+.phase__nums { display: flex; align-items: center; gap: var(--sp-3); font-size: var(--fs-xs); color: var(--text-2); white-space: nowrap; }
+.phase__meter { width: 64px; }
+.phase__w { min-width: 3.4em; text-align: right; font-weight: 600; color: var(--text); }
+.phase__empty { padding: 0 var(--sp-4) var(--sp-3) 44px; font-size: var(--fs-xs); color: var(--text-2); }
+.st { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; font-size: var(--fs-xs); color: var(--text-2); }
+.st .i { width: 13px; height: 13px; }
+.st--done .i { color: var(--ok); }
+.st--active .i { color: var(--text); }
+.st--todo .i { color: var(--text-3); }
+.tasks { width: 100%; border-collapse: collapse; }
+.tasks th { padding: 6px var(--sp-2); font-size: var(--fs-xs); font-weight: 600; color: var(--text-3); text-align: left; border-top: 1px solid var(--border); }
+.tasks td { padding: 7px var(--sp-2); vertical-align: top; border-top: 1px solid var(--border); }
+.tasks th:first-child, .tasks td:first-child { padding-left: 44px; }
+.tasks th:last-child, .tasks td:last-child { padding-right: var(--sp-4); }
+.tid { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-3); white-space: nowrap; }
+.tasks .tev { width: 34%; }
+.size {
+  display: inline-grid; place-items: center; min-width: 24px; height: 18px; padding-inline: 4px;
+  border: 1px solid var(--border-strong); border-radius: 4px; font-size: var(--fs-xs); font-weight: 700; text-transform: uppercase; color: var(--text-2);
+}
+.ev {
+  display: inline-flex; flex-wrap: wrap; align-items: baseline; column-gap: 6px; max-width: 100%; padding: 1px 6px;
+  border: 1px solid var(--border); border-radius: 4px; background: var(--surface-2); font-size: var(--fs-xs); color: var(--text-2);
+}
+.ev b { font-weight: 700; color: var(--text); }
+.ev code { min-width: 0; overflow-wrap: break-word; }
+.flag { display: flex; align-items: flex-start; gap: 6px; margin-top: 4px; font-size: var(--fs-xs); font-weight: 600; }
+.flag .i { margin-top: 1px; color: var(--warn); }
+.amend td { background: var(--surface-2); font-size: var(--fs-xs); color: var(--text-2); }
+.amend .tid { color: var(--text-2); }
+.amend b { color: var(--text); }
+.amend__k { display: inline-flex; align-items: center; gap: 4px; font-weight: 700; color: var(--text); }
+.amend__k .i { color: var(--mark-enhancement); }
+.metering { display: grid; gap: var(--sp-4); }
+.metering__total { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-1) var(--sp-3); font-size: var(--fs-xs); }
+.bigfig { display: flex; align-items: baseline; gap: var(--sp-2); font-size: var(--fs-xl); font-weight: 600; font-variant-numeric: proportional-nums; }
+.bigfig span { font-size: var(--fs-sm); color: var(--text-2); }
+.minihead + .mbars { margin-top: var(--sp-2); }
+.mbars { display: grid; grid-template-columns: max-content minmax(0, 1fr) max-content; align-items: center; gap: 6px var(--sp-3); font-size: var(--fs-xs); }
+.mbars dt { color: var(--text-2); }
+.mbar { position: relative; height: 10px; }
+.mbar span { position: absolute; inset: 0 auto 0 0; width: var(--v); min-width: 2px; border-radius: 0 3px 3px 0; background: var(--text-3); }
+.mbar__v { text-align: right; font-weight: 600; }
+.ctx { display: grid; gap: 2px; }
+.ctx__head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--sp-2); font-size: var(--fs-xs); color: var(--text-2); }
+.ctx__head b { color: var(--text); }
+.ctx .meter { height: 8px; border-radius: 4px; }
+.ctx .meter__fill { border-radius: 4px; }
+.ctx .muted { font-size: var(--fs-xs); }
+.metering__foot { display: flex; gap: 6px; align-items: flex-start; font-size: var(--fs-xs); color: var(--text-2); }
+.metering__foot .i { margin-top: 1px; }
+.rolls li { display: grid; grid-template-columns: 64px minmax(0, 1fr) 96px; gap: var(--sp-3); align-items: center; padding: var(--sp-3) var(--sp-4); }
+.rolls li + li { border-top: 1px solid var(--border); }
+.roll__id { font-weight: 600; }
+.roll__main { font-size: var(--fs-xs); color: var(--text-2); }
+.roll__check { display: flex; gap: 4px; align-items: flex-start; color: var(--text); }
+.roll__check .i { margin-top: 1px; color: var(--ok); }
+.roll__ctx { font-size: var(--fs-xs); font-weight: 600; text-align: right; }
+.dt { width: 100%; border-collapse: collapse; }
+.dt th { padding: var(--sp-2) var(--sp-3); border-bottom: 1px solid var(--border); font-size: var(--fs-xs); font-weight: 600; color: var(--text-3); text-align: left; white-space: nowrap; }
+.dt td { padding: var(--sp-2) var(--sp-3); border-bottom: 1px solid var(--border); vertical-align: top; }
+.dt tbody tr:last-child td, .dt tbody tr:last-child th { border-bottom: 0; }
+.dt th:first-child, .dt td:first-child { padding-left: var(--sp-4); }
+.dt th:last-child, .dt td:last-child { padding-right: var(--sp-4); }
+.dt .num { text-align: right; }
+.dt tbody th { padding: var(--sp-2) var(--sp-3); border-bottom: 1px solid var(--border); font-size: var(--fs-sm); font-weight: 600; color: var(--text); text-align: left; vertical-align: top; white-space: nowrap; }
+.dt .grp th {
+  padding-block: var(--sp-3) var(--sp-1); font-size: var(--fs-xs); font-weight: 600; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--text-2);
+}
+.dt--flush th:first-child, .dt--flush td:first-child { padding-left: 0; }
+.dt--flush th:last-child, .dt--flush td:last-child { padding-right: 0; }
+.dt--flush { margin-top: calc(-1 * var(--sp-2)); }
+.dt td code { overflow-wrap: anywhere; }
+.verify {
+  display: flex; gap: var(--sp-2); align-items: flex-start; margin: var(--sp-3) var(--sp-4) var(--sp-1);
+  padding: var(--sp-2) var(--sp-3); border-radius: var(--radius-sm); background: var(--live-working-soft); font-size: var(--fs-xs);
+}
+.verify .i { margin-top: 1px; color: var(--ok); }
+
+/* ---- view 3: registry ---- */
+.biz__head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: var(--sp-4) var(--sp-8); padding: var(--sp-4) var(--sp-4) var(--sp-3); }
+.biz__fig { display: grid; gap: var(--sp-1); }
+.hero { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-1) var(--sp-3); }
+.hero__usd { font-size: var(--fs-3xl); font-weight: 700; line-height: 1.1; letter-spacing: -0.01em; font-variant-numeric: proportional-nums; }
+.hero__rm { font-size: var(--fs-xl); font-weight: 600; color: var(--text-2); font-variant-numeric: proportional-nums; }
+.biz__copy { max-width: 72ch; color: var(--text-2); }
+.biz__copy b { color: var(--text); }
+.legend--pair { align-self: end; }
+.sw { display: inline-block; width: 16px; height: 10px; border-radius: 0 3px 3px 0; }
+.sw--disc { background: var(--series-1); }
+.sw--exec { background: var(--series-2); }
+.ptab-wrap { border-top: 1px solid var(--border); }
+.ptab { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.ptab th, .ptab td { padding: var(--sp-3); border-bottom: 1px solid var(--border); text-align: left; vertical-align: middle; }
+.ptab thead th { padding-block: var(--sp-2); font-size: var(--fs-xs); font-weight: 600; color: var(--text-3); vertical-align: bottom; }
+.ptab tbody tr:last-child > * { border-bottom: 0; }
+.ptab th:first-child { padding-left: var(--sp-4); }
+.ptab td:last-child, .ptab th:last-child { padding-right: var(--sp-4); }
+.ptab .num { text-align: right; }
+.pt__c1 { width: 196px; }
+.pt__c3 { width: 92px; }
+.pt__c4 { width: 236px; }
+.pt__c5 { width: 214px; }
+.ptab tbody th { display: table-cell; font-weight: 400; }
+.pt__name { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin-bottom: 4px; font-size: var(--fs-md); font-weight: 600; }
+.pt__save { white-space: nowrap; }
+.pair-axis { position: relative; display: block; height: 16px; margin-right: 104px; }
+.pair-axis span { position: absolute; left: var(--x); transform: translateX(-50%); font-weight: 400; }
+.pair-axis span:first-child { transform: none; }
+.pair {
+  display: grid; gap: 6px; padding-right: 104px; padding-block: 4px;
+  background-image: linear-gradient(to right, var(--grid) 1px, transparent 1px);
+  background-size: 25% 100%; background-origin: content-box; background-clip: content-box;
+}
+.pair__row { position: relative; height: 16px; }
+.pair__bar { position: absolute; inset: 0 auto 0 0; width: var(--v); min-width: 2px; border-radius: 0 4px 4px 0; }
+.pair__bar--disc { background: var(--series-1); }
+.pair__bar--exec { background: var(--series-2); }
+.pair__lab { position: absolute; top: 50%; left: calc(var(--v) + 8px); transform: translateY(-50%); font-size: var(--fs-xs); color: var(--text-2); white-space: nowrap; }
+.pair__lab b { color: var(--text); }
+.pt__save b { font-size: var(--fs-xl); }
+.trend__wrap { display: flex; align-items: center; gap: var(--sp-3); }
+.trend { display: block; flex: none; width: 104px; height: 30px; overflow: visible; }
+.trend__mark { stroke: var(--text-3); stroke-width: 1; }
+.trend__txt { display: grid; font-size: var(--fs-sm); line-height: 1.3; }
+.trend__txt .cell-sub { white-space: nowrap; }
+.pb { display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-sm); font-weight: 600; white-space: nowrap; }
+.pb--approved .i { color: var(--ok); }
+.pb--draft .i, .pb--retired .i { color: var(--text-2); }
+.facts { display: grid; gap: 2px; font-size: var(--fs-xs); color: var(--text-2); }
+.facts b { margin-right: 2px; font-size: var(--fs-sm); color: var(--text); }
+.facts__sub { color: var(--text-3); }
+.facts__rep { display: flex; align-items: center; gap: 4px; color: var(--text); }
+.rule { display: flex; gap: var(--sp-2); align-items: flex-start; margin: var(--sp-3) var(--sp-4) var(--sp-1); font-size: var(--fs-sm); color: var(--text-2); }
+.rule b { color: var(--text); }
+.rule .i { margin-top: 2px; color: var(--text); }
+.lockd { display: inline-flex; align-items: center; gap: 4px; font-weight: 600; }
+.lockd .i { width: 12px; height: 12px; color: var(--text-2); }
+
+/* ---- responsive ---- */
+@media (max-width: 1240px) {
+  .appbar__meta .hide-md { display: none; }
+  .console { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; grid-template-areas: "mult" "rail" "ended"; }
+  .kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .kpi--spend { grid-column: span 2; }
+}
+@media (min-width: 761px) and (max-width: 1240px) {
+  .dlist { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dlist > li + li { border-top: 0; }
+  .dlist > li:nth-child(n+3) { border-top: 1px solid var(--border); }
+  .dlist > li:nth-child(odd) { border-right: 1px solid var(--border); }
+}
+@media (max-width: 1100px) {
+  .sgrid, .sgrid--even { grid-template-columns: minmax(0, 1fr); }
+  .shead { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 980px) {
+  /* registry hero rows become one card per process type */
+  .ptab thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .ptab, .ptab tbody, .ptab tr, .ptab td, .ptab tbody th { display: block; }
+  .ptab tr { padding: var(--sp-3) var(--sp-4); border-bottom: 1px solid var(--border); }
+  .ptab tbody tr:last-child { border-bottom: 0; }
+  .ptab td, .ptab tbody th { padding: 4px 0 !important; border: 0 !important; text-align: left !important; }
+  .ptab td { display: grid; grid-template-columns: 7.5em minmax(0, 1fr); align-items: center; gap: var(--sp-2); }
+  .ptab td::before { content: attr(data-label); font-size: var(--fs-xs); color: var(--text-3); }
+  .ptab td.pt__bars { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .ptab tbody th .cell-sub, .pt__save .cell-sub { display: inline; margin-left: 6px; }
+}
+@media (max-width: 900px) {
+  .appbar__in { flex-wrap: wrap; gap: 0 var(--sp-3); }
+  .brand { min-height: 48px; gap: var(--sp-3); }
+  .appbar__meta { gap: var(--sp-2); }
+  .tabs { order: 3; width: 100%; gap: 0; border-top: 1px solid var(--border); }
+  .tab { flex: 1 1 0; min-height: 44px; }
+}
+@media (max-width: 760px) {
+  .appbar__in { padding-inline: var(--sp-4); }
+  .appbar__meta .hide-sm { display: none; }
+  .page { padding-inline: var(--sp-4); padding-block: var(--sp-4) var(--sp-6); }
+  .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .kpi { padding: var(--sp-3); }
+  .kpi--spend { grid-column: 1 / -1; }
+  .tiles { grid-template-columns: minmax(0, 1fr); }
+  .tl__hr--odd { display: none; }
+  .band__name, .band__now, .tl__thrlabel, .band--narrow .band__dur { display: none; }
+  .pbar__labels { flex-direction: column; gap: 4px; }
+  .pbar__labels li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0 var(--sp-3); padding-right: 0; }
+  .pbar__labels b { display: inline; }
+  .tasks th:first-child, .tasks td:first-child { padding-left: var(--sp-4); }
+  .phase__empty { padding-left: var(--sp-4); }
+  .phase > summary { grid-template-columns: 16px minmax(0, 1fr); }
+  .phase__nums { grid-column: 2; flex-wrap: wrap; white-space: normal; gap: 4px var(--sp-3); }
+  .rolls li { grid-template-columns: 52px minmax(0, 1fr); }
+  .roll__ctx { grid-column: 2; text-align: left; }
+  /* wide tables become stacked cards */
+  .rt thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .rt, .rt tbody, .rt tr, .rt td, .rt tbody th { display: block; }
+  .rt tr { padding: var(--sp-2) var(--sp-4); border-bottom: 1px solid var(--border); }
+  .rt tbody tr:last-child { border-bottom: 0; }
+  .rt td, .rt tbody th {
+    display: grid; grid-template-columns: 7.5em minmax(0, 1fr); gap: var(--sp-2);
+    padding: 3px 0 !important; border: 0 !important; text-align: left !important; white-space: normal;
+  }
+  .rt td::before, .rt tbody th::before { content: attr(data-label); font-size: var(--fs-xs); font-weight: 400; color: var(--text-3); }
+  .sm-only { display: inline; }
+  .tl__hr--start { display: none; }
+
+  /* compact phone layouts for the dense tables */
+  .tasks thead, .ledger thead, .dlog thead, .mtable thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .tasks, .tasks tbody, .ledger, .ledger tbody, .dlog, .dlog tbody, .mtable, .mtable tbody { display: block; }
+  .tasks td, .ledger td, .dlog td, .dlog th, .mtable td { display: block; padding: 0 !important; border: 0 !important; text-align: left !important; }
+
+  /* tasks: id + title, then size · status · evidence */
+  .tasks tr {
+    position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 6px var(--sp-3);
+    padding: var(--sp-2) var(--sp-4) var(--sp-2) 72px; border-top: 1px solid var(--border);
+  }
+  .tasks td.tid { position: absolute; left: var(--sp-4); top: 10px; }
+  .tasks td.ttl { flex: 1 1 100%; min-width: 0; }
+  .tasks .tev { width: auto; }
+  .tasks .tev--none { display: none; }
+  .amend td { background: transparent; }
+  .tasks tr.amend { background: var(--surface-2); }
+
+  /* ledger: seq · time · actor, then type · hash */
+  .ledger tr {
+    display: grid; grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: "seq time actor" "type type hash";
+    gap: 2px var(--sp-3); padding: var(--sp-2) var(--sp-4); border-bottom: 1px solid var(--border);
+  }
+  .ledger tbody tr:last-child { border-bottom: 0; }
+  .ledger td:nth-child(1) { grid-area: seq; font-weight: 600; }
+  .ledger td:nth-child(2) { grid-area: time; color: var(--text-2); }
+  .ledger td:nth-child(3) { grid-area: type; }
+  .ledger td:nth-child(4) { grid-area: actor; text-align: right !important; }
+  .ledger td:nth-child(5) { grid-area: hash; text-align: right !important; color: var(--text-2); }
+
+  /* decisions log: test · asked · by · waited, then the question, then the outcome */
+  .dlog tr {
+    display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto; grid-template-areas: "test asked by wait" "q q q q" "out out out out";
+    align-items: center; gap: 2px var(--sp-2); padding: var(--sp-2) var(--sp-4); border-bottom: 1px solid var(--border);
+  }
+  .dlog tr.grp { display: block; padding-block: var(--sp-3) var(--sp-1); }
+  .dlog tbody tr:last-child { border-bottom: 0; }
+  .dlog td:nth-child(1) { grid-area: asked; color: var(--text-2); }
+  .dlog td:nth-child(2) { grid-area: test; }
+  .dlog td:nth-child(3) { grid-area: q; margin-top: 2px; font-weight: 600; }
+  .dlog td:nth-child(4) { grid-area: out; color: var(--text-2); }
+  .dlog td:nth-child(5) { grid-area: by; text-align: right !important; color: var(--text-2); }
+  .dlog td:nth-child(6) { grid-area: wait; color: var(--text-2); }
+
+  /* metering: model + notional, then the four token counts */
+  .mtable tr { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px var(--sp-2); padding-block: var(--sp-2); border-bottom: 1px solid var(--border); }
+  .mtable td:nth-child(1) { grid-column: 1 / 4; }
+  .mtable td:nth-child(6) { grid-column: 4; grid-row: 1; text-align: right !important; }
+  .mtable td:nth-child(n+2):nth-child(-n+5)::before { content: attr(data-label); display: block; font-size: var(--fs-xs); color: var(--text-3); }
+
+  .rt tr.grp { padding-block: var(--sp-3) 0; border-bottom: 0; }
+  .rt tr.grp th { display: block; }
+  .rt tr.grp th::before { content: none; }
+}
+@media (max-width: 420px) {
+  .brand__rule, .appbar__meta .mockflag { display: none; }
+  .tile { padding-inline: var(--sp-3); }
+  .tile__stats { gap: var(--sp-3); }
+  .ptab td { grid-template-columns: 6.5em minmax(0, 1fr); }
+  .trend { width: 84px; }
+  .trend__txt .cell-sub { white-space: normal; }
+}
+@media (forced-colors: active) {
+  .badge, .chip, .count, .tab__count { border: 1px solid CanvasText; }
+  .meter__fill, .pbar__done, .pair__bar, .mbar span { background: CanvasText; }
+}
+</style>
+</head>
+<body>
+<svg class="sprite" aria-hidden="true" focusable="false"><defs><symbol id="i-working" viewBox="0 0 16 16"><path d="M4.5 2.8v10.4L13.2 8z"/></symbol><symbol id="i-thinking" viewBox="0 0 16 16"><circle cx="3" cy="8" r="1.7"/><circle cx="8" cy="8" r="1.7"/><circle cx="13" cy="8" r="1.7"/></symbol><symbol id="i-stalled" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M8 1.3l7.2 13H.8L8 1.3zM7.1 5.6v4.6h1.8V5.6H7.1zm0 5.8v1.8h1.8v-1.8H7.1z"/></symbol><symbol id="i-dead" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M8 1a7 7 0 1 1 0 14A7 7 0 0 1 8 1zM5.4 4.2L4.2 5.4 6.8 8l-2.6 2.6 1.2 1.2L8 9.2l2.6 2.6 1.2-1.2L9.2 8l2.6-2.6-1.2-1.2L8 6.8 5.4 4.2z"/></symbol><symbol id="i-throttled" viewBox="0 0 16 16"><path d="M3.5 1.5h9V3h-1.1v1c0 1.7-1 2.9-2.5 4 1.5 1.1 2.5 2.3 2.5 4v1h1.1v1.5h-9V13h1.1v-1c0-1.7 1-2.9 2.5-4-1.5-1.1-2.5-2.3-2.5-4V3H3.5V1.5z"/></symbol><symbol id="i-waiting" viewBox="0 0 16 16"><path d="M8 1.2L14.8 8 8 14.8 1.2 8z"/></symbol><symbol id="i-clock" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M8 1a7 7 0 1 1 0 14A7 7 0 0 1 8 1zm0 1.6a5.4 5.4 0 1 0 0 10.8A5.4 5.4 0 0 0 8 2.6zM7.2 4.4h1.6v3.2l2.4 1.5-.8 1.4-3.2-2V4.4z"/></symbol><symbol id="i-key" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M10.6 1.4a4 4 0 1 1-1.4 7.8L8 10.4H6.6v1.5H5.1v1.5H2.4V11l4.2-4.2a4 4 0 0 1 4-5.4zm.9 2.1a1.2 1.2 0 1 0 0 2.4 1.2 1.2 0 0 0 0-2.4z"/></symbol><symbol id="i-check" viewBox="0 0 16 16"><path d="M6.3 11.8L2.6 8.1l1.2-1.2 2.5 2.5 5.9-5.9 1.2 1.2z"/></symbol><symbol id="i-check-circle" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M8 1a7 7 0 1 1 0 14A7 7 0 0 1 8 1zm3.2 4.1L7 9.3 4.9 7.2 3.8 8.3 7 11.5l5.3-5.3-1.1-1.1z"/></symbol><symbol id="i-half-circle" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M8 1a7 7 0 1 1 0 14A7 7 0 0 1 8 1zm0 1.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11z"/><path d="M8 4v8a4 4 0 0 0 0-8z"/></symbol><symbol id="i-circle" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M8 1a7 7 0 1 1 0 14A7 7 0 0 1 8 1zm0 1.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11z"/></symbol><symbol id="i-shield" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M8 1L2.5 3v4.3c0 3.3 2.3 6.1 5.5 7.2 3.2-1.1 5.5-3.9 5.5-7.2V3L8 1zm-.9 9.7L4.7 8.3l1.1-1.1 1.3 1.3 3.2-3.2 1.1 1.1-4.3 4.3z"/></symbol><symbol id="i-flag" viewBox="0 0 16 16"><path d="M3.2 1.5h1.6v13H3.2zM5.6 2.2h7.6L11.4 5.3l1.8 3.1H5.6z"/></symbol><symbol id="i-lock" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M4.8 6.5V4.8a3.2 3.2 0 0 1 6.4 0v1.7h1v8H3.8v-8h1zm1.6 0h3.2V4.8a1.6 1.6 0 0 0-3.2 0v1.7z"/></symbol><symbol id="i-person" viewBox="0 0 16 16"><path d="M8 8.2a3.1 3.1 0 1 0 0-6.2 3.1 3.1 0 0 0 0 6.2zM2.6 14.5c.2-2.9 2.6-5 5.4-5s5.2 2.1 5.4 5H2.6z"/></symbol><symbol id="i-rollback" viewBox="0 0 16 16"><path d="M2.6 2.2v5h5L5.7 5.3a4 4 0 1 1-1.3 5.2l-1.5.7a5.6 5.6 0 1 0 1.7-7l-2-2z"/></symbol><symbol id="i-enh" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M8 1a7 7 0 1 1 0 14A7 7 0 0 1 8 1zm-.8 3.4v2.8H4.4v1.6h2.8v2.8h1.6V8.8h2.8V7.2H8.8V4.4H7.2z"/></symbol><symbol id="i-drift" viewBox="0 0 16 16"><path d="M1.8 2.6h12.4L8 13.4z"/></symbol><symbol id="i-pencil" viewBox="0 0 16 16"><path d="M11.1 1.6l3.3 3.3-8.6 8.6-3.9.9.9-3.9z"/></symbol><symbol id="i-archive" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M1.5 2h13v3.2h-13zM2.5 6.2h11v7.8h-11zm3.3 1.6v1.5h4.4V7.8z"/></symbol><symbol id="i-eye" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M8 3c3.3 0 5.9 2.2 7 5-1.1 2.8-3.7 5-7 5S2.1 10.8 1 8c1.1-2.8 3.7-5 7-5zm0 2.2a2.8 2.8 0 1 0 0 5.6 2.8 2.8 0 0 0 0-5.6z"/></symbol><symbol id="i-info" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M8 1a7 7 0 1 1 0 14A7 7 0 0 1 8 1zm-.8 5.6V12h1.6V6.6H7.2zm0-2.6v1.6h1.6V4H7.2z"/></symbol><symbol id="i-star" viewBox="0 0 16 16"><path d="M8 1.2l2 4.3 4.7.5-3.5 3.2 1 4.6L8 11.4l-4.2 2.4 1-4.6L1.3 6l4.7-.5z"/></symbol><symbol id="i-message" viewBox="0 0 16 16"><path d="M1.8 2.2h12.4v8.9H6.6l-3.4 2.7v-2.7H1.8z"/></symbol><symbol id="i-restart" viewBox="0 0 16 16"><path d="M13.4 2.2v5h-5l1.9-1.9a4 4 0 1 0 1.3 5.2l1.5.7a5.6 5.6 0 1 1-1.7-7l2-2z"/></symbol><symbol id="i-rollover" viewBox="0 0 16 16"><path d="M1.5 7.2h7.9L6.8 4.6l1.1-1.1L12.4 8l-4.5 4.5-1.1-1.1 2.6-2.6H1.5zM12.9 2.5h1.6v11h-1.6z"/></symbol><symbol id="i-chev" viewBox="0 0 16 16"><path d="M5.6 3.2L10.4 8l-4.8 4.8-1.1-1.1L8.2 8 4.5 4.3z"/></symbol><symbol id="i-warn" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M8 1.3l7.2 13H.8L8 1.3zM7.1 5.6v4.6h1.8V5.6H7.1zm0 5.8v1.8h1.8v-1.8H7.1z"/></symbol></defs></svg>
+<a class="skip" href="#main">Skip to content</a>
+<header class="appbar">
+  <div class="appbar__in">
+    <div class="brand">
+      <img class="brand__logo brand__logo--light" alt="Daythree" width="97" height="24" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAcwAAAByCAMAAADpshEFAAAAYFBMVEUAAABdUaPNIDBiVqzJHi9YWFphYWReXmDgIzUAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADA7xAuAAAAIHRSTlMA//////////8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAORL9MUAAAkpSURBVHja7Z2NlqsoDICFZGbu+z/xnU5tK5JfBKs2nLO7Z0e0LR8JISRxmqIdo6XfBk13fn3F6B2qAcANJiQ/yXuLITwQy3RvXprfM8Wv7xjEA6nYJprfT4kMmkdhCUuaztXyZ9axoWkPJ5gu0bzx+1swf24gA+YxVsySphPmn7oN0Tyilr01M8wHwlnRxlAeDyb4YD43Jj8xlIdTs3bRnIXyoV9DMg9nADlE87Fmfv2EOXtcPZt8MOd/xUCeXTTv8vgTgnnYVdO813y5fcIDdH6DNnyzFxLNX+Pn6QKKtt+aOMZxEGbs3jr03kRENtH0UY42cDmUgCYdZnrMiRjUo6yGDA3dBEqtB9jRRm0h70AJnppoLiU8aB5CMHmemgnUeoAdbdgGUuAp69nWA+xou8D8g5LYritg0LxzibYPzDK4UtKzjc7baHvCXOKUgEHAPAPMF05Bz25xEEUbbc2SOHliza5bacsUcEaI5sMUYvVs6q1lZ2dS4PGPmw0n8Ho2pb5adv6g2OEMwwmJdQL1FsxwDG5boMAooJQADhLMMKS2APUShUHmz/tgZtefD0/Ug5Pesmwn8C6YmHNm/oznlVAfzO77knfBzIgUzV+UOV+d5TzW/R0Gb4NJi+Dtz/mUKF2rJgxyGATM/TwIBbgBnryAuT/KO8z+ghkwt7eGjeYvuTTgvCRg7i6W98EeIJgB8z0sU2tKUcA8AcsUMK/CslOEQcA8AstOgx8wj8CyRTCJmWCAaZs+cvpMVdvxAjA7ymXyg3ykLC1TlxSY1U3sDwOxduPtWnH5AjCBCSyY952OYzGn+UP4Du9oRJjcTewP475Vffn8MNVodirIoINgQgJDeIqOkk9Kk7/WK8/pOjCpIa1mOphwugTTOEFMKOkPV1Zy4k6G2nlggnWaQ1fBtOpu+wSoYvmgDSbmR2Ng5mw/rL4/jbryd+KN9jmSDf2lMC3n8DsE025zeb4BdIG5aARM6row/HRH+mNMTxL7gx1Jgl77Eof97BJm6AoTH+L3GsGF6KLCoeiKFRks/qOTtPSvhnVl2xUBE1rG2Ii9kO8u6AszlzAz1XgEWD1ofWEBSGJp7c8Tob6xvGa1L9PAb3+EaUfdBQPVbF4tqQJNXPWt0KBxUrj6c/UqmVul1NzUxvJFhATKsHz1BVDzX1wwkTGAFpKBnNStWNbKeEnl+UHI43H1506WV1MBn9ZbB8EsC75DIXzAwgRjDjCVTtpla5IpKWNoctJDgUBB2Kj+vHDS0kWuDSi5ixyCWbLU6iaQMfPiXbBVMkWYSA62mSV5gZVxZ386FisLNDlFaxdMeaNPf6Pln4lpQ18eAJO5QipZs7y+ZByd/bMwdJJgPh8K2xwGxbgbTLLqj5CsT+0Pk71E/M3Bkn4OOvsn6rUIyMFEYdW0a1lVmIGAqZYYoooQdYcp7AJ1wUR1K7NeS9HVv1JqomDOdzJ61m/Ksvyheu7yM3WJh0EwpVE1C6bmGxBmiTKLKOnKWaEJfcwfo6dp9T3BIPKQhsBEaVRVt7zuuSs7oLM//fIZ5FkKetZv/oBtI7rCkhzTpDNM2W+3Uo/OZ9RTxtufhqlKJqFnGxwG0i1rrZrAYjPzC20XmMgPakEPBbNXU5qvO02e37KPb8mcTWcK5tRRy5bfa/WJtmf3h4kaiBImkuYPisdbxe4EVWWAJpioiGaCdsG0ydhayIwfNBKmKiVLbAR5STApL65mcmHtcCdg5haYLWdfjm5GmGwO8HiYuIKZK8FEZcdYovH2Z2CiH6bnUNqIpYRpE+djw1S8vkg4bNHev2XNZGBOAVOByTsDkXQv0TD5/n6YD2t2QxjXB0tmtZDSB578Q6T+nB8U3TCngGmSTIsV09ifO45SnQat71/8ZAOIdvnxaLz9KzAwTS2+WVd6iRVmOc7urcmxYRrCRSjPnuoQpA4b0KdlUxtMcGBxOw2OCPOxZspWTP1IbaksRgCq6t0+wfSllzjdedDkzoNkWaDhHVsTI5rnquZAef/JVSIVtdVEzs3uYjmZbqx0uGkKgA9mgv23JroVU8I09xcaDhNM9xFYxckyTaqSfmA6MhvuAVKtmOcFtMXVWsPhq8eRO1N/dq2BS72O+w6nCZjJ8ikDYdoSDBYDnS1WD/I1/YqhWgVk54lh6U5T1ydCksJ5DGEjxIEmcRekt8GUH4SVaFr6V5YQ/P0j2c8d0t7rMAKDga0GdE1k7KzwRfko/jEw0bC1WDpwLVsR3hcEfLA+Mt6/tkIxivVER+85Qi0Z7VzexQTvjoNpCBspj8nUxCThWA0MhKCDYGpB0Nz4i1OItcqYu9j3BgyEqbNBwlOgslSdtJBUCFsqOPE52quEXhD0aKq3yhRMoNJTAMRkqTEwJ13JIhGdp7FEVeiASimHbkV/1nKRHq9MkV4cl4i7uHQj4NONyMyxXWCiKdTS3B8NKyZdv4NG2VpaLQGRmweg7GDplD6tWoWvFMNImJOyy2Dib8VoXcaUpSrHSJN/U5k8U9psvZloqmADbph5EEwpMD7zaQ72/vLo8nN/Y5k8w6sBqW0+NMA0TJy9YE5C6l72ZJPJaSstNbo2lTxUyyPQm0nww3RNHMZ11hsmKYGip8HW37G0dK1F2lYeQU7D524H+8zh0jD7wCQcQYqnp4oMQP34zC+aXd9dYn82X9RpWWBcT+FlP6/0iXaHOfGxctnaH6X+TuuiE0u+cJo5PGj9hYj6adJelPwxy8oSROmYzTBXwZKv6hO9+vtlE3qVlQUnSu6uIvCLOb582nJwd0HTvwaJ1H/dp4paRHvlheNKWGzv76TZ70WIaT3GadNdc9lS28E493NeLP+ZJXOZnvDPU7rLFELAlJfoQbP3+2abPEpcQbZ1KSDh/bj8aWc1aLqXlP0/2RlnLp73DPcwBxwA7CqW49v9B2m+5ou+DNmwJzsTSzkGaKuL+ew44VyvDZZkz5gpenqccA2UMi9InwCTfu3iX1DJebVMBQw6+SVPstrAsp1zYQHmOFuLQrko0XMbCKsIlVcwCaQPEsyrNDo6Ac660/rsRkYndAl9iXbAjXMo2dMq2mB5cpoQLD9C0wbLy9AMO/YyOCFYntb9AVVoe4zKuXnOx5vWgIZoh+YZfoKO7T8bFkzfpU8oewAAAABJRU5ErkJggg==">
+      <img class="brand__logo brand__logo--dark" alt="Daythree" width="97" height="24" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAcwAAAByCAMAAADpshEFAAAAYFBMVEUAAAD///8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACUCPOvAAAAIHRSTlMA/wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADBqDk4AAAVnSURBVHja7Z3rdiQhCITx/V96z55NJpftlipEW5nyXzJoK58oIj1jprJHaX9LsKa0tx/KCM5oPZX5LFkqn/KiuSNLjsqXtGjuyLKRLD+riOaOMBvN8l8dwSwA0z5AyjQ3ZIlDeSH8IqpyNsxXDcE8meaHUb6OJ9LkyTDbj31TMLeE2TiYJm+2hmm+fB8ZZoVd88tKVQ53aBWbLUVTtyYPoJoDU1b5mNWN0pQJHrGAAmJNS+p+h8hLGr5M+AJbZSZLj9WlRPgCW2U6zP+ICObJLH9DoVhLs/vB/E6lb5qCeQDM1iDTbIJ5BMwXGcGsAPMzUyC6BKvsRbP1zS8fpibERJjf0ib93bQl9Up45tG8ZZYNU6v1ApwozLweic4ynLMNUzAXAi0Hs1H/LkZ0qvuzHGbvwugNLLQezFYJJm+ZU86YgvnMMiuYVZygKZE8wXzKnxXMMofNKSF2wXwmbiCYpUJ6E+6+BHMPloIploK5IUvBfG+W/Rs1v5bXNgGvAMz2HEw/pgTVclp3ni6YGTCROARaq9u+8/hCMOk0giSW2NmV7i28EreCMGPvmYzDDLVIPRyG2WrDDOp+wtrOVMqB6TLmvjzH2QNYhdFKDat/wjZN1UqG2S5gEuMFX5gD1IbKE0ieYNkGZtM4zPYbJjFkahjTzO3es8+CGXOPBww5CSYzaHYYYz7Nnah11pP1htnYShOX2QG1Ii486/Lj5280p3K2YfLno1kOEDPu2IxkVRVl+XPFSWYJ7Q748jvpaNJpHw49Od23MXkwdRKiGWMJrvpErbkwEWguS9DrJuUpYGwEhvTyXBcEmcHXxpwGEzr8sfZ6R42U53gZ8CnHErZcam+ZBxM7ytMsr9uJymO217Jh4qbr1uovzUkwMa06aw51g0PIZ8K0NJjWfybebjZMMGDXN0w4XMfKG5SfzrhHGSz7MImW18AEb7h9NV3uEUTYlzPMnkDAMAniW8AEldo1TDySzsofAxN7ztYw8amIsfRP6VjQYfKOeaHnvWEaDpNdVSg1PgnTsmHaXJg2Dea9J06d7kj/51bCNoPZdoNJHqpo+SNhWjGY/XgzFz5LWmZNMEMwvavYoUho1JsVzAhMP32JC4TmwDTBhGASaFj5I2G2IjAhK6NQGpsbMsxSMIH7vIh8OZjtjD0TTwcjjPJeu9Pcn2XhPCii+whMysiM/kkK5M46yzB5mPPC8+0BmGSubMqvi8wzTPoKDIfZ9ocJbZUheZamZRgm+R4tnGhwuRXh6ZCrYrNQjgUpD3wEp2COWD0uETpkGRwvWQvT3yl5+Zun9fzhcZZkQlesFgCzPQbTIDasPG4OndXXsmki6dH+toDFPhfCNNzriclz0aIkllQSNBhjBlOnPfYLYOJssliirxgF3eXAiwZULSj+sRwmmggSljd/rgKnlYyTj5+/0KhC1loHE/dmMJc/YHWjryQgE8NrPQTT9oGJZN8iydS38rFpPxqTsFjrsZ4FDHkSTATAkPwQTLOZNId6uSVMc73xQfkBmGYzaY51MzhxemtCIsy7e+dR+QGaNpPmYDejM6fTQALM/mVAS5CPwrTBEmq7WynuOznn2TyY9JvnIQDLWUbfwe5UYkJE4BabDpM+GIT0v5xl+PAKJIFCoQpki82HyUdfIkpazzIcufciPtjtG7LFRmGS/bdc+aivmAt0uNK1nbHPvfJync7c/uX2nx1vcmjGjilkClCtUpSlt4mavSnOMwcDnODeD+exI3lTmAnf27TjON6U5Q3P40eBfPAGRKtMyV6UR0XeucpWMKWlOjSlozo0paE6NKWfOjSlnTo0pZs6OKWYMjSllTI8pZAqPKWKjPIHp/YybtO7hxYAAAAASUVORK5CYII=">
+      <span class="brand__rule" aria-hidden="true"></span>
+      <span class="brand__name">Agent Ops Console</span>
+    </div>
+    <nav class="tabs" role="tablist" aria-label="Views">
+      <a class="tab" role="tab" id="tab-console" href="#console" aria-controls="view-console" aria-selected="true">Console<span class="tab__count" aria-label="6 decisions waiting">6</span></a>
+      <a class="tab" role="tab" id="tab-session" href="#session" aria-controls="view-session" aria-selected="false" tabindex="-1">Session</a>
+      <a class="tab" role="tab" id="tab-registry" href="#registry" aria-controls="view-registry" aria-selected="false" tabindex="-1">Registry</a>
+    </nav>
+    <div class="appbar__meta">
+      <span class="mockflag">Design mock · sample data</span>
+      <span class="hide-md"><svg class="i i--ok" aria-hidden="true" focusable="false"><use href="#i-shield"/></svg>Ledger verified 02:00</span>
+      <span class="hide-md">Fri 9 Oct · 13:42 MYT</span>
+      <span><span class="avatar" aria-hidden="true"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-person"/></svg></span><span class="hide-sm">Approver</span></span>
+    </div>
+  </div>
+</header>
+<main id="main" class="page" tabindex="-1">
+
+    <section id="view-console" class="view" role="tabpanel" aria-labelledby="tab-console">
+      <header class="pagehead">
+        <h1>Console</h1>
+        <p class="pagehead__sub">9 active sessions · Fri 9 Oct 2026, updated 13:42:07 MYT</p>
+      </header>
+
+      <section class="kpis" aria-label="Today at a glance">
+        <div class="kpi">
+          <p class="kpi__label">Active sessions</p>
+          <p class="kpi__value">9<span class="kpi__unit">in 4 projects</span></p>
+          <p class="kpi__meta">8 managed · 1 observed</p>
+        </div>
+        <div class="kpi">
+          <p class="kpi__label"><span class="kpi__ic kpi__ic--waiting"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-waiting"/></svg></span>Waiting on you</p>
+          <p class="kpi__value">6<span class="kpi__unit">decisions</span></p>
+          <p class="kpi__meta">oldest <b>2h 14m</b> · 2 sessions paused</p>
+        </div>
+        <div class="kpi">
+          <p class="kpi__label"><span class="kpi__ic kpi__ic--throttled"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-throttled"/></svg></span>Throttled</p>
+          <p class="kpi__value">1<span class="kpi__unit">session</span></p>
+          <p class="kpi__meta"><b>47 min</b> idle today from 2 plan-limit hits</p>
+        </div>
+        <div class="kpi">
+          <p class="kpi__label">Tasks done today</p>
+          <p class="kpi__value">23<span class="kpi__unit">91% with verified evidence</span></p>
+          <p class="kpi__meta kpi__meta--meter"><span class="meter" aria-hidden="true"><span class="meter__fill" style="width:91%"></span></span><span class="sr-only">21 of 23 tasks have verified evidence</span><span>2 flagged: no file change</span></p>
+        </div>
+        <div class="kpi kpi--spend">
+          <p class="kpi__label">Notional spend today</p>
+          <p class="kpi__value">$152.38<span class="kpi__unit">RM 642.27</span></p>
+          <p class="kpi__meta">notional API-equivalent, not a bill · FX 4.2150 BNM, live 09:05</p>
+        </div>
+      </section>
+      <div class="console">
+        <section class="multiples" aria-labelledby="mult-h">
+          <div class="sectionhead">
+            <div class="sectionhead__top">
+              <h2 id="mult-h">Agent activity</h2>
+              <p class="sectionhead__note">Actions per minute (APM), last 30 min · same 0–15 scale on every tile · the stall threshold is 10 min, so a line goes flat before the badge changes</p>
+            </div>
+            <ol class="prec" aria-label="Sessions by liveness, in precedence order"><li><span class="badge badge--waiting"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-waiting"/></svg>Waiting on you</span><span class="prec__n">2</span><span class="prec__sep" aria-hidden="true">›</span></li><li><span class="badge badge--throttled"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-throttled"/></svg>Throttled</span><span class="prec__n">1</span><span class="prec__sep" aria-hidden="true">›</span></li><li><span class="badge badge--dead"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-dead"/></svg>Dead</span><span class="prec__n">1</span><span class="prec__sep" aria-hidden="true">›</span></li><li><span class="badge badge--stalled"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-stalled"/></svg>Stalled</span><span class="prec__n">1</span><span class="prec__sep" aria-hidden="true">›</span></li><li><span class="badge badge--thinking"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-thinking"/></svg>Thinking</span><span class="prec__n">1</span><span class="prec__sep" aria-hidden="true">›</span></li><li><span class="badge badge--working"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-working"/></svg>Working</span><span class="prec__n">3</span></li></ol>
+          </div>
+          <ol class="tiles">
+          <li class="tile">
+            <div class="tile__top">
+              <h3 class="tile__name">backfill-status <span class="tile__sess">s5</span></h3>
+              <div class="tile__chips"><span class="chip">migration</span><span class="chip chip--model">Opus</span></div>
+            </div>
+            <p class="tile__ctx">Claims Intake Bot · P2 Status model</p>
+            <div class="tile__state"><span class="badge badge--waiting"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-waiting"/></svg>Waiting on you</span><span class="tile__statemeta">decision 2h 14m</span><span class="tile__dev">Aisyah</span></div>
+            <div class="tile__act">
+              <svg class="spark" viewBox="0 0 200 40" role="img" aria-label="backfill-status s5, actions per minute over the last 30 minutes: 0 now; peak 0; flat at 0 since 11:28 — turn ended for a data decision."><title>backfill-status s5, actions per minute over the last 30 minutes: 0 now; peak 0; flat at 0 since 11:28 — turn ended for a data decision.</title><line class="spark__base" x1="3" y1="37.5" x2="197" y2="37.5"/><path class="spark__area" d="M3 37L3 37L9.7 37L16.4 37L23.1 37L29.8 37L36.4 37L43.1 37L49.8 37L56.5 37L63.2 37L69.9 37L76.6 37L83.3 37L90 37L96.7 37L103.3 37L110 37L116.7 37L123.4 37L130.1 37L136.8 37L143.5 37L150.2 37L156.9 37L163.6 37L170.2 37L176.9 37L183.6 37L190.3 37L197 37L197 37Z"/><path class="spark__line" d="M3 37L9.7 37L16.4 37L23.1 37L29.8 37L36.4 37L43.1 37L49.8 37L56.5 37L63.2 37L69.9 37L76.6 37L83.3 37L90 37L96.7 37L103.3 37L110 37L116.7 37L123.4 37L130.1 37L136.8 37L143.5 37L150.2 37L156.9 37L163.6 37L170.2 37L176.9 37L183.6 37L190.3 37L197 37"/><circle class="spark__dot" cx="197" cy="37" r="3"/></svg>
+              <p class="apm"><span class="apm__v">0</span><span class="apm__u">APM now</span></p>
+            </div>
+            <dl class="tile__stats">
+              <div class="tstat">
+                <dt>Tasks</dt>
+                <dd><span>6/11</span><span class="tstat__pct">54%</span></dd>
+                <dd class="tstat__bar"><span class="meter" aria-hidden="true"><span class="meter__fill" style="width:54%"></span></span><span class="sr-only">54% of declared weight done</span></dd>
+                <dd class="sub">ETA paused</dd>
+              </div>
+              <div class="tstat">
+                <dt>Context</dt>
+                <dd><span>33%</span></dd>
+                <dd class="tstat__bar"><span class="meter" aria-hidden="true"><span class="meter__fill" style="width:33%"></span><span class="meter__mark" style="left:70%"></span></span><span class="sr-only">33% of the 1M-token window; rollover threshold 70%</span></dd>
+                <dd class="sub">of 1M window</dd>
+              </div>
+              <div class="tstat">
+                <dt>Today</dt>
+                <dd><span>$31.40</span></dd>
+                <dd class="sub">RM 132.35</dd>
+              </div>
+            </dl>
+          </li>
+          <li class="tile">
+            <div class="tile__top">
+              <h3 class="tile__name">nric-masking <span class="tile__sess">s1</span></h3>
+              <div class="tile__chips"><span class="chip">feature-build</span><span class="chip chip--model">Opus</span></div>
+            </div>
+            <p class="tile__ctx">CX Copilot · P1 Discovery</p>
+            <div class="tile__state"><span class="badge badge--waiting"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-waiting"/></svg>Waiting on you</span><span class="tile__statemeta">decision 6m</span><span class="tile__dev">Daniel</span></div>
+            <div class="tile__act">
+              <svg class="spark" viewBox="0 0 200 40" role="img" aria-label="nric-masking s1, actions per minute over the last 30 minutes: 0 now; peak 12; active until 13:36, then 0 while waiting on an ambiguity decision."><title>nric-masking s1, actions per minute over the last 30 minutes: 0 now; peak 12; active until 13:36, then 0 while waiting on an ambiguity decision.</title><line class="spark__base" x1="3" y1="37.5" x2="197" y2="37.5"/><path class="spark__area" d="M3 37L3 21.6L9.7 17.2L16.4 12.8L23.1 19.4L29.8 23.8L36.4 15L43.1 10.6L49.8 17.2L56.5 21.6L63.2 19.4L69.9 26L76.6 17.2L83.3 15L90 10.6L96.7 17.2L103.3 21.6L110 23.8L116.7 19.4L123.4 17.2L130.1 12.8L136.8 19.4L143.5 21.6L150.2 23.8L156.9 26L163.6 37L170.2 37L176.9 37L183.6 37L190.3 37L197 37L197 37Z"/><path class="spark__line" d="M3 21.6L9.7 17.2L16.4 12.8L23.1 19.4L29.8 23.8L36.4 15L43.1 10.6L49.8 17.2L56.5 21.6L63.2 19.4L69.9 26L76.6 17.2L83.3 15L90 10.6L96.7 17.2L103.3 21.6L110 23.8L116.7 19.4L123.4 17.2L130.1 12.8L136.8 19.4L143.5 21.6L150.2 23.8L156.9 26L163.6 37L170.2 37L176.9 37L183.6 37L190.3 37L197 37"/><circle class="spark__dot" cx="197" cy="37" r="3"/></svg>
+              <p class="apm"><span class="apm__v">0</span><span class="apm__u">APM now</span></p>
+            </div>
+            <dl class="tile__stats">
+              <div class="tstat">
+                <dt>Tasks</dt>
+                <dd><span>2/9</span><span class="tstat__pct">18%</span></dd>
+                <dd class="tstat__bar"><span class="meter" aria-hidden="true"><span class="meter__fill" style="width:18%"></span></span><span class="sr-only">18% of declared weight done</span></dd>
+                <dd class="sub">ETA after 3 tasks</dd>
+              </div>
+              <div class="tstat">
+                <dt>Context</dt>
+                <dd><span>18%</span></dd>
+                <dd class="tstat__bar"><span class="meter" aria-hidden="true"><span class="meter__fill" style="width:18%"></span><span class="meter__mark" style="left:70%"></span></span><span class="sr-only">18% of the 1M-token window; rollover threshold 70%</span></dd>
+                <dd class="sub">of 1M window</dd>
+              </div>
+              <div class="tstat">
+                <dt>Today</dt>
+                <dd><span>$18.75</span></dd>
+                <dd class="sub">RM 79.03</dd>
+              </div>
+            </dl>
+          </li>
+          <li class="tile">
+            <div class="tile__top">
+              <h3 class="tile__name">web-console <span class="tile__sess">s2</span></h3>
+              <div class="tile__chips"><span class="chip">feature-build</span><span class="chip chip--model">Sonnet</span></div>
+            </div>
+            <p class="tile__ctx">AOC Platform · P3 Session view</p>
+            <div class="tile__state"><span class="badge badge--throttled"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-throttled"/></svg>Throttled</span><span class="tile__statemeta">resets 14:05</span><span class="tile__dev">Daniel</span></div>
+            <div class="tile__act">
+              <svg class="spark" viewBox="0 0 200 40" role="img" aria-label="web-console s2, actions per minute over the last 30 minutes: 0 now; peak 9; plan limit hit 13:18; 0 since then."><title>web-console s2, actions per minute over the last 30 minutes: 0 now; peak 9; plan limit hit 13:18; 0 since then.</title><line class="spark__base" x1="3" y1="37.5" x2="197" y2="37.5"/><path class="spark__area" d="M3 37L3 19.4L9.7 23.8L16.4 17.2L23.1 21.6L29.8 28.2L36.4 37L43.1 37L49.8 37L56.5 37L63.2 37L69.9 37L76.6 37L83.3 37L90 37L96.7 37L103.3 37L110 37L116.7 37L123.4 37L130.1 37L136.8 37L143.5 37L150.2 37L156.9 37L163.6 37L170.2 37L176.9 37L183.6 37L190.3 37L197 37L197 37Z"/><path class="spark__line" d="M3 19.4L9.7 23.8L16.4 17.2L23.1 21.6L29.8 28.2L36.4 37L43.1 37L49.8 37L56.5 37L63.2 37L69.9 37L76.6 37L83.3 37L90 37L96.7 37L103.3 37L110 37L116.7 37L123.4 37L130.1 37L136.8 37L143.5 37L150.2 37L156.9 37L163.6 37L170.2 37L176.9 37L183.6 37L190.3 37L197 37"/><circle class="spark__dot" cx="197" cy="37" r="3"/></svg>
+              <p class="apm"><span class="apm__v">0</span><span class="apm__u">APM now</span></p>
+            </div>
+            <dl class="tile__stats">
+              <div class="tstat">
+                <dt>Tasks</dt>
+                <dd><span>7/12</span><span class="tstat__pct">58%</span></dd>
+                <dd class="tstat__bar"><span class="meter" aria-hidden="true"><span class="meter__fill" style="width:58%"></span></span><span class="sr-only">58% of declared weight done</span></dd>
+                <dd class="sub">ETA 16:40</dd>
+              </div>
+              <div class="tstat">
+                <dt>Context</dt>
+                <dd><span>72%</span></dd>
+                <dd class="tstat__bar"><span class="meter meter--warn" aria-hidden="true"><span class="meter__fill" style="width:72%"></span><span class="meter__mark" style="left:70%"></span></span><span class="sr-only">72% of the 1M-token window; rollover threshold 70%</span></dd>
+                <dd class="sub"><svg class="i i--warn" aria-hidden="true" focusable="false"><use href="#i-warn"/></svg>rollover due</dd>
+              </div>
+              <div class="tstat">
+                <dt>Today</dt>
+                <dd><span>$16.20</span></dd>
+                <dd class="sub">RM 68.28</dd>
+              </div>
+            </dl>
+          </li>
+          <li class="tile">
+            <div class="tile__top">
+              <h3 class="tile__name">flaky-e2e <span class="tile__sess">s2</span></h3>
+              <div class="tile__chips"><span class="chip">test-repair</span><span class="chip chip--model">Haiku</span></div>
+            </div>
+            <p class="tile__ctx">Claims Intake Bot · P1 Reproduce</p>
+            <div class="tile__state"><span class="badge badge--dead"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-dead"/></svg>Dead</span><span class="tile__statemeta">no heartbeat 21m</span><span class="tile__dev">Priya</span></div>
+            <div class="tile__act">
+              <svg class="spark" viewBox="0 0 200 40" role="img" aria-label="flaky-e2e s2, actions per minute over the last 30 minutes: no data since 13:20; peak 7; no data after 13:20 — process exited (code 137)."><title>flaky-e2e s2, actions per minute over the last 30 minutes: no data since 13:20; peak 7; no data after 13:20 — process exited (code 137).</title><line class="spark__base" x1="3" y1="37.5" x2="197" y2="37.5"/><path class="spark__area" d="M3 37L3 26L9.7 23.8L16.4 28.2L23.1 21.6L29.8 26L36.4 30.4L43.1 26L49.8 32.6L49.8 37Z"/><path class="spark__line" d="M3 26L9.7 23.8L16.4 28.2L23.1 21.6L29.8 26L36.4 30.4L43.1 26L49.8 32.6"/><path class="spark__x" d="M46.8 29.6l6 6M52.8 29.6l-6 6"/></svg>
+              <p class="apm"><span class="apm__v">—</span><span class="apm__u">APM now</span></p>
+            </div>
+            <dl class="tile__stats">
+              <div class="tstat">
+                <dt>Tasks</dt>
+                <dd><span>4/7</span><span class="tstat__pct">64%</span></dd>
+                <dd class="tstat__bar"><span class="meter" aria-hidden="true"><span class="meter__fill" style="width:64%"></span></span><span class="sr-only">64% of declared weight done</span></dd>
+                <dd class="sub">ETA —</dd>
+              </div>
+              <div class="tstat">
+                <dt>Context</dt>
+                <dd><span>22%</span></dd>
+                <dd class="tstat__bar"><span class="meter" aria-hidden="true"><span class="meter__fill" style="width:22%"></span><span class="meter__mark" style="left:70%"></span></span><span class="sr-only">22% of the 1M-token window; rollover threshold 70%</span></dd>
+                <dd class="sub">of 1M window</dd>
+              </div>
+              <div class="tstat">
+                <dt>Today</dt>
+                <dd><span>$0.62</span></dd>
+                <dd class="sub">RM 2.61</dd>
+              </div>
+            </dl>
+          </li>
+          <li class="tile">
+            <div class="tile__top">
+              <h3 class="tile__name">ocr-fields <span class="tile__sess">s3</span></h3>
+              <div class="tile__chips"><span class="chip">feature-build</span><span class="chip chip--model">Sonnet</span></div>
+            </div>
+            <p class="tile__ctx">Claims Intake Bot · P3 Field extraction</p>
+            <div class="tile__state"><span class="badge badge--stalled"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-stalled"/></svg>Stalled</span><span class="tile__statemeta">no output 11m</span><span class="tile__dev">Wei Jie</span></div>
+            <div class="tile__act">
+              <svg class="spark" viewBox="0 0 200 40" role="img" aria-label="ocr-fields s3, actions per minute over the last 30 minutes: 0 now; peak 10; tapering from 13:25, flat at 0 since 13:31; process alive but silent."><title>ocr-fields s3, actions per minute over the last 30 minutes: 0 now; peak 10; tapering from 13:25, flat at 0 since 13:31; process alive but silent.</title><line class="spark__base" x1="3" y1="37.5" x2="197" y2="37.5"/><path class="spark__area" d="M3 37L3 17.2L9.7 21.6L16.4 15L23.1 23.8L29.8 19.4L36.4 17.2L43.1 26L49.8 21.6L56.5 19.4L63.2 23.8L69.9 26L76.6 21.6L83.3 26L90 28.2L96.7 23.8L103.3 30.4L110 32.6L116.7 32.6L123.4 37L130.1 37L136.8 37L143.5 37L150.2 37L156.9 37L163.6 37L170.2 37L176.9 37L183.6 37L190.3 37L197 37L197 37Z"/><path class="spark__line" d="M3 17.2L9.7 21.6L16.4 15L23.1 23.8L29.8 19.4L36.4 17.2L43.1 26L49.8 21.6L56.5 19.4L63.2 23.8L69.9 26L76.6 21.6L83.3 26L90 28.2L96.7 23.8L103.3 30.4L110 32.6L116.7 32.6L123.4 37L130.1 37L136.8 37L143.5 37L150.2 37L156.9 37L163.6 37L170.2 37L176.9 37L183.6 37L190.3 37L197 37"/><circle class="spark__dot" cx="197" cy="37" r="3"/></svg>
+              <p class="apm"><span class="apm__v">0</span><span class="apm__u">APM now</span></p>
+            </div>
+            <dl class="tile__stats">
+              <div class="tstat">
+                <dt>Tasks</dt>
+                <dd><span>9/14</span><span class="tstat__pct">63%</span></dd>
+                <dd class="tstat__bar"><span class="meter" aria-hidden="true"><span class="meter__fill" style="width:63%"></span></span><span class="sr-only">63% of declared weight done</span></dd>
+                <dd class="sub">ETA on hold</dd>
+              </div>
+              <div class="tstat">
+                <dt>Context</dt>
+                <dd><span>64%</span></dd>
+                <dd class="tstat__bar"><span class="meter" aria-hidden="true"><span class="meter__fill" style="width:64%"></span><span class="meter__mark" style="left:70%"></span></span><span class="sr-only">64% of the 1M-token window; rollover threshold 70%</span></dd>
+                <dd class="sub">of 1M window</dd>
+              </div>
+              <div class="tstat">
+                <dt>Today</dt>
+                <dd><span>$21.30</span></dd>
+                <dd class="sub">RM 89.78</dd>
+              </div>
+            </dl>
+          </li>
+          <li class="tile">
+            <div class="tile__top">
+              <h3 class="tile__name">triage-1184 <span class="tile__sess">b</span></h3>
+              <div class="tile__chips"><span class="chip chip--ro"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-lock"/></svg>bug-triage</span><span class="chip chip--model">Sonnet</span></div>
+            </div>
+            <p class="tile__ctx">CX Copilot · Diagnose · agent b of 3</p>
+            <div class="tile__state"><span class="badge badge--thinking"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-thinking"/></svg>Thinking</span><span class="tile__statemeta">generating 2m 40s</span><span class="tile__dev">Triage pool</span></div>
+            <div class="tile__act">
+              <svg class="spark" viewBox="0 0 200 40" role="img" aria-label="triage-1184 b, actions per minute over the last 30 minutes: 0 now; peak 9; tool calls paused for 3 min while the model generates."><title>triage-1184 b, actions per minute over the last 30 minutes: 0 now; peak 9; tool calls paused for 3 min while the model generates.</title><line class="spark__base" x1="3" y1="37.5" x2="197" y2="37.5"/><path class="spark__area" d="M3 37L3 28.2L9.7 23.8L16.4 26L23.1 21.6L29.8 19.4L36.4 26L43.1 23.8L49.8 28.2L56.5 21.6L63.2 17.2L69.9 23.8L76.6 26L83.3 19.4L90 21.6L96.7 26L103.3 23.8L110 28.2L116.7 26L123.4 21.6L130.1 23.8L136.8 26L143.5 28.2L150.2 23.8L156.9 26L163.6 30.4L170.2 28.2L176.9 32.6L183.6 34.8L190.3 37L197 37L197 37Z"/><path class="spark__line" d="M3 28.2L9.7 23.8L16.4 26L23.1 21.6L29.8 19.4L36.4 26L43.1 23.8L49.8 28.2L56.5 21.6L63.2 17.2L69.9 23.8L76.6 26L83.3 19.4L90 21.6L96.7 26L103.3 23.8L110 28.2L116.7 26L123.4 21.6L130.1 23.8L136.8 26L143.5 28.2L150.2 23.8L156.9 26L163.6 30.4L170.2 28.2L176.9 32.6L183.6 34.8L190.3 37L197 37"/><circle class="spark__dot" cx="197" cy="37" r="3"/></svg>
+              <p class="apm"><span class="apm__v">0</span><span class="apm__u">APM now</span></p>
+            </div>
+            <dl class="tile__stats">
+              <div class="tstat">
+                <dt>Tasks</dt>
+                <dd><span>3/5</span><span class="tstat__pct">67%</span></dd>
+                <dd class="tstat__bar"><span class="meter" aria-hidden="true"><span class="meter__fill" style="width:67%"></span></span><span class="sr-only">67% of declared weight done</span></dd>
+                <dd class="sub">ETA 14:10</dd>
+              </div>
+              <div class="tstat">
+                <dt>Context</dt>
+                <dd><span>12%</span></dd>
+                <dd class="tstat__bar"><span class="meter" aria-hidden="true"><span class="meter__fill" style="width:12%"></span><span class="meter__mark" style="left:70%"></span></span><span class="sr-only">12% of the 1M-token window; rollover threshold 70%</span></dd>
+                <dd class="sub">of 1M window</dd>
+              </div>
+              <div class="tstat">
+                <dt>Today</dt>
+                <dd><span>$3.85</span></dd>
+                <dd class="sub">RM 16.23</dd>
+              </div>
+            </dl>
+          </li>
+          <li class="tile">
+            <div class="tile__top">
+              <h3 class="tile__name"><a href="#session">agent-assist</a> <span class="tile__sess">s3</span></h3>
+              <div class="tile__chips"><span class="chip">feature-build</span><span class="chip chip--model">Sonnet</span></div>
+            </div>
+            <p class="tile__ctx">CX Copilot · P4 Agent desktop panel</p>
+            <div class="tile__state"><span class="badge badge--working"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-working"/></svg>Working</span><span class="tile__statemeta">on P4-T4</span><span class="tile__dev">Wei Jie</span></div>
+            <div class="tile__act">
+              <svg class="spark" viewBox="0 0 200 40" role="img" aria-label="agent-assist s3, actions per minute over the last 30 minutes: 9 now; peak 10; steady activity."><title>agent-assist s3, actions per minute over the last 30 minutes: 9 now; peak 10; steady activity.</title><line class="spark__base" x1="3" y1="37.5" x2="197" y2="37.5"/><path class="spark__area" d="M3 37L3 23.8L9.7 19.4L16.4 21.6L23.1 17.2L29.8 26L36.4 28.2L43.1 21.6L49.8 19.4L56.5 23.8L63.2 15L69.9 17.2L76.6 21.6L83.3 26L90 23.8L96.7 19.4L103.3 21.6L110 28.2L116.7 30.4L123.4 26L130.1 21.6L136.8 19.4L143.5 23.8L150.2 17.2L156.9 15L163.6 19.4L170.2 21.6L176.9 23.8L183.6 19.4L190.3 21.6L197 17.2L197 37Z"/><path class="spark__line" d="M3 23.8L9.7 19.4L16.4 21.6L23.1 17.2L29.8 26L36.4 28.2L43.1 21.6L49.8 19.4L56.5 23.8L63.2 15L69.9 17.2L76.6 21.6L83.3 26L90 23.8L96.7 19.4L103.3 21.6L110 28.2L116.7 30.4L123.4 26L130.1 21.6L136.8 19.4L143.5 23.8L150.2 17.2L156.9 15L163.6 19.4L170.2 21.6L176.9 23.8L183.6 19.4L190.3 21.6L197 17.2"/><circle class="spark__dot" cx="197" cy="17.2" r="3"/></svg>
+              <p class="apm"><span class="apm__v">9</span><span class="apm__u">APM now</span></p>
+            </div>
+            <dl class="tile__stats">
+              <div class="tstat">
+                <dt>Tasks</dt>
+                <dd><span>20/29</span><span class="tstat__pct">65%</span></dd>
+                <dd class="tstat__bar"><span class="meter" aria-hidden="true"><span class="meter__fill" style="width:65%"></span></span><span class="sr-only">65% of declared weight done</span></dd>
+                <dd class="sub">ETA 17:20</dd>
+              </div>
+              <div class="tstat">
+                <dt>Context</dt>
+                <dd><span>41%</span></dd>
+                <dd class="tstat__bar"><span class="meter" aria-hidden="true"><span class="meter__fill" style="width:41%"></span><span class="meter__mark" style="left:70%"></span></span><span class="sr-only">41% of the 1M-token window; rollover threshold 70%</span></dd>
+                <dd class="sub">of 1M window</dd>
+              </div>
+              <div class="tstat">
+                <dt>Today</dt>
+                <dd><span>$28.22</span></dd>
+                <dd class="sub">RM 118.94</dd>
+              </div>
+            </dl>
+          </li>
+          <li class="tile">
+            <div class="tile__top">
+              <h3 class="tile__name">runbooks <span class="tile__sess">s1</span></h3>
+              <div class="tile__chips"><span class="chip">docs</span><span class="chip chip--model">Opus</span></div>
+            </div>
+            <p class="tile__ctx">AOC Platform · P2 Operator runbooks</p>
+            <div class="tile__state"><span class="badge badge--working"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-working"/></svg>Working</span><span class="tile__statemeta">on P2-T6</span><span class="tile__dev"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-eye"/></svg>observed · Priya</span></div>
+            <div class="tile__act">
+              <svg class="spark" viewBox="0 0 200 40" role="img" aria-label="runbooks s1, actions per minute over the last 30 minutes: 5 now; peak 7; steady, low-rate activity."><title>runbooks s1, actions per minute over the last 30 minutes: 5 now; peak 7; steady, low-rate activity.</title><line class="spark__base" x1="3" y1="37.5" x2="197" y2="37.5"/><path class="spark__area" d="M3 37L3 30.4L9.7 28.2L16.4 32.6L23.1 26L29.8 23.8L36.4 28.2L43.1 30.4L49.8 26L56.5 28.2L63.2 23.8L69.9 21.6L76.6 26L83.3 30.4L90 28.2L96.7 32.6L103.3 28.2L110 26L116.7 23.8L123.4 28.2L130.1 30.4L136.8 26L143.5 28.2L150.2 23.8L156.9 26L163.6 30.4L170.2 28.2L176.9 26L183.6 23.8L190.3 28.2L197 26L197 37Z"/><path class="spark__line" d="M3 30.4L9.7 28.2L16.4 32.6L23.1 26L29.8 23.8L36.4 28.2L43.1 30.4L49.8 26L56.5 28.2L63.2 23.8L69.9 21.6L76.6 26L83.3 30.4L90 28.2L96.7 32.6L103.3 28.2L110 26L116.7 23.8L123.4 28.2L130.1 30.4L136.8 26L143.5 28.2L150.2 23.8L156.9 26L163.6 30.4L170.2 28.2L176.9 26L183.6 23.8L190.3 28.2L197 26"/><circle class="spark__dot" cx="197" cy="26" r="3"/></svg>
+              <p class="apm"><span class="apm__v">5</span><span class="apm__u">APM now</span></p>
+            </div>
+            <dl class="tile__stats">
+              <div class="tstat">
+                <dt>Tasks</dt>
+                <dd><span>5/12</span><span class="tstat__pct">38%</span></dd>
+                <dd class="tstat__bar"><span class="meter" aria-hidden="true"><span class="meter__fill" style="width:38%"></span></span><span class="sr-only">38% of declared weight done</span></dd>
+                <dd class="sub">ETA 16:05</dd>
+              </div>
+              <div class="tstat">
+                <dt>Context</dt>
+                <dd><span>27%</span></dd>
+                <dd class="tstat__bar"><span class="meter" aria-hidden="true"><span class="meter__fill" style="width:27%"></span><span class="meter__mark" style="left:70%"></span></span><span class="sr-only">27% of the 1M-token window; rollover threshold 70%</span></dd>
+                <dd class="sub">of 1M window</dd>
+              </div>
+              <div class="tstat">
+                <dt>Today</dt>
+                <dd><span>$12.90</span></dd>
+                <dd class="sub">RM 54.37</dd>
+              </div>
+            </dl>
+          </li>
+          <li class="tile">
+            <div class="tile__top">
+              <h3 class="tile__name">rubric-tests <span class="tile__sess">s1</span></h3>
+              <div class="tile__chips"><span class="chip">test-repair</span><span class="chip chip--model">Haiku</span></div>
+            </div>
+            <p class="tile__ctx">QA Scorecard · P2 Failing rubric tests</p>
+            <div class="tile__state"><span class="badge badge--working"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-working"/></svg>Working</span><span class="tile__statemeta">on P2-T2</span><span class="tile__dev">Aisyah</span></div>
+            <div class="tile__act">
+              <svg class="spark" viewBox="0 0 200 40" role="img" aria-label="rubric-tests s1, actions per minute over the last 30 minutes: 12 now; peak 14; bursty: test runs every few minutes."><title>rubric-tests s1, actions per minute over the last 30 minutes: 12 now; peak 14; bursty: test runs every few minutes.</title><line class="spark__base" x1="3" y1="37.5" x2="197" y2="37.5"/><path class="spark__area" d="M3 37L3 34.8L9.7 28.2L16.4 17.2L23.1 8.4L29.8 21.6L36.4 30.4L43.1 34.8L49.8 32.6L56.5 23.8L63.2 10.6L69.9 6.2L76.6 19.4L83.3 30.4L90 34.8L96.7 26L103.3 15L110 8.4L116.7 19.4L123.4 30.4L130.1 34.8L136.8 28.2L143.5 17.2L150.2 6.2L156.9 12.8L163.6 26L170.2 32.6L176.9 23.8L183.6 12.8L190.3 6.2L197 10.6L197 37Z"/><path class="spark__line" d="M3 34.8L9.7 28.2L16.4 17.2L23.1 8.4L29.8 21.6L36.4 30.4L43.1 34.8L49.8 32.6L56.5 23.8L63.2 10.6L69.9 6.2L76.6 19.4L83.3 30.4L90 34.8L96.7 26L103.3 15L110 8.4L116.7 19.4L123.4 30.4L130.1 34.8L136.8 28.2L143.5 17.2L150.2 6.2L156.9 12.8L163.6 26L170.2 32.6L176.9 23.8L183.6 12.8L190.3 6.2L197 10.6"/><circle class="spark__dot" cx="197" cy="10.6" r="3"/></svg>
+              <p class="apm"><span class="apm__v">12</span><span class="apm__u">APM now</span></p>
+            </div>
+            <dl class="tile__stats">
+              <div class="tstat">
+                <dt>Tasks</dt>
+                <dd><span>1/6</span><span class="tstat__pct">14%</span></dd>
+                <dd class="tstat__bar"><span class="meter" aria-hidden="true"><span class="meter__fill" style="width:14%"></span></span><span class="sr-only">14% of declared weight done</span></dd>
+                <dd class="sub">ETA after 3 tasks</dd>
+              </div>
+              <div class="tstat">
+                <dt>Context</dt>
+                <dd><span>9%</span></dd>
+                <dd class="tstat__bar"><span class="meter" aria-hidden="true"><span class="meter__fill" style="width:9%"></span><span class="meter__mark" style="left:70%"></span></span><span class="sr-only">9% of the 1M-token window; rollover threshold 70%</span></dd>
+                <dd class="sub">of 1M window</dd>
+              </div>
+              <div class="tstat">
+                <dt>Today</dt>
+                <dd><span>$0.48</span></dd>
+                <dd class="sub">RM 2.02</dd>
+              </div>
+            </dl>
+          </li>
+          </ol>
+        </section>
+        <aside class="panel rail" aria-labelledby="rail-h">
+          <div class="panel__head">
+            <h2 id="rail-h">Decisions waiting <span class="count">6</span></h2>
+            <p class="panel__meta">Oldest first</p>
+          </div>
+          <ol class="dlist">
+          <li class="dcard">
+            <div class="dcard__top"><span class="dcard__age"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-clock"/></svg>2h 14m</span><span class="dcard__kind">Agent decision</span><span class="chip chip--test"><span class="chip__k">test</span>data</span></div>
+            <h3 class="dcard__q">Backfill 41,208 claims into claim_status: overnight batches, one transaction now, or derive on read?</h3>
+            <p class="dcard__src">Claims Intake Bot · backfill-status s5 · Aisyah</p>
+            <div class="rec">
+              <p class="rec__by"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-star"/></svg>Agent recommends</p>
+              <p class="rec__what">Batches of 5,000, 01:00–04:00</p>
+              <p class="rec__why">Each batch reverses on its own; no table lock in business hours.</p>
+            </div>
+            <div class="dcard__actions">
+              <button type="button" class="btn btn--primary">Approve</button>
+              <button type="button" class="btn">Reject</button>
+            </div>
+          </li>
+          <li class="dcard">
+            <div class="dcard__top"><span class="dcard__age"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-clock"/></svg>1h 05m</span><span class="dcard__kind">Go-live</span><span class="chip chip--test"><span class="chip__k">test</span>production</span><span class="dcard__pk" title="Requires passkey (WebAuthn)"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-key"/></svg>Passkey</span></div>
+            <h3 class="dcard__q">Promote CX Copilot v1.4.0 to production?</h3>
+            <p class="dcard__src">CX Copilot · tag cx-copilot@v1.4.0 (c3e81f0) · CR-0217</p>
+            <div class="rec">
+              <p class="rec__by"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-star"/></svg>AOC recommends</p>
+              <p class="rec__what">Approve: provenance complete</p>
+              <p class="rec__why">Change record approved, UAT signed off 12:31, acceptance 48/48.</p>
+            </div>
+            <div class="dcard__actions">
+              <button type="button" class="btn btn--primary"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-key"/></svg>Approve with passkey</button>
+              <button type="button" class="btn">Reject</button>
+            </div>
+          </li>
+          <li class="dcard">
+            <div class="dcard__top"><span class="dcard__age"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-clock"/></svg>47m</span><span class="dcard__kind">Rollback</span><span class="chip chip--test"><span class="chip__k">test</span>main</span><span class="dcard__pk" title="Requires passkey (WebAuthn)"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-key"/></svg>Passkey</span></div>
+            <h3 class="dcard__q">Roll claims-intake main back to tag p1-done (7c2e9d1)?</h3>
+            <p class="dcard__src">Claims Intake Bot · raised by Priya after INC-0093</p>
+            <div class="rec">
+              <p class="rec__by"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-star"/></svg>AOC recommends</p>
+              <p class="rec__what">Approve: rollback tested clean</p>
+              <p class="rec__why">Branch rb/claims-p1 passes 52/52. Main is untouched until you approve.</p>
+            </div>
+            <div class="dcard__actions">
+              <button type="button" class="btn btn--primary"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-key"/></svg>Approve with passkey</button>
+              <button type="button" class="btn">Reject</button>
+            </div>
+          </li>
+          <li class="dcard">
+            <div class="dcard__top"><span class="dcard__age"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-clock"/></svg>31m</span><span class="dcard__kind">Credit top-up</span><span class="chip chip--policy">policy</span></div>
+            <h3 class="dcard__q">Top up Wei Jie’s credits by $40.00 (RM 168.60)?</h3>
+            <p class="dcard__src">CX Copilot · 2nd request this period · auto-grant used 09:12</p>
+            <div class="rec">
+              <p class="rec__by"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-star"/></svg>AOC recommends</p>
+              <p class="rec__what">Approve $40.00</p>
+              <p class="rec__why">Balance $3.10 of $160.00; the cap only applies at the next task boundary.</p>
+            </div>
+            <div class="dcard__actions">
+              <button type="button" class="btn btn--primary">Approve</button>
+              <button type="button" class="btn">Reject</button>
+            </div>
+          </li>
+          <li class="dcard">
+            <div class="dcard__top"><span class="dcard__age"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-clock"/></svg>12m</span><span class="dcard__kind">Lesson binding</span><span class="chip chip--policy">policy</span></div>
+            <h3 class="dcard__q">Bind lesson L-017 to migration runs: “run pnpm db:check before task_done on schema changes”?</h3>
+            <p class="dcard__src">Root cause: missing guardrail · 3 repeats prevented in trial</p>
+            <div class="rec">
+              <p class="rec__by"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-star"/></svg>AOC recommends</p>
+              <p class="rec__what">Bind to scope migration</p>
+              <p class="rec__why">About 14 min saved per run. Retires after 30 unused runs.</p>
+            </div>
+            <div class="dcard__actions">
+              <button type="button" class="btn btn--primary">Approve</button>
+              <button type="button" class="btn">Reject</button>
+            </div>
+          </li>
+          <li class="dcard">
+            <div class="dcard__top"><span class="dcard__age"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-clock"/></svg>6m</span><span class="dcard__kind">Agent decision</span><span class="chip chip--test"><span class="chip__k">test</span>ambiguity</span></div>
+            <h3 class="dcard__q">Mask NRIC numbers at ingest, or on screen only?</h3>
+            <p class="dcard__src">CX Copilot · nric-masking s1 · Daniel</p>
+            <div class="rec">
+              <p class="rec__by"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-star"/></svg>Agent recommends</p>
+              <p class="rec__what">Mask at ingest, keep a salted hash</p>
+              <p class="rec__why">Raw NRIC is never stored (PDPA) and duplicate matching still works.</p>
+            </div>
+            <div class="dcard__actions">
+              <button type="button" class="btn btn--primary">Approve</button>
+              <button type="button" class="btn">Reject</button>
+            </div>
+          </li>
+          </ol>
+        </aside>
+
+        <section class="panel ended" aria-labelledby="ended-h">
+          <div class="panel__head">
+            <h2 id="ended-h">Ended today</h2>
+            <p class="panel__meta">5 sessions · $18.66 notional, included in today’s spend</p>
+          </div>
+          <table class="dt rt" role="table">
+            <caption class="sr-only">Sessions that ended earlier today</caption>
+            <thead role="rowgroup"><tr role="row"><th role="columnheader" scope="col">Session</th><th role="columnheader" scope="col">Project</th><th role="columnheader" scope="col">Ended</th><th role="columnheader" scope="col">Outcome</th><th role="columnheader" scope="col" class="num">Tasks closed</th><th role="columnheader" scope="col" class="num">Notional</th></tr></thead>
+            <tbody role="rowgroup">
+              <tr>
+                <td class="nowrap" data-label="Session"><div class="cv"><b>triage-1184</b> <span class="muted">c</span></div></td>
+                <td data-label="Project"><div class="cv">CX Copilot<span class="cell-sub">bug-triage · Sonnet</span></div></td>
+                <td data-label="Ended"><div class="cv">13:04</div></td>
+                <td data-label="Outcome"><div class="cv">Same root cause as agent a; no reconciliation needed</div></td>
+                <td class="num" data-label="Tasks closed"><div class="cv">4</div></td>
+                <td class="num" data-label="Notional"><div class="cv"><b>$3.70</b><span class="cell-sub">RM 15.60</span></div></td>
+              </tr>
+              <tr>
+                <td class="nowrap" data-label="Session"><div class="cv"><b>triage-1184</b> <span class="muted">a</span></div></td>
+                <td data-label="Project"><div class="cv">CX Copilot<span class="cell-sub">bug-triage · Sonnet</span></div></td>
+                <td data-label="Ended"><div class="cv">12:58</div></td>
+                <td data-label="Outcome"><div class="cv">Root cause reported, confidence 0.82</div></td>
+                <td class="num" data-label="Tasks closed"><div class="cv">4</div></td>
+                <td class="num" data-label="Notional"><div class="cv"><b>$3.40</b><span class="cell-sub">RM 14.33</span></div></td>
+              </tr>
+              <tr>
+                <td class="nowrap" data-label="Session"><div class="cv"><b>qa-export</b> <span class="muted">s2</span></div></td>
+                <td data-label="Project"><div class="cv">QA Scorecard<span class="cell-sub">feature-build · Sonnet</span></div></td>
+                <td data-label="Ended"><div class="cv">11:40</div></td>
+                <td data-label="Outcome"><div class="cv">Completed; tag v0.6.0 pinned</div></td>
+                <td class="num" data-label="Tasks closed"><div class="cv">6</div></td>
+                <td class="num" data-label="Notional"><div class="cv"><b>$2.40</b><span class="cell-sub">RM 10.12</span></div></td>
+              </tr>
+              <tr>
+                <td class="nowrap" data-label="Session"><div class="cv"><b>fx-rates</b> <span class="muted">daily</span></div></td>
+                <td data-label="Project"><div class="cv">AOC Platform<span class="cell-sub">fx-scrape · Haiku</span></div></td>
+                <td data-label="Ended"><div class="cv">09:02</div></td>
+                <td data-label="Outcome"><div class="cv">USD/MYR 4.2150 fetched live and validated</div></td>
+                <td class="num" data-label="Tasks closed"><div class="cv">1</div></td>
+                <td class="num" data-label="Notional"><div class="cv"><b>$0.04</b><span class="cell-sub">RM 0.17</span></div></td>
+              </tr>
+              <tr>
+                <td class="nowrap" data-label="Session"><div class="cv"><b>backfill-status</b> <span class="muted">s4</span></div></td>
+                <td data-label="Project"><div class="cv">Claims Intake Bot<span class="cell-sub">migration · Opus</span></div></td>
+                <td data-label="Ended"><div class="cv">08:29</div></td>
+                <td data-label="Outcome"><div class="cv">Rolled over to s5 at 71% context</div></td>
+                <td class="num" data-label="Tasks closed"><div class="cv">5</div></td>
+                <td class="num" data-label="Notional"><div class="cv"><b>$9.12</b><span class="cell-sub">RM 38.44</span></div></td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+      </div>
+    </section>
+
+    <section id="view-session" class="view" role="tabpanel" aria-labelledby="tab-session">
+      <header class="shead">
+        <div class="shead__id">
+          <nav class="crumbs" aria-label="Breadcrumb"><ol><li><a href="#console">Console</a></li><li>CX Copilot</li><li>thread agent-assist</li><li aria-current="page">s3</li></ol></nav>
+          <div class="shead__title">
+            <h1>agent-assist <span>· s3</span></h1>
+            <span class="badge badge--working"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-working"/></svg>Working</span>
+            <span class="alive"><span class="alive__dot" aria-hidden="true"></span>Alive · heartbeat 2s ago</span>
+          </div>
+          <div class="shead__facts">
+            <span class="chip">feature-build · execution</span><span class="chip chip--model">Sonnet</span><span class="chip chip--managed"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-shield"/></svg>Managed</span>
+            <span>CX Copilot · thread agent-assist, 3 sessions since Mon 5 Oct</span>
+            <span><svg class="i" aria-hidden="true" focusable="false"><use href="#i-person"/></svg>Wei Jie</span>
+            <span>Started 07:12 · 6h 30m · last event 13:41:52</span>
+          </div>
+        </div>
+        <section class="ops" aria-labelledby="ops-h">
+          <h2 id="ops-h" class="minihead">Operator actions</h2>
+          <div class="ops__btns">
+            <button type="button" class="btn" aria-describedby="ops-nudge"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-message"/></svg>Nudge…</button>
+            <button type="button" class="btn" aria-describedby="ops-restart"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-restart"/></svg>Restart</button>
+            <button type="button" class="btn" aria-disabled="true" aria-describedby="ops-roll"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-rollover"/></svg>Roll over</button>
+          </div>
+          <ul class="ops__help">
+            <li id="ops-nudge"><b>Nudge</b> ends the turn and resumes with your note.</li>
+            <li id="ops-restart"><b>Restart</b> relaunches from the last checkpoint with --resume.</li>
+            <li id="ops-roll" class="ops__blocked"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-lock"/></svg><span><b>Roll over</b> is unavailable: not at a clean task boundary. P4-T4 has 37 file edits since the last task_done at 12:31.</span></li>
+          </ul>
+        </section>
+      </header>
+
+      <section class="panel hero-tl" aria-labelledby="tl-h">
+        <div class="panel__head">
+          <h2 id="tl-h">Session timeline</h2>
+          <p class="panel__meta">Phases to scale by elapsed time · 07:12–13:42 MYT</p>
+        </div>
+        <div class="panel__body">
+          <dl class="tlstats">
+            <div><dt>Elapsed</dt><dd>6h 30m</dd></div>
+            <div><dt>Tool calls</dt><dd>1,751</dd></div>
+            <div><dt>Avg per active min</dt><dd>5.5</dd></div>
+            <div><dt>Decisions</dt><dd>3 <span>· 48 min waiting</span></dd></div>
+            <div><dt>Drift marks</dt><dd>2</dd></div>
+            <div><dt>Rollbacks</dt><dd>1</dd></div>
+            <div><dt>Throttled</dt><dd>23 min</dd></div>
+          </dl>
+
+          <div class="tl">
+            <div class="tl__marks">
+              <button type="button" class="mk mk--pin" style="--x:11.79%" aria-describedby="tip-0" aria-label="07:58 · Phase P2 complete"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-flag"/></svg><span class="tip tip--start" role="tooltip" id="tip-0"><b>07:58 · Phase P2 complete</b>Pinned tag p2-done → 4e1a9c2. Rollback target for this phase.</span></button>
+              <span class="tl__wait" style="--x:24.36%;--w:5.64%" aria-hidden="true"></span><button type="button" class="mk mk--decision" style="--x:24.36%" aria-describedby="tip-1" aria-label="08:47 · Decision · irreversible"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-waiting"/></svg><span class="tip" role="tooltip" id="tip-1"><b>08:47 · Decision · irreversible</b>Drop staging table tmp_transcripts? Rejected by CEO after 22 min: keep until UAT sign-off.</span></button>
+              <button type="button" class="mk mk--drift" style="--x:30.77%" aria-describedby="tip-2" aria-label="09:12 · Drift"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-drift"/></svg><span class="tip" role="tooltip" id="tip-2"><b>09:12 · Drift</b>P3-T3 edited summariser/src/config.ts, outside its declared files.</span></button>
+              <span class="tl__wait" style="--x:38.21%;--w:4.36%" aria-hidden="true"></span><button type="button" class="mk mk--decision" style="--x:38.21%" aria-describedby="tip-3" aria-label="09:41 · Decision · ambiguity"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-waiting"/></svg><span class="tip" role="tooltip" id="tip-3"><b>09:41 · Decision · ambiguity</b>Summary format: 3 bullets or an 80-word paragraph? Wei Jie chose 3 bullets (the agent’s recommendation) after 17 min.</span></button>
+              <button type="button" class="mk mk--rollback" style="--x:46.15%" aria-describedby="tip-4" aria-label="10:12 · Rollback (off-main)"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-rollback"/></svg><span class="tip" role="tooltip" id="tip-4"><b>10:12 · Rollback (off-main)</b>Reverted P3-T5 (2 commits) to 9c4e1b7 after the contract test failed. Self-approved by Wei Jie · change record CR-0211.</span></button>
+              <button type="button" class="mk mk--pin" style="--x:51.03%" aria-describedby="tip-5" aria-label="10:31 · Phase P3 complete"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-flag"/></svg><span class="tip" role="tooltip" id="tip-5"><b>10:31 · Phase P3 complete</b>Pinned tag p3-done → 9b07d3e.</span></button>
+              <span class="tl__wait" style="--x:76.41%;--w:2.31%" aria-hidden="true"></span><button type="button" class="mk mk--decision" style="--x:76.41%" aria-describedby="tip-6" aria-label="12:10 · Decision · main"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-waiting"/></svg><span class="tip tip--end" role="tooltip" id="tip-6"><b>12:10 · Decision · main</b>Merge summariser-service into main? Approved by CEO after 9 min: merge after green CI.</span></button>
+              <button type="button" class="mk mk--enh" style="--x:85.90%" aria-describedby="tip-7" aria-label="12:47 · Enhancement"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-enh"/></svg><span class="tip tip--end" role="tooltip" id="tip-7"><b>12:47 · Enhancement</b>Amendment #2 added P4-T7 Keyboard shortcuts (s). Denominator 28 → 29 tasks, 76 → 78 weight.</span></button>
+              <button type="button" class="mk mk--drift" style="--x:90.51%" aria-describedby="tip-8" aria-label="13:05 · Drift"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-drift"/></svg><span class="tip tip--end" role="tooltip" id="tip-8"><b>13:05 · Drift</b>P4-T4 touched 3 files outside the panel package.</span></button>
+            </div>
+            <div class="tl__bands"><div class="band band--narrow" style="--x:0.00%;--w:11.79%"><b>P2</b><span class="band__dur">46m</span></div><div class="band" style="--x:11.79%;--w:39.23%"><b>P3</b><span class="band__name">Summariser service</span><span class="band__dur">2h 33m</span></div><div class="band band--current" style="--x:51.03%;--w:48.97%"><b>P4</b><span class="band__name">Agent desktop panel</span><span class="band__dur">3h 11m</span><span class="band__now">in progress</span></div></div>
+            <div class="tl__ticklane">
+              <svg class="tl__ticks" viewBox="0 0 390 36" preserveAspectRatio="none" role="img" aria-label="Tool calls per minute, 07:12 to 13:42: 1,751 calls, average 5.5 per active minute, peak 11 at 10:20; no calls during three decision waits and a 23-minute plan-limit throttle."><title>Tool calls per minute, 07:12 to 13:42: 1,751 calls, average 5.5 per active minute, peak 11 at 10:20; no calls during three decision waits and a 23-minute plan-limit throttle.</title><path d="M0.15 36v-11.3h0.7V36zM1.15 36v-14.2h0.7V36zM2.15 36v-8.5h0.7V36zM3.15 36v-11.3h0.7V36zM4.15 36v-17h0.7V36zM5.15 36v-11.3h0.7V36zM6.15 36v-19.8h0.7V36zM7.15 36v-14.2h0.7V36zM8.15 36v-14.2h0.7V36zM9.15 36v-11.3h0.7V36zM10.15 36v-17h0.7V36zM11.15 36v-17h0.7V36zM12.15 36v-19.8h0.7V36zM13.15 36v-14.2h0.7V36zM14.15 36v-14.2h0.7V36zM15.15 36v-22.7h0.7V36zM16.15 36v-22.7h0.7V36zM17.15 36v-14.2h0.7V36zM18.15 36v-19.8h0.7V36zM19.15 36v-19.8h0.7V36zM20.15 36v-11.3h0.7V36zM21.15 36v-11.3h0.7V36zM22.15 36v-14.2h0.7V36zM23.15 36v-17h0.7V36zM24.15 36v-14.2h0.7V36zM25.15 36v-14.2h0.7V36zM26.15 36v-8.5h0.7V36zM27.15 36v-11.3h0.7V36zM28.15 36v-14.2h0.7V36zM29.15 36v-14.2h0.7V36zM30.15 36v-11.3h0.7V36zM31.15 36v-8.5h0.7V36zM32.15 36v-14.2h0.7V36zM33.15 36v-5.7h0.7V36zM34.15 36v-11.3h0.7V36zM35.15 36v-14.2h0.7V36zM36.15 36v-11.3h0.7V36zM37.15 36v-5.7h0.7V36zM38.15 36v-8.5h0.7V36zM39.15 36v-5.7h0.7V36zM40.15 36v-8.5h0.7V36zM41.15 36v-2.8h0.7V36zM42.15 36v-5.7h0.7V36zM43.15 36v-5.7h0.7V36zM44.15 36v-5.7h0.7V36zM45.15 36v-2.8h0.7V36zM46.15 36v-5.7h0.7V36zM47.15 36v-11.3h0.7V36zM48.15 36v-11.3h0.7V36zM49.15 36v-5.7h0.7V36zM50.15 36v-5.7h0.7V36zM51.15 36v-5.7h0.7V36zM52.15 36v-5.7h0.7V36zM53.15 36v-11.3h0.7V36zM54.15 36v-11.3h0.7V36zM55.15 36v-17h0.7V36zM56.15 36v-8.5h0.7V36zM57.15 36v-14.2h0.7V36zM58.15 36v-8.5h0.7V36zM59.15 36v-17h0.7V36zM60.15 36v-17h0.7V36zM61.15 36v-14.2h0.7V36zM62.15 36v-19.8h0.7V36zM63.15 36v-19.8h0.7V36zM64.15 36v-14.2h0.7V36zM65.15 36v-17h0.7V36zM66.15 36v-11.3h0.7V36zM67.15 36v-17h0.7V36zM68.15 36v-14.2h0.7V36zM69.15 36v-14.2h0.7V36zM70.15 36v-11.3h0.7V36zM71.15 36v-11.3h0.7V36zM72.15 36v-14.2h0.7V36zM73.15 36v-14.2h0.7V36zM74.15 36v-19.8h0.7V36zM75.15 36v-11.3h0.7V36zM76.15 36v-19.8h0.7V36zM77.15 36v-14.2h0.7V36zM78.15 36v-11.3h0.7V36zM79.15 36v-8.5h0.7V36zM80.15 36v-8.5h0.7V36zM81.15 36v-11.3h0.7V36zM82.15 36v-14.2h0.7V36zM83.15 36v-17h0.7V36zM84.15 36v-8.5h0.7V36zM85.15 36v-14.2h0.7V36zM86.15 36v-17h0.7V36zM87.15 36v-11.3h0.7V36zM88.15 36v-8.5h0.7V36zM89.15 36v-11.3h0.7V36zM90.15 36v-11.3h0.7V36zM91.15 36v-11.3h0.7V36zM92.15 36v-5.7h0.7V36zM93.15 36v-5.7h0.7V36zM94.15 36v-11.3h0.7V36zM117.15 36v-14.2h0.7V36zM118.15 36v-17h0.7V36zM119.15 36v-14.2h0.7V36zM120.15 36v-17h0.7V36zM121.15 36v-19.8h0.7V36zM122.15 36v-17h0.7V36zM123.15 36v-22.7h0.7V36zM124.15 36v-17h0.7V36zM125.15 36v-22.7h0.7V36zM126.15 36v-19.8h0.7V36zM127.15 36v-19.8h0.7V36zM128.15 36v-17h0.7V36zM129.15 36v-19.8h0.7V36zM130.15 36v-22.7h0.7V36zM131.15 36v-14.2h0.7V36zM132.15 36v-25.5h0.7V36zM133.15 36v-22.7h0.7V36zM134.15 36v-22.7h0.7V36zM135.15 36v-22.7h0.7V36zM136.15 36v-19.8h0.7V36zM137.15 36v-17h0.7V36zM138.15 36v-14.2h0.7V36zM139.15 36v-17h0.7V36zM140.15 36v-14.2h0.7V36zM141.15 36v-11.3h0.7V36zM142.15 36v-14.2h0.7V36zM143.15 36v-14.2h0.7V36zM144.15 36v-19.8h0.7V36zM145.15 36v-17h0.7V36zM146.15 36v-11.3h0.7V36zM147.15 36v-11.3h0.7V36zM148.15 36v-8.5h0.7V36zM166.15 36v-14.2h0.7V36zM167.15 36v-8.5h0.7V36zM168.15 36v-14.2h0.7V36zM169.15 36v-19.8h0.7V36zM170.15 36v-14.2h0.7V36zM171.15 36v-17h0.7V36zM172.15 36v-19.8h0.7V36zM173.15 36v-17h0.7V36zM174.15 36v-14.2h0.7V36zM175.15 36v-22.7h0.7V36zM176.15 36v-19.8h0.7V36zM177.15 36v-14.2h0.7V36zM178.15 36v-19.8h0.7V36zM179.15 36v-22.7h0.7V36zM180.15 36v-25.5h0.7V36zM181.15 36v-25.5h0.7V36zM182.15 36v-25.5h0.7V36zM183.15 36v-25.5h0.7V36zM184.15 36v-25.5h0.7V36zM185.15 36v-25.5h0.7V36zM186.15 36v-28.3h0.7V36zM187.15 36v-22.7h0.7V36zM188.15 36v-31.2h0.7V36zM189.15 36v-31.2h0.7V36zM190.15 36v-19.8h0.7V36zM191.15 36v-22.7h0.7V36zM192.15 36v-11.3h0.7V36zM193.15 36v-11.3h0.7V36zM194.15 36v-11.3h0.7V36zM195.15 36v-11.3h0.7V36zM196.15 36v-17h0.7V36zM197.15 36v-17h0.7V36zM198.15 36v-8.5h0.7V36zM199.15 36v-14.2h0.7V36zM200.15 36v-14.2h0.7V36zM201.15 36v-5.7h0.7V36zM202.15 36v-11.3h0.7V36zM203.15 36v-14.2h0.7V36zM204.15 36v-11.3h0.7V36zM205.15 36v-11.3h0.7V36zM206.15 36v-8.5h0.7V36zM207.15 36v-11.3h0.7V36zM208.15 36v-5.7h0.7V36zM232.15 36v-19.8h0.7V36zM233.15 36v-19.8h0.7V36zM234.15 36v-19.8h0.7V36zM235.15 36v-14.2h0.7V36zM236.15 36v-11.3h0.7V36zM237.15 36v-17h0.7V36zM238.15 36v-19.8h0.7V36zM239.15 36v-14.2h0.7V36zM240.15 36v-11.3h0.7V36zM241.15 36v-11.3h0.7V36zM242.15 36v-14.2h0.7V36zM243.15 36v-17h0.7V36zM244.15 36v-11.3h0.7V36zM245.15 36v-19.8h0.7V36zM246.15 36v-19.8h0.7V36zM247.15 36v-19.8h0.7V36zM248.15 36v-22.7h0.7V36zM249.15 36v-11.3h0.7V36zM250.15 36v-11.3h0.7V36zM251.15 36v-17h0.7V36zM252.15 36v-14.2h0.7V36zM253.15 36v-17h0.7V36zM254.15 36v-17h0.7V36zM255.15 36v-17h0.7V36zM256.15 36v-8.5h0.7V36zM257.15 36v-19.8h0.7V36zM258.15 36v-19.8h0.7V36zM259.15 36v-17h0.7V36zM260.15 36v-17h0.7V36zM261.15 36v-11.3h0.7V36zM262.15 36v-5.7h0.7V36zM263.15 36v-14.2h0.7V36zM264.15 36v-17h0.7V36zM265.15 36v-8.5h0.7V36zM266.15 36v-14.2h0.7V36zM267.15 36v-11.3h0.7V36zM268.15 36v-5.7h0.7V36zM269.15 36v-14.2h0.7V36zM270.15 36v-8.5h0.7V36zM271.15 36v-17h0.7V36zM272.15 36v-8.5h0.7V36zM273.15 36v-8.5h0.7V36zM274.15 36v-11.3h0.7V36zM275.15 36v-14.2h0.7V36zM276.15 36v-11.3h0.7V36zM277.15 36v-17h0.7V36zM278.15 36v-11.3h0.7V36zM279.15 36v-19.8h0.7V36zM280.15 36v-14.2h0.7V36zM281.15 36v-14.2h0.7V36zM282.15 36v-22.7h0.7V36zM283.15 36v-19.8h0.7V36zM284.15 36v-14.2h0.7V36zM285.15 36v-22.7h0.7V36zM286.15 36v-17h0.7V36zM287.15 36v-22.7h0.7V36zM288.15 36v-25.5h0.7V36zM289.15 36v-17h0.7V36zM290.15 36v-25.5h0.7V36zM291.15 36v-19.8h0.7V36zM292.15 36v-19.8h0.7V36zM293.15 36v-28.3h0.7V36zM294.15 36v-19.8h0.7V36zM295.15 36v-25.5h0.7V36zM296.15 36v-17h0.7V36zM297.15 36v-28.3h0.7V36zM307.15 36v-22.7h0.7V36zM308.15 36v-17h0.7V36zM309.15 36v-17h0.7V36zM310.15 36v-22.7h0.7V36zM311.15 36v-19.8h0.7V36zM312.15 36v-17h0.7V36zM313.15 36v-14.2h0.7V36zM314.15 36v-14.2h0.7V36zM315.15 36v-11.3h0.7V36zM316.15 36v-19.8h0.7V36zM317.15 36v-11.3h0.7V36zM318.15 36v-17h0.7V36zM319.15 36v-14.2h0.7V36zM320.15 36v-8.5h0.7V36zM321.15 36v-14.2h0.7V36zM322.15 36v-17h0.7V36zM323.15 36v-11.3h0.7V36zM324.15 36v-14.2h0.7V36zM325.15 36v-14.2h0.7V36zM326.15 36v-14.2h0.7V36zM327.15 36v-17h0.7V36zM328.15 36v-8.5h0.7V36zM329.15 36v-14.2h0.7V36zM330.15 36v-14.2h0.7V36zM331.15 36v-5.7h0.7V36zM332.15 36v-17h0.7V36zM333.15 36v-17h0.7V36zM334.15 36v-14.2h0.7V36zM335.15 36v-8.5h0.7V36zM336.15 36v-17h0.7V36zM337.15 36v-8.5h0.7V36zM338.15 36v-19.8h0.7V36zM339.15 36v-19.8h0.7V36zM340.15 36v-17h0.7V36zM341.15 36v-11.3h0.7V36zM342.15 36v-19.8h0.7V36zM343.15 36v-17h0.7V36zM344.15 36v-11.3h0.7V36zM345.15 36v-19.8h0.7V36zM346.15 36v-14.2h0.7V36zM347.15 36v-14.2h0.7V36zM348.15 36v-19.8h0.7V36zM349.15 36v-14.2h0.7V36zM350.15 36v-17h0.7V36zM351.15 36v-22.7h0.7V36zM352.15 36v-19.8h0.7V36zM353.15 36v-17h0.7V36zM354.15 36v-17h0.7V36zM355.15 36v-14.2h0.7V36zM356.15 36v-19.8h0.7V36zM357.15 36v-17h0.7V36zM358.15 36v-14.2h0.7V36zM359.15 36v-11.3h0.7V36zM360.15 36v-17h0.7V36zM361.15 36v-22.7h0.7V36zM362.15 36v-19.8h0.7V36zM363.15 36v-25.5h0.7V36zM364.15 36v-14.2h0.7V36zM365.15 36v-11.3h0.7V36zM366.15 36v-19.8h0.7V36zM367.15 36v-22.7h0.7V36zM368.15 36v-17h0.7V36zM369.15 36v-28.3h0.7V36zM370.15 36v-25.5h0.7V36zM371.15 36v-19.8h0.7V36zM372.15 36v-14.2h0.7V36zM373.15 36v-17h0.7V36zM374.15 36v-22.7h0.7V36zM375.15 36v-19.8h0.7V36zM376.15 36v-11.3h0.7V36zM377.15 36v-8.5h0.7V36zM378.15 36v-14.2h0.7V36zM379.15 36v-19.8h0.7V36zM380.15 36v-22.7h0.7V36zM381.15 36v-17h0.7V36zM382.15 36v-25.5h0.7V36zM383.15 36v-28.3h0.7V36zM384.15 36v-22.7h0.7V36zM385.15 36v-19.8h0.7V36zM386.15 36v-17h0.7V36zM387.15 36v-22.7h0.7V36zM388.15 36v-19.8h0.7V36zM389.15 36v-25.5h0.7V36z"/><rect class="tl__thr" x="209" y="33" width="23" height="3"/></svg>
+              <span class="tl__thrlabel" style="--x:53.59%;--w:5.90%">throttled</span>
+            </div>
+            <div class="tl__axis"><span class="tl__hr tl__hr--start" style="--x:0%">07:12</span><span class="tl__hr" style="--x:12.31%">08:00</span><span class="tl__hr tl__hr--odd" style="--x:27.69%">09:00</span><span class="tl__hr" style="--x:43.08%">10:00</span><span class="tl__hr tl__hr--odd" style="--x:58.46%">11:00</span><span class="tl__hr" style="--x:73.85%">12:00</span><span class="tl__hr tl__hr--odd" style="--x:89.23%">13:00</span><span class="tl__hr tl__hr--end" style="--x:100%">now 13:42</span></div>
+            <div class="tl__now" aria-hidden="true"></div>
+          </div>
+
+          <ul class="legend" aria-label="Timeline legend">
+            <li><span class="lg lg--band" aria-hidden="true"></span>Phase, to scale</li>
+            <li><span class="lg lg--band lg--current" aria-hidden="true"></span>Current phase</li>
+            <li><span class="lg lg--ticks" aria-hidden="true"><i></i><i></i><i></i></span>Tool calls per minute</li>
+            <li><span class="lg-ic lg-ic--decision"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-waiting"/></svg></span>Decision, line = wait</li>
+            <li><span class="lg-ic lg-ic--drift"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-drift"/></svg></span>Drift</li>
+            <li><span class="lg-ic lg-ic--rollback"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-rollback"/></svg></span>Rollback</li>
+            <li><span class="lg-ic lg-ic--enh"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-enh"/></svg></span>Enhancement</li>
+            <li><span class="lg-ic"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-flag"/></svg></span>Phase tag pinned</li>
+            <li><span class="lg lg--thr" aria-hidden="true"></span>Throttled (idle)</li>
+            <li><span class="lg lg--now" aria-hidden="true"></span>Now</li>
+          </ul>
+          <p class="tl-summary"><b>P2 Transcript pipeline</b> 07:12–07:58 (46m, continued from s2) · <b>P3 Summariser service</b> 07:58–10:31 (2h 33m) · <b>P4 Agent desktop panel</b> 10:31–now (3h 11m) · <b>Next:</b> P5 Hardening and UAT, not started. Peak 11 tool calls a minute at 10:20, after the rollback re-run. Decisions at 08:47, 09:41 and 12:10; drift at 09:12 and 13:05; rollback at 10:12; enhancement at 12:47.</p>
+
+          <div class="pbar">
+            <div class="pbar__head">
+              <h3>Plan completion</h3>
+              <p class="pbar__total"><b>65%</b> · 51 of 78 weighted points · 20 of 29 tasks · denominator changed 12:47 (amendment #2, +2)</p>
+            </div>
+            <div class="pbar__track" role="img" aria-label="Plan completion by phase: P1 Discovery 8 of 8; P2 Transcript pipeline 16 of 16; P3 Summariser service 19 of 19; P4 Agent desktop panel 8 of 20; P5 Hardening and UAT 0 of 15. Overall 51 of 78 weight, 65%."><span class="pbar__seg" style="--w:8"><span class="pbar__done" style="--d:100%"></span></span><span class="pbar__seg" style="--w:16"><span class="pbar__done" style="--d:100%"></span></span><span class="pbar__seg" style="--w:19"><span class="pbar__done" style="--d:100%"></span></span><span class="pbar__seg" style="--w:20"><span class="pbar__done" style="--d:40%"></span></span><span class="pbar__seg" style="--w:15"><span class="pbar__done" style="--d:0%"></span></span></div>
+            <ol class="pbar__labels"><li style="--w:8"><b>P1 Discovery</b><span>8/8 weight · 4/4 tasks</span></li><li style="--w:16"><b>P2 Transcript pipeline</b><span>16/16 weight · 6/6 tasks</span></li><li style="--w:19"><b>P3 Summariser service</b><span>19/19 weight · 7/7 tasks</span></li><li style="--w:20"><b>P4 Agent desktop panel</b><span>8/20 weight · 3/7 tasks</span></li><li style="--w:15"><b>P5 Hardening and UAT</b><span>0/15 weight · 0/5 tasks</span></li></ol>
+          </div>
+        </div>
+      </section>
+
+      <div class="sgrid">
+
+        <section class="panel" aria-labelledby="man-h">
+          <div class="panel__head">
+            <h2 id="man-h">Plan manifest</h2>
+            <p class="panel__meta">Thread agent-assist · manifest v8 · weights xs 1 · s 2 · m 3 · l 5 · xl 8</p>
+          </div>
+          <div class="manifest">
+            <details class="phase phase--done">
+              <summary>
+                <svg class="i chev" aria-hidden="true" focusable="false"><use href="#i-chev"/></svg>
+                <span class="phase__title"><span class="phase__id">P1</span>Discovery<span class="phase__note">tag p1-done → 3f9a1c4 · s1, Mon 5 Oct</span></span>
+                <span class="phase__nums"><span class="st st--done"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-check-circle"/></svg>Done</span><span>4/4 tasks</span><span class="phase__meter"><span class="meter" aria-hidden="true"><span class="meter__fill" style="width:100%"></span></span><span class="sr-only">100% of weight</span></span><span class="phase__w">8/8</span></span>
+              </summary>
+              <p class="phase__empty">4 tasks, all closed with evidence.</p>
+            </details>
+            <details class="phase phase--done">
+              <summary>
+                <svg class="i chev" aria-hidden="true" focusable="false"><use href="#i-chev"/></svg>
+                <span class="phase__title"><span class="phase__id">P2</span>Transcript pipeline<span class="phase__note">tag p2-done → 4e1a9c2 · 07:58 today</span></span>
+                <span class="phase__nums"><span class="st st--done"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-check-circle"/></svg>Done</span><span>6/6 tasks</span><span class="phase__meter"><span class="meter" aria-hidden="true"><span class="meter__fill" style="width:100%"></span></span><span class="sr-only">100% of weight</span></span><span class="phase__w">16/16</span></span>
+              </summary>
+              <p class="phase__empty">6 tasks, all closed with evidence.</p>
+            </details>
+            <details class="phase phase--done">
+              <summary>
+                <svg class="i chev" aria-hidden="true" focusable="false"><use href="#i-chev"/></svg>
+                <span class="phase__title"><span class="phase__id">P3</span>Summariser service<span class="phase__note">tag p3-done → 9b07d3e · 10:31 · 1 rollback</span></span>
+                <span class="phase__nums"><span class="st st--done"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-check-circle"/></svg>Done</span><span>7/7 tasks</span><span class="phase__meter"><span class="meter" aria-hidden="true"><span class="meter__fill" style="width:100%"></span></span><span class="sr-only">100% of weight</span></span><span class="phase__w">19/19</span></span>
+              </summary>
+              <p class="phase__empty">7 tasks, all closed with evidence.</p>
+            </details>
+            <details class="phase phase--active" open>
+              <summary>
+                <svg class="i chev" aria-hidden="true" focusable="false"><use href="#i-chev"/></svg>
+                <span class="phase__title"><span class="phase__id">P4</span>Agent desktop panel<span class="phase__note">amended 12:47</span></span>
+                <span class="phase__nums"><span class="st st--active"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-half-circle"/></svg>In progress</span><span>3/7 tasks</span><span class="phase__meter"><span class="meter" aria-hidden="true"><span class="meter__fill" style="width:40%"></span></span><span class="sr-only">40% of weight</span></span><span class="phase__w">8/20</span></span>
+              </summary>
+              <table class="tasks" role="table">
+                <caption class="sr-only">P4 Agent desktop panel tasks</caption>
+                <thead role="rowgroup"><tr role="row"><th role="columnheader" scope="col">Task</th><th role="columnheader" scope="col">Title</th><th role="columnheader" scope="col">Size</th><th role="columnheader" scope="col">Status</th><th role="columnheader" scope="col">Evidence</th></tr></thead>
+                <tbody role="rowgroup">
+                  <tr>
+                    <td class="tid" data-label="Task"><div class="cv">P4-T1</div></td>
+                    <td class="ttl" data-label="Title"><div class="cv">Panel shell and routing</div></td>
+                    <td data-label="Size"><div class="cv"><span class="size">m</span></div></td>
+                    <td data-label="Status"><div class="cv"><span class="st st--done"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-check-circle"/></svg>Done 10:58</span></div></td>
+                    <td class="tev" data-label="Evidence"><div class="cv"><span class="ev"><b>diff</b><code>3 files +142 −18</code></span></div></td>
+                  </tr>
+                  <tr>
+                    <td class="tid" data-label="Task"><div class="cv">P4-T2</div></td>
+                    <td class="ttl" data-label="Title"><div class="cv">Live summary stream binding</div></td>
+                    <td data-label="Size"><div class="cv"><span class="size">m</span></div></td>
+                    <td data-label="Status"><div class="cv"><span class="st st--done"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-check-circle"/></svg>Done 11:46</span></div></td>
+                    <td class="tev" data-label="Evidence"><div class="cv"><span class="ev"><b>test</b><code>panel.stream.test.ts › renders deltas</code></span></div></td>
+                  </tr>
+                  <tr>
+                    <td class="tid" data-label="Task"><div class="cv">P4-T3</div></td>
+                    <td class="ttl" data-label="Title"><div class="cv">Confidence badge on summary card<p class="flag"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-flag"/></svg><span>Closed with no file change — cited commit predates the task</span></p></div></td>
+                    <td data-label="Size"><div class="cv"><span class="size">s</span></div></td>
+                    <td data-label="Status"><div class="cv"><span class="st st--done"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-check-circle"/></svg>Done 12:31</span></div></td>
+                    <td class="tev" data-label="Evidence"><div class="cv"><span class="ev"><b>commit</b><code>1f0b7aa</code></span></div></td>
+                  </tr>
+                  <tr>
+                    <td class="tid" data-label="Task"><div class="cv">P4-T4</div></td>
+                    <td class="ttl" data-label="Title"><div class="cv">Agent notes quick-insert</div></td>
+                    <td data-label="Size"><div class="cv"><span class="size">l</span></div></td>
+                    <td data-label="Status"><div class="cv"><span class="st st--active"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-half-circle"/></svg>In progress since 12:31</span></div></td>
+                    <td class="tev tev--none" data-label="Evidence"><div class="cv"><span class="muted">—</span></div></td>
+                  </tr>
+                  <tr>
+                    <td class="tid" data-label="Task"><div class="cv">P4-T5</div></td>
+                    <td class="ttl" data-label="Title"><div class="cv">Escalate-to-supervisor button</div></td>
+                    <td data-label="Size"><div class="cv"><span class="size">s</span></div></td>
+                    <td data-label="Status"><div class="cv"><span class="st st--todo"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-circle"/></svg>To do</span></div></td>
+                    <td class="tev tev--none" data-label="Evidence"><div class="cv"><span class="muted">—</span></div></td>
+                  </tr>
+                  <tr>
+                    <td class="tid" data-label="Task"><div class="cv">P4-T6</div></td>
+                    <td class="ttl" data-label="Title"><div class="cv">Panel accessibility pass</div></td>
+                    <td data-label="Size"><div class="cv"><span class="size">m</span></div></td>
+                    <td data-label="Status"><div class="cv"><span class="st st--todo"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-circle"/></svg>To do</span></div></td>
+                    <td class="tev tev--none" data-label="Evidence"><div class="cv"><span class="muted">—</span></div></td>
+                  </tr>
+                  <tr>
+                    <td class="tid" data-label="Task"><div class="cv">P4-T7</div></td>
+                    <td class="ttl" data-label="Title"><div class="cv">Keyboard shortcuts <span class="chip chip--amend">added by amendment #2</span></div></td>
+                    <td data-label="Size"><div class="cv"><span class="size">s</span></div></td>
+                    <td data-label="Status"><div class="cv"><span class="st st--todo"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-circle"/></svg>To do</span></div></td>
+                    <td class="tev tev--none" data-label="Evidence"><div class="cv"><span class="muted">—</span></div></td>
+                  </tr>
+                  <tr class="amend">
+                    <td class="tid" data-label="Audit"><div class="cv">#2</div></td>
+                    <td colspan="4" class="ttl" data-label="Amendment"><div class="cv"><span class="amend__k"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-enh"/></svg>Audited amendment</span> 12:47 · Wei Jie · Added P4-T7 Keyboard shortcuts (s, weight 2) · reason: CX ops lead UAT feedback · <b>denominator 28 → 29 tasks, 76 → 78 weight</b> · ledger #18,442</div></td>
+                  </tr>
+                </tbody>
+              </table>
+            </details>
+            <details class="phase phase--todo">
+              <summary>
+                <svg class="i chev" aria-hidden="true" focusable="false"><use href="#i-chev"/></svg>
+                <span class="phase__title"><span class="phase__id">P5</span>Hardening and UAT<span class="phase__note">not started</span></span>
+                <span class="phase__nums"><span class="st st--todo"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-circle"/></svg>Not started</span><span>0/5 tasks</span><span class="phase__meter"><span class="meter" aria-hidden="true"><span class="meter__fill" style="width:0%"></span></span><span class="sr-only">0% of weight</span></span><span class="phase__w">0/15</span></span>
+              </summary>
+              <p class="phase__empty">5 tasks declared, none started.</p>
+            </details>
+          </div>
+        </section>
+        <div class="scol">
+
+        <section class="panel" aria-labelledby="met-h">
+          <div class="panel__head">
+            <h2 id="met-h">Metering</h2>
+            <p class="panel__meta">Notional API-equivalent · Max plan, so not a bill</p>
+          </div>
+          <div class="panel__body metering">
+            <div class="metering__total">
+              <p class="bigfig">$28.22<span>RM 118.94</span></p>
+              <p class="muted">this session, since 07:12</p>
+            </div>
+            <table class="dt dt--flush mtable" role="table">
+              <caption class="sr-only">Tokens by model, in millions</caption>
+              <thead role="rowgroup"><tr role="row"><th role="columnheader" scope="col">Model</th><th role="columnheader" scope="col" class="num">Input</th><th role="columnheader" scope="col" class="num">Output</th><th role="columnheader" scope="col" class="num">Cache read</th><th role="columnheader" scope="col" class="num">Cache write</th><th role="columnheader" scope="col" class="num">Notional</th></tr></thead>
+              <tbody role="rowgroup">
+                <tr>
+                  <td data-label="Model"><div class="cv"><b>Sonnet</b><span class="cell-sub">main loop</span></div></td>
+                  <td class="num" data-label="Input"><div class="cv">1.24M</div></td>
+                  <td class="num" data-label="Output"><div class="cv">0.86M</div></td>
+                  <td class="num" data-label="Cache read"><div class="cv">48.60M</div></td>
+                  <td class="num" data-label="Cache write"><div class="cv">2.91M</div></td>
+                  <td class="num" data-label="Notional"><div class="cv"><b>$28.08</b></div></td>
+                </tr>
+                <tr>
+                  <td data-label="Model"><div class="cv"><b>Haiku</b><span class="cell-sub">chunk-summary subagent</span></div></td>
+                  <td class="num" data-label="Input"><div class="cv">0.42M</div></td>
+                  <td class="num" data-label="Output"><div class="cv">0.09M</div></td>
+                  <td class="num" data-label="Cache read"><div class="cv">3.10M</div></td>
+                  <td class="num" data-label="Cache write"><div class="cv">0.20M</div></td>
+                  <td class="num" data-label="Notional"><div class="cv"><b>$0.14</b></div></td>
+                </tr>
+              </tbody>
+            </table>
+            <div>
+              <h3 class="minihead">Where the cost comes from</h3>
+              <dl class="mbars" role="img" aria-label="Notional cost by token type: Input $2.52, Output $8.65, Cache read $9.75, Cache write $7.30."><dt>Input</dt><dd class="mbar"><span style="--v:25.9%"></span></dd><dd class="mbar__v">$2.52</dd><dt>Output</dt><dd class="mbar"><span style="--v:88.7%"></span></dd><dd class="mbar__v">$8.65</dd><dt>Cache read</dt><dd class="mbar"><span style="--v:100.0%"></span></dd><dd class="mbar__v">$9.75</dd><dt>Cache write</dt><dd class="mbar"><span style="--v:74.9%"></span></dd><dd class="mbar__v">$7.30</dd></dl>
+            </div>
+            <div class="ctx">
+              <div class="ctx__head"><h3 class="minihead">Context</h3><p><b>412k</b> of 1M tokens · 41% · rollover at 70%</p></div>
+              <span class="meter" aria-hidden="true"><span class="meter__fill" style="width:41%"></span><span class="meter__mark" style="left:70%"></span></span><span class="sr-only">41% of the context window used; rollover threshold at 70%</span>
+              <p class="muted">Growing about 5.7 points an hour, so the next rollover lands near 18:50, at a clean task boundary.</p>
+            </div>
+            <p class="metering__foot"><svg class="i i--thr" aria-hidden="true" focusable="false"><use href="#i-throttled"/></svg>1 plan-limit hit this session (10:41–11:04, 23 min idle). Rate card v3 per MTok: Sonnet $2.00 in · $10.00 out · $0.20 cache read · $2.50 cache write; Haiku $0.10 · $0.50 · $0.01 · $0.125. Rate changes apply forward only. FX 4.2150 (BNM, live 09:05).</p>
+          </div>
+        </section>
+
+        <section class="panel" aria-labelledby="roll-h">
+          <div class="panel__head">
+            <h2 id="roll-h">Rollover history</h2>
+            <p class="panel__meta">One writer per thread · only at clean task boundaries</p>
+          </div>
+          <ol class="rolls">
+            <li>
+              <p class="roll__id">s2 → s3</p>
+              <div class="roll__main">
+                <p>Fri 9 Oct, 07:12 · brief 3.4k tokens</p>
+                <p class="roll__check"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-check-circle"/></svg>Brief matched manifest v7 and 0 open decisions</p>
+              </div>
+              <div class="roll__ctx"><span>71%</span><span class="meter" aria-hidden="true"><span class="meter__fill" style="width:71%"></span><span class="meter__mark" style="left:70%"></span></span><span class="sr-only">Context 71% at rollover</span></div>
+            </li>
+            <li>
+              <p class="roll__id">s1 → s2</p>
+              <div class="roll__main">
+                <p>Tue 6 Oct, 16:20 · brief 2.9k tokens</p>
+                <p class="roll__check"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-check-circle"/></svg>Brief matched manifest v4; 1 open decision carried over</p>
+              </div>
+              <div class="roll__ctx"><span>73%</span><span class="meter" aria-hidden="true"><span class="meter__fill" style="width:73%"></span><span class="meter__mark" style="left:70%"></span></span><span class="sr-only">Context 73% at rollover</span></div>
+            </li>
+          </ol>
+        </section>
+        </div>
+      </div>
+      <div class="sgrid sgrid--even">
+
+        <section class="panel" aria-labelledby="dlog-h">
+          <div class="panel__head">
+            <h2 id="dlog-h">Decisions log</h2>
+            <p class="panel__meta">Thread agent-assist · 48 min waiting this session</p>
+          </div>
+          <table class="dt dlog" role="table">
+            <caption class="sr-only">Decisions raised in this thread, newest first</caption>
+            <thead role="rowgroup"><tr role="row"><th role="columnheader" scope="col">Asked</th><th role="columnheader" scope="col">Test</th><th role="columnheader" scope="col">Question</th><th role="columnheader" scope="col">Outcome</th><th role="columnheader" scope="col">By</th><th role="columnheader" scope="col" class="num">Waited</th></tr></thead>
+            <tbody role="rowgroup">
+                <tr class="grp"><th colspan="6" scope="colgroup">This session · s3</th></tr>
+                <tr>
+                  <td class="nowrap" data-label="Asked"><div class="cv">12:10</div></td>
+                  <td data-label="Test"><div class="cv"><span class="chip chip--test"><span class="chip__k">test</span>main</span></div></td>
+                  <td class="dq" data-label="Question"><div class="cv">Merge summariser-service into main?</div></td>
+                  <td data-label="Outcome"><div class="cv">Approved — merge after green CI</div></td>
+                  <td class="nowrap" data-label="By"><div class="cv">CEO</div></td>
+                  <td class="num nowrap" data-label="Waited"><div class="cv"><span class="sm-only">waited </span>9m</div></td>
+                </tr>
+                <tr>
+                  <td class="nowrap" data-label="Asked"><div class="cv">09:41</div></td>
+                  <td data-label="Test"><div class="cv"><span class="chip chip--test"><span class="chip__k">test</span>ambiguity</span></div></td>
+                  <td class="dq" data-label="Question"><div class="cv">Summary format: 3 bullets or an 80-word paragraph?</div></td>
+                  <td data-label="Outcome"><div class="cv">3 bullets (agent’s recommendation)</div></td>
+                  <td class="nowrap" data-label="By"><div class="cv">Wei Jie</div></td>
+                  <td class="num nowrap" data-label="Waited"><div class="cv"><span class="sm-only">waited </span>17m</div></td>
+                </tr>
+                <tr>
+                  <td class="nowrap" data-label="Asked"><div class="cv">08:47</div></td>
+                  <td data-label="Test"><div class="cv"><span class="chip chip--test"><span class="chip__k">test</span>irreversible</span></div></td>
+                  <td class="dq" data-label="Question"><div class="cv">Drop staging table tmp_transcripts?</div></td>
+                  <td data-label="Outcome"><div class="cv">Rejected — keep until UAT sign-off</div></td>
+                  <td class="nowrap" data-label="By"><div class="cv">CEO</div></td>
+                  <td class="num nowrap" data-label="Waited"><div class="cv"><span class="sm-only">waited </span>22m</div></td>
+                </tr>
+                <tr class="grp"><th colspan="6" scope="colgroup">Earlier in this thread · s2</th></tr>
+                <tr>
+                  <td class="nowrap" data-label="Asked"><div class="cv">Thu 16:40</div></td>
+                  <td data-label="Test"><div class="cv"><span class="chip chip--test"><span class="chip__k">test</span>data</span></div></td>
+                  <td class="dq" data-label="Question"><div class="cv">Keep raw call audio for 30 days or 7?</div></td>
+                  <td data-label="Outcome"><div class="cv">7 days (agent’s recommendation)</div></td>
+                  <td class="nowrap" data-label="By"><div class="cv">CEO</div></td>
+                  <td class="num nowrap" data-label="Waited"><div class="cv"><span class="sm-only">waited </span>1h 12m</div></td>
+                </tr>
+                <tr>
+                  <td class="nowrap" data-label="Asked"><div class="cv">Wed 11:05</div></td>
+                  <td data-label="Test"><div class="cv"><span class="chip chip--test"><span class="chip__k">test</span>main</span></div></td>
+                  <td class="dq" data-label="Question"><div class="cv">Merge transcript-pipeline into main?</div></td>
+                  <td data-label="Outcome"><div class="cv">Approved</div></td>
+                  <td class="nowrap" data-label="By"><div class="cv">CEO</div></td>
+                  <td class="num nowrap" data-label="Waited"><div class="cv"><span class="sm-only">waited </span>26m</div></td>
+                </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section class="panel" aria-labelledby="led-h">
+          <div class="panel__head">
+            <h2 id="led-h">Ledger excerpt</h2>
+            <p class="panel__meta">This session only; gaps in seq are other sessions</p>
+          </div>
+          <p class="verify"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-shield"/></svg><span><b>Chain verified against anchor 02:00</b> · off-host signed commit 5e1c0d7 · head #18,447 · checked 13:40</span></p>
+          <table class="dt ledger" role="table">
+            <caption class="sr-only">Most recent ledger events for this session</caption>
+            <thead role="rowgroup"><tr role="row"><th role="columnheader" scope="col" class="num">Seq</th><th role="columnheader" scope="col">Time</th><th role="columnheader" scope="col">Type</th><th role="columnheader" scope="col">Actor</th><th role="columnheader" scope="col">Hash</th></tr></thead>
+            <tbody role="rowgroup">
+                <tr>
+                  <td class="num" data-label="Seq"><div class="cv"><span class="sm-only">#</span>18,447</div></td>
+                  <td data-label="Time"><div class="cv">13:41:52</div></td>
+                  <td data-label="Type"><div class="cv"><code>tool.file_changed</code></div></td>
+                  <td class="nowrap" data-label="Actor"><div class="cv">agent · s3</div></td>
+                  <td data-label="Hash"><div class="cv"><code>7f3a9c1e…</code></div></td>
+                </tr>
+                <tr>
+                  <td class="num" data-label="Seq"><div class="cv"><span class="sm-only">#</span>18,446</div></td>
+                  <td data-label="Time"><div class="cv">13:39:07</div></td>
+                  <td data-label="Type"><div class="cv"><code>session.liveness_changed</code><span class="cell-sub">thinking → working</span></div></td>
+                  <td class="nowrap" data-label="Actor"><div class="cv">sidecar</div></td>
+                  <td data-label="Hash"><div class="cv"><code>2b8d04fa…</code></div></td>
+                </tr>
+                <tr>
+                  <td class="num" data-label="Seq"><div class="cv"><span class="sm-only">#</span>18,445</div></td>
+                  <td data-label="Time"><div class="cv">13:05:41</div></td>
+                  <td data-label="Type"><div class="cv"><code>drift.flagged</code></div></td>
+                  <td class="nowrap" data-label="Actor"><div class="cv">hook</div></td>
+                  <td data-label="Hash"><div class="cv"><code>51aa9e3b…</code></div></td>
+                </tr>
+                <tr>
+                  <td class="num" data-label="Seq"><div class="cv"><span class="sm-only">#</span>18,442</div></td>
+                  <td data-label="Time"><div class="cv">12:47:30</div></td>
+                  <td data-label="Type"><div class="cv"><code>plan.amended</code><span class="cell-sub">#2 · 28 → 29 tasks</span></div></td>
+                  <td class="nowrap" data-label="Actor"><div class="cv">Wei Jie</div></td>
+                  <td data-label="Hash"><div class="cv"><code>c07e12d8…</code></div></td>
+                </tr>
+                <tr>
+                  <td class="num" data-label="Seq"><div class="cv"><span class="sm-only">#</span>18,439</div></td>
+                  <td data-label="Time"><div class="cv">12:31:16</div></td>
+                  <td data-label="Type"><div class="cv"><code>task.done</code><span class="cell-sub">flagged: no_file_change</span></div></td>
+                  <td class="nowrap" data-label="Actor"><div class="cv">agent · s3</div></td>
+                  <td data-label="Hash"><div class="cv"><code>e91c7d20…</code></div></td>
+                </tr>
+                <tr>
+                  <td class="num" data-label="Seq"><div class="cv"><span class="sm-only">#</span>18,436</div></td>
+                  <td data-label="Time"><div class="cv">12:19:02</div></td>
+                  <td data-label="Type"><div class="cv"><code>decision.resolved</code></div></td>
+                  <td class="nowrap" data-label="Actor"><div class="cv">CEO</div></td>
+                  <td data-label="Hash"><div class="cv"><code>9d4fa771…</code></div></td>
+                </tr>
+                <tr>
+                  <td class="num" data-label="Seq"><div class="cv"><span class="sm-only">#</span>18,431</div></td>
+                  <td data-label="Time"><div class="cv">12:10:44</div></td>
+                  <td data-label="Type"><div class="cv"><code>decision.requested</code></div></td>
+                  <td class="nowrap" data-label="Actor"><div class="cv">agent · s3</div></td>
+                  <td data-label="Hash"><div class="cv"><code>0b6e3f58…</code></div></td>
+                </tr>
+            </tbody>
+          </table>
+        </section>
+      </div>
+    </section>
+
+    <section id="view-registry" class="view" role="tabpanel" aria-labelledby="tab-registry">
+      <header class="pagehead">
+        <h1>Registry</h1>
+        <p class="pagehead__sub">Process types, playbooks and model routing · W34–W41, 8 weeks to Fri 9 Oct 2026</p>
+      </header>
+
+      <section class="panel biz" aria-labelledby="biz-h">
+        <div class="biz__head">
+          <div class="biz__fig">
+            <h2 id="biz-h" class="eyebrow">Distillation business case · notional</h2>
+            <p class="hero"><span class="hero__usd">$3,296</span><span class="hero__rm">RM 13,861</span></p>
+            <p class="biz__copy">saved over 8 weeks by running <b>494 execution runs</b> on distilled playbooks instead of discovery on Opus. Execution costs <b>76% less per run</b>, weighted by runs. RM is the sum of daily rollups at each day’s BNM rate.</p>
+          </div>
+          <ul class="legend legend--pair" aria-label="Bar legend">
+            <li><span class="sw sw--disc" aria-hidden="true"></span>Discovery $/run · Opus</li>
+            <li><span class="sw sw--exec" aria-hidden="true"></span>Execution $/run · Sonnet or Haiku</li>
+            <li><span class="lg lg--trend" aria-hidden="true"></span>Blended $/run, weekly</li>
+          </ul>
+        </div>
+        <div class="ptab-wrap">
+          <table class="ptab" role="table">
+            <caption class="sr-only">Cost per run, discovery versus execution, by process type</caption>
+            <thead role="rowgroup">
+              <tr role="row">
+                <th role="columnheader" scope="col" class="pt__c1">Process type · playbook</th>
+                <th role="columnheader" scope="col" class="pt__bars"><span class="sr-only">Cost per run, discovery and execution</span><span class="pair-axis" aria-hidden="true"><span style="--x:0%">$0</span><span style="--x:25%">$10</span><span style="--x:50%">$20</span><span style="--x:75%">$30</span><span style="--x:100%">$40</span></span></th>
+                <th role="columnheader" scope="col" class="num pt__c3">Saving</th>
+                <th role="columnheader" scope="col" class="pt__c4">Cost per run, 8 weeks</th>
+                <th role="columnheader" scope="col" class="pt__c5">Runs and quality</th>
+              </tr>
+            </thead>
+            <tbody role="rowgroup">
+              <tr>
+                <th scope="row" data-label="Process type">
+                  <span class="pt__name">bug-triage <span class="chip chip--ro"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-lock"/></svg>read-only</span></span>
+                  <span class="pb pb--approved"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-check-circle"/></svg>Approved by CEO</span>
+                  <span class="cell-sub">Playbook v3 · 14 Sep</span>
+                </th>
+                <td class="pt__bars" data-label="Cost per run">
+                  <div class="pair" role="img" aria-label="bug-triage: discovery $4.20 per run on Opus, execution $0.95 per run on Sonnet, 77% less.">
+                    <div class="pair__row"><span class="pair__bar pair__bar--disc" style="--v:10.50%"></span><span class="pair__lab" style="--v:10.50%"><b>$4.20</b> Opus</span></div>
+                    <div class="pair__row"><span class="pair__bar pair__bar--exec" style="--v:2.38%"></span><span class="pair__lab" style="--v:2.38%"><b>$0.95</b> Sonnet</span></div>
+                  </div>
+                </td>
+                <td class="num pt__save" data-label="Saving"><div class="cv"><b>77%</b><span class="cell-sub">less per run</span></div></td>
+                <td class="pt__trend" data-label="8-week trend"><span class="trend__wrap"><svg class="trend" viewBox="0 0 120 30" role="img" aria-label="bug-triage cost per run by week, W34 to W41: $3.90, $3.10, $2.20, $1.60, $1.30, $1.10, $1.00, $0.98"><title>bug-triage cost per run by week, W34 to W41: $3.90, $3.10, $2.20, $1.60, $1.30, $1.10, $1.00, $0.98</title><line class="spark__base" x1="3" y1="27.5" x2="117" y2="27.5"/><path class="spark__area" d="M3 27L3 4L19.3 8.7L35.6 14L51.9 17.6L68.1 19.3L84.4 20.5L100.7 21.1L117 21.2L117 27Z"/><path class="spark__line" d="M3 4L19.3 8.7L35.6 14L51.9 17.6L68.1 19.3L84.4 20.5L100.7 21.1L117 21.2"/><circle class="spark__dot" cx="117" cy="21.2" r="3"/></svg><span class="trend__txt"><b>$0.98</b><span class="cell-sub">−75% since W34</span></span></span></td>
+                <td class="pt__facts" data-label="Runs and quality">
+                  <ul class="facts">
+                    <li><b>214</b> runs <span class="facts__sub">9 disc · 205 exec</span></li>
+                    <li><b>5</b> lessons in scope</li>
+                    <li><b>0</b> open repeat offences</li>
+                  </ul>
+                </td>
+              </tr>
+              <tr>
+                <th scope="row" data-label="Process type">
+                  <span class="pt__name">feature-build</span>
+                  <span class="pb pb--approved"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-check-circle"/></svg>Approved by CEO</span>
+                  <span class="cell-sub">Playbook v2 · 28 Sep</span>
+                </th>
+                <td class="pt__bars" data-label="Cost per run">
+                  <div class="pair" role="img" aria-label="feature-build: discovery $38.60 per run on Opus, execution $14.20 per run on Sonnet, 63% less.">
+                    <div class="pair__row"><span class="pair__bar pair__bar--disc" style="--v:96.50%"></span><span class="pair__lab" style="--v:96.50%"><b>$38.60</b> Opus</span></div>
+                    <div class="pair__row"><span class="pair__bar pair__bar--exec" style="--v:35.50%"></span><span class="pair__lab" style="--v:35.50%"><b>$14.20</b> Sonnet</span></div>
+                  </div>
+                </td>
+                <td class="num pt__save" data-label="Saving"><div class="cv"><b>63%</b><span class="cell-sub">less per run</span></div></td>
+                <td class="pt__trend" data-label="8-week trend"><span class="trend__wrap"><svg class="trend" viewBox="0 0 120 30" role="img" aria-label="feature-build cost per run by week, W34 to W41: $36.00, $35.10, $31.40, $27.20, $24.10, $22.00, $20.30, $19.50"><title>feature-build cost per run by week, W34 to W41: $36.00, $35.10, $31.40, $27.20, $24.10, $22.00, $20.30, $19.50</title><line class="spark__base" x1="3" y1="27.5" x2="117" y2="27.5"/><path class="spark__area" d="M3 27L3 4L19.3 4.6L35.6 6.9L51.9 9.6L68.1 11.6L84.4 12.9L100.7 14L117 14.5L117 27Z"/><path class="spark__line" d="M3 4L19.3 4.6L35.6 6.9L51.9 9.6L68.1 11.6L84.4 12.9L100.7 14L117 14.5"/><circle class="spark__dot" cx="117" cy="14.5" r="3"/></svg><span class="trend__txt"><b>$19.50</b><span class="cell-sub">−46% since W34</span></span></span></td>
+                <td class="pt__facts" data-label="Runs and quality">
+                  <ul class="facts">
+                    <li><b>61</b> runs <span class="facts__sub">22 disc · 39 exec</span></li>
+                    <li><b>7</b> lessons in scope</li>
+                    <li class="facts__rep"><svg class="i i--warn" aria-hidden="true" focusable="false"><use href="#i-warn"/></svg><b>2</b> open repeat offences</li>
+                  </ul>
+                </td>
+              </tr>
+              <tr>
+                <th scope="row" data-label="Process type">
+                  <span class="pt__name">migration</span>
+                  <span class="pb pb--draft"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-pencil"/></svg>Draft</span>
+                  <span class="cell-sub">Playbook v1 · not yet submitted</span>
+                </th>
+                <td class="pt__bars" data-label="Cost per run">
+                  <div class="pair" role="img" aria-label="migration: discovery $27.40 per run on Opus, execution $8.90 per run on Sonnet, 68% less.">
+                    <div class="pair__row"><span class="pair__bar pair__bar--disc" style="--v:68.50%"></span><span class="pair__lab" style="--v:68.50%"><b>$27.40</b> Opus</span></div>
+                    <div class="pair__row"><span class="pair__bar pair__bar--exec" style="--v:22.25%"></span><span class="pair__lab" style="--v:22.25%"><b>$8.90</b> Sonnet · trial runs</span></div>
+                  </div>
+                </td>
+                <td class="num pt__save" data-label="Saving"><div class="cv"><b>68%</b><span class="cell-sub">less per run</span></div></td>
+                <td class="pt__trend" data-label="8-week trend"><span class="trend__wrap"><svg class="trend" viewBox="0 0 120 30" role="img" aria-label="migration cost per run by week, W34 to W41: $27.40, $27.40, $26.10, $25.80, $24.90, $21.30, $18.20, $16.40"><title>migration cost per run by week, W34 to W41: $27.40, $27.40, $26.10, $25.80, $24.90, $21.30, $18.20, $16.40</title><line class="spark__base" x1="3" y1="27.5" x2="117" y2="27.5"/><path class="spark__area" d="M3 27L3 4L19.3 4L35.6 5.1L51.9 5.3L68.1 6.1L84.4 9.1L100.7 11.7L117 13.2L117 27Z"/><path class="spark__line" d="M3 4L19.3 4L35.6 5.1L51.9 5.3L68.1 6.1L84.4 9.1L100.7 11.7L117 13.2"/><circle class="spark__dot" cx="117" cy="13.2" r="3"/></svg><span class="trend__txt"><b>$16.40</b><span class="cell-sub">−40% since W34</span></span></span></td>
+                <td class="pt__facts" data-label="Runs and quality">
+                  <ul class="facts">
+                    <li><b>18</b> runs <span class="facts__sub">6 disc · 12 exec</span></li>
+                    <li><b>4</b> lessons in scope</li>
+                    <li class="facts__rep"><svg class="i i--warn" aria-hidden="true" focusable="false"><use href="#i-warn"/></svg><b>1</b> open repeat offence</li>
+                  </ul>
+                </td>
+              </tr>
+              <tr>
+                <th scope="row" data-label="Process type">
+                  <span class="pt__name">test-repair</span>
+                  <span class="pb pb--approved"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-check-circle"/></svg>Approved by CEO</span>
+                  <span class="cell-sub">Playbook v2 · 21 Aug</span>
+                </th>
+                <td class="pt__bars" data-label="Cost per run">
+                  <div class="pair" role="img" aria-label="test-repair: discovery $9.80 per run on Opus, execution $1.40 per run on Haiku, 86% less.">
+                    <div class="pair__row"><span class="pair__bar pair__bar--disc" style="--v:24.50%"></span><span class="pair__lab" style="--v:24.50%"><b>$9.80</b> Opus</span></div>
+                    <div class="pair__row"><span class="pair__bar pair__bar--exec" style="--v:3.50%"></span><span class="pair__lab" style="--v:3.50%"><b>$1.40</b> Haiku</span></div>
+                  </div>
+                </td>
+                <td class="num pt__save" data-label="Saving"><div class="cv"><b>86%</b><span class="cell-sub">less per run</span></div></td>
+                <td class="pt__trend" data-label="8-week trend"><span class="trend__wrap"><svg class="trend" viewBox="0 0 120 30" role="img" aria-label="test-repair cost per run by week, W34 to W41: $8.20, $6.00, $3.90, $2.40, $1.90, $1.60, $1.50, $1.45"><title>test-repair cost per run by week, W34 to W41: $8.20, $6.00, $3.90, $2.40, $1.90, $1.60, $1.50, $1.45</title><line class="spark__base" x1="3" y1="27.5" x2="117" y2="27.5"/><path class="spark__area" d="M3 27L3 4L19.3 10.2L35.6 16.1L51.9 20.3L68.1 21.7L84.4 22.5L100.7 22.8L117 22.9L117 27Z"/><path class="spark__line" d="M3 4L19.3 10.2L35.6 16.1L51.9 20.3L68.1 21.7L84.4 22.5L100.7 22.8L117 22.9"/><circle class="spark__dot" cx="117" cy="22.9" r="3"/></svg><span class="trend__txt"><b>$1.45</b><span class="cell-sub">−82% since W34</span></span></span></td>
+                <td class="pt__facts" data-label="Runs and quality">
+                  <ul class="facts">
+                    <li><b>132</b> runs <span class="facts__sub">7 disc · 125 exec</span></li>
+                    <li><b>3</b> lessons in scope</li>
+                    <li><b>0</b> open repeat offences</li>
+                  </ul>
+                </td>
+              </tr>
+              <tr>
+                <th scope="row" data-label="Process type">
+                  <span class="pt__name">docs</span>
+                  <span class="pb pb--retired"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-archive"/></svg>Retired</span>
+                  <span class="cell-sub">Playbook v1 · 24 Sep · re-distilling</span>
+                </th>
+                <td class="pt__bars" data-label="Cost per run">
+                  <div class="pair" role="img" aria-label="docs: discovery $6.10 per run on Opus, execution $0.70 per run on Haiku, 89% less.">
+                    <div class="pair__row"><span class="pair__bar pair__bar--disc" style="--v:15.25%"></span><span class="pair__lab" style="--v:15.25%"><b>$6.10</b> Opus</span></div>
+                    <div class="pair__row"><span class="pair__bar pair__bar--exec" style="--v:1.75%"></span><span class="pair__lab" style="--v:1.75%"><b>$0.70</b> Haiku · before retirement</span></div>
+                  </div>
+                </td>
+                <td class="num pt__save" data-label="Saving"><div class="cv"><b>89%</b><span class="cell-sub">less per run</span></div></td>
+                <td class="pt__trend" data-label="8-week trend"><span class="trend__wrap"><svg class="trend" viewBox="0 0 120 30" role="img" aria-label="docs cost per run by week, W34 to W41: $2.10, $1.20, $0.90, $0.80, $0.80, $3.90, $5.60, $5.90. Playbook retired in W39"><title>docs cost per run by week, W34 to W41: $2.10, $1.20, $0.90, $0.80, $0.80, $3.90, $5.60, $5.90. Playbook retired in W39</title><line class="spark__base" x1="3" y1="27.5" x2="117" y2="27.5"/><line class="trend__mark" x1="84.4" y1="2" x2="84.4" y2="27"/><path class="spark__area" d="M3 27L3 18.8L19.3 22.3L35.6 23.5L51.9 23.9L68.1 23.9L84.4 11.8L100.7 5.2L117 4L117 27Z"/><path class="spark__line" d="M3 18.8L19.3 22.3L35.6 23.5L51.9 23.9L68.1 23.9L84.4 11.8L100.7 5.2L117 4"/><circle class="spark__dot" cx="117" cy="4" r="3"/></svg><span class="trend__txt"><b>$5.90</b><span class="cell-sub">+181% since W34</span><span class="cell-sub">retired W39</span></span></span></td>
+                <td class="pt__facts" data-label="Runs and quality">
+                  <ul class="facts">
+                    <li><b>61</b> runs <span class="facts__sub">13 disc · 48 exec</span></li>
+                    <li><b>1</b> lessons in scope</li>
+                    <li><b>0</b> open repeat offences</li>
+                  </ul>
+                </td>
+              </tr>
+              <tr>
+                <th scope="row" data-label="Process type">
+                  <span class="pt__name">fx-scrape</span>
+                  <span class="pb pb--approved"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-check-circle"/></svg>Approved by CEO</span>
+                  <span class="cell-sub">Playbook v1 · 2 Sep</span>
+                </th>
+                <td class="pt__bars" data-label="Cost per run">
+                  <div class="pair" role="img" aria-label="fx-scrape: discovery $2.30 per run on Opus, execution $0.04 per run on Haiku, 98% less.">
+                    <div class="pair__row"><span class="pair__bar pair__bar--disc" style="--v:5.75%"></span><span class="pair__lab" style="--v:5.75%"><b>$2.30</b> Opus</span></div>
+                    <div class="pair__row"><span class="pair__bar pair__bar--exec" style="--v:0.10%"></span><span class="pair__lab" style="--v:0.10%"><b>$0.04</b> Haiku</span></div>
+                  </div>
+                </td>
+                <td class="num pt__save" data-label="Saving"><div class="cv"><b>98%</b><span class="cell-sub">less per run</span></div></td>
+                <td class="pt__trend" data-label="8-week trend"><span class="trend__wrap"><svg class="trend" viewBox="0 0 120 30" role="img" aria-label="fx-scrape cost per run by week, W34 to W41: $0.31, $0.05, $0.04, $0.05, $0.04, $0.04, $0.06, $0.04"><title>fx-scrape cost per run by week, W34 to W41: $0.31, $0.05, $0.04, $0.05, $0.04, $0.04, $0.06, $0.04</title><line class="spark__base" x1="3" y1="27.5" x2="117" y2="27.5"/><path class="spark__area" d="M3 27L3 4L19.3 23.3L35.6 24L51.9 23.3L68.1 24L84.4 24L100.7 22.5L117 24L117 27Z"/><path class="spark__line" d="M3 4L19.3 23.3L35.6 24L51.9 23.3L68.1 24L84.4 24L100.7 22.5L117 24"/><circle class="spark__dot" cx="117" cy="24" r="3"/></svg><span class="trend__txt"><b>$0.04</b><span class="cell-sub">−87% since W34</span></span></span></td>
+                <td class="pt__facts" data-label="Runs and quality">
+                  <ul class="facts">
+                    <li><b>66</b> runs <span class="facts__sub">1 disc · 65 exec</span></li>
+                    <li><b>2</b> lessons in scope</li>
+                    <li class="facts__rep"><svg class="i i--warn" aria-hidden="true" focusable="false"><use href="#i-warn"/></svg><b>1</b> open repeat offence</li>
+                  </ul>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="route-h">
+        <div class="panel__head">
+          <h2 id="route-h">Model routing</h2>
+          <p class="panel__meta">Type is declared at launch with aoc run --type; the model is fixed for the session</p>
+        </div>
+        <p class="rule"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-lock"/></svg><span><b>Discovery always runs on Opus.</b> Credits meter cost; they never pick the model, and budget never overrides this rule.</span></p>
+        <table class="dt rt" role="table">
+          <caption class="sr-only">Model routing per process type</caption>
+          <thead role="rowgroup"><tr role="row"><th role="columnheader" scope="col">Process type</th><th role="columnheader" scope="col">Discovery</th><th role="columnheader" scope="col">Execution</th><th role="columnheader" scope="col">Escalation</th><th role="columnheader" scope="col">Credentials</th><th role="columnheader" scope="col">Parallel sessions</th></tr></thead>
+          <tbody role="rowgroup">
+              <tr>
+                <th scope="row" data-label="Process type"><div class="cv">bug-triage</div></th>
+                <td data-label="Discovery"><div class="cv"><span class="lockd"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-lock"/></svg>Opus</span></div></td>
+                <td data-label="Execution"><div class="cv">Sonnet</div></td>
+                <td data-label="Escalation"><div class="cv">Low-confidence root cause goes to a human decision</div></td>
+                <td data-label="Credentials"><div class="cv">Read-only · no deploy keys</div></td>
+                <td data-label="Parallel sessions"><div class="cv">Up to 3 read-only agents; disagreements reconcile to a human decision</div></td>
+              </tr>
+              <tr>
+                <th scope="row" data-label="Process type"><div class="cv">feature-build</div></th>
+                <td data-label="Discovery"><div class="cv"><span class="lockd"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-lock"/></svg>Opus</span></div></td>
+                <td data-label="Execution"><div class="cv">Sonnet</div></td>
+                <td data-label="Escalation"><div class="cv">—</div></td>
+                <td data-label="Credentials"><div class="cv">Supervisor session env</div></td>
+                <td data-label="Parallel sessions"><div class="cv">1 writer per thread</div></td>
+              </tr>
+              <tr>
+                <th scope="row" data-label="Process type"><div class="cv">migration</div></th>
+                <td data-label="Discovery"><div class="cv"><span class="lockd"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-lock"/></svg>Opus</span></div></td>
+                <td data-label="Execution"><div class="cv">Sonnet (trial while the playbook is a draft)</div></td>
+                <td data-label="Escalation"><div class="cv">Rollover only at clean task boundaries</div></td>
+                <td data-label="Credentials"><div class="cv">Supervisor session env</div></td>
+                <td data-label="Parallel sessions"><div class="cv">1 writer per thread</div></td>
+              </tr>
+              <tr>
+                <th scope="row" data-label="Process type"><div class="cv">test-repair</div></th>
+                <td data-label="Discovery"><div class="cv"><span class="lockd"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-lock"/></svg>Opus</span></div></td>
+                <td data-label="Execution"><div class="cv">Haiku</div></td>
+                <td data-label="Escalation"><div class="cv">—</div></td>
+                <td data-label="Credentials"><div class="cv">Supervisor session env</div></td>
+                <td data-label="Parallel sessions"><div class="cv">1 writer per thread</div></td>
+              </tr>
+              <tr>
+                <th scope="row" data-label="Process type"><div class="cv">docs</div></th>
+                <td data-label="Discovery"><div class="cv"><span class="lockd"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-lock"/></svg>Opus</span></div></td>
+                <td data-label="Execution"><div class="cv">Haiku (paused: playbook retired, runs on Opus)</div></td>
+                <td data-label="Escalation"><div class="cv">—</div></td>
+                <td data-label="Credentials"><div class="cv">Supervisor session env</div></td>
+                <td data-label="Parallel sessions"><div class="cv">1 writer per thread</div></td>
+              </tr>
+              <tr>
+                <th scope="row" data-label="Process type"><div class="cv">fx-scrape</div></th>
+                <td data-label="Discovery"><div class="cv"><span class="lockd"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-lock"/></svg>Opus</span></div></td>
+                <td data-label="Execution"><div class="cv">Haiku</div></td>
+                <td data-label="Escalation"><div class="cv">Sonnet once on failed self-validation, then carry forward (flagged)</div></td>
+                <td data-label="Credentials"><div class="cv">No repository access</div></td>
+                <td data-label="Parallel sessions"><div class="cv">1 scheduled run, 09:00 MYT</div></td>
+              </tr>
+          </tbody>
+        </table>
+      </section>
+    </section>
+  <footer class="mockfoot">Static design mock for AOC-SPEC-003 §12. Every name, figure, tag and hash is sample data.</footer>
+</main>
+<script>
+(() => {
+  // Hash routing for the three views; tabs follow the WAI-ARIA tabs pattern (arrows, Home, End).
+  const ids = ['console', 'session', 'registry'];
+  const tabs = ids.map((id) => document.getElementById('tab-' + id));
+  const views = ids.map((id) => document.getElementById('view-' + id));
+  const show = (id, focus) => {
+    const n = ids.indexOf(id);
+    if (n < 0) return;
+    ids.forEach((_, i) => {
+      tabs[i].setAttribute('aria-selected', String(i === n));
+      tabs[i].tabIndex = i === n ? 0 : -1;
+      views[i].hidden = i !== n;
+    });
+    if (focus) tabs[n].focus();
+  };
+  const go = (id, focus) => {
+    if (location.hash !== '#' + id) history.pushState(null, '', '#' + id);
+    show(id, focus);
+    window.scrollTo(0, 0);
+  };
+  tabs.forEach((tab, i) => {
+    tab.addEventListener('click', (e) => { e.preventDefault(); go(ids[i]); });
+    tab.addEventListener('keydown', (e) => {
+      const step = { ArrowRight: 1, ArrowLeft: -1 }[e.key];
+      const n = e.key === 'Home' ? 0 : e.key === 'End' ? ids.length - 1 : step ? (i + step + ids.length) % ids.length : -1;
+      if (n < 0) return;
+      e.preventDefault();
+      go(ids[n], true);
+    });
+  });
+  // Other in-page anchors (the skip link) also change the hash; only view names route.
+  const route = () => location.hash.slice(1);
+  const fromHash = () => { const id = route(); if (!id || ids.includes(id)) show(id || 'console'); };
+  addEventListener('hashchange', () => { if (ids.includes(route())) { fromHash(); scrollTo(0, 0); } });
+  addEventListener('popstate', fromHash);
+  show(ids.includes(route()) ? route() : 'console');
+})();
+</script>
+</body>
+</html>
