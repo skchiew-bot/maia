@@ -400,23 +400,34 @@ export class EventStore {
   private project(e: StoredEvent, payload: JsonValue | null, replaying: boolean): void {
     for (const p of this.projectors) {
       if (p.handles && !p.handles.includes(e.type)) continue;
-      const sp = `p_${p.name.replace(/[^a-z0-9_]/gi, '_')}`;
-      this.db.exec(`SAVEPOINT ${sp}`);
-      try {
-        p.apply({ db: this.db, replaying }, e, payload);
-        this.db.exec(`RELEASE ${sp}`);
-      } catch (err) {
-        this.db.exec(`ROLLBACK TO ${sp}`);
-        this.db.exec(`RELEASE ${sp}`);
-        this.opts.log.error('projector failed', { projector: p.name, type: e.type, seq: e.seq, err: String(err) });
-        this.db
-          .prepare(
-            `INSERT INTO projection_health (name, status, last_error, failed_seq, updated_at) VALUES (?, 'degraded', ?, ?, ?)
-             ON CONFLICT(name) DO UPDATE SET status='degraded', last_error=excluded.last_error, failed_seq=excluded.failed_seq, updated_at=excluded.updated_at`,
-          )
-          .run(p.name, String(err).slice(0, 500), e.seq, this.opts.clock.iso());
-      }
+      const err = this.applyIsolated(p, e, payload, replaying);
+      if (err !== null) this.markDegraded(p.name, e.seq, err);
     }
+  }
+
+  /** Apply one event to one projector inside a savepoint; the error it threw (its half-done writes undone), or null. */
+  private applyIsolated(p: Projector, e: StoredEvent, payload: JsonValue | null, replaying: boolean): string | null {
+    const sp = `p_${p.name.replace(/[^a-z0-9_]/gi, '_')}`;
+    this.db.exec(`SAVEPOINT ${sp}`);
+    try {
+      p.apply({ db: this.db, replaying }, e, payload);
+      this.db.exec(`RELEASE ${sp}`);
+      return null;
+    } catch (err) {
+      this.db.exec(`ROLLBACK TO ${sp}`);
+      this.db.exec(`RELEASE ${sp}`);
+      this.opts.log.error('projector failed', { projector: p.name, type: e.type, seq: e.seq, replaying, err: String(err) });
+      return String(err);
+    }
+  }
+
+  private markDegraded(name: string, seq: number, error: string): void {
+    this.db
+      .prepare(
+        `INSERT INTO projection_health (name, status, last_error, failed_seq, updated_at) VALUES (?, 'degraded', ?, ?, ?)
+         ON CONFLICT(name) DO UPDATE SET status='degraded', last_error=excluded.last_error, failed_seq=excluded.failed_seq, updated_at=excluded.updated_at`,
+      )
+      .run(name, error.slice(0, 500), seq, this.opts.clock.iso());
   }
 
   // ── reads ─────────────────────────────────────────────────────────────────
@@ -570,7 +581,11 @@ export class EventStore {
     return erased;
   }
 
-  /** Drop and rebuild projections from the log (payloads decrypted; null where erased). */
+  /**
+   * Drop and rebuild projections from the log (payloads decrypted; null where erased). An event a projector cannot
+   * handle is isolated exactly as it is live: skipped for that projector, which is marked degraded again. Aborting
+   * instead would make one poison event unrebuildable, and aocd rebuilds degraded projections before it starts.
+   */
   rebuildProjections(names?: string[]): void {
     const targets = this.projectors.filter((p) => !names || names.includes(p.name));
     this.db.exec('BEGIN IMMEDIATE');
@@ -579,6 +594,7 @@ export class EventStore {
         for (const t of p.tables) this.db.exec(`DROP TABLE IF EXISTS ${t}`);
         for (const ddl of p.ddl) this.db.exec(ddl);
       }
+      const failed = new Map<string, { seq: number; error: string }>();
       let from = 1;
       for (;;) {
         const rows = this.db.prepare('SELECT * FROM events WHERE seq >= ? ORDER BY seq LIMIT 2000').all(from) as unknown as EventRow[];
@@ -588,12 +604,17 @@ export class EventStore {
           const payload = this.readPayload(e);
           for (const p of targets) {
             if (p.handles && !p.handles.includes(e.type)) continue;
-            p.apply({ db: this.db, replaying: true }, e, payload);
+            const err = this.applyIsolated(p, e, payload, true);
+            if (err !== null) failed.set(p.name, { seq: e.seq, error: err });
           }
         }
         from = rows[rows.length - 1]!.seq + 1;
       }
-      for (const p of targets) this.db.prepare('DELETE FROM projection_health WHERE name = ?').run(p.name);
+      for (const p of targets) {
+        this.db.prepare('DELETE FROM projection_health WHERE name = ?').run(p.name);
+        const f = failed.get(p.name);
+        if (f) this.markDegraded(p.name, f.seq, f.error);
+      }
       this.db.exec('COMMIT');
     } catch (err) {
       this.db.exec('ROLLBACK');
