@@ -1,0 +1,368 @@
+/* Rollbacks area: gated rollback tracks, pinned states, break-glass countdowns, promotions and provenance. */
+
+.rollbacks-summary {
+  margin-bottom: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: var(--fs-md);
+}
+.rollbacks-summary strong {
+  color: var(--text);
+}
+.rollbacks-filter {
+  min-width: 180px;
+}
+.rollbacks-filter .aoc-field__label,
+.rollbacks-pins__project .aoc-field__label {
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+}
+.rollbacks-pins__project {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+.rollbacks-pins__project .aoc-input {
+  height: 26px;
+  font-size: var(--fs-sm);
+}
+.rollbacks-muted {
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+}
+.rollbacks-more {
+  margin-top: var(--sp-3);
+  font-size: var(--fs-sm);
+}
+
+/* ---- rollback and break-glass items ---- */
+.rollbacks-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.rollbacks-item,
+.rollbacks-bg {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.rollbacks-item.is-awaiting_approval,
+.rollbacks-bg.is-pending {
+  box-shadow: inset 3px 0 0 var(--mark-decision);
+}
+.rollbacks-item.is-not_clean,
+.rollbacks-item.is-failed {
+  box-shadow: inset 3px 0 0 var(--danger);
+}
+.rollbacks-item__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 6px 12px;
+}
+.rollbacks-item__title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  min-width: 0;
+}
+.rollbacks-item__project {
+  font-size: var(--fs-md);
+  font-weight: 600;
+}
+.rollbacks-item__target {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+}
+.rollbacks-item__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 4px;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+}
+.rollbacks-item__reason,
+.rollbacks-justification {
+  color: var(--text);
+  font-size: var(--fs-sm);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.rollbacks-item__report {
+  font-size: var(--fs-sm);
+}
+.rollbacks-item__report > summary {
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  cursor: pointer;
+}
+.rollbacks-item__report > * + * {
+  margin-top: 6px;
+}
+.rollbacks-item__exec,
+.rollbacks-exec {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+.rollbacks-item__exec .aoc-icon,
+.rollbacks-exec .aoc-icon {
+  color: var(--text-3);
+}
+.rollbacks-pre {
+  max-height: 220px;
+  margin: 0;
+  padding: 8px 10px;
+  overflow: auto;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.rollbacks-item__action {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+.rollbacks-warnline {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+.rollbacks-warnline .aoc-icon {
+  color: var(--warn);
+}
+
+/* ---- post-incident countdown ---- */
+.rollbacks-countdown {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--fs-sm);
+}
+.rollbacks-countdown__line,
+.rollbacks-countdown.is-done {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+}
+.rollbacks-countdown.is-done .aoc-icon {
+  color: var(--ok);
+}
+.rollbacks-countdown.is-due .rollbacks-countdown__line .aoc-icon {
+  color: var(--warn);
+}
+.rollbacks-countdown.is-overdue .rollbacks-countdown__line .aoc-icon,
+.rollbacks-countdown.is-overdue strong {
+  color: var(--danger);
+}
+.rollbacks-countdown__bar {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--surface-3);
+}
+.rollbacks-countdown__bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--warn);
+}
+.rollbacks-countdown.is-overdue .rollbacks-countdown__bar > span {
+  background: var(--danger);
+}
+
+/* ---- pinned states ---- */
+.rollbacks-pins__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 16px;
+  padding: 0 var(--sp-4) var(--sp-2);
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+}
+.rollbacks-pin {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 6px;
+  min-width: 0;
+  padding: 3px 0;
+}
+.rollbacks-pin__tag {
+  max-width: 30ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- promotions ---- */
+.rollbacks-promo {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 0;
+}
+.rollbacks-promo > span:first-child {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.rollbacks-outcome {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px 8px;
+  padding: 4px 0;
+}
+@media (min-width: 641px) {
+  .rollbacks-outcome {
+    justify-content: flex-start;
+  }
+}
+.rollbacks-outcome__detail {
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+}
+.rollbacks-drawer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+.rollbacks-drawer__title {
+  margin-top: var(--sp-2);
+  font-size: var(--fs-md);
+  font-weight: 600;
+}
+.rollbacks-prov {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  font-size: var(--fs-sm);
+}
+.rollbacks-prov__ok,
+.rollbacks-prov__bad {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  font-weight: 600;
+}
+.rollbacks-prov__ok .aoc-icon {
+  color: var(--ok);
+}
+.rollbacks-prov__bad .aoc-icon {
+  color: var(--danger);
+}
+.rollbacks-prov__reasons {
+  padding-left: 18px;
+  color: var(--text-2);
+}
+.rollbacks-prov__commits {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.rollbacks-prov__commits li {
+  display: grid;
+  grid-template-columns: 14px auto minmax(0, 1fr);
+  align-items: center;
+  gap: 2px 8px;
+  padding: 6px 0;
+  border-top: 1px solid var(--border);
+}
+.rollbacks-prov__commits li.is-traced > .aoc-icon {
+  color: var(--ok);
+}
+.rollbacks-prov__commits li.is-orphan > .aoc-icon {
+  color: var(--danger);
+}
+.rollbacks-prov__subject {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.rollbacks-prov__via {
+  grid-column: 2 / -1;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+}
+.rollbacks-orphans {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* ---- forms ---- */
+.rollbacks-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+.rollbacks-form__row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--sp-3);
+}
+.rollbacks-flow {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: var(--sp-3) var(--sp-3) var(--sp-3) calc(var(--sp-3) + 18px);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+}
+.rollbacks-flow strong {
+  color: var(--text);
+}
+.rollbacks-checks {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.rollbacks-checks legend {
+  margin-bottom: 4px;
+  padding: 0;
+}

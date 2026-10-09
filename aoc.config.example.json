@@ -1,8 +1,9 @@
 {
   "//": "aocd configuration. Copy to aoc.config.json where you start aocd, or point --config <file> / AOC_CONFIG at it. Every key is optional and the values below are the built-in defaults. Relative paths resolve against this file's directory (~ is your home). Keys starting with // are comments; a //key shows an optional setting without enabling it. Env overrides: AOC_PORT, AOC_HOST, AOC_DATA_DIR, AOC_PUBLIC_URL. Secrets never go here: see .env.example.",
 
-  "//mode": "development | production. Production withdraws development conveniences that weaken a binding control; today: with intake.requireScan, attachments are refused (503) unless an anti-virus engine scans them.",
   "mode": "development",
+  "//mode": "development | production. Production refuses to start unless managed sessions are isolated (supervisor.sessionUser + readOnlySessionUser, aocd as root) and the KEK comes from keys.masterKeyFile (outside dataDir, 0400/0600, owned by aocd's user; never AOC_MASTER_KEY, never generated), and with intake.requireScan refuses attachments (503) unless an anti-virus engine scans them. See docs/runbooks/credential-isolation.md §4.",
+
   "dataDir": ".aoc/data",
   "host": "127.0.0.1",
   "port": 7420,
@@ -10,7 +11,7 @@
   "timezone": "Asia/Kuala_Lumpur",
 
   "keys": {
-    "//": "Key-encryption key for the per-scope body keys (crypto-shred, §13). Order: AOC_MASTER_KEY env, then masterKeyFile, else <dataDir>/master.key is generated (0600). Production: store it apart from the data dir and its backups, per docs/runbooks/key-custody.md (R6).",
+    "//": "Key-encryption key for the per-scope body keys (crypto-shred, §13). Development order: AOC_MASTER_KEY env, then masterKeyFile, else <dataDir>/master.key is generated (0600). Production mode accepts only an existing masterKeyFile outside the data dir, per docs/runbooks/key-custody.md (R6).",
     "//masterKeyFile": "/etc/aoc/master.key"
   },
 
@@ -53,7 +54,13 @@
       "NODE_EXTRA_CA_CERTS",
       "SSL_CERT_FILE"
     ],
-    "//credentialProfilesFile": "/etc/aoc/credential-profiles.json — { \"profiles\": { \"<name>\": { \"env\": { … } } } }, readable only by the user aocd runs as; never on developer machines."
+    "//credentialProfilesFile": "/etc/aoc/credential-profiles.json — { \"profiles\": { \"<name>\": { \"env\": { \"GIT_SSH_COMMAND\": \"ssh -i {{file:ssh-key}}\" }, \"files\": { \"ssh-key\": \"/etc/aoc/keys/<name>\" } } } }, readable only by the user aocd runs as; never on developer machines. Isolated sessions get a private copy of each file for the length of a turn.",
+    "//isolation": "user | none. Unset: user once sessionUser is set or in production, else none (sessions run as aocd's own user and can read its keys and databases: development only, warned on every launch).",
+    "//sessionUser": "aoc-agent — unprivileged OS user every credentialed turn runs as (claude, hooks, MCP server, tools). aocd must run as root to switch to it.",
+    "//readOnlySessionUser": "aoc-reader — OS user for read-only (triage) types, with its own uid and group; required in production.",
+    "runner": [],
+    "//runner": "Optional argv prefix that starts each turn in its isolated context instead of a direct uid/gid switch (a per-session container wrapper, or [\"setpriv\",\"--reuid={uid}\",\"--regid={gid}\",\"--clear-groups\",\"--\"]). Placeholders: {user} {uid} {gid} {sessionId} {sessionDir} {cwd}.",
+    "sessionHomesDir": ".aoc/session-homes"
   },
 
   "decisions": {
@@ -81,6 +88,8 @@
     "session": "1700",
     "runAtLocalTime": "18:00",
     "retryAtLocalTimes": ["18:30", "21:00"],
+    "//recheckPreviousWeekday": "The first run of a day re-checks the previous weekday if it was stamped a holiday or its page was unreadable: if BNM has since published it, that day is attempted again. Metering closes each day at 00:15 and a closed day is never restated, so a late figure for a closed day is only reported (fx.alert).",
+    "recheckPreviousWeekday": true,
     "pageUrl": "https://www.bnm.gov.my/exchange-rates",
     "apiUrl": "https://api.bnm.gov.my/public/exchange-rate/USD",
     "extractor": "claude-cli",

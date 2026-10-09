@@ -19,6 +19,9 @@ import {
   type DecisionOption,
   type JsonValue,
   type MetaOf,
+  type PinDTO,
+  type PinListDTO,
+  type PinProblem,
   type PromotionDTO,
   type ProvenanceDTO,
   type RollbackDTO,
@@ -638,6 +641,71 @@ export class ChangeEngine implements ChangeService {
       editRatioSum: sum('editRatioSum'),
     });
     return { rows, totals, blindDwellMs: this.o.blindAffirmMs };
+  }
+
+  // ── pinned states ────────────────────────────────────────────────────────
+  /** A project's pinned states, newest first, each checked the way a rollback resolves its target. */
+  pinList(projectId: string, limit = 100): PinListDTO {
+    const repo = this.repoPath(projectId);
+    const git = this.ctx.services.get('git');
+    const usable = !!repo && git.isRepo(repo);
+    const branch = usable ? this.defaultBranch(projectId) : null;
+    const head = usable && branch ? git.revParse(repo!, `refs/heads/${branch}`) : null;
+    const tags = usable ? this.tagCommits(repo!) : new Map<string, string>();
+    const byState = new Map<string, PinDTO>();
+    for (const r of this.read.pinRows(projectId)) {
+      const by = { source: r.source, sourceId: r.source_id, at: r.at, seq: r.seq };
+      const key = `${r.tag ?? ''}\u0000${r.sha ?? ''}`;
+      const known = byState.get(key);
+      if (known) known.pinnedBy.push(by);
+      else
+        byState.set(key, {
+          tag: r.tag,
+          sha: r.sha,
+          pinnedBy: [by],
+          ...(usable
+            ? this.resolvePin(repo!, tags, r.tag, r.sha)
+            : { resolvedSha: null, problem: 'repo_unknown' }),
+        });
+    }
+    const latest = (p: PinDTO) => p.pinnedBy[p.pinnedBy.length - 1]!.seq;
+    const pins = [...byState.values()].sort((a, b) => latest(b) - latest(a)).slice(0, limit);
+    return { projectId, defaultBranch: branch, head, pins };
+  }
+
+  private resolvePin(
+    repo: string,
+    tags: Map<string, string>,
+    tag: string | null,
+    sha: string | null,
+  ): { resolvedSha: string | null; problem: PinProblem | null } {
+    if (tag) {
+      const commit = tags.get(tag.replace(/^refs\/tags\//, ''));
+      if (!commit) return { resolvedSha: null, problem: 'tag_missing' };
+      if (sha && !commit.startsWith(sha)) return { resolvedSha: null, problem: 'tag_moved' };
+      return { resolvedSha: commit, problem: null };
+    }
+    const git = this.ctx.services.get('git');
+    const commit = sha && git.commitExists(repo, sha) ? git.revParse(repo, sha) : null;
+    return commit ? { resolvedSha: commit, problem: null } : { resolvedSha: null, problem: 'commit_missing' };
+  }
+
+  /** Every tag of the repository with the commit it points at (annotated tags peeled), in one git call. */
+  private tagCommits(repo: string): Map<string, string> {
+    const r = this.ctx.services
+      .get('git')
+      .run(repo, [
+        'for-each-ref',
+        '--format=%(refname:strip=2)%00%(objectname)%00%(*objectname)',
+        'refs/tags',
+      ]);
+    const out = new Map<string, string>();
+    if (r.code !== 0) return out;
+    for (const line of r.stdout.split('\n')) {
+      const [name, object, peeled] = line.split('\u0000');
+      if (name && object) out.set(name, peeled || object);
+    }
+    return out;
   }
 
   // ── rollback ─────────────────────────────────────────────────────────────

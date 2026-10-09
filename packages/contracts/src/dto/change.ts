@@ -198,6 +198,32 @@ export interface ProvenanceDTO {
   reasons: string[];
 }
 
+/** What recorded a pinned state: a phase completion, a change record (rollback point or completion pin), or a tag. */
+export type PinSource = 'phase.completed' | 'change.submitted' | 'change.completed' | 'git.ref_pinned';
+/** Why a pin can no longer be restored (rollback targets must still resolve to their pinned commit). */
+export type PinProblem = 'repo_unknown' | 'tag_missing' | 'tag_moved' | 'commit_missing';
+
+export interface PinDTO {
+  /** Immutable tag (null for a SHA-only pin). */
+  tag: string | null;
+  /** SHA recorded when the state was pinned. */
+  sha: string | null;
+  /** Every record that pinned this state, oldest first. */
+  pinnedBy: { source: PinSource; sourceId: string | null; at: string; seq: number }[];
+  /** The commit a rollback to this pin restores; null when it no longer resolves (see `problem`). */
+  resolvedSha: string | null;
+  problem: PinProblem | null;
+}
+
+/** `GET /api/pins?projectId=` — the project's pinned states, newest first, checked against its repository. */
+export interface PinListDTO {
+  projectId: string;
+  defaultBranch: string | null;
+  /** Current head of the default branch: the natural rollback target for a new change record (not yet pinned). */
+  head: string | null;
+  pins: PinDTO[];
+}
+
 export interface AffirmRateRowDTO {
   userId: string;
   name: string | null;

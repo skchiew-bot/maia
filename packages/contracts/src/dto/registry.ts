@@ -75,6 +75,27 @@ export interface RunCostSplit {
   avgCostUsd: number | null;
   totalCostUsd: number;
 }
+/** Per-run efficiency of one split (finished runs; rollover chains count once). */
+export interface RunEfficiency {
+  /** Mean metered tokens per finished run, every token type; null with no runs. */
+  avgTokens: number | null;
+  /** Mean wall-clock time per finished run, launch to final end (ms); null with no runs. */
+  avgDurationMs: number | null;
+}
+/**
+ * Distillation savings beyond USD. Ringgit converts each run's amount at the BNM rate of the local day the run
+ * was launched and sums them (the daily-rollup rule) — never a USD total × today's rate.
+ */
+export interface RegistrySavings {
+  /** realizedSavingsUsd in RM; null until both splits have runs, or when a contributing day has no rate. */
+  realizedRm: number | null;
+  /** opportunity.usd in RM; null without an execution path, or when a contributing day has no rate. */
+  opportunityRm: number | null;
+  /** execution runs × (discovery − execution) tokens per run; null until both splits have runs. Negative = more. */
+  tokensSaved: number | null;
+  /** execution runs × (discovery − execution) wall-clock ms per run; null until both splits have runs. */
+  timeSavedMs: number | null;
+}
 export interface RegistryTrendPoint {
   /** Monday of the week (local timezone), YYYY-MM-DD. */
   weekStart: string;
@@ -83,6 +104,8 @@ export interface RegistryTrendPoint {
   executionRuns: number;
   /** Average cost per finished run launched that week; null for an empty week. */
   avgCostUsd: number | null;
+  /** Runs that used tokens but cost US$0: no rate card priced their model that day (they pull the average down). */
+  unpricedRuns: number;
 }
 export interface RegistryOpportunity {
   /**
@@ -128,6 +151,9 @@ export interface RegistryEntry {
   /** execution runs × (discovery $/run − execution $/run); null until both splits have runs. */
   realizedSavingsUsd: number | null;
   opportunity: RegistryOpportunity;
+  /** Tokens and wall-clock time per finished run, per split. */
+  efficiency: { discovery: RunEfficiency; execution: RunEfficiency };
+  savings: RegistrySavings;
   /** 8 weekly points, oldest → newest (the current, partial week last). */
   trend: RegistryTrendPoint[];
   playbook: RegistryPlaybookStatus;
@@ -137,6 +163,35 @@ export interface RegistryEntry {
   openRepeatOffences: number | null;
   /** metered = MeteringService.sessionCostUsd; estimated = usage.recorded × default rates. */
   costBasis: 'metered' | 'estimated' | 'mixed' | 'none';
+}
+
+/** One managed run (a launch plus its rollover successors), as `GET /api/registry/runs` lists it. */
+export interface RegistryRunDTO {
+  /** Root session id: the run's identity. */
+  runId: string;
+  /** Latest session of the chain (open it, or distill from it). */
+  lastSessionId: string;
+  sessions: number;
+  processType: string;
+  projectId: string | null;
+  /** Model id the run was launched with. */
+  model: string;
+  kind: RunKind;
+  launchedAt: string;
+  /** Final end; null while running. */
+  endedAt: string | null;
+  /** Final outcome (completed, failed, killed, …); null while running. */
+  outcome: string | null;
+  finished: boolean;
+  costUsd: number;
+  costBasis: 'metered' | 'estimated';
+  tokens: number;
+  durationMs: number | null;
+  /** Playbook (proposed or approved) already distilled from this run. */
+  playbookId: string | null;
+}
+export interface RegistryRunsResponse {
+  runs: RegistryRunDTO[];
 }
 
 // ── team knowledge layer ───────────────────────────────────────────────────

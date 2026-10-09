@@ -25,6 +25,16 @@ export interface ProgressDTO {
   etaHiddenReason: 'fewer_than_3_done' | 'complete' | null;
 }
 
+/** The manifest phase a session is working in: the first phase (in plan order) with work left. */
+export interface CurrentPhaseDTO {
+  phaseId: string;
+  name: string;
+  /** 1-based position in the plan. */
+  index: number;
+  /** Phases in the plan. */
+  count: number;
+}
+
 export interface SessionSummary {
   sessionId: string;
   mode: SessionMode;
@@ -34,6 +44,8 @@ export interface SessionSummary {
   threadId: string | null;
   phaseId: string | null;
   phaseName: string | null;
+  /** From the plan manifest; null before a plan is declared or once every phase is done. */
+  currentPhase?: CurrentPhaseDTO | null;
   processType: string | null;
   model: string | null;
   ownerId: string | null;
@@ -45,10 +57,16 @@ export interface SessionSummary {
   contextTokens: number | null;
   contextPct: number | null;
   costTodayUsd: number;
+  /** Today's notional cost at today's stamped USD→MYR rate; null when today has no FX rate. */
+  costTodayRm?: number | null;
   openDecision: { decisionId: string; kind: string; createdAt: string } | null;
   throttledUntil: string | null;
   lastActivityAt: string | null;
   startedAt: string;
+  /** When session.ended was recorded (a crash alone leaves it unset: the session stays restartable). */
+  endedAt?: string | null;
+  /** session.ended outcome (completed / failed / killed / retired / abandoned); null while live. */
+  outcome?: string | null;
   ticketId: string | null;
 }
 
@@ -66,7 +84,10 @@ export interface ConsoleKpis {
 
 export interface ConsoleSnapshot {
   generatedAt: string;
+  /** The local calendar day (configured timezone) behind every "today" figure, including ended sessions. */
+  today?: string;
   kpis: ConsoleKpis;
+  /** Live sessions, dead (failed) sessions awaiting a restart, then the sessions that ended today. */
   sessions: SessionSummary[];
 }
 
@@ -96,6 +117,19 @@ export interface SessionDetail extends SessionSummary {
     rollover: { enabled: boolean; reason: string | null };
     prompt: { enabled: boolean; reason: string | null };
   };
+}
+
+/**
+ * Whole-session activity behind the session hero (§12): tool calls per minute and plan-limit spans. Minutes
+ * with no tool call are omitted, so gaps (decision waits, throttles) stay visible as gaps.
+ */
+export interface SessionActivityDTO {
+  sessionId: string;
+  /** Tool calls (completed and denied) per minute, oldest first; `at` is the start of the minute (UTC). */
+  minutes: { at: string; count: number }[];
+  totalToolCalls: number;
+  /** Plan-limit episodes, oldest first. `endAt` and `idleMs` are null while the session is still throttled. */
+  throttles: { startAt: string; endAt: string | null; resetAt: string | null; idleMs: number | null }[];
 }
 
 /** Operator transcript view (rendered output of the managed session; untrusted text — escape when rendering). */

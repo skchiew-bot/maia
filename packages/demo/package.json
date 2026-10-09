@@ -2,7 +2,7 @@
   "name": "@aoc/demo",
   "version": "0.1.0",
   "private": true,
-  "description": "Deterministic demo-history seeder and live demo driver",
+  "description": "Deterministic demo-history seeder and the live demo launcher (real managed sessions on claude-sim)",
   "type": "module",
   "exports": {
     ".": "./src/index.ts"
@@ -11,9 +11,10 @@
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "seed": "node --import tsx src/seed.ts",
-    "pulse": "node --import tsx src/pulse.ts"
+    "live": "node --import tsx src/live.ts"
   },
   "dependencies": {
+    "@aoc/claude-sim": "workspace:*",
     "@aoc/contracts": "workspace:*",
     "@aoc/kernel": "workspace:*",
     "@aoc/mod-audit": "workspace:*",

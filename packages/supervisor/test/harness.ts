@@ -95,11 +95,15 @@ const TYPES: ProcessType[] = ProcessRegistrySchema.parse({
 
 export class StubRegistry implements RegistryService {
   readonly playbooks = new Map<string, PlaybookInfo>();
+  private readonly types: ProcessType[];
+  constructor(extra: ProcessType[] = []) {
+    this.types = [...TYPES, ...extra];
+  }
   listTypes(): ProcessType[] {
-    return TYPES;
+    return this.types;
   }
   getType(id: string): ProcessType | null {
-    return TYPES.find((t) => t.id === id) ?? null;
+    return this.types.find((t) => t.id === id) ?? null;
   }
   activePlaybook(processType: string): PlaybookInfo | null {
     return this.playbooks.get(processType) ?? null;
@@ -270,8 +274,12 @@ export interface HarnessOptions {
   log?: Logger;
   /** The fake sidecar runs until SIGTERM, then holds its exit until `releaseSidecars()` (its last-report window). */
   sidecarHold?: boolean;
-  /** Extra aocd environment (e.g. FAKE_SIDECAR_LINGER=1). */
-  env?: Record<string, string>;
+  /** Process types added to the stub registry. */
+  types?: ProcessType[];
+  /** aocd environment entries added to (or, with undefined, removed from) the default one (e.g. FAKE_SIDECAR_LINGER=1). */
+  env?: Record<string, string | undefined>;
+  /** Keep the event store on disk (its directory is `t.dataDir`). */
+  onDisk?: boolean;
 }
 
 export async function createHarness(o: HarnessOptions = {}) {
@@ -309,7 +317,7 @@ export async function createHarness(o: HarnessOptions = {}) {
     ...o.env,
   };
   const ledger = new StubLedger();
-  const registry = new StubRegistry();
+  const registry = new StubRegistry(o.types);
   const credits = new StubCredits();
   const liveness = new StubLiveness();
   const learning = new StubLearning();
@@ -336,6 +344,7 @@ export async function createHarness(o: HarnessOptions = {}) {
     },
     services,
     log: o.log,
+    onDisk: o.onDisk,
   });
   const sup = t.rt.services.get('supervisor') as Supervisor;
   liveness.lifecycleOf = (sessionId) => sup.session(sessionId)?.lifecycle;

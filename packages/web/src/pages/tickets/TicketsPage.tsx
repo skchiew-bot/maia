@@ -103,13 +103,20 @@ export default function TicketsPage() {
     return latest;
   }, [promotions.data]);
   const gatesFor = useCallback((t: InternalTicket) => gatesOf(t, promotionOf.get(t.ticketId)), [promotionOf]);
+  // At the go-live gate a human is only waited on while the promotion is pending, not after it failed.
+  const waitsOnGate = useCallback(
+    (t: InternalTicket) =>
+      GATE_STAGES.has(t.stage) && (t.stage !== 'go_live_gate' || gatesFor(t).goLive === 'waiting'),
+    [gatesFor],
+  );
 
   const all = tickets.data ?? [];
   const open = all.filter((t) => !TERMINAL.has(t.stage));
   const funnel = useMemo(() => funnelOf(all, now), [all, now]);
-  const gatesWaiting = open.filter((t) => GATE_STAGES.has(t.stage));
+  const gatesWaiting = open.filter(waitsOnGate);
   const uatWaiting = open.filter((t) => t.stage === 'uat' && t.openDecisionIds.length > 0);
   const stuck = open.filter((t) => gatesFor(t).goLive === 'blocked');
+  const promotionFailed = open.filter((t) => gatesFor(t).goLive === 'failed');
   const urgent = open.filter((t) => t.severity === 'critical' || t.severity === 'high');
   const oldestOpen = open.reduce<string | null>(
     (min, t) => (min === null || t.submittedAt < min ? t.submittedAt : min),
@@ -120,7 +127,7 @@ export default function TicketsPage() {
     const filtered = all.filter((t) => {
       if (sevFilter && t.severity !== sevFilter) return false;
       if (stageFilter === 'open') return !TERMINAL.has(t.stage);
-      if (stageFilter === 'gates') return GATE_STAGES.has(t.stage);
+      if (stageFilter === 'gates') return waitsOnGate(t);
       return stageFilter ? t.stage === stageFilter : true;
     });
     // Open work first, most severe first, then oldest first.
@@ -130,7 +137,7 @@ export default function TicketsPage() {
         SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] ||
         a.submittedAt.localeCompare(b.submittedAt),
     );
-  }, [all, stageFilter, sevFilter]);
+  }, [all, stageFilter, sevFilter, waitsOnGate]);
 
   const set = (key: 'stage' | 'severity', value: string | null) => {
     const next = new URLSearchParams(params);
@@ -319,7 +326,14 @@ export default function TicketsPage() {
           <InlineAlert tone="danger" title="Go-live did not start after a UAT pass">
             {stuck.length === 1 ? 'One ticket passed' : `${stuck.length} tickets passed`} the requester&apos;s
             UAT but no go-live request was raised, so nothing will promote the fix. Open the ticket to see its
-            history.
+            history and request go-live again.
+          </InlineAlert>
+        )}
+        {promotionFailed.length > 0 && (
+          <InlineAlert tone="danger" title="Go-live promotion did not complete">
+            {promotionFailed.length === 1 ? 'One ticket' : `${promotionFailed.length} tickets`} reached the
+            go-live gate but the promotion failed or was refused, so nothing reached main. Open the ticket to
+            see the reason and request go-live again.
           </InlineAlert>
         )}
         <FilterBar

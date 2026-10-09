@@ -1,0 +1,424 @@
+/* Console (Builder landing). Colours come only from design tokens; nothing animates at rest. */
+.console-page {
+  container: console / inline-size;
+  min-width: 0;
+}
+
+/* ---- KPI strip extras ---- */
+.console-kpis {
+  margin-bottom: var(--sp-3);
+}
+.console-kpi-meter {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 2px;
+}
+.console-kpi-meter .console-meter {
+  max-width: 220px;
+}
+
+/* ---- Filters ---- */
+.console-filter {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+.console-filter .aoc-field__label {
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+}
+.console-filter .aoc-select {
+  min-width: 132px;
+}
+.console-filter .aoc-select__control {
+  height: var(--ctl-h);
+  font-size: var(--fs-sm);
+}
+
+/* ---- Layout: activity + ended on the left, decisions rail on the right ---- */
+.console-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
+  grid-template-areas:
+    'activity rail'
+    'ended rail';
+  grid-template-rows: auto 1fr;
+  gap: var(--sp-4);
+  align-items: start;
+}
+.console-activity {
+  grid-area: activity;
+  min-width: 0;
+}
+.console-layout__rail {
+  grid-area: rail;
+  min-width: 0;
+}
+.console-layout__ended {
+  grid-area: ended;
+  min-width: 0;
+}
+@container console (max-width: 980px) {
+  .console-layout {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: 'activity' 'rail' 'ended';
+    grid-template-rows: auto;
+  }
+}
+
+/* ---- Panels ---- */
+.console-panel,
+.console-rail {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.console-panel__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 2px var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  border-bottom: 1px solid var(--border);
+}
+.console-panel__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  line-height: var(--lh-tight);
+}
+.console-panel__meta {
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+}
+.console-ended .aoc-dt {
+  padding: 0 var(--sp-1) var(--sp-1);
+}
+.console-cellstack {
+  display: inline-flex;
+  flex-direction: column;
+  line-height: 1.3;
+}
+.console-cellsub {
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+}
+.console-ended__title {
+  display: inline-block;
+  max-width: 34ch;
+  line-height: 1.3;
+}
+.console-ended .aoc-dt__td {
+  height: auto;
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+
+/* ---- Agent activity header + fleet counts ---- */
+.console-activity__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px var(--sp-3);
+  margin-bottom: var(--sp-2);
+}
+.console-activity__note {
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+}
+.console-fleet {
+  margin-bottom: var(--sp-3);
+}
+.console-fleet__list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 2px;
+  list-style: none;
+}
+.console-fleet__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.console-fleet__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 8px 0 3px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: none;
+  color: var(--text);
+}
+.console-fleet__btn:hover {
+  background: var(--surface-2);
+}
+.console-fleet__btn.is-pressed {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: var(--accent-soft);
+}
+.console-fleet__n {
+  min-width: 1ch;
+  font-size: var(--fs-sm);
+  font-weight: 700;
+}
+.console-fleet__item.is-zero .console-fleet__n {
+  color: var(--text-3);
+  font-weight: 400;
+}
+.console-fleet__sep {
+  color: var(--text-3);
+  font-size: var(--fs-sm);
+}
+
+/* ---- Tiles (small multiples) ---- */
+.console-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(264px, 100%), 1fr));
+  gap: var(--sp-3);
+  list-style: none;
+}
+.console-tile {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.console-tile > article {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  height: 100%;
+  padding: var(--sp-3) var(--sp-4) var(--sp-3);
+}
+.console-tile__top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--sp-2);
+}
+.console-tile__name {
+  min-width: 0;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  line-height: 1.3;
+}
+.console-tile__link {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--text);
+  text-decoration: none;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow-wrap: anywhere;
+}
+.console-tile__link:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+.console-tile__chips {
+  display: flex;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+  max-width: 50%;
+}
+.console-tile__chips .aoc-chip {
+  height: 20px;
+  padding: 0 6px;
+}
+.console-chip--model {
+  border-color: var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+}
+.console-tile__ctx {
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.console-tile__state {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  min-height: 22px;
+}
+.console-tile__decision {
+  color: inherit;
+  font-weight: 600;
+}
+.console-tile__owner {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 50%;
+  margin-left: auto;
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.console-tile__act {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  margin-top: 2px;
+}
+.console-tile__spark {
+  flex: 1;
+  min-width: 0;
+}
+.console-tile__apm {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  min-width: 52px;
+  line-height: 1.1;
+}
+.console-tile__apm-value {
+  font-size: var(--fs-xl);
+  font-weight: 600;
+}
+.console-tile__apm-unit {
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+}
+.console-tile__stats {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr) minmax(0, 0.95fr);
+  gap: var(--sp-3);
+  margin-top: 4px;
+  padding-top: var(--sp-2);
+  border-top: 1px solid var(--border);
+}
+.console-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.console-stat dt {
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+}
+.console-stat__value {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-height: 20px;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+.console-stat__pct {
+  margin-left: auto;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  font-weight: 400;
+}
+.console-stat__flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--text);
+  font-size: var(--fs-xs);
+}
+.console-stat__flag .aoc-icon {
+  color: var(--warn);
+}
+.console-stat__bar {
+  min-height: 4px;
+}
+.console-stat__sub {
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.console-stat__money.aoc-money--stacked {
+  align-items: flex-start;
+}
+
+/* Thin progress meter: neutral ink fill on a recessive track (colour only where it means something). */
+.console-meter {
+  display: block;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--surface-3);
+}
+.console-meter__fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--text-2);
+}
+
+/* ---- Decisions rail (cards: decisionCard.css) ---- */
+.console-rail {
+  display: flex;
+  flex-direction: column;
+}
+.console-rail__foot {
+  padding: var(--sp-2) var(--sp-4);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+
+/* ---- Loading skeleton: static blocks that hold the layout ---- */
+.console-skeleton__kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(176px, 1fr));
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-4);
+}
+.console-skeleton__tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(264px, 100%), 1fr));
+  gap: var(--sp-3);
+}
+.console-skeleton__block {
+  display: block;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+.console-skeleton__block--kpi {
+  height: 92px;
+}
+.console-skeleton__block--tile {
+  height: 214px;
+}
+
+@media (max-width: 520px) {
+  .console-tile > article {
+    padding: var(--sp-3);
+  }
+  .console-filter {
+    flex: 1 1 140px;
+  }
+  .console-filter .aoc-select {
+    flex: 1;
+    min-width: 0;
+  }
+}
+@media (max-width: 480px) {
+  /* Five KPIs in two columns: the last one takes the full row instead of leaving a hole. */
+  .console-kpis > .aoc-kpis__item:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+  }
+}

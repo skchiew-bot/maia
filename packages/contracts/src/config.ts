@@ -17,8 +17,11 @@ const localTime = z.string().regex(LOCAL_TIME, 'expected HH:MM (24-hour local ti
 
 export const AocConfigSchema = z.object({
   /**
-   * `production` withdraws development conveniences that weaken a binding control; today: with
-   * `intake.requireScan`, only an anti-virus engine counts as a scan (the builtin heuristic does not).
+   * 'production' turns binding controls into startup refusals and withdraws development conveniences:
+   * - managed sessions must run isolated from aocd (supervisor.isolation 'user', a separate read-only session user);
+   * - the KEK must come from an existing keys.masterKeyFile outside dataDir (mode 0400/0600, owned by aocd's user) —
+   *   never AOC_MASTER_KEY, never generated (docs/runbooks/credential-isolation.md §4, key-custody.md §3);
+   * - with intake.requireScan, only an anti-virus engine counts as a scan (the builtin heuristic does not).
    */
   mode: z.enum(['development', 'production']).default('development'),
   /** Where aoc.db, bodies.db, keys, spool and artifacts live. */
@@ -51,8 +54,38 @@ export const AocConfigSchema = z.object({
       autoContinueLimit: z.number().int().min(0).default(1),
       /** Env vars copied from aocd into sessions (everything else is dropped — credential isolation, §3). */
       envAllowlist: z.array(z.string()).default(['PATH', 'HOME', 'LANG', 'LC_ALL', 'TERM', 'TZ', 'TMPDIR', 'SHELL', 'USER', 'CLAUDE_CONFIG_DIR', 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'HTTPS_PROXY', 'HTTP_PROXY', 'NO_PROXY', 'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE']),
-      /** JSON file: { profiles: { [name]: { env: Record<string,string> } } } readable only by the supervisor user. */
+      /**
+       * JSON file `{ profiles: { [name]: { env: Record<string,string>, files?: Record<string,string> } } }` readable
+       * only by aocd's user. `files` names key files; an env value refers to one as `{{file:<name>}}` and a session
+       * gets a private per-session copy of it (deleted when its turn ends).
+       */
       credentialProfilesFile: z.string().optional(),
+      /**
+       * How managed sessions are kept apart from aocd (§3, threat model O-1). 'user': every turn — claude, its hooks,
+       * its MCP server and the model's tools — runs as `sessionUser` (`readOnlySessionUser` for read-only types),
+       * with a per-session HOME, CLAUDE_CONFIG_DIR and TMPDIR, so it cannot read aocd's keys, databases or credential
+       * profiles; aocd must run as root to switch users. 'none': sessions run as aocd's own user and can read all
+       * of that — development only, warned on every launch. Unset: 'user' when sessionUser is set or in production
+       * mode, else 'none'. Resolve it with `sessionIsolationOf(config)`.
+       */
+      isolation: z.enum(['none', 'user']).optional(),
+      /** Unprivileged OS user for credentialed sessions (e.g. aoc-agent). Never root, never aocd's own user. */
+      sessionUser: z.string().min(1).optional(),
+      /**
+       * OS user for read-only sessions (e.g. aoc-reader), with its own uid and primary group, so a triage session
+       * can neither open a build session's key copy nor read its environment through /proc. Defaults to
+       * sessionUser (warned); production requires a distinct user.
+       */
+      readOnlySessionUser: z.string().min(1).optional(),
+      /**
+       * Optional argv prefix that starts each turn in its isolated context instead of a direct uid/gid switch,
+       * e.g. a per-session container wrapper or ["setpriv","--reuid={uid}","--regid={gid}","--clear-groups","--"].
+       * Placeholders: {user} {uid} {gid} {sessionId} {sessionDir} {cwd}. It must run the command as that uid
+       * with the environment it is given (verified at startup).
+       */
+      runner: z.array(z.string()).default([]),
+      /** Per-session HOME, CLAUDE_CONFIG_DIR, TMPDIR and key copies (isolation 'user'); session users traverse it. */
+      sessionHomesDir: z.string().default('.aoc/session-homes'),
     })
     .default({}),
   decisions: z
@@ -94,6 +127,12 @@ export const AocConfigSchema = z.object({
       runAtLocalTime: localTime.default('18:00'),
       /** Later attempts while the day's rate is not yet published or the source was unreadable; the last one decides. */
       retryAtLocalTimes: z.array(localTime).default(['18:30', '21:00']),
+      /**
+       * The day's first run re-checks the previous weekday when it was carried forward unread (a holiday stamp or an
+       * unreadable source): if BNM has since published it, that day is attempted again; a day metering has closed is
+       * never restated, so its late figure is only reported.
+       */
+      recheckPreviousWeekday: z.boolean().default(true),
       pageUrl: z.string().default('https://www.bnm.gov.my/exchange-rates'),
       /** BNM Open API USD endpoint: aocd requests `<apiUrl>/date/<YYYY-MM-DD>?session=<session>`. */
       apiUrl: z.string().url().default('https://api.bnm.gov.my/public/exchange-rate/USD'),
@@ -224,3 +263,9 @@ export const AocConfigSchema = z.object({
 });
 export type AocConfig = z.infer<typeof AocConfigSchema>;
 export const defaultConfig = (): AocConfig => AocConfigSchema.parse({});
+
+/** The effective session isolation: explicit setting, else 'user' once a session user is named or in production. */
+export function sessionIsolationOf(config: Pick<AocConfig, 'mode' | 'supervisor'>): 'none' | 'user' {
+  const s = config.supervisor;
+  return s.isolation ?? (s.sessionUser || config.mode === 'production' ? 'user' : 'none');
+}

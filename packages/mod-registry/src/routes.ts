@@ -1,11 +1,21 @@
 import { z } from 'zod';
-import { KNOWLEDGE_KINDS, PLAYBOOK_RETIRE_REASONS, PLAYBOOK_STATUSES } from '@aoc/contracts';
+import {
+  KNOWLEDGE_KINDS,
+  PLAYBOOK_RETIRE_REASONS,
+  PLAYBOOK_STATUSES,
+  type RegistryRunsResponse,
+} from '@aoc/contracts';
 import { HttpError, parseQuery, readJson, requirePermission, type App, type Ctx } from '@aoc/kernel';
 import type { RegistryEngine } from './engine';
 
 const PlaybookListQuery = z.object({
   processType: z.string().min(1).max(80).optional(),
   status: z.enum(PLAYBOOK_STATUSES).optional(),
+});
+const RunsQuery = z.object({
+  processType: z.string().min(1).max(80).optional(),
+  outcome: z.string().min(1).max(40).optional(),
+  limit: z.coerce.number().int().min(1).max(500).optional(),
 });
 const DistillBody = z.object({ sessionId: z.string().min(1).max(64) }).strict();
 const RetireBody = z.object({ reason: z.enum(PLAYBOOK_RETIRE_REASONS).optional() }).strict();
@@ -47,6 +57,16 @@ export function registerRoutes(app: App, engine: RegistryEngine): void {
   app.get('/api/registry/process-types', (c) => {
     requirePermission(c, 'registry.view');
     return c.json(engine.typesResponse());
+  });
+
+  /** Runs and economics: run chains newest first (cost, tokens, time, kind, playbook distilled from them). */
+  app.get('/api/registry/runs', (c) => {
+    requirePermission(c, 'registry.view');
+    const q = parseQuery(c, RunsQuery);
+    const body: RegistryRunsResponse = {
+      runs: engine.runs({ processType: q.processType, outcome: q.outcome, limit: q.limit ?? 100 }),
+    };
+    return c.json(body);
   });
 
   app.get('/api/playbooks', (c) => {

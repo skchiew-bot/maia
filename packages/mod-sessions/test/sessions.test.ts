@@ -221,7 +221,7 @@ describe('hook ingest', () => {
     launch(owner, 'ses_B', {}, randomUUID());
     const res = await t.request('POST', '/ingest/hook', { headers: t.ingestHeaders('ses_A'), body: hook('ses_B', CLAUDE_A, 'PostToolUse', { tool_name: 'Read', tool_input: {}, tool_response: {} }) });
     expect(res.status).toBe(403);
-    const hb = await t.request('POST', '/ingest/heartbeat', { headers: t.ingestHeaders('ses_A'), body: { sessionId: 'ses_B', pid: 1, alive: true, at: t.clock.iso(), transcriptBytes: 0, lastTranscriptWriteAt: null } });
+    const hb = await t.request('POST', '/ingest/heartbeat', { headers: t.sidecarHeaders('ses_A'), body: { sessionId: 'ses_B', pid: 1, alive: true, at: t.clock.iso(), transcriptBytes: 0, lastTranscriptWriteAt: null } });
     expect(hb.status).toBe(403);
   });
 

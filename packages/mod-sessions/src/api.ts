@@ -5,7 +5,10 @@ import {
   type ApmSeries,
   type AuthContext,
   type ConsoleSnapshot,
+  type CurrentPhaseDTO,
+  type Progress,
   type ProgressDTO,
+  type SessionActivityDTO,
   type SessionDetail,
   type SessionLifecycle,
   type SessionSummary,
@@ -17,6 +20,8 @@ import type { SessionRow, SessionsEngine } from './engine';
 import { minuteOf } from './projector';
 
 export const APM_WINDOW_MINUTES = 30;
+/** Most ended sessions the console snapshot lists for today. */
+export const ENDED_TODAY_LIMIT = 50;
 const ACTIVE: SessionLifecycle[] = ['launching', 'running', 'idle', 'waiting_decision', 'blocked', 'throttled'];
 
 interface UsageRow {
@@ -70,8 +75,7 @@ export class SessionReadModels {
     return this.cost(rows, date);
   }
 
-  private progress(sessionId: string): ProgressDTO | null {
-    const p = this.ctx.services.maybe('ledger')?.sessionProgress(sessionId);
+  private progress(p: Progress | null): ProgressDTO | null {
     if (!p) return null;
     return {
       doneTasks: p.doneTasks,
@@ -83,6 +87,19 @@ export class SessionReadModels {
       etaMs: p.etaMs,
       etaHiddenReason: p.etaHiddenReason,
     };
+  }
+
+  /** The first phase in plan order that still has open work. */
+  private currentPhase(p: Progress | null): CurrentPhaseDTO | null {
+    if (!p) return null;
+    const index = p.phases.findIndex((ph) => ph.totalTasks > 0 && !ph.complete);
+    const ph = p.phases[index];
+    return ph ? { phaseId: ph.phaseId, name: ph.name, index: index + 1, count: p.phases.length } : null;
+  }
+
+  /** Today's FX rate (USD→MYR) as stamped by metering; null when today has none. */
+  private fxToday(): number | null {
+    return this.ctx.services.maybe('metering')?.fxRate(this.today())?.rate ?? null;
   }
 
   private windowFor(model: string | null): number | null {
@@ -101,6 +118,9 @@ export class SessionReadModels {
       .get(r.session_id) as { decision_id: string; kind: string; created_at: string } | undefined;
     const window = this.windowFor(r.model);
     const phaseName = r.phase_id ?? null;
+    const ledgerProgress = this.ctx.services.maybe('ledger')?.sessionProgress(r.session_id) ?? null;
+    const costToday = this.costToday(r.session_id);
+    const fx = this.fxToday();
     return {
       sessionId: r.session_id,
       mode: r.mode,
@@ -110,6 +130,7 @@ export class SessionReadModels {
       threadId: r.thread_id,
       phaseId: r.phase_id,
       phaseName,
+      currentPhase: this.currentPhase(ledgerProgress),
       processType: r.process_type,
       model: r.model,
       ownerId: r.owner_id,
@@ -117,28 +138,42 @@ export class SessionReadModels {
       lifecycle: r.lifecycle,
       liveness: r.liveness || r.liveness_since ? { state: r.liveness, reason: r.liveness_reason ?? 'unknown', since: r.liveness_since ?? r.started_at } : null,
       apm: this.apm(r.session_id),
-      progress: this.progress(r.session_id),
+      progress: this.progress(ledgerProgress),
       contextTokens: r.context_tokens,
       contextPct: r.context_tokens != null && window ? Math.round((r.context_tokens / window) * 1000) / 10 : null,
-      costTodayUsd: this.costToday(r.session_id),
+      costTodayUsd: costToday,
+      costTodayRm: fx === null ? null : Math.round(costToday * fx * 100) / 100,
       openDecision: dec ? { decisionId: dec.decision_id, kind: dec.kind, createdAt: dec.created_at } : null,
       throttledUntil: r.throttled_until,
       lastActivityAt: r.last_activity_at ?? r.last_tool_at,
       startedAt: r.started_at,
+      endedAt: r.ended_at,
+      outcome: r.outcome,
       ticketId: r.ticket_id,
     };
   }
 
+  /** Sessions that ended on the local calendar day `date` (configured timezone), most recent first. */
+  private endedOn(date: string): SessionRow[] {
+    const tz = this.ctx.config.timezone;
+    // A local day never starts more than 24h before now, so this window holds every candidate.
+    return (
+      this.ctx.db
+        .prepare("SELECT * FROM sess_sessions WHERE lifecycle IN ('ended','failed','retired') AND ended_at >= ? ORDER BY ended_at DESC LIMIT 500")
+        .all(new Date(this.ctx.clock.now() - 25 * 3600_000).toISOString()) as unknown as SessionRow[]
+    )
+      .filter((r) => r.ended_at !== null && localDate(Date.parse(r.ended_at), tz) === date)
+      .slice(0, ENDED_TODAY_LIMIT);
+  }
+
   console(): ConsoleSnapshot {
+    const date = this.today();
     const rows = this.engine.rows({ lifecycle: ACTIVE });
-    const recentEnded = this.ctx.db
-      .prepare("SELECT * FROM sess_sessions WHERE lifecycle IN ('ended','failed','retired') AND ended_at >= ? ORDER BY ended_at DESC LIMIT 12")
-      .all(new Date(this.ctx.clock.now() - 6 * 3600_000).toISOString()) as unknown as SessionRow[];
-    const failed = this.engine.rows({ lifecycle: ['failed'] }).filter((r) => !recentEnded.some((x) => x.session_id === r.session_id));
-    const sessions = [...rows, ...failed.slice(0, 6), ...recentEnded].map((r) => this.summary(r));
+    const endedToday = this.endedOn(date);
+    const failed = this.engine.rows({ lifecycle: ['failed'] }).filter((r) => !endedToday.some((x) => x.session_id === r.session_id));
+    const sessions = [...rows, ...failed.slice(0, 6), ...endedToday].map((r) => this.summary(r));
     const waiting = rows.filter((r) => r.liveness === 'waiting_on_you');
     const throttled = rows.filter((r) => r.liveness === 'throttled');
-    const date = this.today();
     const tasks = this.ctx.db.prepare('SELECT done, verified FROM sess_tasks_daily WHERE date = ?').get(date) as { done: number; verified: number } | undefined;
     const idle = (this.ctx.db.prepare('SELECT idle_ms FROM sess_throttle_daily WHERE date = ?').get(date) as { idle_ms: number } | undefined)?.idle_ms ?? 0;
     const ongoingIdle = throttled.reduce((ms, r) => ms + (r.throttle_started_at ? Math.max(0, this.ctx.clock.now() - Date.parse(r.throttle_started_at)) : 0), 0);
@@ -149,6 +184,7 @@ export class SessionReadModels {
     const fx = this.ctx.services.maybe('metering')?.fxRate(date) ?? null;
     return {
       generatedAt: this.ctx.clock.iso(),
+      today: date,
       kpis: {
         activeSessions: rows.length,
         waitingOnYou: waiting.length,
@@ -161,6 +197,32 @@ export class SessionReadModels {
         notionalRmToday: fx ? Math.round(usd * fx.rate * 100) / 100 : null,
       },
       sessions,
+    };
+  }
+
+  /** Tool calls per minute over the whole session (sess_activity) and its plan-limit episodes. */
+  activity(sessionId: string): SessionActivityDTO {
+    const rows = this.ctx.db
+      .prepare('SELECT minute, count FROM sess_activity WHERE session_id = ? ORDER BY minute')
+      .all(sessionId) as { minute: string; count: number }[];
+    const throttles: SessionActivityDTO['throttles'] = [];
+    let open: SessionActivityDTO['throttles'][number] | null = null;
+    for (const e of this.ctx.store.list({ sessionId, types: ['throttle.hit', 'throttle.cleared'], limit: 10_000 })) {
+      if (e.type === 'throttle.hit') {
+        if (open) continue;
+        open = { startAt: e.ts, endAt: null, resetAt: typeof e.meta.resetAt === 'string' ? e.meta.resetAt : null, idleMs: null };
+        throttles.push(open);
+      } else if (open) {
+        open.endAt = e.ts;
+        open.idleMs = typeof e.meta.idleMs === 'number' ? e.meta.idleMs : null;
+        open = null;
+      }
+    }
+    return {
+      sessionId,
+      minutes: rows.map((m) => ({ at: `${m.minute}:00.000Z`, count: m.count })),
+      totalToolCalls: rows.reduce((n, m) => n + m.count, 0),
+      throttles,
     };
   }
 
@@ -236,6 +298,13 @@ export function registerApiRoutes(app: App, ctx: ModuleContext, engine: Sessions
     const r = engine.row(c.req.param('id'));
     if (!r) throw new HttpError(404, 'not_found', 'Session not found');
     return c.json(rm.detail(r, auth));
+  });
+
+  app.get('/api/sessions/:id/activity', (c) => {
+    requirePermission(c, 'session.view');
+    const id = c.req.param('id');
+    if (!engine.row(id)) throw new HttpError(404, 'not_found', 'Session not found');
+    return c.json(rm.activity(id));
   });
 
   app.get('/api/sessions/:id/events', (c) => {

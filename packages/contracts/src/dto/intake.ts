@@ -17,6 +17,22 @@ export interface PublicTicket {
   canSignOffUat: boolean;
 }
 
+/**
+ * `GET /portal/api/limits` — what an intake accepts, so the portal can check text and files before uploading.
+ * The server still enforces every rule: content is identified by its magic bytes, never by name or declared type.
+ */
+export interface IntakeLimits {
+  maxAttachments: number;
+  /** Per-file cap by detected kind (documents share the image cap). */
+  maxBytes: { image: number; video: number; document: number };
+  /** Combined size of all files in one request. */
+  maxTotalBytes: number;
+  titleLength: { min: number; max: number };
+  descriptionLength: { min: number; max: number };
+  /** Declared types that match an accepted signature, with their usual file extensions. */
+  accepted: { mime: string; kind: 'image' | 'video' | 'document'; extensions: string[] }[];
+}
+
 export interface TicketDiagnosisDTO {
   sessionId: string;
   status: 'running' | 'reported' | 'stopped';

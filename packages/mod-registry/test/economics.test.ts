@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import type { LearningService, MeteringService, ProcessType, RegistryEntry } from '@aoc/contracts';
+import type {
+  FxService,
+  LearningService,
+  MeteringService,
+  ProcessType,
+  RegistryEntry,
+  RegistryRunsResponse,
+} from '@aoc/contracts';
 import type { TestRuntime } from '@aoc/kernel';
 import { computeRegistryEntries, DEFAULT_RATES, runKind, weekStarts } from '../src';
 import { ended, launch, rollover, seedPlaybook, start, usage } from './helpers';
@@ -170,6 +177,164 @@ describe('registry economics (Registry hero)', () => {
     // Projected execution: opus → sonnet blended rate ratio (12 / 24).
     expect(fb.opportunity).toEqual({ usd: 3.6, basis: 'projected', windowRuns: 1, executionCostUsd: 3.6 });
     expect(byType(entries, 'bug-triage').costBasis).toBe('none');
+    await t.close();
+  });
+
+  it('converts savings to RM at each run day’s BNM rate and reports tokens and time per run', async () => {
+    const costs: Record<string, number> = { d1: 10, d2: 14, e1: 4, e2: 6, b1: 8 };
+    // Local launch days (Kuala Lumpur) → the USD/MYR rate in effect that day.
+    const rates: Record<string, number> = {
+      '2026-09-22': 4.2,
+      '2026-09-23': 4.2,
+      '2026-09-29': 4.3,
+      '2026-09-30': 4.4,
+      '2026-10-06': 4.5,
+    };
+    const fx: FxService = {
+      rateFor: (date) =>
+        rates[date] === undefined ? null : { rate: rates[date]!, status: 'live', sourceDate: date },
+    };
+    const t = await start({ services: { metering: stubMetering(costs), fx }, now: NOW });
+    const at = (iso: string, sessionId: string, processType: string, tokens: number, hours: number) => {
+      t.clock.set(iso);
+      launch(t, { sessionId, processType });
+      usage(t, sessionId, 'claude-opus-5-5', { input: tokens / 2, output: tokens / 2 });
+      t.clock.advance(hours * 3_600_000);
+      ended(t, sessionId, 'completed');
+    };
+    at('2026-09-22T02:00:00.000Z', 'd1', 'feature-build', 400_000, 3);
+    at('2026-09-23T02:00:00.000Z', 'd2', 'feature-build', 600_000, 5);
+    t.clock.set('2026-09-24T02:00:00.000Z');
+    seedPlaybook(t, { playbookId: 'pbk_fb', processType: 'feature-build' });
+    at('2026-09-29T02:00:00.000Z', 'e1', 'feature-build', 100_000, 1);
+    at('2026-09-30T02:00:00.000Z', 'e2', 'feature-build', 300_000, 2);
+    at('2026-10-06T02:00:00.000Z', 'b1', 'bug-fix', 50_000, 1);
+    t.clock.set(NOW);
+
+    const entries = await t.json<RegistryEntry[]>('GET', '/api/registry', {
+      headers: t.user('builder').headers,
+    });
+    const fb = byType(entries, 'feature-build');
+    expect(fb.realizedSavingsUsd).toBe(14); // 2 × (12 − 5)
+    expect(fb.efficiency).toEqual({
+      discovery: { avgTokens: 500_000, avgDurationMs: 4 * 3_600_000 },
+      execution: { avgTokens: 200_000, avgDurationMs: 1.5 * 3_600_000 },
+    });
+    // e1 saved 12 − 4 = 8 on a 4.3 day and e2 saved 12 − 6 = 6 on a 4.4 day: 34.4 + 26.4, not 14 × today's rate.
+    // Opportunity: 7 per run (12 − 5) for each of the four window runs at its own day's rate.
+    expect(fb.savings).toEqual({
+      realizedRm: 60.8,
+      opportunityRm: 119.7,
+      tokensSaved: 600_000,
+      timeSavedMs: 5 * 3_600_000,
+    });
+
+    // Projected opportunity (no execution run yet) converts each window run at its own day's rate.
+    const bf = byType(entries, 'bug-fix');
+    expect(bf.opportunity).toMatchObject({ usd: 4, basis: 'projected', windowRuns: 1 });
+    expect(bf.savings).toEqual({ realizedRm: null, opportunityRm: 4 * 4.5, tokensSaved: null, timeSavedMs: null });
+    expect(bf.efficiency.execution).toEqual({ avgTokens: null, avgDurationMs: null });
+
+    // No execution path: no opportunity in any currency.
+    expect(byType(entries, 'bug-triage').savings.opportunityRm).toBeNull();
+    await t.close();
+  });
+
+  it('leaves RM empty when a contributing day has no FX rate', async () => {
+    const fx: FxService = {
+      rateFor: (date) => (date === '2026-10-06' ? { rate: 4.5, status: 'live', sourceDate: date } : null),
+    };
+    const t = await start({ services: { metering: stubMetering({ b1: 8, b2: 8 }), fx }, now: NOW });
+    run(t, '2026-10-05T02:00:00.000Z', 'b1', 'bug-fix');
+    run(t, '2026-10-06T02:00:00.000Z', 'b2', 'bug-fix');
+    t.clock.set(NOW);
+    const entries = await t.json<RegistryEntry[]>('GET', '/api/registry', {
+      headers: t.user('approver').headers,
+    });
+    expect(byType(entries, 'bug-fix').opportunity.usd).toBe(8);
+    expect(byType(entries, 'bug-fix').savings.opportunityRm).toBeNull();
+    await t.close();
+  });
+
+  it('lists runs newest first with kind, outcome, cost, tokens, time and the playbook distilled from them', async () => {
+    const t = await start({ services: { metering: stubMetering({ r1: 10, r2: 3, r3: 7 }) }, now: NOW });
+    const headers = t.user('builder').headers;
+    t.clock.set('2026-10-01T02:00:00.000Z');
+    launch(t, { sessionId: 'r1', processType: 'feature-build' });
+    usage(t, 'r1', 'claude-opus-5-5', { input: 1000, output: 3000 });
+    t.clock.advance(2 * 3_600_000);
+    ended(t, 'r1', 'completed');
+    t.rt.store.append({
+      type: 'playbook.proposed',
+      actor: { kind: 'human', id: 'usr_curator' },
+      scope: { decisionId: 'dec_p1' },
+      meta: {
+        playbookId: 'pbk_p1',
+        processType: 'feature-build',
+        sourceSessionId: 'r1',
+        version: 1,
+        stepCount: 1,
+        decisionId: 'dec_p1',
+        method: 'fallback',
+      },
+      payload: { title: 'Feature build playbook', steps: [{ id: 's1', title: 'Do the thing' }] },
+      source: 'api',
+      bodyScope: 'pbk_p1',
+    });
+    t.clock.set('2026-10-02T02:00:00.000Z');
+    launch(t, { sessionId: 'r2', processType: 'bug-fix' });
+    t.clock.advance(3_600_000);
+    ended(t, 'r2', 'failed');
+    t.clock.set('2026-10-03T02:00:00.000Z');
+    launch(t, { sessionId: 'r3', processType: 'feature-build' });
+    // Tokens used but no rate priced them: US$0, flagged per trend week.
+    t.clock.set('2026-10-06T02:00:00.000Z');
+    launch(t, { sessionId: 'r0', processType: 'test-repair' });
+    usage(t, 'r0', 'claude-haiku-5-5', { output: 2000 });
+    ended(t, 'r0', 'completed');
+    t.clock.set(NOW);
+
+    const testRepair = (await t.json<RegistryEntry[]>('GET', '/api/registry', { headers })).find(
+      (e) => e.processType === 'test-repair',
+    )!;
+    expect(testRepair.trend.at(-1)).toMatchObject({ runs: 1, avgCostUsd: 0, unpricedRuns: 1 });
+    expect(testRepair.trend.slice(0, -1).every((p) => p.unpricedRuns === 0)).toBe(true);
+
+    const all = await t.json<RegistryRunsResponse>('GET', '/api/registry/runs', { headers });
+    expect(all.runs.map((r) => r.runId)).toEqual(['r0', 'r3', 'r2', 'r1']);
+    expect(all.runs[0]).toMatchObject({ processType: 'test-repair', costUsd: 0, tokens: 2000, finished: true });
+    expect(all.runs[1]).toMatchObject({ finished: false, outcome: null, endedAt: null, durationMs: null });
+    expect(all.runs[2]).toMatchObject({ processType: 'bug-fix', outcome: 'failed', costUsd: 3, playbookId: null });
+    expect(all.runs[3]).toEqual({
+      runId: 'r1',
+      lastSessionId: 'r1',
+      sessions: 1,
+      processType: 'feature-build',
+      projectId: 'prj_shop',
+      model: 'claude-opus-5-5',
+      kind: 'discovery',
+      launchedAt: '2026-10-01T02:00:00.000Z',
+      endedAt: '2026-10-01T04:00:00.000Z',
+      outcome: 'completed',
+      finished: true,
+      costUsd: 10,
+      costBasis: 'metered',
+      tokens: 4000,
+      durationMs: 2 * 3_600_000,
+      playbookId: 'pbk_p1',
+    });
+
+    const done = await t.json<RegistryRunsResponse>(
+      'GET',
+      '/api/registry/runs?outcome=completed&processType=feature-build',
+      { headers },
+    );
+    expect(done.runs.map((r) => r.runId)).toEqual(['r1']);
+    expect((await t.json<RegistryRunsResponse>('GET', '/api/registry/runs?limit=1', { headers })).runs).toHaveLength(1);
+    expect((await t.request('GET', '/api/registry/runs?limit=0', { headers })).status).toBe(422);
+    expect((await t.request('GET', '/api/registry/runs', { headers: t.user('requester').headers })).status).toBe(
+      403,
+    );
     await t.close();
   });
 

@@ -1,6 +1,7 @@
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { serve } from '@hono/node-server';
+import { sessionIsolationOf, type AocConfig } from '@aoc/contracts';
 import { createLogger } from '@aoc/kernel';
 import pkg from '../package.json' with { type: 'json' };
 import { ConfigError, loadConfig, parseDaemonArgs, type LoadedConfig } from './config';
@@ -14,7 +15,8 @@ const USAGE = `Usage: aocd [--config <file>] [--version]
 
 Config file: --config <file>, else $AOC_CONFIG, else ./aoc.config.json, else built-in defaults.
 Env overrides: AOC_PORT, AOC_HOST, AOC_DATA_DIR, AOC_PUBLIC_URL; AOC_LOG_LEVEL=debug|info|warn|error.
-Secrets come from the environment only (AOC_MASTER_KEY, AOC_BOOTSTRAP_TOKEN, ANTHROPIC_API_KEY): see .env.example.
+Secrets never go in the config file: AOC_BOOTSTRAP_TOKEN and ANTHROPIC_API_KEY come from the environment, the KEK
+from keys.masterKeyFile (AOC_MASTER_KEY is accepted in development only): see .env.example.
 `;
 
 /** Intake videos (up to intake.maxVideoBytes) on slow links need longer than Node's 5-minute default. */
@@ -140,11 +142,20 @@ function banner(aoc: AocServer, loaded: LoadedConfig, port: number, env: NodeJS.
     `  console  ${config.port === 0 ? `http://localhost:${port}` : config.publicUrl}/`,
     `  config   ${loaded.file ?? 'built-in defaults (no aoc.config.json)'}`,
     `  data     ${config.dataDir}`,
+    `  sessions ${sessionsLine(config)}`,
   ];
   if (!aoc.webDir) lines.push('  ui       not built (run `pnpm build`); serving the API only');
   const hint = signInHint(aoc, env);
   if (hint) lines.push(`  sign-in  ${hint}`);
   return `${lines.join('\n')}\n`;
+}
+
+/** Who managed sessions run as (§3): the startup self-check has already passed when this prints. */
+function sessionsLine(config: AocConfig): string {
+  const s = config.supervisor;
+  if (sessionIsolationOf(config) === 'none')
+    return 'run as this OS user: isolation is off (development only; set supervisor.sessionUser)';
+  return `run as ${s.sessionUser}${s.readOnlySessionUser ? `, read-only ones as ${s.readOnlySessionUser}` : ''} (${config.mode})`;
 }
 
 /** Where to find the bootstrap token — never the token itself. */

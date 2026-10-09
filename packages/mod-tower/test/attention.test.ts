@@ -62,9 +62,12 @@ describe('attention queue: ranked by cost of delay', () => {
       'Break-glass promotion · 1m',
       'Dead session · 10m',
       'Lesson binding · 12h',
-      'FX carried forward · 4 days · alert 6h old',
+      'FX carried forward · 4 weekdays · alert 6h old',
       'Change request · 2h',
     ]);
+    expect(s.attention.find((a) => a.id === 'fx_carry_forward')?.title).toBe(
+      'No live USD/MYR rate for 4 weekdays',
+    );
     expect(s.kpis.needsYou).toBe(5);
     expect(s.kpis.oldestNeedsYouSince).toBe('2026-10-08T18:00:00.000Z');
     expect(s.summary).toBe(

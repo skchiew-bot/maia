@@ -18,6 +18,13 @@ export function isFlagged(reason: FxReason): boolean {
   return FX_FLAGGED_REASONS.includes(reason);
 }
 
+/** The weekday before `date` (Friday for a Monday). */
+export function previousWeekday(date: string): string {
+  let d = addDays(date, -1);
+  while (isWeekend(d)) d = addDays(d, -1);
+  return d;
+}
+
 /** Weekdays from `from` through `through` (inclusive); `since` is the first of them. Weekends never count. */
 export function weekdaysIn(from: string, through: string): { days: number; since: string | null } {
   let days = 0;

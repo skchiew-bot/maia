@@ -4,6 +4,7 @@
  */
 import { z } from 'zod';
 import { defineEvent, meta, payload, zHash, zIso, zLabel, zNonNeg } from './define';
+import { FX_SESSIONS } from './fx';
 
 const day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
@@ -83,6 +84,8 @@ export const METERING_EVENTS = [
       fxRate: zNonNeg,
       fxStatus: z.enum(['live', 'inherited', 'missing']),
       fxSourceDate: day.nullable(),
+      /** BNM session of the FX rate used (null when missing or not stamped; absent on rollups closed before it existed). */
+      fxSession: z.enum(FX_SESSIONS).nullable().optional(),
       rateCardVersion: z.number().int().min(0),
       inputTokens: zNonNeg,
       outputTokens: zNonNeg,

@@ -181,7 +181,8 @@ export class EventStore {
 
   constructor(private readonly opts: EventStoreOptions) {
     const mem = opts.dataDir === ':memory:';
-    if (!mem) mkdirSync(opts.dataDir, { recursive: true });
+    // Owner-only: the chain, decrypted read models and (in development) the generated KEK live here.
+    if (!mem) mkdirSync(opts.dataDir, { recursive: true, mode: 0o700 });
     this.db = new DatabaseSync(mem ? ':memory:' : join(opts.dataDir, 'aoc.db'));
     // secure_delete: projection text scrubbed on erasure (§13) is zeroed on disk, not left in freed pages.
     this.db.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON; PRAGMA secure_delete = ON;');
