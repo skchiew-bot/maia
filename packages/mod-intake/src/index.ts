@@ -143,7 +143,7 @@ export function createIntakeModule(opts: IntakeModuleOptions = {}): AocModule {
           if (e.type === 'session.ended' && link.role === 'build') {
             const t = flow.ticket(link.ticket_id);
             if (!t || t.build_session_id !== sessionId || t.stage !== 'building') return;
-            if (ctx.store.findByCausation(e.id).length) return; // UAT ready or escalated already
+            if (flow.reacted(e.id)) return; // UAT ready or escalated already
             const outcome = (e.meta as { outcome: string }).outcome;
             if (outcome === 'completed') flow.readyForUat(t, e.id);
             else ctx.notify({ kind: 'session.attention', title: `Build for ${t.ticket_id} ended (${outcome}) before UAT`, audience: ['approver', 'builder'], severity: 'warn', refs: { ticketId: t.ticket_id, sessionId } });
@@ -165,7 +165,7 @@ export function createIntakeModule(opts: IntakeModuleOptions = {}): AocModule {
           if (e.type === 'promotion.completed') return flow.close(row.ticket_id, 'fixed', INTAKE_ACTOR, 'Promoted to main', e.id);
           // Approved but not executed (main moved on, push failed): the ticket must not sit at the gate with nothing open.
           const t = flow.ticket(row.ticket_id);
-          if (!t || t.resolution || ctx.store.findByCausation(e.id).length) return;
+          if (!t || t.resolution || flow.reacted(e.id)) return;
           flow.escalateGoLive(t, `promotion ${promotionId} ${e.type === 'promotion.refused' ? 'was refused' : 'failed'} at execution (${reason ?? 'unknown'})`, e.id);
         },
       },

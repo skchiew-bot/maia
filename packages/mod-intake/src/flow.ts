@@ -380,6 +380,15 @@ export class IntakeFlow {
   }
 
   /**
+   * Whether intake already reacted to an event: one of its own `ticket.*` events names it as the cause. Events other
+   * modules append for the same cause (the ledger releasing a thread's writer on `session.ended`) say nothing about
+   * the ticket, and which module's reactor runs first is not something intake can rely on.
+   */
+  reacted(causationId: string): boolean {
+    return this.ctx.store.findByCausation(causationId).some((x) => x.type.startsWith('ticket.'));
+  }
+
+  /**
    * After a UAT pass (or a human's retry): request the go-live gate. One outcome per cause, so a redelivered event
    * never requests twice; when go-live cannot be requested the ticket is escalated, never left silently in UAT.
    */
@@ -445,7 +454,7 @@ export class IntakeFlow {
     const row = this.ctx.db.prepare('SELECT ticket_id FROM itk_decisions WHERE decision_id = ?').get(m.decisionId) as { ticket_id: string } | undefined;
     if (!row) return;
     // Single-step reactions are done once anything they caused exists; UAT sign-off checks each of its steps.
-    if (m.kind !== 'uat_signoff' && this.ctx.store.findByCausation(e.id).length) return;
+    if (m.kind !== 'uat_signoff' && this.reacted(e.id)) return;
     const t = this.ticket(row.ticket_id);
     if (!t || t.resolution) return;
     const card = this.ctx.services.get('decisions').get(m.decisionId);

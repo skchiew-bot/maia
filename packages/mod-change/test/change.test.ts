@@ -1,6 +1,15 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { ChangeRequestDTO, ChangeService, LedgerService } from '@aoc/contracts';
-import { approveChange, draftAndAffirm, harness, makeRepo, type Harness, type TestRepo } from './helpers';
+import {
+  approveChange,
+  cloneGit,
+  cloneRef,
+  draftAndAffirm,
+  harness,
+  makeRepo,
+  type Harness,
+  type TestRepo,
+} from './helpers';
 
 const DRAFT = {
   impact: 'Changes the session cookie format; every logged-in user is re-authenticated once.',
@@ -308,8 +317,10 @@ describe('change requests (§8, §14)', () => {
       headers: h.builder.headers,
     });
     expect(done).toMatchObject({ status: 'completed', pinnedSha: work, pinnedTag: `aoc/change/${changeId}` });
-    expect(repo.git('cat-file', '-t', `aoc/change/${changeId}`)).toBe('tag');
-    expect(repo.head(`aoc/change/${changeId}^{commit}`)).toBe(work);
+    // The pin is an annotated tag in the service clone, where no agent can move it; the project repository has none.
+    expect(cloneGit(h, 'prj_app', 'cat-file', '-t', `refs/tags/aoc/change/${changeId}`).stdout.trim()).toBe('tag');
+    expect(cloneRef(h, 'prj_app', `refs/tags/aoc/change/${changeId}^{commit}`)).toBe(work);
+    expect(() => repo.git('rev-parse', '--verify', `refs/tags/aoc/change/${changeId}`)).toThrow();
     expect(h.t.rt.store.list({ types: ['git.ref_pinned'] })[0]!.meta).toEqual({
       projectId: 'prj_app',
       tag: `aoc/change/${changeId}`,

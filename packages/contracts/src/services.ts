@@ -26,8 +26,14 @@ export interface AuthContext {
   tokenId: string;
   method: 'bearer' | 'cookie';
 }
+/**
+ * `session`: the managed session's token — in the claude environment, so the model can use it (hooks, MCP).
+ * `sidecar`: the same session's sidecar — only the sidecar process holds it; it alone reports heartbeats, activity,
+ * usage, throttles and process exits for a managed session (G-44).
+ */
 export type IngestPrincipal =
   | { kind: 'session'; sessionId: string; tokenId: string }
+  | { kind: 'sidecar'; sessionId: string; tokenId: string }
   | { kind: 'observer'; tokenId: string }
   | { kind: 'system'; tokenId: string };
 
@@ -39,7 +45,10 @@ export interface IdentityService {
   can(user: User, perm: Permission): boolean;
   /** Per-session ingest token (supervisor issues at launch; revoked when the session ends). */
   issueIngestToken(sessionId: string, actor: Actor): string;
-  revokeIngestTokensFor(sessionId: string, actor: Actor): void;
+  /** The session's sidecar token: the supervisor passes it to the sidecar process only, never to claude. */
+  issueSidecarToken(sessionId: string, actor: Actor): string;
+  /** Revoke the session's ingest tokens: both kinds, or only the `session` or the `sidecar` one. */
+  revokeIngestTokensFor(sessionId: string, actor: Actor, kind?: 'session' | 'sidecar'): void;
   verifyIngestToken(token: string): IngestPrincipal | null;
   /**
    * Verify a WebAuthn assertion for a specific decision. The challenge was bound to

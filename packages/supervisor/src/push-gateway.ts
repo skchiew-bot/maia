@@ -10,12 +10,12 @@
  * The repository is `<dataDir>/git/<project>.git`, the path mod-change's service-owned clone uses for promotions
  * (G-04), so one `origin` serves feature pushes and promotions alike (each with its own credential profile).
  */
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync } from 'node:fs';
-import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { MAX_PUSH_BYTES, type Actor } from '@aoc/contracts';
-import type { Logger } from '@aoc/kernel';
+import { GIT_SAFETY_ARGS, GIT_SERVICE_ENV, runServiceGit, serviceGitEnv, type Logger } from '@aoc/kernel';
 
 // ── pkt-lines (gitprotocol-common) ────────────────────────────────────────────
 
@@ -182,10 +182,11 @@ export interface PushVars {
 }
 
 /**
- * Default and release branches move only through the supervisor's gated promotion (§3, §8), whatever a profile says.
- * Case-insensitive: a host or a checkout on a case-folding file system must not turn `Main` into `main`.
+ * Default and release branches move only through the supervisor's gated promotion (§3, §8), whatever a profile says,
+ * and so does what AOC itself keeps in the service clone (rollback evidence branches). Case-insensitive: a host or a
+ * checkout on a case-folding file system must not turn `Main` into `main`.
  */
-const PROTECTED_BRANCH = /^refs\/heads\/(?:main|master|production|HEAD|release(?:\/.*)?)$/i;
+const PROTECTED_BRANCH = /^refs\/heads\/(?:main|master|production|HEAD|release(?:\/.*)?|aoc\/rollback(?:\/.*)?)$/i;
 
 /** git check-ref-format, for the branches the gateway accepts at all. */
 function validBranchRef(ref: string): boolean {
@@ -262,14 +263,13 @@ export class SlidingWindow {
 // ── git ───────────────────────────────────────────────────────────────────────
 
 /**
- * Settings on every git process the gateway runs, ahead of the repository's own config: no hook, fsmonitor or
- * automatic gc; incoming objects are checked and bounded; no deletion, no non-fast-forward.
+ * Settings on every git process the gateway runs, ahead of the repository's own config: the kernel's safety settings
+ * (no hook, fsmonitor, signing program or automatic gc; every transport denied), then what a receiving end adds:
+ * incoming objects are checked and bounded; no deletion, no non-fast-forward.
  */
-const gitArgs = (maxPackBytes: number): string[] =>
-  Object.entries({
-    'core.hooksPath': '/dev/null',
-    'core.fsmonitor': 'false',
-    'gc.auto': '0',
+const gitArgs = (maxPackBytes: number): string[] => [
+  ...GIT_SAFETY_ARGS,
+  ...Object.entries({
     'receive.autogc': 'false',
     'receive.fsckObjects': 'true',
     'transfer.fsckObjects': 'true',
@@ -277,22 +277,10 @@ const gitArgs = (maxPackBytes: number): string[] =>
     'receive.denyDeletes': 'true',
     'receive.denyNonFastForwards': 'true',
     'receive.advertisePushOptions': 'false',
-  }).flatMap(([k, v]) => ['-c', `${k}=${v}`]);
-/** AOC's own refs and tags are neither advertised nor updatable through the gateway. */
-const HIDDEN_REFS = ['refs/aoc', 'refs/tags'].flatMap((r) => ['-c', `receive.hideRefs=${r}`]);
-
-/** The environment git runs in: no system or global config, no prompt, no home. */
-const GIT_ENV_FIXED: Readonly<Record<string, string>> = {
-  GIT_CONFIG_NOSYSTEM: '1',
-  GIT_CONFIG_GLOBAL: '/dev/null',
-  GIT_TERMINAL_PROMPT: '0',
-};
-
-function gitEnv(source: Record<string, string | undefined>): Record<string, string> {
-  const env: Record<string, string> = { ...GIT_ENV_FIXED, HOME: '/nonexistent' };
-  for (const k of ['PATH', 'LANG', 'LC_ALL']) if (typeof source[k] === 'string') env[k] = source[k]!;
-  return env;
-}
+  }).flatMap(([k, v]) => ['-c', `${k}=${v}`]),
+];
+/** AOC's own refs (mod-change's targets, tags, rollback evidence) are neither advertised nor updatable through the gateway. */
+const HIDDEN_REFS = ['refs/aoc', 'refs/tags', 'refs/heads/aoc/rollback'].flatMap((r) => ['-c', `receive.hideRefs=${r}`]);
 
 const PLAIN_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 
@@ -304,12 +292,17 @@ export function serviceRepoPathFor(root: string, projectId: string): string {
   return join(resolve(root), `${name}.git`);
 }
 
-/** How git would reach `url`: the one transport the forward may open, or null for anything else (ext::, fd::, …). */
+/**
+ * How git would reach `url`: the one transport the forward may open, or null for anything else (ext::, fd::, plain
+ * http, an option-looking string). The same rule mod-change applies to the promotion remote of the same clone.
+ */
 export function transportOf(url: string): 'ssh' | 'https' | 'file' | null {
-  if (/^ssh:\/\//i.test(url) || /^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:(?!\/\/)/.test(url)) return 'ssh';
-  if (/^https:\/\//i.test(url)) return 'https';
-  if (/^file:\/\//i.test(url) || isAbsolute(url)) return 'file';
-  return null;
+  if (!url || url.startsWith('-') || /[\s\0]/.test(url)) return null;
+  const scheme = /^([A-Za-z][A-Za-z0-9+.-]*):\/\//.exec(url)?.[1]?.toLowerCase();
+  if (scheme) return scheme === 'https' || scheme === 'ssh' || scheme === 'file' ? scheme : null;
+  if (url.startsWith('/')) return 'file';
+  // scp-like `[user@]host:path`: a colon before any slash (git's own rule), and no `<helper>::` syntax.
+  return /^(?:[A-Za-z0-9._-]+@)?[A-Za-z0-9.-]+:(?!:)/.test(url) ? 'ssh' : null;
 }
 
 /** The lines of `git push --porcelain`: `<flag>\t<src>:<dst>\t<summary>`, by destination ref. */
@@ -339,7 +332,13 @@ export interface PushGatewayHost {
   /** The session `sessionId`, if it may push to the repository `repoName` (`<name>.git`) right now. */
   principal(sessionId: string, repoName: string): PushPrincipal;
   /** The upstream push, run from the service repository with the named profile's credential (runIsolated). */
-  forward(input: { repo: string; command: string[]; profileName: string; timeoutMs: number }): Promise<{ exitCode: number; stdout: string; stderr: string }>;
+  forward(input: {
+    repo: string;
+    command: string[];
+    env: Record<string, string>;
+    profileName: string;
+    timeoutMs: number;
+  }): Promise<{ exitCode: number; stdout: string; stderr: string }>;
   record(r: PushRecord): void;
   env(): Record<string, string | undefined>;
   now(): number;
@@ -445,6 +444,7 @@ export class PushGateway {
     const repo = this.ensureRepo(p.vars.projectId);
     const upstream = this.upstreamOf(repo);
     if (!upstream.ok) {
+      this.host.log.warn('push gateway: the service repository has no usable upstream remote', { repo, reason: upstream.reason });
       await drain(reader);
       this.record(p, updates, updates.map(() => ({ result: 'refused' as const, reason: upstream.reason })));
       return reportStatus('ok', updates.map((u) => ({ ref: u.ref, refusal: upstream.reason })));
@@ -459,7 +459,7 @@ export class PushGateway {
     }
     const accepted = updates.filter((u) => report.ok.has(u.ref));
     const forwarded = accepted.length
-      ? await this.forward(p, repo, upstream.transport, accepted)
+      ? await this.forward(p, repo, upstream, accepted)
       : new Map<string, string | null>();
     const outcomes = updates.map((u) => {
       if (!report.ok.has(u.ref)) return { result: 'refused' as const, reason: `aoc: ${report.ng.get(u.ref) ?? 'refused'}` };
@@ -478,23 +478,21 @@ export class PushGateway {
   private async forward(
     p: Extract<PushPrincipal, { ok: true }>,
     repo: string,
-    transport: 'ssh' | 'https' | 'file',
+    upstream: { url: string; transport: 'ssh' | 'https' | 'file' },
     accepted: RefUpdate[],
   ): Promise<Map<string, string | null>> {
+    // Like the promotion push from the same clone: the URL itself, one transport opened, a fixed environment.
     const command = [
-      'env',
-      ...Object.entries(GIT_ENV_FIXED).map(([k, v]) => `${k}=${v}`),
       'git',
       ...this.gitArgs,
       '-c',
-      'protocol.allow=never',
-      '-c',
-      `protocol.${transport}.allow=always`,
+      `protocol.${upstream.transport}.allow=user`,
       `--git-dir=${repo}`,
       'push',
       '--porcelain',
       '--no-verify',
-      'origin',
+      '--',
+      upstream.url,
       ...accepted.map((u) => `${u.newSha}:${u.ref}`),
     ];
     let r: { exitCode: number; stdout: string; stderr: string };
@@ -502,6 +500,7 @@ export class PushGateway {
       r = await this.host.forward({
         repo,
         command,
+        env: { ...GIT_SERVICE_ENV },
         profileName: p.profileName,
         timeoutMs: this.o.forwardTimeoutMs ?? 120_000,
       });
@@ -532,28 +531,31 @@ export class PushGateway {
     const repo = serviceRepoPathFor(this.o.root, projectId);
     if (!existsSync(repo)) {
       mkdirSync(dirname(repo), { recursive: true, mode: 0o700 });
-      const r = spawnSync('git', ['init', '--quiet', '--bare', '--template=', '--initial-branch=aoc', repo], {
-        env: gitEnv(this.host.env()),
-        encoding: 'utf8',
-        timeout: 30_000,
-      });
-      if (r.status !== 0) throw new GatewayError(503, 'the push gateway repository could not be created');
+      // Created the way mod-change's service clone is, so whichever comes first leaves the other the same repository.
+      const r = runServiceGit(dirname(repo), [
+        'init',
+        '--quiet',
+        '--bare',
+        '--template=',
+        '--initial-branch=aoc-service-clone',
+        repo,
+      ]);
+      if (r.code !== 0) throw new GatewayError(503, 'the push gateway repository could not be created');
     }
     return repo;
   }
 
   /** The operator-configured remote of the service repository (pushurl wins), and how git would reach it. */
-  private upstreamOf(repo: string): { ok: true; transport: 'ssh' | 'https' | 'file' } | { ok: false; reason: string } {
+  private upstreamOf(
+    repo: string,
+  ): { ok: true; url: string; transport: 'ssh' | 'https' | 'file' } | { ok: false; reason: string } {
     for (const key of ['remote.origin.pushurl', 'remote.origin.url']) {
-      const r = spawnSync('git', [`--git-dir=${repo}`, 'config', '--get', key], {
-        env: gitEnv(this.host.env()),
-        encoding: 'utf8',
-      });
-      const url = r.status === 0 ? r.stdout.trim() : '';
+      const r = runServiceGit(repo, [`--git-dir=${repo}`, 'config', '--get', key]);
+      const url = r.code === 0 ? r.stdout.trim() : '';
       if (!url) continue;
       const transport = transportOf(url);
       return transport
-        ? { ok: true, transport }
+        ? { ok: true, url, transport }
         : { ok: false, reason: 'aoc: the upstream remote is not an ssh, https or local-path URL' };
     }
     return {
@@ -570,7 +572,7 @@ export class PushGateway {
     reader: BodyReader,
   ): Promise<{ code: number; stdout: Buffer }> {
     const child = spawn('git', [...this.gitArgs, ...HIDDEN_REFS, 'receive-pack', '--stateless-rpc', repo], {
-      env: gitEnv(this.host.env()),
+      env: serviceGitEnv({}, this.host.env()),
       stdio: ['pipe', 'pipe', 'ignore'],
     });
     const out: Buffer[] = [];
@@ -625,7 +627,7 @@ export class PushGateway {
   private git(repo: string, args: string[]): Promise<{ code: number; stdout: Buffer }> {
     return new Promise((ok) => {
       const child = spawn('git', [...this.gitArgs, `--git-dir=${repo}`, ...args], {
-        env: gitEnv(this.host.env()),
+        env: serviceGitEnv({}, this.host.env()),
         stdio: ['ignore', 'pipe', 'ignore'],
       });
       const out: Buffer[] = [];

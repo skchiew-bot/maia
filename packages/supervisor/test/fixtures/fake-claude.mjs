@@ -6,8 +6,11 @@
 // Scenario: `[[fake:<mode>,<mode>…|key=value|…]]` in the first prompt (or FAKE_CLAUDE_MODE), one mode per turn
 // (the last repeats). Modes: normal | gated (waits for gate=<file>; end=crash exits 1 without a result) | crash |
 // usage_limit | rate_limited | error | hang (until SIGINT) | hang_hard (ignores SIGINT) | chatty (count=<n>) |
-// background (pidfile=<path>) | printenv | shell (script=<sh file>, out=<json file for status/stdout/stderr>).
-// Params: context=<tokens>, reset=<epoch s>, gate=<path>, mcp=<status reported for the aoc server>.
+// background (pidfile=<path>) | printenv | shell (script=<sh file>, out=<json file for status/stdout/stderr>) |
+// tampered (one short answer, resumed from a deleted cost state: its cumulative modelUsage goes down).
+// Params: context=<tokens>, reset=<epoch s>, gate=<path>, mcp=<status reported for the aoc server>,
+// overhead=<input tokens the result's modelUsage counts but no assistant message carries>, compact=1 (a
+// compact_boundary line). Like Claude Code, result.modelUsage is cumulative across --resume (saved per invocation).
 // FAKE_CLAUDE_LOG=<file> receives one JSON line per invocation (argv, env, cwd, pid, turn, mode, prompt).
 import { spawn, spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -56,11 +59,13 @@ if (!configDir) fail('the fake requires CLAUDE_CONFIG_DIR (it never touches a re
 const transcript = join(configDir, 'projects', process.cwd().replace(/[^A-Za-z0-9]/g, '-'), `${uuid}.jsonl`);
 let scenario;
 let turn;
+let savedCost = {};
 if (opts['--resume']) {
   if (!existsSync(transcript)) fail(`No conversation found with session ID: ${uuid}`);
   const lines = readFileSync(transcript, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
   scenario = lines.find((l) => l.type === 'fake_meta').scenario;
   turn = lines.filter((l) => l.type === 'fake_turn').length + 1;
+  savedCost = lines.filter((l) => l.type === 'fake_cost').at(-1)?.modelUsage ?? {};
 } else {
   if (existsSync(transcript)) fail(`Session ID ${uuid} is already in use.`);
   const m = /\[\[fake:([^\]]+)\]\]/.exec(prompt);
@@ -96,12 +101,28 @@ const model = opts['--model'] ?? 'claude-sonnet-5-5';
 let msgN = 0;
 const emit = (o) => process.stdout.write(JSON.stringify({ ...o, session_id: uuid }) + '\n');
 const usage = { input_tokens: 12, cache_read_input_tokens: Number(params.context ?? 2000), cache_creation_input_tokens: 0, output_tokens: 40 };
-const assistant = (content, extra = {}) =>
+const spent = { inputTokens: Number(params.overhead ?? 0), outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 };
+const assistant = (content, extra = {}) => {
+  spent.inputTokens += usage.input_tokens;
+  spent.outputTokens += usage.output_tokens;
+  spent.cacheReadInputTokens += usage.cache_read_input_tokens;
+  spent.cacheCreationInputTokens += usage.cache_creation_input_tokens;
   emit({ type: 'assistant', message: { id: `msg_${turn}_${++msgN}`, type: 'message', role: 'assistant', model, content, stop_reason: null, usage }, parent_tool_use_id: null, ...extra });
+};
 const text = (t) => assistant([{ type: 'text', text: t }]);
 const partial = (t) => emit({ type: 'stream_event', event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: t } }, parent_tool_use_id: null });
-const result = (t, isError = false, subtype = 'success', extra = {}) =>
-  emit({ type: 'result', subtype, is_error: isError, duration_ms: 5, num_turns: 1, result: t, api_error_status: null, total_cost_usd: 0.001, usage, ...extra });
+// Cumulative for the conversation: what the previous invocation saved plus this one (a tampered run lost the save).
+const modelUsage = () => {
+  const before = mode === 'tampered' ? {} : savedCost;
+  const prev = before[model] ?? { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 };
+  const now = Object.fromEntries(Object.entries(spent).map(([k, v]) => [k, (prev[k] ?? 0) + v]));
+  return { ...before, [model]: { ...now, costUSD: 0.001, contextWindow: 1000000, maxOutputTokens: 128000, costBasis: 'list' } };
+};
+const result = (t, isError = false, subtype = 'success', extra = {}) => {
+  const cumulative = modelUsage();
+  appendFileSync(transcript, JSON.stringify({ type: 'fake_cost', modelUsage: cumulative }) + '\n');
+  emit({ type: 'result', subtype, is_error: isError, duration_ms: 5, num_turns: 1, result: t, api_error_status: null, total_cost_usd: 0.001, usage, modelUsage: cumulative, ...extra });
+};
 const finish = (code) => process.stdout.write('', () => process.exit(code));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -134,10 +155,15 @@ async function main() {
         for (let i = 0; i < 1500 && !existsSync(params.gate); i++) await sleep(10);
         if (params.end === 'crash') return finish(1);
       }
+      if (params.compact) emit({ type: 'system', subtype: 'compact_boundary', compact_metadata: { trigger: 'auto', pre_tokens: 3000, post_tokens: 900 } });
       text('Done for now.');
       result('Done for now.');
       return finish(0);
     }
+    case 'tampered':
+      text(`Turn ${turn}: short`);
+      result('short');
+      return finish(0);
     case 'crash':
       partial('About to');
       text('About to crash');

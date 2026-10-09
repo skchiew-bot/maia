@@ -379,7 +379,7 @@ console.log(a.status, (await a.arrayBuffer()).byteLength, b.status);`,
 const ZERO = '0'.repeat(40);
 
 /** The gateway class on its own, with stand-ins for the supervisor and for the upstream push. */
-async function unitWorld(opts: Partial<PushGatewayOptions> = {}) {
+async function unitWorld(opts: Partial<PushGatewayOptions> = {}, { operator = true } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'aoc-gateway-unit-'));
   closers.push(async () => rmSync(root, { recursive: true, force: true }));
   const work = join(root, 'work');
@@ -412,9 +412,11 @@ async function unitWorld(opts: Partial<PushGatewayOptions> = {}) {
     { root: join(root, 'git'), ...opts },
   );
   const repo = gateway.repoPath('prj_demo');
-  mkdirSync(join(root, 'git'), { recursive: true });
-  git(root, ['init', '-q', '--bare', '--template=', repo]);
-  git(root, [`--git-dir=${repo}`, 'remote', 'add', 'origin', join(root, 'nowhere.git')]);
+  if (operator) {
+    mkdirSync(join(root, 'git'), { recursive: true });
+    git(root, ['init', '-q', '--bare', '--template=', repo]);
+    git(root, [`--git-dir=${repo}`, 'remote', 'add', 'origin', join(root, 'nowhere.git')]);
+  }
   return {
     gateway,
     repo,
@@ -452,6 +454,16 @@ describe('the gateway on its own', () => {
     const running = spawnSync('ps', ['-eo', 'args'], { encoding: 'utf8' }).stdout;
     expect(running).not.toContain(`receive-pack --stateless-rpc ${u.repo}`);
   }, 30_000);
+
+  it('creates a project’s repository the way mod-change creates its service clone, which it shares (G-04)', async () => {
+    const u = await unitWorld({}, { operator: false });
+    expect(existsSync(u.repo)).toBe(false);
+    expect((await u.gateway.advertise('ses_1', u.name)).toString('latin1')).toContain('# service=git-receive-pack');
+    expect(git(u.repo, ['rev-parse', '--is-bare-repository']).stdout.trim()).toBe('true');
+    expect(git(u.repo, [`--git-dir=${u.repo}`, 'symbolic-ref', 'HEAD']).stdout.trim()).toBe('refs/heads/aoc-service-clone');
+    const hooks = join(u.repo, 'hooks');
+    expect(existsSync(hooks) ? readdirSync(hooks) : []).toEqual([]);
+  });
 
   it('hands receive-pack only the commands it checked, with only the capabilities the gateway speaks', async () => {
     const u = await unitWorld();

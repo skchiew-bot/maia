@@ -136,12 +136,21 @@ describe('supervisor + claude-sim: a managed session end to end', () => {
     expect(h.events({ types: ['plan.amended'], sessionId }).map((e) => e.meta.removed)).toEqual([1]);
     expect(h.events({ types: ['task.done'], sessionId }).map((e) => e.meta.taskId)).toEqual(['t1', 't3']);
     expect(h.events({ types: ['session.ended'], sessionId }).map((e) => e.meta.outcome)).toEqual(['completed']);
-    // The session's ingest token dies with it, once its last sidecar has reported the final turn's usage.
-    const issued = h.events({ types: ['token.issued'], sessionId })[0]!;
-    await waitFor(() => h.events({ types: ['token.revoked'] }).some((e) => e.meta.tokenId === issued.meta.tokenId), {
-      timeout: 20_000,
-      what: "the session's token revoked after its last sidecar",
-    });
+    // The session's ingest token dies with it; its sidecar token once its last sidecar has reported the final turn's
+    // usage (G-44).
+    for (const kind of ['ingest_session', 'ingest_sidecar']) {
+      const issued = h.events({ types: ['token.issued'], sessionId }).filter((e) => e.meta.kind === kind);
+      expect(issued.length, kind).toBeGreaterThan(0);
+      await waitFor(() => issued.every((t) => h.events({ types: ['token.revoked'] }).some((e) => e.meta.tokenId === t.meta.tokenId)), {
+        timeout: 20_000,
+        what: `the session's ${kind} tokens revoked`,
+      });
+    }
+    // Each turn's sidecar usage was checked against claude-sim's own result.modelUsage, and agreed.
+    expect(h.events({ types: ['usage.reconciled'], sessionId }).map((e) => [e.meta.turn, e.meta.status])).toEqual([
+      [1, 'match'],
+      [2, 'match'],
+    ]);
     expect(typesOf(sessionId)).toEqual(expect.arrayContaining(['thread.writer_released', 'token.revoked', 'usage.recorded', 'prompt.submitted']));
     expect(h.store.verifyChain().ok).toBe(true);
   });

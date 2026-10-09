@@ -1,5 +1,5 @@
-import { spawn } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type {
@@ -11,9 +11,9 @@ import type {
   User,
 } from '@aoc/contracts';
 import {
-  createGitService,
   createTestRuntime,
   initRepo,
+  type AocModule,
   type BroadcastMessage,
   type TestRuntime,
   type TestUser,
@@ -25,25 +25,31 @@ export interface IsolatedCall {
   command: string[];
   credentialProfile: string | null;
   timeoutMs: number;
+  env?: Record<string, string>;
+  sandbox?: { handOver?: string[] };
 }
 
 /** Git env isolated from the host's config so tests are deterministic. */
 const GIT_ENV = { GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0' };
 
-/** SupervisorService fake: runIsolated really runs the command (argv, no shell) with a minimal env plus the credential profile's env. */
+/**
+ * SupervisorService fake: runIsolated really runs the command (argv, no shell) as the supervisor does — PATH, then
+ * the caller's env, then the credential profile's env — as the current user (no session user is configured).
+ */
 export class FakeSupervisor implements SupervisorService {
   readonly calls: IsolatedCall[] = [];
   readonly profiles: Record<string, Record<string, string>> = {
-    'prod-promote': { AOC_TEST_CREDENTIALS: 'prod-promote' },
+    'prod-promote': { TEST_PROMOTION_TOKEN: 'prod-promote' },
   };
 
   runIsolated(input: IsolatedCall): Promise<{ exitCode: number; stdout: string; stderr: string }> {
     this.calls.push(input);
+    if (input.sandbox && input.credentialProfile)
+      return Promise.reject(new Error('runIsolated: a sandboxed run never gets a credential profile'));
     return new Promise((resolve) => {
       const env = {
         PATH: process.env.PATH ?? '',
-        HOME: process.env.HOME ?? '/tmp',
-        ...GIT_ENV,
+        ...input.env,
         ...(input.credentialProfile ? this.profiles[input.credentialProfile] : {}),
       };
       const child = spawn(input.command[0]!, input.command.slice(1), {
@@ -75,18 +81,33 @@ export class FakeSupervisor implements SupervisorService {
   stopRequested(): boolean {
     return false;
   }
-  /** git commands run through runIsolated, as argv after any `env K=V` prefix. */
-  gitCalls(): { profile: string | null; env: string[]; args: string[] }[] {
+  /** git commands run through runIsolated: the subcommand and its arguments, after git's global options. */
+  gitCalls(): { profile: string | null; cwd: string; sandboxed: boolean; args: string[] }[] {
     return this.calls.flatMap((c) => {
-      const i = c.command.indexOf('git');
-      if (i < 0) return [];
-      const env = c.command[0] === 'env' ? c.command.slice(1, i) : [];
-      return [{ profile: c.credentialProfile, env, args: c.command.slice(i + 1) }];
+      if (c.command[0] !== 'git') return [];
+      let i = 1;
+      while (i < c.command.length) {
+        const a = c.command[i]!;
+        if (a === '-c' || a === '--work-tree') i += 2;
+        else if (a.startsWith('--git-dir=')) i += 1;
+        else break;
+      }
+      return [{ profile: c.credentialProfile, cwd: c.cwd, sandboxed: !!c.sandbox, args: c.command.slice(i) }];
     });
   }
 }
 
-const git = createGitService();
+/** Plain git, as a developer or an agent runs it (the kernel's service refuses every transport). */
+const git = {
+  run(dir: string, args: string[], opts: { env?: Record<string, string> } = {}) {
+    const r = spawnSync('git', args, {
+      cwd: dir,
+      encoding: 'utf8',
+      env: { PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? '/tmp', ...opts.env },
+    });
+    return { code: r.status ?? 1, stdout: r.stdout ?? '', stderr: r.stderr ?? String(r.error ?? '') };
+  },
+};
 const temps: string[] = [];
 
 export function tempDir(prefix: string): string {
@@ -130,7 +151,10 @@ export function makeRepo(files: Record<string, string> = { 'README.md': '# app\n
   };
 }
 
-/** A bare remote wired as `origin`, plus a pre-push hook that only lets the supervisor (AOC_SUPERVISOR_PUSH=1) push. */
+/**
+ * A bare remote wired as the project repository's `origin` (the developers' view), plus the developers' pre-push
+ * speed bump there: it refuses pushes unless AOC_SUPERVISOR_PUSH=1. AOC itself never runs that hook any more.
+ */
 export function addGuardedRemote(repo: TestRepo): string {
   const remote = tempDir('aoc-chg-remote-');
   const r = git.run(remote, ['init', '-q', '--bare', '-b', 'main'], { env: GIT_ENV });
@@ -146,8 +170,33 @@ export function addGuardedRemote(repo: TestRepo): string {
   return remote;
 }
 
+/** What an operator does once per project (as the aocd user): name the protected remote in the service clone. */
+export function setPromotionRemote(h: Harness, projectId: string, remote: string): string {
+  const clone = h.mod.engine.serviceClonePath(projectId);
+  if (!existsSync(clone)) {
+    mkdirSync(dirname(clone), { recursive: true });
+    const init = git.run(dirname(clone), ['init', '-q', '--bare', clone], { env: GIT_ENV });
+    if (init.code !== 0) throw new Error(init.stderr);
+  }
+  const added = git.run(clone, [`--git-dir=${clone}`, 'remote', 'add', 'origin', remote], { env: GIT_ENV });
+  if (added.code !== 0) throw new Error(added.stderr);
+  return clone;
+}
+
 export function remoteHead(remote: string, branch = 'main'): string {
-  return git.run(remote, ['rev-parse', `refs/heads/${branch}`], { env: GIT_ENV }).stdout.trim();
+  return git.run(remote, [`--git-dir=${remote}`, 'rev-parse', `refs/heads/${branch}`], { env: GIT_ENV }).stdout.trim();
+}
+
+/** A ref in the project's service clone (null when absent). */
+export function cloneRef(h: Harness, projectId: string, ref: string): string | null {
+  const r = cloneGit(h, projectId, 'rev-parse', '--verify', '--quiet', ref);
+  return r.code === 0 ? r.stdout.trim() : null;
+}
+
+/** git in the project's service clone (inspection by the test). */
+export function cloneGit(h: Harness, projectId: string, ...args: string[]) {
+  const clone = h.mod.engine.serviceClonePath(projectId);
+  return git.run(clone, [`--git-dir=${clone}`, ...args], { env: GIT_ENV });
 }
 
 /** Acceptance test used by the rollback scenarios: fails when state.txt says "broken". */
@@ -179,17 +228,23 @@ export async function harness(
     ledger?: Partial<LedgerService>;
     learning?: Partial<LearningService>;
     selfmod?: SelfModificationService;
+    /** More modules, e.g. the real supervisor (with `supervisor: false`). */
+    modules?: AocModule[];
     config?: Parameters<typeof createTestRuntime>[0]['config'];
   } = {},
 ): Promise<Harness> {
   const sup = new FakeSupervisor();
-  const mod = createChangeModule(opts.change);
+  const mod = createChangeModule({ serviceClonesDir: tempDir('aoc-chg-clones-'), ...opts.change });
   const services: Record<string, unknown> = {};
   if (opts.supervisor !== false) services.supervisor = sup;
   if (opts.ledger) services.ledger = opts.ledger;
   if (opts.learning) services.learning = opts.learning;
   if (opts.selfmod) services.selfmod = opts.selfmod;
-  const t = await createTestRuntime({ modules: [mod], services, config: opts.config });
+  const t = await createTestRuntime({
+    modules: [mod, ...(opts.modules ?? [])],
+    services,
+    config: opts.config,
+  });
   const notifications: Harness['notifications'] = [];
   t.rt.broadcaster.subscribe({
     role: 'approver',
