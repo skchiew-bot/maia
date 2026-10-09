@@ -129,7 +129,7 @@ export function createIntakeModule(opts: IntakeModuleOptions = {}): AocModule {
         async react(e, _p, ctx) {
           const ticketId = (e.meta as { ticketId: string }).ticketId;
           if (ctx.store.findByCausation(e.id, 'ticket.triage_started').length) return;
-          if (flow.sessions(ticketId, 'triage').length) return;
+          // Launches are keyed on this event, so a redelivery after a partial start completes it instead of stalling.
           await flow.startTriage(ticketId, e.id);
         },
       },
@@ -393,7 +393,16 @@ export function createIntakeModule(opts: IntakeModuleOptions = {}): AocModule {
         const body = await readJson(c, z.object({ resolution: z.enum(['wont_fix', 'duplicate', 'cannot_reproduce', 'withdrawn']), note: z.string().max(2000).optional() }));
         const t = flow.ticket(c.req.param('id'));
         if (!t) throw new HttpError(404, 'not_found', 'Ticket not found');
-        flow.close(t.ticket_id, body.resolution, { kind: 'human', id: auth.user.id }, body.note);
+        const { user } = auth;
+        // "withdrawn" speaks for the requester: only an Approver records it. Otherwise the owner of linked work may close.
+        const ok =
+          hasPermission(user.role, 'ticket.close_any', user.flags) ||
+          (body.resolution !== 'withdrawn' &&
+            hasPermission(user.role, 'ticket.close_own', user.flags) &&
+            flow.sessions(t.ticket_id).some((s) => ctx.services.maybe('sessions')?.get(s.session_id)?.ownerId === user.id));
+        if (!ok)
+          throw new HttpError(403, 'forbidden', 'Only an Approver, or the owner of a session working on this ticket, may close it (only an Approver records a withdrawal)');
+        flow.close(t.ticket_id, body.resolution, { kind: 'human', id: user.id }, body.note);
         return c.json(internalView(ctx, flow, flow.ticket(t.ticket_id)!));
       });
     },

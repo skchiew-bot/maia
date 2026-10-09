@@ -865,6 +865,12 @@ export class ChangeEngine implements ChangeService {
     if (sessions && !info) throw new HttpError(404, 'session_not_found', `Unknown session ${sessionId}`);
     if (info?.projectId && info.projectId !== c.project_id)
       throw new HttpError(422, 'session_project_mismatch', 'The session belongs to another project');
+    // An observed session is unverified laptop work (threat model §2.2, T-12): linking one here would let the
+    // provenance trace treat a commit as traced via `via: 'session_change'` on nothing but that label. Observed
+    // sessions cannot themselves record a ledger head to satisfy the trace's reachability check today, but this
+    // gate must hold on its own, not by relying on that being true elsewhere (G-25).
+    if (info?.mode === 'observed')
+      throw new HttpError(422, 'session_not_managed', 'An observed session cannot be linked to a change record');
     if (!this.read.changeDto(changeId)!.sessions.some((s) => s.sessionId === sessionId)) {
       this.ctx.store.append({
         type: 'change.started',
