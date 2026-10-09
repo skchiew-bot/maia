@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import type { TowerAttentionItem } from '@aoc/contracts';
+import type { AttentionSeverity, TowerAttentionItem } from '@aoc/contracts';
 import {
   ago,
   capReached,
+  days,
   decide,
   hours,
   launch,
@@ -29,7 +30,7 @@ const byId = (items: TowerAttentionItem[], id: string) => {
 };
 
 describe('attention queue: ranked by cost of delay', () => {
-  it('ranks mixed kinds by base × age factor × blast radius — cost of delay beats age', async () => {
+  it('ranks mixed kinds by impact plus SLA-relative age — cost of delay beats age', async () => {
     h = await setup();
     decide(h, 'dec_bg', 'break_glass', { at: ago(h, minutes(1)) });
     decide(h, 'dec_lesson', 'lesson_binding', { at: ago(h, hours(12)), projectId: null });
@@ -48,20 +49,21 @@ describe('attention queue: ranked by cost of delay', () => {
     );
 
     const s = await h.snap();
-    // Raw costs 132.9 > 104.7 > 99.1 > 84.7 > 70.5, published on the 0–100 scale.
     expect(s.attention.map((a) => [a.id, a.costOfDelay.score, a.severity])).toEqual([
-      ['decision:dec_change', 84.8, 'critical'], // 40 × (1 + log2 5)
-      ['decision:dec_bg', 78.9, 'critical'], // 100, a minute old
-      ['session_dead:ses_dead', 77.5, 'critical'], // 70 × 1.415
-      ['decision:dec_lesson', 70.5, 'high'], // the oldest item (12h) still ranks below fresher, costlier ones
-      ['fx_carry_forward', 58.8, 'high'],
+      ['decision:dec_bg', 81.9, 'critical'], // 80 + 20·log2(1 + 1m/15m)
+      ['session_dead:ses_dead', 54.4, 'high'], // 50 + 20·log2(1 + 10m/1h)
+      // The oldest item (12h) ranks below fresher, costlier ones. A quarter of its 2-day SLA scores the same as a
+      // quarter of the carry-forward alert's 1-day scale: equal impact, equal share of the time scale.
+      ['decision:dec_lesson', 14.4, 'low'],
+      ['fx_carry_forward', 14.4, 'low'],
+      ['decision:dec_change', 12.3, 'low'], // 10 + 20·log2(1 + 2h/1d)
     ]);
     expect(s.attention.map((a) => a.costOfDelay.basis)).toEqual([
-      'Change request · 2h',
       'Break-glass promotion · 1m',
       'Dead session · 10m',
       'Lesson binding · 12h',
       'FX carried forward · 4 days · alert 6h old',
+      'Change request · 2h',
     ]);
     expect(s.kpis.needsYou).toBe(5);
     expect(s.kpis.oldestNeedsYouSince).toBe('2026-10-08T18:00:00.000Z');
@@ -75,7 +77,154 @@ describe('attention queue: ranked by cost of delay', () => {
     });
   });
 
-  it('gives each kind its inline intervention; passkey only for go-live, rollback and break-glass', async () => {
+  it('reproduces the approved mock’s queue: same order, bands and buttons, each score within 1.5 points', async () => {
+    h = await setup();
+    const ticketMoved = (
+      type: 'ticket.uat_ready' | 'ticket.uat_result' | 'ticket.golive_requested',
+      ticketId: string,
+      at: number,
+      decisionId = '',
+    ) =>
+      ticketEvent(
+        h,
+        type === 'ticket.uat_ready'
+          ? {
+              type,
+              actor: sys,
+              scope: { ticketId },
+              meta: { ticketId, uatRef: 'uat/1', uatSha: 'abcdef1', decisionId },
+              source: 'intake',
+            }
+          : type === 'ticket.uat_result'
+            ? {
+                type,
+                actor: { kind: 'human', id: 'usr_customer' },
+                scope: { ticketId },
+                meta: { ticketId, requesterId: 'usr_customer', verdict: 'pass' },
+                payload: {},
+                source: 'intake',
+              }
+            : {
+                type,
+                actor: sys,
+                scope: { ticketId },
+                meta: { ticketId, decisionId, promotionId: 'prm_1' },
+                source: 'intake',
+              },
+        at,
+      );
+    // 1. Rollback gate, 47m against its 30m SLA.
+    decide(h, 'dec_rb', 'rollback', { at: ago(h, minutes(47)), test: 'main' });
+    // 2. Go-live gate, 1h 05m, holding a UAT-signed fix for a high ticket still within its 2-day SLA.
+    ticket(h, 'tkt_1171', 'high', { at: ago(h, days(1)) });
+    ticketMoved('ticket.uat_result', 'tkt_1171', ago(h, hours(2)));
+    ticketMoved('ticket.golive_requested', 'tkt_1171', ago(h, minutes(65)), 'dec_gl');
+    decide(h, 'dec_gl', 'go_live', { at: ago(h, minutes(65)), subjectType: 'promotion', subjectId: 'prm_1' });
+    // 3. Post-incident change record, 3h 30m overdue.
+    h.emit(
+      {
+        type: 'breakglass.post_incident_overdue',
+        actor: sys,
+        meta: {
+          breakglassId: 'brk_1',
+          changeId: 'chg_219',
+          dueAt: new Date(ago(h, minutes(210))).toISOString(),
+        },
+        source: 'scheduler',
+      },
+      ago(h, minutes(200)),
+    );
+    // 4. Dead session, 21m.
+    launch(h, 'ses_e2e', { at: ago(h, hours(2)) });
+    live(h, 'ses_e2e', 'dead', ago(h, minutes(21)));
+    // 5. High ticket in UAT, 3d 2h after submission, waiting on the requester.
+    ticket(h, 'tkt_1162', 'high', { at: ago(h, days(3) + hours(2)) });
+    ticketMoved('ticket.uat_ready', 'tkt_1162', ago(h, days(1)), 'dec_uat');
+    decide(h, 'dec_uat', 'uat_signoff', {
+      at: ago(h, days(1)),
+      subjectType: 'ticket',
+      subjectId: 'tkt_1162',
+    });
+    // 6 and 11. Data decisions holding their sessions: 2h 14m and 6m against the 1h SLA.
+    launch(h, 'ses_bf', { at: ago(h, hours(3)), processType: 'backfill' });
+    decide(h, 'dec_bf', 'agent_decision', { at: ago(h, minutes(134)), test: 'data', sessionId: 'ses_bf' });
+    launch(h, 'ses_nric', { at: ago(h, hours(1)), processType: 'discovery' });
+    decide(h, 'dec_nric', 'agent_decision', { at: ago(h, minutes(6)), test: 'data', sessionId: 'ses_nric' });
+    // 7. A builder at the credit cap for 31m, one session held, top-up pending.
+    const dev = h.t.user('builder', 'Wei Jie');
+    launch(h, 'ses_assist', { at: ago(h, hours(2)), owner: dev.user.id });
+    capReached(h, dev.user.id, 'ses_assist', ago(h, minutes(31)));
+    topupRequested(h, dev.user.id, 'tpu_1', 'dec_top', ago(h, minutes(25)));
+    decide(h, 'dec_top', 'credit_topup', { at: ago(h, minutes(25)), requesterId: dev.user.id });
+    // 8. Stalled 11m. 9. Throttled 24m.
+    launch(h, 'ses_ocr', { at: ago(h, hours(1)) });
+    live(h, 'ses_ocr', 'stalled', ago(h, minutes(11)));
+    launch(h, 'ses_web', { at: ago(h, hours(1)) });
+    h.emit(
+      {
+        type: 'throttle.hit',
+        actor: sys,
+        scope: { sessionId: 'ses_web' },
+        meta: { sessionId: 'ses_web', resetAt: '2026-10-09T06:05:00.000Z', source: 'stream' },
+        payload: { message: 'limit' },
+        source: 'sidecar',
+      },
+      ago(h, minutes(24)),
+    );
+    live(h, 'ses_web', 'throttled', ago(h, minutes(24)));
+    // 10. FX discrepancy, 4h 37m.
+    h.emit(
+      {
+        type: 'fx.discrepancy_raised',
+        actor: sys,
+        meta: { date: '2026-10-08', scraped: 4.221, official: 4.225, decisionId: 'dec_fx' },
+        payload: {},
+        source: 'scheduler',
+      },
+      ago(h, minutes(277)),
+    );
+    decide(h, 'dec_fx', 'fx_discrepancy', { at: ago(h, minutes(277)), projectId: null });
+    // 12. Lesson binding, 12m against its 2-day SLA.
+    decide(h, 'dec_lesson', 'lesson_binding', { at: ago(h, minutes(12)), projectId: null });
+
+    const s = await h.snap();
+    const mock: [string, number, AttentionSeverity, string][] = [
+      ['decision:dec_rb', 94, 'critical', 'Approve with passkey'],
+      ['decision:dec_gl', 81, 'critical', 'Approve with passkey'],
+      ['post_incident_overdue:brk_1', 66, 'high', 'Open record'],
+      ['session_dead:ses_e2e', 58, 'high', 'Restart'],
+      ['ticket_waiting:tkt_1162', 52, 'high', 'Open ticket'],
+      ['decision:dec_bf', 47, 'medium', 'Approve'],
+      [`credit_blocked:${dev.user.id}`, 43, 'medium', 'Approve top-up'],
+      ['session_stalled:ses_ocr', 34, 'medium', 'Nudge…'],
+      ['session_throttled:ses_web', 22, 'low', 'Open'],
+      ['fx_discrepancy:dec_fx', 16, 'low', 'Review'],
+      ['decision:dec_nric', 14, 'low', 'Approve'],
+      ['decision:dec_lesson', 8, 'low', 'Approve'],
+    ];
+    expect(s.attention.map((a) => [a.id, a.severity, a.action.label])).toEqual(
+      mock.map(([id, , severity, label]) => [id, severity, label]),
+    );
+    expect(s.attention.map((a) => a.costOfDelay.score)).toEqual([
+      93.9, 82.2, 65.9, 58.7, 52.5, 45.9, 43, 34.9, 21.7, 16.1, 14.8, 8.1,
+    ]);
+    s.attention.forEach((a, i) =>
+      expect(Math.abs(a.costOfDelay.score - mock[i]![1])).toBeLessThanOrEqual(1.5),
+    );
+    expect(byId(s.attention, 'ticket_waiting:tkt_1162').costOfDelay.basis).toBe(
+      'High ticket · 3d 2h · past the 2d SLA · in UAT, waiting on the requester',
+    );
+    expect(byId(s.attention, 'decision:dec_gl').costOfDelay.basis).toBe(
+      'Go-live gate · 1h 5m · blocks a UAT-signed fix · high ticket',
+    );
+    expect(s.kpis).toMatchObject({
+      needsYou: 12,
+      oldestNeedsYouSince: new Date(ago(h, days(3) + hours(2))).toISOString(), // the mock's "oldest 3d 2h (ticket)"
+      openPastSla: 2, // the rollback (47m > 30m) and the data decision (2h 14m > 1h)
+    });
+  });
+
+  it('gives each kind its inline intervention; passkey only for go-live, rollback and break-glass; Approve applies the recommendation', async () => {
     h = await setup();
     for (const [id, kind] of [
       ['dec_go', 'go_live'],
@@ -88,6 +237,9 @@ describe('attention queue: ranked by cost of delay', () => {
     ] as const) {
       decide(h, id, kind, { at: ago(h, minutes(5)) });
     }
+    // Without a recommendation there is nothing for an inline Approve to apply: the card opens for review.
+    decide(h, 'dec_go_open', 'go_live', { at: ago(h, minutes(5)), recommend: null });
+    decide(h, 'dec_cr_open', 'change_request', { at: ago(h, minutes(5)), recommend: null });
     launch(h, 'ses_mig', { at: ago(h, hours(1)), processType: 'migration' });
     decide(h, 'dec_main', 'agent_decision', { at: ago(h, minutes(5)), test: 'main', sessionId: 'ses_mig' });
     launch(h, 'ses_dead', { at: ago(h, hours(1)) });
@@ -124,7 +276,9 @@ describe('attention queue: ranked by cost of delay', () => {
       [
         'decision:dec_bg',
         'decision:dec_cr',
+        'decision:dec_cr_open',
         'decision:dec_go',
+        'decision:dec_go_open',
         'decision:dec_main',
         'decision:dec_po',
         'decision:dec_rb',
@@ -141,6 +295,7 @@ describe('attention queue: ranked by cost of delay', () => {
         href: `/decisions?id=${id}`,
         decisionId: id,
         requiresPasskey: true,
+        recommendedOptionId: 'approve',
       });
       expect(byId(s.attention, `decision:${id}`).chips).toContain('Passkey');
     }
@@ -149,16 +304,32 @@ describe('attention queue: ranked by cost of delay', () => {
         kind: 'resolve_decision',
         label: 'Approve',
         requiresPasskey: false,
+        recommendedOptionId: 'approve',
       });
     }
+    expect(byId(s.attention, 'decision:dec_go_open').action).toEqual({
+      kind: 'resolve_decision',
+      label: 'Review',
+      href: '/decisions?id=dec_go_open',
+      decisionId: 'dec_go_open',
+      requiresPasskey: true,
+      recommendedOptionId: null,
+    });
+    expect(byId(s.attention, 'decision:dec_cr_open').action).toMatchObject({
+      label: 'Review',
+      requiresPasskey: false,
+      recommendedOptionId: null,
+    });
+    // A judgement call (triage disagreement) is read before it is resolved, recommendation or not.
     expect(byId(s.attention, 'decision:dec_tr').action).toMatchObject({
       kind: 'resolve_decision',
       label: 'Review',
       requiresPasskey: false,
+      recommendedOptionId: null,
     });
     expect(byId(s.attention, 'decision:dec_main')).toMatchObject({
       detail: 'Touches main / protected branch',
-      costOfDelay: { score: 61.1, basis: 'Agent decision (test 1: main) · 5m · holds a migration session' }, // raw 60 × 1.222
+      costOfDelay: { score: 14.3, basis: 'Agent decision (test 1: main) · 5m · holds a migration session' }, // 12 + 20·log2(1 + 5m/1h)
       chips: ['test main'],
     });
     expect(byId(s.attention, 'session_dead:ses_dead').action).toEqual({
@@ -166,6 +337,7 @@ describe('attention queue: ranked by cost of delay', () => {
       label: 'Restart',
       href: '/sessions/ses_dead',
       sessionId: 'ses_dead',
+      recommendedOptionId: null,
     });
     expect(byId(s.attention, 'session_stalled:ses_stall')).toMatchObject({
       title: 'Stalled session: bug-fix',
@@ -180,11 +352,17 @@ describe('attention queue: ranked by cost of delay', () => {
     });
   });
 
-  it('decisions past their SLA say so in the basis', async () => {
+  it('decisions past their approved SLA (or their own due time) say so in the basis', async () => {
     h = await setup();
     decide(h, 'dec_rb', 'rollback', { at: ago(h, minutes(47)) });
     decide(h, 'dec_data', 'agent_decision', { at: ago(h, minutes(134)), test: 'data' });
     decide(h, 'dec_fp', 'fix_plan', { at: ago(h, hours(3)) });
+    // Change requests have no approved SLA: only a card's own due time makes one late.
+    decide(h, 'dec_cr', 'change_request', { at: ago(h, hours(30)) });
+    decide(h, 'dec_cr_due', 'change_request', {
+      at: ago(h, hours(3)),
+      dueAt: new Date(ago(h, hours(1))).toISOString(),
+    });
     const s = await h.snap();
     expect(byId(s.attention, 'decision:dec_rb')).toMatchObject({
       costOfDelay: { basis: 'Rollback gate · 47m · past the 30m SLA' },
@@ -194,18 +372,27 @@ describe('attention queue: ranked by cost of delay', () => {
       'Agent decision (test 5: data) · 2h 14m · past the 1h SLA',
     );
     expect(byId(s.attention, 'decision:dec_fp').costOfDelay.basis).toBe('Fix-plan gate · 3h'); // within its 4h SLA
+    expect(byId(s.attention, 'decision:dec_cr')).toMatchObject({
+      costOfDelay: { basis: 'Change request · 30h' },
+      chips: [],
+    });
+    expect(byId(s.attention, 'decision:dec_cr_due')).toMatchObject({
+      costOfDelay: { basis: 'Change request · 3h · past its due time' },
+      chips: ['Past SLA'],
+    });
+    expect(s.kpis.openPastSla).toBe(3); // rollback, data decision, the change request past its due time
   });
 
-  it('customers waiting beyond the severity SLA (critical 1h, high 4h, medium 24h, low 72h) — including on the requester in UAT', async () => {
+  it('customers waiting beyond the severity SLA (critical 4h, high 2d, medium 5d, low 10d) — including on the requester in UAT', async () => {
     h = await setup();
-    ticket(h, 'tkt_c59', 'critical', { at: ago(h, minutes(59)) });
-    ticket(h, 'tkt_c61', 'critical', { at: ago(h, minutes(61)) });
-    ticket(h, 'tkt_h239', 'high', { at: ago(h, hours(4) - minutes(1)) });
-    ticket(h, 'tkt_h241', 'high', { at: ago(h, hours(4) + minutes(1)) });
-    ticket(h, 'tkt_m', 'medium', { at: ago(h, hours(24) + minutes(1)) });
-    ticket(h, 'tkt_l71', 'low', { at: ago(h, hours(72) - minutes(1)) });
-    ticket(h, 'tkt_l73', 'low', { at: ago(h, hours(72) + minutes(1)) });
-    ticket(h, 'tkt_uat', 'critical', { at: ago(h, hours(5)) });
+    ticket(h, 'tkt_c_within', 'critical', { at: ago(h, hours(4) - minutes(1)) });
+    ticket(h, 'tkt_c_past', 'critical', { at: ago(h, hours(4) + minutes(1)) });
+    ticket(h, 'tkt_h_within', 'high', { at: ago(h, days(2) - minutes(1)) });
+    ticket(h, 'tkt_h_past', 'high', { at: ago(h, days(2) + minutes(1)) });
+    ticket(h, 'tkt_m', 'medium', { at: ago(h, days(5) + minutes(1)) });
+    ticket(h, 'tkt_l_within', 'low', { at: ago(h, days(10) - minutes(1)) });
+    ticket(h, 'tkt_l_past', 'low', { at: ago(h, days(10) + minutes(1)) });
+    ticket(h, 'tkt_uat', 'critical', { at: ago(h, hours(8)) });
     ticketEvent(
       h,
       {
@@ -236,8 +423,8 @@ describe('attention queue: ranked by cost of delay', () => {
       {
         type: 'ticket.triage_started',
         actor: sys,
-        scope: { ticketId: 'tkt_h241' },
-        meta: { ticketId: 'tkt_h241', sessionIds: [], budgetTokens: 1, budgetMinutes: 1 },
+        scope: { ticketId: 'tkt_h_past' },
+        meta: { ticketId: 'tkt_h_past', sessionIds: [], budgetTokens: 1, budgetMinutes: 1 },
         source: 'intake',
       },
       ago(h, hours(3)),
@@ -246,36 +433,42 @@ describe('attention queue: ranked by cost of delay', () => {
     const s = await h.snap();
     expect(s.attention.map((a) => a.id)).toEqual([
       'ticket_waiting:tkt_uat', // waiting on the requester (the UAT sign-off decision itself is not an item)
-      'ticket_waiting:tkt_c61',
-      'ticket_waiting:tkt_h241',
+      'ticket_waiting:tkt_c_past',
+      'ticket_waiting:tkt_h_past',
       'ticket_waiting:tkt_m',
-      'ticket_waiting:tkt_l73',
+      'ticket_waiting:tkt_l_past',
     ]);
-    expect(byId(s.attention, 'ticket_waiting:tkt_c61')).toMatchObject({
+    // Shown from submission (how long the customer has waited); scored from the breach on the ticket's own SLA.
+    expect(byId(s.attention, 'ticket_waiting:tkt_c_past')).toMatchObject({
       title: 'Critical ticket waiting for triage',
-      since: new Date(ago(h, minutes(1))).toISOString(), // started needing attention when the SLA ran out
-      ageMs: minutes(1),
+      detail: 'Ticket tkt_c_past',
+      since: new Date(ago(h, hours(4) + minutes(1))).toISOString(),
+      ageMs: hours(4) + minutes(1),
       severity: 'critical',
-      costOfDelay: { score: 76.2, basis: 'Critical ticket · 1m past the 1h SLA · waiting for triage' },
-      action: { kind: 'open', label: 'Open ticket', href: '/tickets/tkt_c61' },
+      costOfDelay: { score: 75.1, basis: 'Critical ticket · 4h 1m · past the 4h SLA · waiting for triage' },
+      action: { kind: 'open', label: 'Open ticket', href: '/tickets/tkt_c_past', recommendedOptionId: null },
       chips: ['Critical', 'SLA breached'],
     });
     expect(byId(s.attention, 'ticket_waiting:tkt_uat')).toMatchObject({
       title: 'Critical ticket in UAT, waiting on the requester',
-      costOfDelay: { basis: 'Critical ticket · 4h past the 1h SLA · in UAT, waiting on the requester' },
+      severity: 'critical',
+      costOfDelay: {
+        score: 92.9,
+        basis: 'Critical ticket · 8h · past the 4h SLA · in UAT, waiting on the requester',
+      },
     });
-    expect(byId(s.attention, 'ticket_waiting:tkt_h241')).toMatchObject({
+    expect(byId(s.attention, 'ticket_waiting:tkt_h_past')).toMatchObject({
       title: 'High ticket in triage',
-      severity: 'high',
-      costOfDelay: { score: 61.1 },
+      severity: 'medium',
+      costOfDelay: { score: 40, basis: 'High ticket · 2d · past the 2d SLA · in triage' },
     });
     expect(byId(s.attention, 'ticket_waiting:tkt_m')).toMatchObject({
       severity: 'medium',
-      costOfDelay: { score: 34.9 },
+      costOfDelay: { score: 25 },
     });
-    expect(byId(s.attention, 'ticket_waiting:tkt_l73')).toMatchObject({
+    expect(byId(s.attention, 'ticket_waiting:tkt_l_past')).toMatchObject({
       severity: 'low',
-      costOfDelay: { score: 17.5 },
+      costOfDelay: { score: 15 },
     });
     // Ticket text is user-entered (PII): never in the queue.
     expect(JSON.stringify(s.attention)).not.toMatch(/jane|0123456789|Login broken/);
@@ -331,8 +524,8 @@ describe('attention queue: ranked by cost of delay', () => {
       subjectId: 'prm_1',
     });
 
-    // A critical ticket past its SLA, waiting at the fix-plan gate.
-    ticket(h, 'tkt_2', 'critical', { at: ago(h, hours(3)) });
+    // A critical ticket past its 4h SLA, waiting at the fix-plan gate.
+    ticket(h, 'tkt_2', 'critical', { at: ago(h, hours(5)) });
     ticketEvent(
       h,
       {
@@ -351,19 +544,19 @@ describe('attention queue: ranked by cost of delay', () => {
     expect(s.attention.map((a) => a.id)).toEqual(['decision:dec_gl', 'decision:dec_fp']);
     expect(byId(s.attention, 'decision:dec_gl')).toMatchObject({
       costOfDelay: {
-        score: 99.7,
+        score: 90.9,
         basis: 'Go-live gate · 2h 14m · blocks a UAT-signed fix · high ticket · past the 2h SLA',
-      }, // raw 90 × 3.45 × 1.55
+      }, // 45 × 1.55 + 20·log2(1 + 2h14m/2h) = 91.4, on the tail above 90
       chips: ['Passkey', 'High ticket', 'UAT signed', 'Past SLA'],
       detail: 'Ticket tkt_1 at the go-live gate',
     });
     expect(byId(s.attention, 'decision:dec_fp')).toMatchObject({
-      costOfDelay: { basis: 'Fix-plan gate · 1h · critical ticket · customer past the 1h SLA' },
+      costOfDelay: { score: 58.9, basis: 'Fix-plan gate · 1h · critical ticket · customer past the 4h SLA' }, // 30 × 1.75 + 6.4
       chips: ['Critical ticket', 'SLA breached'],
     });
   });
 
-  it('credit caps: one item per builder, 45 + 10 per blocked session, top-up decisions fold in, cleared by funding', async () => {
+  it('credit caps: one item per builder, 25 + 6 per blocked session, top-up decisions fold in, cleared by funding', async () => {
     h = await setup();
     const dev = h.t.user('builder', 'Dana Developer');
     launch(h, 'ses_c1', { at: ago(h, hours(5)), owner: dev.user.id });
@@ -378,7 +571,7 @@ describe('attention queue: ranked by cost of delay', () => {
       detail: 'Dana Developer · 2 sessions held at a task boundary',
       projectId: 'prj_a',
       since: new Date(ago(h, hours(3))).toISOString(),
-      costOfDelay: { score: 95.9, basis: 'Credit cap · 3h · 2 sessions blocked · no top-up requested' }, // raw (45 + 2 × 10) × 3.81
+      costOfDelay: { score: 77, basis: 'Credit cap · 3h · 2 sessions blocked · no top-up requested' }, // 25 + 2 × 6 + 20·log2(1 + 3h/1h)
       action: { kind: 'open', label: 'Open credits', href: `/credits?userId=${dev.user.id}` },
     });
 
@@ -395,6 +588,7 @@ describe('attention queue: ranked by cost of delay', () => {
         href: '/decisions?id=dec_top',
         decisionId: 'dec_top',
         requiresPasskey: false,
+        recommendedOptionId: 'approve',
       },
       chips: ['2 blocked', 'Top-up pending'],
     });
@@ -405,8 +599,13 @@ describe('attention queue: ranked by cost of delay', () => {
     s = await h.snap();
     expect(s.attention).toEqual([]);
 
-    // A top-up decision the credit events never explained still surfaces as a credit item.
-    decide(h, 'dec_orphan', 'credit_topup', { at: ago(h, minutes(30)), requesterId: 'usr_other' });
+    // A top-up decision the credit events never explained still surfaces as a credit item; without a
+    // recommendation (a manual request) it opens for review rather than approving inline.
+    decide(h, 'dec_orphan', 'credit_topup', {
+      at: ago(h, minutes(30)),
+      requesterId: 'usr_other',
+      recommend: null,
+    });
     s = await h.snap();
     expect(s.attention.map((a) => [a.id, a.title, a.detail, a.costOfDelay.basis])).toEqual([
       [
@@ -416,6 +615,7 @@ describe('attention queue: ranked by cost of delay', () => {
         'Credit top-up · 30m · waiting for approval',
       ],
     ]);
+    expect(s.attention[0]!.action).toMatchObject({ label: 'Review top-up', recommendedOptionId: null });
   });
 
   it('decision titles come from the decision payload, PII-scrubbed and capped at 120 characters', async () => {

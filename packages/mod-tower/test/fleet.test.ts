@@ -105,10 +105,39 @@ describe('fleet', () => {
     expect(fleet.rolloverPressure).toBe(1); // ses_a at 70% of a 1M window
   });
 
+  it('pools the previous 7 local days into the stall-rate average: stalled session-days ÷ live session-days', async () => {
+    h = await setup(); // local days run from 16:00Z; today (9 Oct) is not part of the average
+    const session = (id: string, from: string, to: string | null, stalls: string[] = []) => {
+      launch(h, id, { at: at(from) });
+      live(h, id, 'working', at(from));
+      for (const s of stalls) {
+        live(h, id, 'stalled', at(s));
+        live(h, id, 'working', at(s) + 60_000);
+      }
+      if (to) end(h, id, at(to));
+    };
+    session('ses_p1', '2026-10-08T01:00:00.000Z', '2026-10-08T05:00:00.000Z', ['2026-10-08T03:00:00.000Z']); // 8 Oct: stalled
+    session('ses_p2', '2026-10-08T02:00:00.000Z', '2026-10-08T04:00:00.000Z'); // 8 Oct
+    // Live on 5 and 6 Oct (one session-day each), stalled on the 6th.
+    session('ses_p3', '2026-10-05T01:00:00.000Z', '2026-10-06T08:00:00.000Z', ['2026-10-06T02:00:00.000Z']);
+    // Stalled and ended on 1 Oct, before the window.
+    session('ses_old', '2026-09-30T01:00:00.000Z', '2026-10-01T05:00:00.000Z', ['2026-10-01T02:00:00.000Z']);
+    session('ses_today', '2026-10-09T01:00:00.000Z', null, ['2026-10-09T02:00:00.000Z']);
+
+    const { fleet } = await h.snap();
+    expect(fleet.stallRatePct).toBe(100); // ses_today, the only session live today
+    expect(fleet.stallRateAvg7dPct).toBe(50); // 2 stalled of 4 live session-days (p1, p2 on the 8th; p3 on the 5th and 6th)
+  });
+
   it('counts nothing for an empty fleet', async () => {
     h = await setup();
     const { fleet } = await h.snap();
-    expect(fleet).toMatchObject({ stallRatePct: 0, throttleLostMsToday: 0, rolloverPressure: 0 });
+    expect(fleet).toMatchObject({
+      stallRatePct: 0,
+      stallRateAvg7dPct: null,
+      throttleLostMsToday: 0,
+      rolloverPressure: 0,
+    });
     expect(
       fleet.trend.every(
         (p) => p.working + p.thinking + p.stalled + p.dead + p.throttled + p.waiting_on_you === 0,
