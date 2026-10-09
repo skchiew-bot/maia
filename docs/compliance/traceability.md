@@ -4,8 +4,8 @@ Audit of merged code against `docs/spec/AOC-SPEC-003.md`. Companion: [gaps.md](g
 
 | | |
 | --- | --- |
-| Baseline | integration branch `claude/eager-johnson-dlplmw` @ `ca0d637` (merged into the audit worktree) |
-| Test run at baseline | `npx vitest run` (whole repo): **125 files, 1172 tests, all pass** |
+| Baseline | integration branch `claude/eager-johnson-dlplmw` @ `a1c8a0c` (merged into the audit worktree) |
+| Test run at baseline | `npx vitest run` (whole repo): **125 files, 1173 tests, all pass** |
 | Previous baseline | `fb97e98` (978 tests, 2 failing; 121 Implemented / 69 Partial / 11 Missing) |
 | Landed since | supervisor; mod-audit (anchors, verify-against-anchor, erasure, audit API, self-modification guard); security fixes (ingest body caps, anonymous-ingest refusal, bounded chained headers, session-bound idempotency, blob path containment, scope-column verification, observed hooks cannot target managed sessions, intake erasure and UAT framing); kernel projection back-fill; docs (architecture, ADRs, runbooks, threat model, self-modification boundary, ISO Annex A research); CEO decisions of 2026-10-09 (mock approved, stall threshold 10 min, sole-Approver fallback off) |
 | Still not merged | web pages (every page except login/gallery is a placeholder — G-09, in progress); mod-tower (not a spec requirement) |

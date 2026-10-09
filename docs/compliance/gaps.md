@@ -1,7 +1,7 @@
 # AOC-SPEC-003 gap list
 
 Open Partial rows of [traceability.md](traceability.md), grouped into fixes small enough for one engineer.
-Baseline: integration `ca0d637` — 125 test files, **1172 tests, all pass**. No requirement is Missing any more.
+Baseline: integration `a1c8a0c` — 125 test files, **1173 tests, all pass**. No requirement is Missing any more.
 
 * **P0** — breaks a binding control or the §3 make-or-break. Nothing ships to real users before these close.
 * **P1** — a binding requirement only partly met, wrong by default, or a defect that lets agents or outages corrupt
