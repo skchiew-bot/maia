@@ -293,9 +293,11 @@ export class HookDispatcher {
         this.d.engine.recordActivity(s.sessionId, 'stream', now);
         return { exitCode: 0 };
       case 'UserPromptSubmit':
+        // The hook relays what claude says it was asked: an agent-side claim, never a supervisor fact (O-4). The
+        // supervisor's own record of what it sent is session.turn_started's injectedText; `origin` names the source.
         this.ctx.store.append({
           type: 'prompt.submitted',
-          actor: s.mode === 'observed' ? this.agent(s.sessionId) : { kind: 'system', id: 'supervisor' },
+          actor: this.agent(s.sessionId),
           scope,
           meta: { sessionId: s.sessionId, origin: s.mode === 'observed' ? 'terminal' : 'supervisor' },
           payload: { text: summarize(h.prompt, 4000) },

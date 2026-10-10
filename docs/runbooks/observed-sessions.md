@@ -33,9 +33,9 @@ Before installing:
 - Tell every developer what is captured, and who can see it. It is employee personal data under the PDPA; the
   employee notice should cover it.
 - Global hooks capture **every** Claude Code session on the machine, including personal or unrelated work. Today
-  the daemon records a session even when its directory maps to no project (`projectId: null`). Until unmapped
-  directories can be ignored (threat model O-25), advise developers to use a separate OS account, or to disable
-  the hooks, for non-work use.
+  the daemon records a session even when its directory maps to no project (`projectId: null`), by the CEO's
+  decision of 2026-10-10 (threat model O-25). Advise developers to use a separate OS account, or to disable the
+  hooks, for non-work use.
 - An erasure request for an observed session follows the [crypto-shred procedure](key-custody.md#6-crypto-shred)
   with the session scope.
 
