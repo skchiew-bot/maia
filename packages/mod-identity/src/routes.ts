@@ -4,6 +4,7 @@ import {
   BEARER_ATTRIBUTION_NOTE,
   IDENTITY_TOKEN_KINDS,
   IdentityCreateUserSchema,
+  IdentityIssueObserverTokenSchema,
   IdentityIssueTokenSchema,
   IdentityUpdateUserSchema,
   PasskeyAssertOptionsSchema,
@@ -262,10 +263,11 @@ export function mountIdentityRoutes(app: App, ctx: ModuleContext, deps: Identity
 
   app.post('/api/tokens/observer', async (c) => {
     const auth = requirePermission(c, 'users.manage');
-    const body = await readJson(c, IdentityIssueTokenSchema);
+    const body = await readJson(c, IdentityIssueObserverTokenSchema);
     const issued = service.issueObserver(humanActor(auth), {
       label: body.label,
       expiresInDays: body.expiresInDays,
+      userId: body.userId,
     });
     c.header('Cache-Control', 'no-store');
     return c.json(issued, 201);

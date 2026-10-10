@@ -170,10 +170,11 @@ function apply(db: DatabaseSync, e: StoredEvent, p: P, tz: string): void {
       break;
     case 'session.observed':
       db.prepare(
-        `INSERT INTO sess_sessions (session_id, mode, claude_session_id, project_id, lifecycle, cwd, transcript_path, title, started_at)
-         VALUES (?, 'observed', ?, ?, 'running', ?, ?, ?, ?) ON CONFLICT(session_id) DO NOTHING`,
+        `INSERT INTO sess_sessions (session_id, mode, owner_id, claude_session_id, project_id, lifecycle, cwd, transcript_path, title, started_at)
+         VALUES (?, 'observed', ?, ?, ?, 'running', ?, ?, ?, ?) ON CONFLICT(session_id) DO NOTHING`,
       ).run(
         m.sessionId as string,
+        str(m.ownerId),
         m.claudeSessionId as string,
         str(m.projectId),
         str(p?.cwd),

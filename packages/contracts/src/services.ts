@@ -34,7 +34,8 @@ export interface AuthContext {
 export type IngestPrincipal =
   | { kind: 'session'; sessionId: string; tokenId: string }
   | { kind: 'sidecar'; sessionId: string; tokenId: string }
-  | { kind: 'observer'; tokenId: string }
+  /** userId: the developer the token was issued to (O-6); null for a token issued before tokens had an owner. */
+  | { kind: 'observer'; tokenId: string; userId: string | null }
   | { kind: 'system'; tokenId: string };
 
 export interface IdentityService {

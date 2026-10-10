@@ -2,6 +2,7 @@
  * Abuse scenarios on top of the route matrix (spec §3, §6): a person acting on someone else's resources, a page
  * on another site riding a signed-in browser, an agent writing as another agent, and credentials that should be dead.
  */
+import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { identityServiceOf } from '@aoc/mod-identity';
 import { bootProd, seedSession, type Prod, type SeededSession } from './support/prod';
@@ -25,6 +26,59 @@ const json = async (res: Response): Promise<any> => {
     return text;
   }
 };
+
+describe('observer tokens belong to a person (O-6)', () => {
+  it("an observer token attributes its observed sessions to its developer, cannot write into another developer's, and dies with them", async () => {
+    const ana = p.user('builder', 'Ana');
+    const ben = p.user('builder', 'Ben');
+    const boss = p.user('approver', 'Boss');
+    const service = identityServiceOf(p.aoc.runtime.services);
+    const anaToken = service.issueObserver(SYSTEM, { userId: ana.user.id }).token;
+    const benToken = service.issueObserver(SYSTEM, { userId: ben.user.id }).token;
+    const claudeSessionId = randomUUID();
+    const hook = (token: string, event: string, extra: Record<string, unknown> = {}) =>
+      p.request('POST', '/ingest/hook', {
+        headers: { authorization: `Bearer ${token}` },
+        body: {
+          mode: 'observed',
+          aocSessionId: null,
+          hook: { session_id: claudeSessionId, transcript_path: '/tmp/o6.jsonl', cwd: '/tmp/o6', hook_event_name: event, ...extra },
+          sentAt: p.clock.iso(),
+          idempotencyKey: `o6-${randomUUID()}`,
+        },
+      });
+
+    expect((await hook(anaToken, 'SessionStart', { source: 'startup' })).status).toBe(200);
+    const session = p.aoc.runtime.services.get('sessions').byClaudeSessionId(claudeSessionId)!;
+    expect(session.ownerId).toBe(ana.user.id);
+    expect(p.store.list({ types: ['session.observed'], sessionId: session.sessionId })[0]!.meta.ownerId).toBe(ana.user.id);
+
+    await settle();
+    const before = p.store.head().seq;
+    expect((await hook(benToken, 'UserPromptSubmit', { prompt: 'forged' })).status).toBe(403);
+    await settle();
+    expect(p.store.head().seq).toBe(before);
+
+    const off = await p.request('PATCH', `/api/users/${ana.user.id}`, { headers: boss.headers, body: { active: false } });
+    expect(off.status).toBe(200);
+    expect((await hook(anaToken, 'UserPromptSubmit', { prompt: 'after leaving' })).status).toBe(401);
+  });
+
+  it('is issued only to an active user, named in the request', async () => {
+    const boss = p.user('approver', 'Issuer');
+    const gone = p.user('builder', 'Gone');
+    await p.request('PATCH', `/api/users/${gone.user.id}`, { headers: boss.headers, body: { active: false } });
+    const issue = (body: unknown) => p.request('POST', '/api/tokens/observer', { headers: boss.headers, body });
+    expect((await issue({ label: 'no owner' })).status).toBe(422);
+    expect((await issue({ userId: 'usr_DOESNOTEXIST' })).status).toBe(404);
+    expect((await issue({ userId: gone.user.id })).status).toBe(409);
+    const dev = p.user('builder', 'Dev');
+    const ok = await issue({ userId: dev.user.id, label: 'laptop' });
+    expect(ok.status).toBe(201);
+    const { tokenId } = (await ok.json()) as { tokenId: string };
+    expect(identityServiceOf(p.aoc.runtime.services).getToken(tokenId)).toMatchObject({ kind: 'observer', userId: dev.user.id });
+  });
+});
 
 describe('own resources', () => {
   it('a person may list and revoke their own tokens, and nobody else may touch anyone\'s', async () => {

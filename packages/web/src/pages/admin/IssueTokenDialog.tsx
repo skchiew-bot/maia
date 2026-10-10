@@ -14,7 +14,9 @@ import {
 } from '../../components';
 import { EXPIRY_CHOICES } from './model';
 
-export type TokenTarget = { kind: 'user'; user: IdentityUserDto } | { kind: 'observer' };
+/** An observer token belongs to one developer (O-6): `users` are the people it can be issued to. */
+export type TokenTarget =
+  { kind: 'user'; user: IdentityUserDto } | { kind: 'observer'; users: IdentityUserDto[] };
 
 export interface IssueTokenDialogProps {
   /** Whom the token is for; `null` closes the dialog. */
@@ -51,6 +53,7 @@ export function IssueTokenDialog({ target, onClose, onIssued }: IssueTokenDialog
   const secretId = useId();
   const toast = useToast();
   const [label, setLabel] = useState('');
+  const [ownerId, setOwnerId] = useState('');
   const [expiry, setExpiry] = useState('90');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(undefined);
@@ -62,6 +65,7 @@ export function IssueTokenDialog({ target, onClose, onIssued }: IssueTokenDialog
   useEffect(() => {
     // The plaintext never outlives the dialog.
     setLabel('');
+    setOwnerId('');
     setExpiry('90');
     setBusy(false);
     setError(undefined);
@@ -69,15 +73,22 @@ export function IssueTokenDialog({ target, onClose, onIssued }: IssueTokenDialog
     setCopied('idle');
   }, [open]);
 
-  const forWhom = target?.kind === 'user' ? target.user.name : 'observed sessions';
+  const developers = target?.kind === 'observer' ? target.users.filter((u) => u.active) : [];
+  const owner = developers.find((u) => u.id === ownerId);
+  const forWhom = target?.kind === 'user' ? target.user.name : (owner?.name ?? 'observed sessions');
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (!target) return;
+    if (target.kind === 'observer' && !owner) {
+      setError(new Error('Choose the developer this token is for.'));
+      return;
+    }
     setBusy(true);
     setError(undefined);
     const days = EXPIRY_CHOICES.find((c) => c.value === expiry)?.days ?? null;
     const body = {
+      ...(target.kind === 'observer' ? { userId: ownerId } : {}),
       ...(label.trim() ? { label: label.trim() } : {}),
       ...(days ? { expiresInDays: days } : {}),
     };
@@ -182,6 +193,17 @@ export function IssueTokenDialog({ target, onClose, onIssued }: IssueTokenDialog
         </div>
       ) : (
         <form id={formId} className="admin-form" onSubmit={submit} noValidate>
+          {target?.kind === 'observer' && (
+            <Select
+              label="Developer"
+              required
+              value={ownerId}
+              onChange={(e) => setOwnerId(e.target.value)}
+              placeholder="Choose a developer"
+              options={developers.map((u) => ({ value: u.id, label: u.name }))}
+              hint="Their observed sessions are recorded under their name; the token dies if they are deactivated."
+            />
+          )}
           <TextField
             label="Label"
             value={label}

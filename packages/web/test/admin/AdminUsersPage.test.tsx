@@ -133,6 +133,32 @@ describe('Admin › Users page', { timeout: 60_000 }, () => {
     expect(document.body.innerHTML).not.toContain(SECRET);
   });
 
+  it('issues an observer token to one developer, and only once one is chosen (O-6)', async () => {
+    const user = userEvent.setup();
+    const issued: IssuedTokenDto = {
+      token: 'aoc_o_0bserverTok3nAbCdEfGhIjKlMnOpQrStUvWxYz012',
+      tokenId: 'tok_obs',
+      kind: 'observer',
+      prefix: 'aoc_o_0bserver',
+      expiresAt: null,
+      note: 'Store this token now: it is shown only once and cannot be recovered (only its hash is kept).',
+    };
+    const { calls } = adminRoutes({ 'POST /api/tokens/observer': () => issued });
+    await openPage();
+    await user.click(screen.getByRole('button', { name: 'Issue observer token' }));
+    const dialog = screen.getByRole('dialog', { name: 'Issue an observer token' });
+    const developer = within(dialog).getByLabelText(/Developer/);
+    // Only active people can hold one.
+    expect(within(developer).queryByRole('option', { name: 'Former Approver' })).toBeNull();
+    await user.click(within(dialog).getByRole('button', { name: 'Issue token' }));
+    expect(await within(dialog).findByText('Choose the developer this token is for.')).toBeInTheDocument();
+    expect(calls.filter((c) => c.method === 'POST')).toEqual([]);
+    await user.selectOptions(developer, 'usr_aisyah');
+    await user.click(within(dialog).getByRole('button', { name: 'Issue token' }));
+    expect(await within(dialog).findByLabelText('Token')).toHaveValue(issued.token);
+    expect(calls.find((c) => c.method === 'POST')!.body).toMatchObject({ userId: 'usr_aisyah' });
+  });
+
   it('blocks demoting or deactivating the last active Approver', async () => {
     const user = userEvent.setup();
     adminRoutes();

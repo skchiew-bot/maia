@@ -181,6 +181,16 @@ export const IdentityIssueTokenSchema = z
   .strict();
 export type IdentityIssueTokenRequest = z.infer<typeof IdentityIssueTokenSchema>;
 
+/** An observer token belongs to one developer (O-6): their observed sessions are attributed to them. */
+export const IdentityIssueObserverTokenSchema = z
+  .object({
+    label: zLabelText.optional(),
+    expiresInDays: z.number().int().min(1).max(3650).optional(),
+    userId: z.string().min(1).max(64),
+  })
+  .strict();
+export type IdentityIssueObserverTokenRequest = z.infer<typeof IdentityIssueObserverTokenSchema>;
+
 export const PasskeyRegisterVerifySchema = z
   .object({ response: z.record(z.unknown()), label: zLabelText.optional() })
   .strict();

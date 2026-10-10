@@ -262,7 +262,7 @@ export default function AdminUsersPage() {
         breadcrumbs={[{ label: 'Admin' }, { label: 'Users' }]}
         actions={
           <>
-            <Button icon="key" onClick={() => setTokenTarget({ kind: 'observer' })}>
+            <Button icon="key" onClick={() => setTokenTarget({ kind: 'observer', users: people ?? [] })}>
               Issue observer token
             </Button>
             <Button variant="primary" icon="plus" onClick={() => setCreateRole('builder')}>
@@ -532,7 +532,11 @@ export default function AdminUsersPage() {
           title="Observer tokens"
           subtitle="Read-only observed sessions on developer hosts"
           actions={
-            <Button size="sm" icon="key" onClick={() => setTokenTarget({ kind: 'observer' })}>
+            <Button
+              size="sm"
+              icon="key"
+              onClick={() => setTokenTarget({ kind: 'observer', users: people ?? [] })}
+            >
               Issue
             </Button>
           }

@@ -258,6 +258,10 @@ export class HookDispatcher {
     // Managed sessions also carry a claude session id (visible on the console). Observed-mode events must never
     // reach them, or any holder of the shared observer token could forge a managed session's audit trail.
     if (existing && existing.mode !== 'observed') throw new HttpError(403, 'forbidden', 'Observed events cannot target a managed session');
+    // A developer's observer token writes only into that developer's observed sessions (O-6).
+    const ownerId = p.kind === 'observer' ? p.userId : null;
+    if (existing && existing.ownerId && ownerId && existing.ownerId !== ownerId)
+      throw new HttpError(403, 'forbidden', "Observed events cannot target another developer's session");
     if (existing) return existing;
     if (p.kind === 'observer') {
       const wait = this.d.observerLimiter.newSession(p.tokenId);
@@ -268,7 +272,7 @@ export class HookDispatcher {
       type: 'session.observed',
       actor: { kind: 'system', id: 'sessions' },
       scope: { sessionId },
-      meta: { sessionId, claudeSessionId: req.hook.session_id, projectId: this.projectForCwd(req.hook.cwd) },
+      meta: { sessionId, claudeSessionId: req.hook.session_id, projectId: this.projectForCwd(req.hook.cwd), ownerId },
       payload: { cwd: req.hook.cwd, transcriptPath: req.hook.transcript_path ?? '' },
       source: 'hook',
       sourceTs: req.sentAt,

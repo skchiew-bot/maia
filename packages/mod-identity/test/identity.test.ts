@@ -140,7 +140,7 @@ describe('token storage', () => {
       const session = sessionCookieFrom(login)!;
       const observer = await t.json<IssuedTokenDto>('POST', '/api/tokens/observer', {
         headers: owner.headers,
-        body: { label: 'dev box' },
+        body: { label: 'dev box', userId: owner.user.id },
         expect: 201,
       });
       const ingest = service.issueIngestToken('ses_TEST1', { kind: 'system', id: 'supervisor' });
