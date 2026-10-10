@@ -405,8 +405,9 @@ credentials or Claude login state. With `isolation: "none"` (development only) t
   transcript it writes; its liveness and usage now reach aocd only from the sidecar and are reconciled against the
   process's own figures (T-4). It cannot approve, promote or forge another session's events. It can send out whatever
   it holds (the Claude token, its ingest token, the `session` part of its credential profile), because egress is not
-  restricted. Sessions of one kind (build, or read-only) that run at the same time share an OS user, so one can read
-  another's environment (G-49).
+  restricted. Sessions of one kind (build, or read-only) that run at the same time share an OS user, but each turn
+  runs in a PID and mount namespace of its own, so none can read another's environment or session directory (G-49,
+  closed); they still share the network namespace and, for two build threads of one project, the workspace.
 
 ### T-4. Sidecar spoofing
 
@@ -779,7 +780,7 @@ Now (`mod-change`, `provenance.ts`) a commit is traced only when
 
 | # | Risk (§16) | Severity | Controls (where) | Status | Residual / open items |
 | --- | --- | --- | --- | --- | --- |
-| R1 | Work bypasses the platform | Critical | Push credentials stay in aocd and reach no session; the push gateway refuses protected refs (R-02); sessions run as an unprivileged OS user (G-01); privileged git runs in a service-owned clone (G-04); provenance is checked against AOC's own records (G-25); `envAllowlist`; GitHub rulesets; observed hooks; `aoc doctor` (T-1) | Built (isolation, gateway, clone, provenance gate, `aoc doctor`) + Ops | The host set-up (P-13, P-22) and the rulesets (P-01) are operator work; concurrent sessions of one kind share an OS user (G-49); Claude credentials in the environment and open egress (O-14); a recorded HEAD does not prove authorship (T-22) |
+| R1 | Work bypasses the platform | Critical | Push credentials stay in aocd and reach no session; the push gateway refuses protected refs (R-02); sessions run as an unprivileged OS user (G-01); privileged git runs in a service-owned clone (G-04); provenance is checked against AOC's own records (G-25); `envAllowlist`; GitHub rulesets; observed hooks; `aoc doctor` (T-1) | Built (isolation, gateway, clone, provenance gate, `aoc doctor`) + Ops | The host set-up (P-13, P-22) and the rulesets (P-01) are operator work; concurrent sessions of one kind share an OS user and a network namespace (G-49 closed the process and file side); Claude credentials in the environment and open egress (O-14); a recorded HEAD does not prove authorship (T-22) |
 | R2 | The in-file chain is defeatable | High | Off-host anchors; Verify against the external records, in evidence packs too (T-13, ADR-0010) | Built (`mod-audit`, `mod-evidence`) | The default configuration anchors to a local directory (`audit.anchorRemote`, P-04); up to an hour of routine events unanchored (G-40); no TSA signature check or signed anchor commit until `audit.tsaCaFile` and `audit.gpgKeyId` are set |
 | R3 | ISO 42001 mapping wrong in ≥ 5 rows | High | Provisional corrected mapping (`docs/compliance/iso42001-annex-a.md`); compliance-lead stamp; evidence packs provisional until stamped | Provisional | The mapping was compiled from secondary sources; the compliance lead must review it against the purchased standard |
 | R4 | Intake uploads are an attack and PDPA surface | High | Magic bytes, size caps, scan, encrypted blobs, hashes only in the chain, abstracted status, media access log, read-only triage (UAT feedback too), untrusted framing, budget, human gates (T-11, T-19) | Built | The `builtin` scanner is not AV, and production refuses uploads without ClamAV (P-12); uploads are parsed in memory (O-16, G-47); build-session egress (O-14) |
@@ -808,7 +809,7 @@ the [gap list](../compliance/gaps.md), which tracks owners and acceptance tests.
 **Highest priority, before any real credential or real data:**
 
 1. O-1 and O-2: a separate sandbox user, and no privileged git or repository code in agent-writable trees. Built
-   (G-01, G-04); what remains is the host set-up (P-13, P-22), G-49 and G-50.
+   (G-01, G-04, G-49); what remains is the host set-up (P-13, P-22) and G-50.
 2. O-27: provenance from AOC's own records, not from commit messages. Built (G-25); commit signing would close the
    residual in T-22.
 3. O-8, decided (no sole-Approver exception): appoint a second Approver with a passkey, or the CEO's own
@@ -819,7 +820,7 @@ the [gap list](../compliance/gaps.md), which tracks owners and acceptance tests.
 
 | # | Item | Type | Owner | Related |
 | --- | --- | --- | --- | --- |
-| O-1 | Run every managed session (`claude`, hooks, MCP server, the model's tools) as a separate unprivileged OS user, or in a per-session container, with a home directory of its own that holds no credentials. **Done (G-01):** `supervisor.isolation: "user"` runs every turn as `sessionUser` (`readOnlySessionUser` for read-only types) with its own `HOME`, `CLAUDE_CONFIG_DIR` and `TMPDIR`; aocd runs as root; production refuses `"none"`, and a startup self-check refuses to start while a session user can read aocd's files. Remaining: sessions of one kind that run at the same time share an OS user (G-49), and the host set-up (P-13) | Done; follow-up change + Ops | `supervisor`, Ops | T-2, T-3, T-4, R1, R6, gaps G-01, G-49, P-13 |
+| O-1 | Run every managed session (`claude`, hooks, MCP server, the model's tools) as a separate unprivileged OS user, or in a per-session container, with a home directory of its own that holds no credentials. **Done (G-01):** `supervisor.isolation: "user"` runs every turn as `sessionUser` (`readOnlySessionUser` for read-only types) with its own `HOME`, `CLAUDE_CONFIG_DIR` and `TMPDIR`; aocd runs as root; production refuses `"none"`, and a startup self-check refuses to start while a session user can read aocd's files. Sessions of one kind that run at the same time share an OS user, each turn in a PID and mount namespace of its own (G-49, done). Remaining: the host set-up (P-13) | Done + Ops | `supervisor`, Ops | T-2, T-3, T-4, R1, R6, gaps G-01, G-49, P-13 |
 | O-2 | Never run privileged git or tests in agent-writable trees. Inspect as the sandbox user with hardened flags; promote, tag and roll back from a service-owned clone fetched by SHA; never set `safe.directory=*`. **Done (G-04).** Remaining: the acceptance command still runs through a shell (G-50) | Done; follow-up change | `kernel` (git), `supervisor`, `mod-change`, `mod-ledger` | T-2, gaps G-04, G-50 |
 | O-3 | Give the sidecar its own principal, outside the `claude` environment. **Done (G-44):** a sidecar token per session, only in the sidecar's environment; sidecar reports refuse the session token, live and spooled; revoked once the last report is in. Out of the model's reach only with session isolation (O-1) | Change | `supervisor`, `sidecar`, `mod-identity`, `mod-sessions` | T-3, T-4, T-14, gap G-44 |
 | O-4 | Record hook-relayed events with the agent as actor. A managed `UserPromptSubmit` is recorded today as a supervisor prompt; the supervisor already records what it injects (`session.turn_started.injectedText`) | Change | `mod-sessions` | T-3, gap G-47 |
