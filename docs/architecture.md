@@ -263,9 +263,8 @@ The supervisor is a module inside aocd (`SupervisorService` in
   session that works in a worktree outside the project repository gets no turn-end record; its task closes and phase
   pins still count.
 
-Not in place yet (see the [gap list](compliance/gaps.md)): a launch is not failed when no `SessionStart` hook arrives
-within N seconds (O-15, G-47); and Claude Code's auto-compaction threshold is not aligned with the rollover threshold
-(ADR-0008).
+Not in place yet (see the [gap list](compliance/gaps.md)): Claude Code's auto-compaction threshold is not aligned with
+the rollover threshold (ADR-0008).
 
 ### 2.3 Per-session sidecar
 

@@ -160,7 +160,7 @@ environment, is inside Zone 3**, whatever its name. Zone 3 therefore runs as a s
 | T | Replays and duplicate flushes | Idempotency keys; spool replays deduplicated. Chained keys are derived from the session and the client's key, so one session cannot pre-claim another's | Built | — |
 | R | A hook-relayed event is taken for a supervisor fact | Hook-sourced events must carry the agent as actor. Today a managed `UserPromptSubmit` is recorded as `{kind: system, id: supervisor}` | Required (O-4) | — |
 | I | Ingest responses leak data | Responses are acknowledgements and hook decisions; `get_status` returns only the caller's own session | Built | — |
-| D | Event floods, decision-card spam through forged `PreToolUse` | Body caps (16 MiB per ingest request, 64 MiB per spool flush); batch caps (spool ≤ 500 items, usage ≤ 200 batches); duplicate agent decisions collapse into one open card; observer tokens are rate limited per token (600 requests a minute with a burst of 1000, 60 new observed sessions an hour, 429 with `Retry-After`, R-13) | Built / Required (O-16: per-session limits on decision cards and on ingest in general) | — |
+| D | Event floods, decision-card spam through forged `PreToolUse` | Body caps (16 MiB per ingest request, 64 MiB per spool flush); batch caps (spool ≤ 500 items, usage ≤ 200 batches); duplicate agent decisions collapse into one open card, and a session may hold at most `decisions.maxOpenAgentDecisionsPerSession` (3) open agent cards (O-16, `7d1369e`); observer tokens are rate limited per token (600 requests a minute with a burst of 1000, 60 new observed sessions an hour, 429 with `Retry-After`, R-13) | Built / Required (O-16: per-session limits on ingest in general) | — |
 | E | System-token theft gives write access to every session | System tokens never leave aocd | Required | — |
 | D | A session token holder posts a value that makes a projector throw, so aocd cannot start (a usage `lastAt` of `not-a-date` did, W4-11) | Client timestamps, token counts and message ids are validated at ingest; the projector tolerates old bad rows; a rebuild isolates a projector that throws and marks it `degraded` instead of aborting (W4-04); the catalog's `zIso` must parse as an instant | Built ([wave 4](review-wave4.md)) | A deterministic bug in a projector still degrades its read model until fixed |
 | I | An unauthenticated caller learns which session and thread ids exist from 404 against 401 | The supervisor's session routes authenticate and check the role before they look the session up (W4-09) | Built | — |
@@ -213,7 +213,7 @@ environment, is inside Zone 3**, whatever its name. Zone 3 therefore runs as a s
 | T | A workspace `.claude/settings*.json`, or the session's own `~/.claude/settings.json`, switches off AOC's hooks or overrides its environment (F-05) | Each turn fails closed (409 `workspace_settings_override` or `session_settings_override`) when those files set `disableAllHooks` or `env`, are not plain JSON or are links | Built | Other Claude Code state in the session's `HOME` is not checked |
 | E | A session works outside its project (R-09) | The working directory must resolve, through symlinks, inside the project's repository or its own directory under `supervisor.workspacesDir`, and is checked again every turn (409 `cwd_outside_project`) | Built | It limits where a session starts, not what its OS user may read |
 | D | A reactor replay launches a second session, or a launch for a typo creates a project | Launches carry an idempotency key chained on `session.launch_requested` (R-07); an unknown project is a 404 `unknown_project` and appends nothing | Built | — |
-| T | Invalid generated settings disable every hook silently | The generated settings are validated against a schema before launch (Built); failing a launch that sees no `SessionStart` within N seconds is not built (O-15) | Built / Required (O-15) | Until the `SessionStart` check exists, a Claude Code version that rejects settings AOC considers valid runs without hooks, unnoticed |
+| T | Invalid generated settings disable every hook silently | The generated settings are validated against a schema before launch (Built); a turn whose hooks send no `SessionStart` within `supervisor.sessionStartTimeoutSec` (60 s) is aborted and its session failed, `session_start_missing` (Built, O-15, `7d1369e`) | Built | A Claude Code version that rejects AOC's settings runs without hooks for up to the timeout |
 | S | The `aoc` MCP server fails and the session runs without its structured voice | The turn is aborted unless `aoc` is `connected` in `system/init` | Built | — |
 | D | Runaway sessions | `maxConcurrentSessions` (8), `autoContinueLimit`, diagnosis budgets, stall detection, credits at boundaries | Built | — |
 | R | "Who launched, resumed or stopped this?" | Every launch, turn, resume, nudge, restart and stop is an event with an actor and a reason | Built | — |
@@ -653,7 +653,8 @@ Forged or runaway `PreToolUse` attempts raise many cards; or one card waits for 
   - Every card shows its age; reminders every 30 min; in-page notifications; an opt-in webhook (Built).
   - The Tower ranks the attention queue by cost of delay (Built, `mod-tower`).
   - Waiting costs nothing, because the turn has ended (ADR-0006).
-  - Per-session rate limits on card creation (Required, O-16, gap G-47).
+  - A session may hold at most `decisions.maxOpenAgentDecisionsPerSession` (3) open agent cards; one more different
+    card is refused and the agent told to end its turn (Built, O-16, `7d1369e`).
 - **Residual:** a single Approver is the bottleneck, and by the CEO's decision their own Approver-level requests
   wait for a second Approver (O-8).
 
@@ -704,11 +705,11 @@ The MCP server can also fail to start without stopping the session.
 
 - **Controls:** the supervisor validates the generated settings against a schema before launch, and aborts the
   turn unless `aoc` is `connected` in `system/init` (Built). Unknown managed session ids fail closed (Built). A
-  missing `SessionStart` within N seconds should fail the launch (Required, O-15). In the real-CLI check (Claude
-  Code 2.1.295, 2026-10-09) the `aoc` server was `connected` in every session AOC launched and the hooks fired with
-  the documented stdin ([research §13.2](../research/claude-code-integration.md#132-what-worked-the-first-time)).
-- **Residual:** until the `SessionStart` check exists, a Claude Code version that rejects settings AOC's schema
-  accepts would run without hooks. Re-run the research captures and the opt-in real-CLI suite on every upgrade (§7).
+  missing `SessionStart` within `supervisor.sessionStartTimeoutSec` aborts the turn and fails the session (Built,
+  O-15, `7d1369e`). In the real-CLI check (Claude Code 2.1.295, 2026-10-09) the `aoc` server was `connected` in
+  every session AOC launched and the hooks fired with the documented stdin ([research §13.2](../research/claude-code-integration.md#132-what-worked-the-first-time)).
+- **Residual:** a Claude Code version that rejects settings AOC's schema accepts runs without hooks for up to
+  `supervisor.sessionStartTimeoutSec` before its turn is aborted. Re-run the research captures and the opt-in real-CLI suite on every upgrade (§7).
   Observed sessions are best-effort by design.
 
 ### T-21. Self-modification of the governance core
@@ -836,8 +837,8 @@ the [gap list](../compliance/gaps.md), which tracks owners and acceptance tests.
 | O-12 | Set backup retention within the PDPA erasure promise (`audit.backupRetentionDays`, 35 days by default), and state "erased from backups within N days" in erasure responses | **Decision (CEO, DPO)** | CEO | T-18, R6, gap P-03 |
 | O-13 | Production KEK from a file (for example a systemd credential), never `AOC_MASTER_KEY` (refused in production, done). **Done:** every helper aocd starts itself gets an allowlisted environment (kernel git, the anchor git and `openssl`, the claude CLI adapter, the ClamAV client); the backup copy command is the deliberate exception (aocd's environment minus `AOC_*`, `ANTHROPIC_*`, `CLAUDE_CODE_OAUTH*`, because it carries the operator's own transfer credentials) | Ops | Ops | T-18, R6, gaps G-46, P-03 |
 | O-14 | Claude credentials reach every session through `envAllowlist` and are readable by the model. Restrict egress, prefer per-host login state over environment tokens where possible, and evaluate Claude Code's tool sandboxing on the deployed version | **Decision** + change | CEO, `supervisor` | T-3, gap P-20 |
-| O-15 | Launch fail-closed checks. **Partly done:** generated settings are validated and a turn aborts unless `aoc` is `connected`. Remaining: fail a launch with no `SessionStart` within N seconds | Change | `supervisor`, `hooks` | T-20, gap G-47 |
-| O-16 | Rate limits: per-session decision-card creation, ingest, uploads per Requester, SSE connections per user. Also stream portal uploads to disk instead of parsing up to about 200 MiB in memory. **Done:** body caps, the observer-token limits (R-13), the evidence-pack and manual-backup limits, and the push gateway's limit | Change | `mod-sessions`, `mod-decisions`, `mod-intake`, `daemon` | T-17, §3, gap G-47 |
+| O-15 | Launch fail-closed checks. **Done:** generated settings are validated, a turn aborts unless `aoc` is `connected`, and a turn with no `SessionStart` within `supervisor.sessionStartTimeoutSec` is aborted (`7d1369e`) | Done | `supervisor`, `hooks` | T-20, gap G-47 |
+| O-16 | Rate limits: per-session decision-card creation, ingest, uploads per Requester, SSE connections per user. Also stream portal uploads to disk instead of parsing up to about 200 MiB in memory. **Done:** body caps, the observer-token limits (R-13), the evidence-pack and manual-backup limits, the push gateway's limit, and at most `decisions.maxOpenAgentDecisionsPerSession` open agent cards per session (`7d1369e`) | Change | `mod-sessions`, `mod-decisions`, `mod-intake`, `daemon` | T-17, §3, gap G-47 |
 | O-17 | Lesson and playbook hygiene: provenance on the card, text length caps, highlighted invisible characters, no auto-proposal from untrusted-input sessions | Change | `mod-learning`, `mod-registry` | T-15, gap G-47 |
 | O-18 | FX session: confirm the 1700 end-of-day middle rate (the default: page scrape cross-checked with the API, from 18:00 MYT) or mandate the 1200 noon rate (from 13:00, API figure only, no page cross-check). The research defaults are built: explicit `?session=`, 4-dp comparison, 1.25 % soft flag, alert after 3 weekdays without a live rate | Decision (CEO, FinOps) | CEO; `mod-fx` | R13, gaps G-36, P-19 |
 | O-19 | Extend passkeys beyond go-live, rollback and break-glass to every Approver gate (fix plan, main/production/data change requests, protected operations, lesson binding, top-ups) | **Decision (CEO)** | CEO, `mod-identity` | T-8, gap P-20 |

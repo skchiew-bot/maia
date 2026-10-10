@@ -222,7 +222,7 @@ the chain is part of what is being protected. Three external records:
   - session isolation: the session users, the per-session `HOME`, and the startup self-check (O-1, G-01);
   - `runIsolated` and the service-owned clone: no privileged git in an agent-writable tree (O-2, G-04);
   - the tool grants (`toolPolicy`) and what a builder's shell may run (O-30, undecided);
-  - settings validation and launch fail-closed checks (O-15, partly built);
+  - settings validation and launch fail-closed checks (O-15, built);
   - the sidecar's token and principal (O-3, G-44), and the turn-end HEAD record (G-25).
 - [ ] **Change control:** the provenance algorithm (O-27, G-25) and the service-owned clone; isolation of rollback
       verification and its acceptance command (run as argv without a shell, G-50); break-glass audit; immutable pin tags.
