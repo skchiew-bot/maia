@@ -1247,8 +1247,8 @@ Open items. Owners, fixes and acceptance tests are in the [gap list](compliance/
 8. **Builder shell policy: undecided** (O-30, P-26). The shipped writer types are granted scoped git verbs only, so
    under `claude -p` a builder cannot run tests; the supervisor grants blanket `Bash` to a writer type whose entry
    says nothing about Bash. The options and the lead's recommendation are in P-26.
-9. Findings of the real-CLI check: noisy evidence flags (G-52), refused permission requests that are not audited
-   (G-53), and boundary notices that a model can ignore until its turn ends (G-54).
+9. Findings of the real-CLI check: noisy evidence flags (G-52) and refused permission requests that are not audited
+   (G-53). Boundary notices are now enforced: after a stop, every tool call of the turn is denied (G-54).
 
 ## Glossary
 

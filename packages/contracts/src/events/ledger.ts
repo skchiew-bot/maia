@@ -139,6 +139,14 @@ export const LEDGER_EVENTS = [
     payload: payload({ evidence: z.object({ kind: z.enum(EVIDENCE_KINDS), ref: z.string(), detail: z.string().optional() }) }),
   }),
   defineEvent({
+    type: 'task.boundary_delivered',
+    owner: 'ledger',
+    description:
+      'A task_done answer told the agent to stop at this boundary (stop order, credit cap or rollover); every tool call is denied until the next turn starts (G-54).',
+    meta: meta({ sessionId: zId, taskId: zId, reason: z.enum(['stop_requested', 'credit_cap', 'rollover']) }),
+    payload: null,
+  }),
+  defineEvent({
     type: 'phase.completed',
     owner: 'ledger',
     description: 'All tasks of a phase done; pins an immutable git tag/SHA for rollback (§8).',

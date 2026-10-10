@@ -115,6 +115,9 @@ describe('(h) credit cap at task boundaries, through the MCP server', () => {
     expect(t2.text).toContain(`STOP — AOC task boundary (credit_cap). Do not start another task.\nCredit cap reached for ${period}.`);
     expect(h.events({ types: ['credit.auto_granted'] })).toHaveLength(1);
     expect(h.events({ types: ['credit.cap_reached'], sessionId: s.sessionId }).map((e) => e.meta.taskId)).toEqual(['t1', 't2']);
+    // The rest of the turn is stopped, not just asked to stop (G-54): every further tool call is denied.
+    expect((await claude.tool('Write', { file_path: 'src/evaluate.ts', content: '' })).decision).toBe('deny');
+    expect(h.events({ types: ['tool.denied'], sessionId: s.sessionId }).at(-1)!.meta).toMatchObject({ toolName: 'Write', guard: 'boundary-stop' });
 
     // A top-up: the requester can never approve it; another approver can, and the next boundary continues.
     const req = await h.api<CreditTopupRequest>('POST', '/api/credits/topup-requests', {
@@ -129,6 +132,16 @@ describe('(h) credit cap at task boundaries, through the MCP server', () => {
     const granted = await waitFor(() => h.events({ types: ['credit.topup_granted'] })[0], { what: 'the top-up grant' });
     expect(granted.meta).toMatchObject({ requestId: req.requestId, userId: dev.user.id, amountUsd: 2, approverId: ceo.user.id, balanceBefore: -0.05, balanceAfter: 1.95 });
     expect(await account(h, dev)).toMatchObject({ grantedUsd: 2.25, balanceUsd: 1.95, capped: false, pendingTopup: null });
+    // The supervisor resumes a capped session with a new turn once the top-up is granted (the scenario below runs it under
+    // the real supervisor); here the test starts that turn itself. The boundary stop held only for the turn it was delivered in.
+    h.store.append({
+      type: 'session.turn_started',
+      actor: { kind: 'system', id: 'supervisor' },
+      scope: { sessionId: s.sessionId, projectId },
+      meta: { sessionId: s.sessionId, turn: 2, reason: 'topup' },
+      payload: {},
+      source: 'supervisor',
+    });
 
     await claude.write('src/evaluate.ts', 'export const evaluate = (program: unknown) => program;\n');
     const t3 = await claude.aoc('task_done', { task_id: 't3', evidence: { kind: 'diff', ref: 'src/evaluate.ts' } });

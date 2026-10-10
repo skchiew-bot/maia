@@ -6,14 +6,14 @@
 import type { AocModule } from '@aoc/kernel';
 import { LedgerCore, resolveOptions, type LedgerModuleOptions } from './core';
 import { createDriftReactor, createOverrunJob } from './drift';
-import { createNoManifestGuard } from './guards';
+import { createBoundaryStopGuard, createNoManifestGuard } from './guards';
 import { createWriterReleaseReactor } from './projects';
 import { createLedgerProjector } from './projector';
 import { mountLedgerRoutes } from './routes';
 import { LedgerServiceImpl } from './service';
 
 export type { LedgerModuleOptions } from './core';
-export { NO_MANIFEST_REASON } from './guards';
+export { BOUNDARY_STOP_REASON, NO_MANIFEST_REASON } from './guards';
 export { LEDGER_TABLES } from './projector';
 export { phaseTagName, isPlausibleTestId, DEFAULT_OVERRUN_BUDGET_MIN } from './rules';
 
@@ -22,7 +22,7 @@ export function createLedgerModule(opts: LedgerModuleOptions = {}): AocModule {
   return {
     name: 'ledger',
     projectors: [createLedgerProjector()],
-    guards: [createNoManifestGuard(core)],
+    guards: [createBoundaryStopGuard(core), createNoManifestGuard(core)],
     reactors: [createDriftReactor(core), createWriterReleaseReactor(core)],
     jobs: [createOverrunJob(core)],
     init(ctx) {

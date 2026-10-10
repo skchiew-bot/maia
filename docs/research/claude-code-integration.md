@@ -737,8 +737,9 @@ sessions made for other purposes, not a designed sample.
   `tool.denied` event (the hook is relayed, nothing reads it), so a session that keeps hitting the permission wall (D1 before the fix) shows up only as the model's own words.
 - **config/process-types.json**: the writer types grant git verbs only. A task closed with `test` evidence needs a test
   runner (`Bash(npm test:*)` and the like, per project): in print mode a refused test run is a dead end.
-- **Boundary obedience** (credit cap, rollover, stop) rests on the model; D8 shows a model can ignore it. A PreToolUse
-  guard that denies tool calls after a boundary stop has been delivered would make it enforceable.
+- **Boundary obedience** (credit cap, rollover, stop) rested on the model; D8 shows a model can ignore it. Done (G-54,
+  `3c2fdf4`): the ledger's `boundary-stop` PreToolUse guard denies every tool call after a boundary stop was delivered,
+  until the next turn starts.
 
 ### 13.8 Re-running and refreshing
 

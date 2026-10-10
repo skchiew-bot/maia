@@ -21,6 +21,7 @@ export const LEDGER_TABLES = [
   'ledger_drift',
   'ledger_amendments',
   'ledger_enhancements',
+  'ledger_boundary_stops',
 ] as const;
 
 const DDL = [
@@ -77,6 +78,8 @@ const DDL = [
     event_id TEXT PRIMARY KEY, seq INTEGER NOT NULL, project_id TEXT NOT NULL, session_id TEXT, change_id TEXT,
     by_id TEXT NOT NULL, at TEXT NOT NULL, title TEXT, detail TEXT)`,
   `CREATE INDEX IF NOT EXISTS ledger_enhancements_project ON ledger_enhancements(project_id, seq)`,
+  `CREATE TABLE IF NOT EXISTS ledger_boundary_stops (
+    session_id TEXT PRIMARY KEY, task_id TEXT NOT NULL, reason TEXT NOT NULL, at TEXT NOT NULL, seq INTEGER NOT NULL)`,
 ];
 
 /** Key pairing started/done reports of one step: the playbook step id, else a hash of the reported text. */
@@ -512,6 +515,21 @@ const handlers: Record<string, Handler> = {
       m.state,
       e.ts,
       e.seq,
+    );
+  },
+
+  'task.boundary_delivered'(db, e) {
+    const m = e.meta as MetaOf<'task.boundary_delivered'>;
+    db.prepare(
+      `INSERT INTO ledger_boundary_stops (session_id, task_id, reason, at, seq) VALUES (?,?,?,?,?)
+       ON CONFLICT(session_id) DO UPDATE SET task_id = excluded.task_id, reason = excluded.reason, at = excluded.at, seq = excluded.seq`,
+    ).run(m.sessionId, m.taskId, m.reason, e.ts, e.seq);
+  },
+
+  /** A boundary stop holds for the rest of the turn it was delivered in. */
+  'session.turn_started'(db, e) {
+    db.prepare('DELETE FROM ledger_boundary_stops WHERE session_id = ?').run(
+      (e.meta as MetaOf<'session.turn_started'>).sessionId,
     );
   },
 
