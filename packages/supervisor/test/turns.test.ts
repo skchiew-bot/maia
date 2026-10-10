@@ -356,6 +356,24 @@ describe('turn end: crash, auto-continue, completion, credit cap', () => {
     open.open();
   });
 
+  it('fails a turn whose hooks send no SessionStart within the timeout, and keeps one whose hooks do (O-15, G-47)', async () => {
+    h = await createHarness({ supervisor: { sessionStartTimeoutSec: 1 } });
+    const silent = await h.launch('[[fake:hang]] No hooks', { threadId: 'thr_silent' });
+    await h.waitLifecycle(silent, 'failed', 10_000);
+    expect(h.events('session.lifecycle_changed', silent).at(-1)!.meta).toMatchObject({
+      to: 'failed',
+      reason: 'session_start_missing',
+    });
+    expect(h.events('session.turn_ended', silent).map((e) => e.meta.outcome)).toEqual(['error']);
+
+    const hooked = await h.launch('[[fake:hang]] Hooks run', { threadId: 'thr_hooked' });
+    h.sup.sessionStarted(hooked);
+    await new Promise((r) => setTimeout(r, 1_500));
+    expect(h.lifecycle(hooked)).toBe('running');
+    await h.sup.stop(hooked, true, h.ownerActor);
+    await h.waitLifecycle(hooked, 'ended');
+  });
+
   it('blocks when the credit cap is reached during a turn and resumes on a top-up', async () => {
     h = await createHarness();
     const gate = h.gate();

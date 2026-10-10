@@ -289,6 +289,7 @@ export class HookDispatcher {
     switch (h.hook_event_name) {
       case 'SessionStart':
         if (s.mode === 'observed' && (s.lifecycle === 'ended' || s.lifecycle === 'idle')) this.setLifecycle(s, 'running', 'session_start', key('lc'));
+        if (s.mode === 'managed') this.ctx.services.maybe('supervisor')?.sessionStarted?.(s.sessionId);
         this.d.engine.recordActivity(s.sessionId, 'stream', now);
         return { exitCode: 0 };
       case 'UserPromptSubmit':

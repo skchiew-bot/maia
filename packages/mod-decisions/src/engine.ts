@@ -295,11 +295,12 @@ export class DecisionEngine implements DecisionService {
       rationale: input.recommendation.rationale,
     };
     const context = input.context ?? null;
-    const duplicate = this.list({
+    const open = this.list({
       sessionId: session.sessionId,
       kind: ['agent_decision'],
       status: ['open'],
-    }).find(
+    });
+    const duplicate = open.find(
       (c) =>
         c.test === input.test &&
         c.question === input.question &&
@@ -308,6 +309,16 @@ export class DecisionEngine implements DecisionService {
         sameJson(c.recommendation, recommendation),
     );
     if (duplicate) return duplicate;
+    // A session, or a prompt injected into one, could otherwise flood the queue with different cards (O-16, G-47).
+    const max = this.ctx.config.decisions.maxOpenAgentDecisionsPerSession;
+    if (open.length >= max)
+      // 409, not 429: the ingest client retries and spools a 429, and this refusal must reach the agent now.
+      throw new DecisionError(
+        409,
+        'too_many_open_decisions',
+        `This session already has ${open.length} open decision cards (the limit is ${max}). Do not ask again: END YOUR TURN NOW; the supervisor resumes this session when they are answered.`,
+        { open: open.length, limit: max },
+      );
     return this.raise(
       {
         kind: 'agent_decision',

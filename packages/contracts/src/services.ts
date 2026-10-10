@@ -278,6 +278,8 @@ export interface SupervisorService {
   isRunning(sessionId: string): boolean;
   /** Operator asked for a stop at the next task boundary (task_done returns stop_requested). */
   stopRequested(sessionId: string): boolean;
+  /** A managed session's SessionStart hook arrived: its hooks run (O-15). */
+  sessionStarted?(sessionId: string): void;
   /** Run a command in a supervisor-controlled environment (rollback verification, promotion). Never exposed to agents. */
   runIsolated(input: IsolatedRunInput): Promise<{ exitCode: number; stdout: string; stderr: string }>;
 }

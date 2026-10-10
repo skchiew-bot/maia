@@ -103,6 +103,32 @@ describe('POST /ingest/mcp/request_decision', () => {
     expect(again.decision_id).not.toBe(first.decision_id);
   });
 
+  it('refuses a fourth different open card from one session, and takes new ones once earlier ones are answered (O-16, G-47)', async () => {
+    const { t, engine } = await setup();
+    const ask = (n: number) =>
+      t.request('POST', PATH, {
+        headers: t.ingestHeaders('ses_1'),
+        body: { sessionId: 'ses_1', input: input({ question: `Push migration fix number ${n} straight to main?` }) },
+      });
+    const ids: string[] = [];
+    for (const n of [1, 2, 3]) {
+      const res = await ask(n);
+      expect(res.status).toBe(200);
+      ids.push(((await res.json()) as RequestDecisionResult).decision_id);
+    }
+    const refused = await ask(4);
+    expect(refused.status).toBe(409);
+    const err = ((await refused.json()) as { error: { code: string; message: string; details: unknown } }).error;
+    expect(err).toMatchObject({ code: 'too_many_open_decisions', details: { open: 3, limit: 3 } });
+    expect(err.message).toMatch(/END YOUR TURN NOW/);
+    expect(t.rt.store.list({ types: ['decision.requested'] })).toHaveLength(3);
+    // A retry of an open card is still answered with that card, not refused.
+    expect((await ask(2)).status).toBe(200);
+    // Once one is answered there is room again.
+    engine.withdraw(ids[0]!, 'superseded', { kind: 'system', id: 'supervisor' });
+    expect((await ask(4)).status).toBe(200);
+  });
+
   it('validates the input against the MCP schema (422 with issues)', async () => {
     const { t } = await setup();
     const post = (body: unknown) => t.request('POST', PATH, { headers: t.ingestHeaders('ses_1'), body });

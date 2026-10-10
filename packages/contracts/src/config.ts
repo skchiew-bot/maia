@@ -115,6 +115,11 @@ export const AocConfigSchema = z.object({
       maxConcurrentSessions: z.number().int().positive().default(8),
       /** Times the supervisor auto-continues a session that ended its turn with work left before asking a human. */
       autoContinueLimit: z.number().int().min(0).default(1),
+      /**
+       * A managed turn whose hooks send no SessionStart within this many seconds is aborted and its session failed
+       * (session_start_missing): AOC's hooks are not running, so nothing it enforces would hold (O-15). 0 turns it off.
+       */
+      sessionStartTimeoutSec: z.number().int().min(0).default(60),
       /** Env vars copied from aocd into sessions (everything else is dropped — credential isolation, §3). */
       envAllowlist: z.array(z.string()).default(['PATH', 'HOME', 'LANG', 'LC_ALL', 'TERM', 'TZ', 'TMPDIR', 'SHELL', 'USER', 'CLAUDE_CONFIG_DIR', 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'HTTPS_PROXY', 'HTTP_PROXY', 'NO_PROXY', 'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE']),
       /**
@@ -170,6 +175,8 @@ export const AocConfigSchema = z.object({
        * (2026-10-09): with one Approver, their own requests wait for a second Approver (separation of duties, §6).
        */
       soleApproverFallback: z.boolean().default(false),
+      /** Open agent decision cards one session may have at a time; one more different card is refused (O-16). */
+      maxOpenAgentDecisionsPerSession: z.number().int().positive().default(3),
     })
     .default({}),
   credits: z
