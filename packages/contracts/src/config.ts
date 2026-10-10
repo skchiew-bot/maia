@@ -149,6 +149,13 @@ export const AocConfigSchema = z.object({
        * with the environment it is given (verified at startup).
        */
       runner: z.array(z.string()).default([]),
+      /**
+       * Isolation 'user' without a runner: each turn runs in a PID and mount namespace of its own (unshare), with
+       * its own /proc and no view of other sessions' directories, so sessions that share an OS user cannot read
+       * each other's environment or key copies (G-49). Needs util-linux and CAP_SYS_ADMIN; production refuses
+       * false unless a runner keeps sessions apart.
+       */
+      sessionNamespaces: z.boolean().default(true),
       /** Per-session HOME, CLAUDE_CONFIG_DIR, TMPDIR and key copies (isolation 'user'); session users traverse it. */
       sessionHomesDir: z.string().default('.aoc/session-homes'),
     })

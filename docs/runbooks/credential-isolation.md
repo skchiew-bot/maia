@@ -153,13 +153,24 @@ The host that runs aocd and the supervisor. Items 1–3 are enforced by aocd whe
    [Service]
    User=root
    NoNewPrivileges=yes
-   CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_CHOWN CAP_FOWNER CAP_KILL CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH
+   CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_CHOWN CAP_FOWNER CAP_KILL CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_SYS_ADMIN
    ProtectSystem=strict
    PrivateTmp=yes
    ReadWritePaths=/var/lib/aoc /var/lib/aoc-sessions /srv/aoc/workspaces
    ```
 
    `NoNewPrivileges=yes` is inherited by sessions, so no setuid binary (`sudo`, `su`) can raise an agent's rights.
+
+   **Each turn gets its own PID and mount namespace** (`supervisor.sessionNamespaces`, default `true`, G-49). Sessions
+   of one kind share an OS user, and file permissions and `/proc` cannot keep two processes of one user apart. So
+   aocd starts every turn under `unshare --mount --pid`, through `<sessionHomesDir>/.aoc-ns-init.sh` (written by aocd
+   at start, root's, `0644`): the turn gets a `/proc` of its own, which lists only its own processes, and a `tmpfs`
+   over `sessionHomesDir` that leaves only its own session directory in view. It then becomes the session user. A
+   build turn therefore cannot read a concurrent build turn's environment (its ingest token), key copies or
+   `mcp.json`, nor can two read-only turns read each other's. It needs util-linux (`unshare`, `mount`, `setpriv`) in
+   `/usr/bin`, `/bin`, `/usr/sbin` or `/sbin`, and `CAP_SYS_ADMIN`. With `"sessionNamespaces": false` and no runner,
+   development warns and production refuses to start. The network namespace is shared: sessions can still reach
+   each other's `localhost` listeners and abstract Unix sockets.
 
    Configuration:
 
@@ -214,6 +225,10 @@ The host that runs aocd and the supervisor. Items 1–3 are enforced by aocd whe
    - the session user **can** reach `sessionHomesDir` and `workspacesDir`, and run `claudeBin` (with its prefix),
      the hook command and the MCP command;
    - the probe really ran as the session user's uid (this catches a runner that does not switch users);
+   - the probe cannot read a concurrent session's directory, its `mcp.json` or its process's environment: aocd
+     starts a peer turn as the same user, the same way, while the probe runs (G-49). Production refuses to start if
+     it can; development logs a warning. With a container runner whose session process is not a child of the
+     runner's own process, only the peer's directory and `mcp.json` are checked, not its environment;
    - `sessionHomesDir` is owned by root and no directory above it is writable by a session user.
 
    Key copies left behind by a crash are deleted at the same time.
@@ -302,9 +317,10 @@ The host that runs aocd and the supervisor. Items 1–3 are enforced by aocd whe
      -v "$dir:$dir" -v "$cwd:$cwd" -w "$cwd" --env-file <(env) aoc-session-image "$@"
    ```
 
-   The startup self-check runs through the runner too, so a runner that does not switch users is refused. A plain
-   uid switch through a runner: `["setpriv", "--reuid={uid}", "--regid={gid}", "--clear-groups", "--"]` (the same as
-   aocd does by itself when no runner is set).
+   The startup self-check runs through the runner too, so a runner that does not switch users is refused, and so,
+   in production, is one that does not keep concurrent sessions apart (item 3). A plain uid switch through a runner,
+   `["setpriv", "--reuid={uid}", "--regid={gid}", "--clear-groups", "--"]`, is therefore development only: it runs
+   turns without the namespaces of item 1.
 
 7. **No process type names the promotion profile.** Check:
    `jq -r '.types[].credentialProfile' config/process-types.json | sort -u` must not list `prod-promote` (nor any
@@ -582,8 +598,10 @@ Use a disposable branch and record the results as an AOC change record (or attac
    `sudo -u aoc-agent cat /etc/aoc/credential-profiles.json /etc/aoc/kek /etc/aoc/keys/git-feature` and
    `sudo -u aoc-reader ls /var/lib/aoc/data` → every read `Permission denied`. While a build turn runs,
    `sudo -u aoc-reader cat /proc/<its pid>/environ` → `Permission denied`; once it ends,
-   `ls /var/lib/aoc-sessions/<session id>/credentials` → no such directory. The automated version of this drill
-   is `packages/supervisor/test/isolation.test.ts` (it needs root). With isolation off every read succeeds.
+   `ls /var/lib/aoc-sessions/<session id>/credentials` → no such directory. A turn that runs `ls /proc` and
+   `ls /var/lib/aoc-sessions/<another session id>` sees only its own processes, and no such directory (G-49). The
+   automated version of this drill is `packages/supervisor/test/isolation.test.ts` (it needs root). With isolation
+   off every read succeeds.
 7. **Provenance gate.** Push a commit with no change record to a feature branch, then request promotion → expect
    `promotion.refused {reason: provenance_gap, orphanShas: [...]}`. Then repeat with a commit made on a laptop
    whose message carries a copied `AOC-Change: <approved change id>` trailer → expect the same refusal: a trailer

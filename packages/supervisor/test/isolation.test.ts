@@ -72,13 +72,14 @@ const USERS: Record<string, OsUser> = {
   'aoc-twin': { name: 'aoc-twin', uid: 1203, gid: 1201 },
   root: { name: 'root', uid: 0, gid: 0 },
 };
-const deps = (euid = 0) => ({
+const deps = (euid = 0, tools = ['unshare', 'mount', 'mkdir', 'setpriv']) => ({
   euid,
   lookup: (name: string) => {
     const u = USERS[name];
     if (!u) throw new IsolationError(`OS user "${name}" does not exist`);
     return u;
   },
+  findTool: (name: string) => (tools.includes(name) ? `/usr/bin/${name}` : null),
 });
 
 describe('isolation settings', () => {
@@ -109,8 +110,34 @@ describe('isolation settings', () => {
       reader: USERS['aoc-agent'],
       runner: [],
       homesRoot: '/srv/aoc/homes',
+      namespaces: {
+        unshare: '/usr/bin/unshare',
+        mount: '/usr/bin/mount',
+        mkdir: '/usr/bin/mkdir',
+        setpriv: '/usr/bin/setpriv',
+        init: '/srv/aoc/homes/.aoc-ns-init.sh',
+      },
     });
     expect(r.warnings.join('\n')).toContain('set supervisor.readOnlySessionUser');
+  });
+
+  it('keeps concurrent sessions of one user apart with namespaces, unless a runner does (G-49)', () => {
+    const sup = { sessionUser: 'aoc-agent', readOnlySessionUser: 'aoc-reader' };
+    expect(() => resolveIsolation(cfg({ supervisor: sup }), deps(0, ['unshare', 'mkdir']))).toThrow(
+      'supervisor.sessionNamespaces needs mount, setpriv (util-linux, coreutils)',
+    );
+    const off = resolveIsolation(cfg({ supervisor: { ...sup, sessionNamespaces: false } }), deps());
+    expect(off.isolation!.namespaces).toBeNull();
+    expect(off.warnings.join('\n')).toContain(
+      "concurrent sessions of one kind share an OS user and can read each other's environment and key copies (G-49)",
+    );
+    expect(() =>
+      resolveIsolation(cfg({ mode: 'production', supervisor: { ...sup, sessionNamespaces: false } }), deps()),
+    ).toThrow('production mode: supervisor.sessionNamespaces is false and no runner is set');
+    // A runner starts turns its own way (a container per session); the startup self-check verifies it.
+    const runner = resolveIsolation(cfg({ supervisor: { ...sup, runner: ['aoc-container-run', '--'] } }), deps());
+    expect(runner.isolation!.namespaces).toBeNull();
+    expect(runner.warnings).toEqual([]);
   });
 
   it('refuses root, unknown users and a read-only user sharing the build user’s uid or group', () => {
@@ -241,6 +268,7 @@ describe('turn spawning', () => {
     reader: USERS['aoc-reader']!,
     runner: [],
     homesRoot: '/srv/homes',
+    namespaces: null,
   };
   const ctx = { sessionId: 'ses_1', sessionDir: '/srv/homes/ses_1', cwd: '/w/prj' };
 
@@ -250,6 +278,37 @@ describe('turn spawning', () => {
       args: ['-p'],
       uid: 1201,
       gid: 1201,
+    });
+  });
+
+  it('or starts the turn in namespaces of its own, as the session user', () => {
+    const namespaces = {
+      unshare: '/usr/bin/unshare',
+      mount: '/usr/bin/mount',
+      mkdir: '/usr/bin/mkdir',
+      setpriv: '/usr/bin/setpriv',
+      init: '/srv/homes/.aoc-ns-init.sh',
+    };
+    expect(turnSpawn({ ...iso, namespaces }, iso.reader, ctx, 'claude', ['-p'])).toEqual({
+      command: '/usr/bin/unshare',
+      args: [
+        '--mount',
+        '--propagation',
+        'private',
+        '--pid',
+        '--',
+        '/bin/sh',
+        '/srv/homes/.aoc-ns-init.sh',
+        '/usr/bin/mount',
+        '/usr/bin/setpriv',
+        '/usr/bin/mkdir',
+        '/srv/homes',
+        '/srv/homes/ses_1',
+        '1202',
+        '1202',
+        'claude',
+        '-p',
+      ],
     });
   });
 
@@ -779,8 +838,8 @@ describe.skipIf(!canCreateUsers)('OS-level isolation end to end (needs root to c
     const r = toolResults(triage);
     expect(r).toHaveLength(4);
     // claude-sim reports any stat failure as "does not exist"; the files do exist (checked as root above/below).
-    expect(r.slice(0, 3).every((t) => /does not exist/.test(t))).toBe(true);
-    expect(r[3]).toMatch(/EACCES: permission denied/);
+    // The build turn's process is not even in the triage turn's own /proc (G-49).
+    expect(r.every((t) => /does not exist/.test(t))).toBe(true);
     for (const leaked of [
       'TEST-KEY-git-feature',
       'TEST-KEY-session-read',
@@ -797,6 +856,82 @@ describe.skipIf(!canCreateUsers)('OS-level isolation end to end (needs root to c
     expect(toolResults(build)).toEqual(['released']);
     expect(existsSync(copy)).toBe(false);
   }, 120_000);
+
+  /** Two concurrent build turns of the same OS user: one holds its key copy, the other looks for it (G-49). */
+  async function snoopOnPeer(w: World) {
+    const hold = scenario(w, 'hold', [
+      bash(`while [ ! -e ${w.gate} ]; do sleep 0.05; done; echo released`),
+      endTurn,
+    ]);
+    const held = await h!.launch(`${hold} hold the credentials`, {
+      processType: 'iso-build',
+      threadId: 'thr_hold',
+    });
+    const dirs = sessionDirs(w.homes, held);
+    const copy = join(dirs.credentials, 'read-key');
+    await h!.waitFor(() => existsSync(copy), 'the holding turn’s key copy', 60_000);
+    const snoop = scenario(w, 'peer-snoop', [
+      // Every process this turn can see whose environment names the other session (its ingest token is there too).
+      bash(`for f in /proc/[0-9]*/environ; do grep -qa ${held} "$f" 2>/dev/null && echo "$f"; done; echo scanned`),
+      bash(`cat ${copy}`),
+      bash(`cat ${dirs.mcpConfig}`),
+      bash(`ls ${dirs.dir}`),
+      endTurn,
+    ]);
+    const snooper = await h!.launch(`${snoop} look around`, {
+      processType: 'iso-build',
+      threadId: 'thr_snoop',
+    });
+    await h!.waitLifecycle(snooper, 'idle', 60_000);
+    const r = toolResults(snooper);
+    writeFileSync(w.gate, 'go');
+    await h!.waitLifecycle(held, 'idle', 60_000);
+    expect(toolResults(held)).toEqual(['released']);
+    return r;
+  }
+
+  it('keeps two concurrent build turns of one OS user apart: neither sees the other’s environment or key copy', async () => {
+    const w = world();
+    h = await harness(w);
+    const r = await snoopOnPeer(w);
+    expect(r).toHaveLength(4);
+    expect(r[0]).toBe('scanned');
+    for (const t of r.slice(1)) expect(t).toMatch(/^Exit code \d+[\s\S]*No such file or directory/);
+    for (const leaked of ['TEST-KEY-session-read', 'AOC_INGEST_TOKEN', 'mcpServers'])
+      expect(r.join('\n')).not.toContain(leaked);
+  }, 120_000);
+
+  it('without namespaces, a concurrent build turn reads the other’s environment and key copy, and startup warns', async () => {
+    const w = world();
+    const logs: string[] = [];
+    h = await harness(w, {
+      supervisor: { sessionNamespaces: false },
+      log: createLogger({ level: 'warn', sink: (l) => logs.push(l) }),
+    });
+    expect(logs.join('\n')).toContain('supervisor.sessionNamespaces is false and no runner is set');
+    expect(logs.join('\n')).toContain('concurrent sessions are not kept apart (G-49)');
+    const r = await snoopOnPeer(w);
+    expect(r[0]).toMatch(/^\/proc\/\d+\/environ\n[\s\S]*scanned$/);
+    expect(r[1]).toBe('[redacted]');
+    expect(r[2]).toContain('mcpServers');
+  }, 120_000);
+
+  it('an interrupt reaches a namespaced turn: it ends cleanly long before the SIGKILL fallback', async () => {
+    const w = world();
+    h = await harness(w, { module: { interruptGraceMs: 60_000 } });
+    const running = join(w.logs, 'running');
+    const hold = scenario(w, 'wait', [
+      bash(`touch ${running}; while [ ! -e ${w.gate} ]; do sleep 0.05; done; echo released`),
+      endTurn,
+    ]);
+    const id = await h.launch(`${hold} wait for the gate`, { processType: 'iso-build' });
+    await h.waitFor(() => existsSync(running), 'the turn to run its tool', 60_000);
+    const asked = Date.now();
+    await h.sup.stop(id, true, h.ownerActor);
+    await h.waitLifecycle(id, 'ended', 30_000);
+    expect(Date.now() - asked).toBeLessThan(30_000);
+    expect(h.events('session.turn_ended', id).map((e) => e.meta.exitCode)).toEqual([0]);
+  }, 90_000);
 
   it('refuses the next turn of a session that switched its own hooks off in its HOME', async () => {
     const w = world();
@@ -926,6 +1061,24 @@ describe.skipIf(!canCreateUsers)('OS-level isolation end to end (needs root to c
       );
       // Development only warns, and the world's own profiles file defines it.
       await (await start(w, dataDir, { credentialProfilesFile: bare })).stop();
+      await (await start(w, dataDir, {}, { mode: 'production' })).stop();
+    }, 60_000);
+
+    it('refuses to start in production while concurrent sessions of one user can read each other (G-49)', async () => {
+      const w = world();
+      const dataDir = join(w.root, 'data');
+      mkdirSync(dataDir, { mode: 0o700 });
+      const setpriv = { runner: ['setpriv', '--reuid={uid}', '--regid={gid}', '--clear-groups', '--'] };
+      const err = await start(w, dataDir, setpriv, { mode: 'production' }).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(IsolationError);
+      for (const user of [WRITER, READER]) {
+        const peer = join(w.homes, `aoc-selfcheck-peer-${user}`);
+        expect(String(err)).toContain(`a session of ${user} can read a concurrent session's ${peer}`);
+        expect(String(err)).toContain(`a session of ${user} can read a concurrent session's ${join(peer, 'mcp.json')}`);
+      }
+      expect(String(err)).toMatch(/can read a concurrent session's \/proc\/\d+\/environ/);
+      expect(String(err)).toContain('concurrent sessions are not kept apart (G-49)');
+      // The built-in namespaces keep them apart.
       await (await start(w, dataDir, {}, { mode: 'production' })).stop();
     }, 60_000);
 

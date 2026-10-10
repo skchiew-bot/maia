@@ -212,7 +212,9 @@ The supervisor is a module inside aocd (`SupervisorService` in
   read-only types), with its own `HOME`, `CLAUDE_CONFIG_DIR` and `TMPDIR`. A session therefore cannot read aocd's
   keys, databases or credential profiles, and a startup self-check refuses to start while a session user can.
   `isolation: "none"` runs sessions as aocd's own user, with a warning at every launch; it is for development only.
-  Sessions of one kind that run at the same time share an OS user (G-49).
+  Sessions of one kind that run at the same time share an OS user, so each turn starts in a PID and mount namespace
+  of its own (`supervisor.sessionNamespaces`): its `/proc` lists only its own processes, and only its own session
+  directory is in view (G-49).
 - **Sidecar.** Started with the session id, the `claude` pid, the transcript path and the daemon URL. Its ingest
   token travels in the environment, never in argv, because a command line is readable by every local user.
 - **End of a turn** (one process is one turn), checked in this order: an open decision → `waiting_decision`; a
@@ -262,9 +264,8 @@ The supervisor is a module inside aocd (`SupervisorService` in
   pins still count.
 
 Not in place yet (see the [gap list](compliance/gaps.md)): a launch is not failed when no `SessionStart` hook arrives
-within N seconds (O-15, G-47); a sidecar that dies is not restarted (G-51); sessions of one kind share an OS user
-while they run at the same time (G-49); and Claude Code's auto-compaction threshold is not aligned with the rollover
-threshold (ADR-0008).
+within N seconds (O-15, G-47); a sidecar that dies is not restarted (G-51); and Claude Code's auto-compaction
+threshold is not aligned with the rollover threshold (ADR-0008).
 
 ### 2.3 Per-session sidecar
 
@@ -1149,7 +1150,7 @@ The details are in the [threat model](security/threat-model.md). The load-bearin
    credential profiles) are protected by file permissions, and file permissions protect nothing from a process
    running as the same user. Session isolation does this (G-01): production refuses to start without it, and a
    startup self-check refuses to start while a session user can read aocd's files. Sessions of one kind that run at
-   the same time still share a user (G-49).
+   the same time share a user, each turn in namespaces of its own (G-49).
 4. **Untrusted input is data.** Intake text and media, transcripts and tool output are fenced, escaped and never
    executed as instructions. Triage runs read-only (`--tools Read,Glob,Grep`, no credentials, `read-only` guard
    as defence in depth).
@@ -1225,8 +1226,7 @@ Open items. Owners, fixes and acceptance tests are in the [gap list](compliance/
 
 1. **Host set-up.** Session isolation (G-01), the credential profiles and the promotion remotes (R-02, G-04) are
    built, and production refuses to start without them, but a host has to be configured and the self-check has to
-   pass (P-13, P-22). Sessions of one kind that run at the same time still share an OS user (G-49), and the rollback
-   acceptance command runs through a shell as the session user (G-50).
+   pass (P-13, P-22). The rollback acceptance command runs through a shell as the session user (G-50).
 2. **Provenance proves presence, not authorship.** A commit traces only through a session the platform linked to a
    gate and a HEAD it recorded (G-25), but a session that checks a foreign commit out gets it recorded for itself
    (threat model T-22). Commit signing would close that; it is not built.
