@@ -81,6 +81,10 @@ if (fetch.ok && current && git('rev-parse', '-q', '--verify', `refs/remotes/orig
     );
   } else if (behind && ahead) {
     lines.push(`! ${current} and origin/${current} have both moved: merge origin/${current} before pushing.`);
+  } else if (behind && busy) {
+    lines.push(
+      `! ${current} is behind origin/${current} while a merge or rebase is in progress: finish or abort it, then merge origin/${current}.`,
+    );
   } else if (behind) {
     lines.push(
       `! ${current} is behind origin/${current} with local changes: commit them, then merge origin/${current}.`,

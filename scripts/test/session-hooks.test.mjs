@@ -296,6 +296,24 @@ describe('SessionStart hook: claude-session-start.mjs', () => {
     );
   });
 
+  test('leaves a branch that is behind mid-merge, and says to finish the merge first', () => {
+    onPushedBranch();
+    pushedElsewhere();
+    git(work, 'checkout', '-q', '-b', 'side', 'main');
+    commit(work, 'feature.txt', 'side version');
+    git(work, 'checkout', '-q', 'feature');
+    const merge = spawnSync('git', ['merge', '-q', 'side'], { cwd: work, env: baseEnv(), encoding: 'utf8' });
+    assert.notEqual(merge.status, 0, 'the merge should stop on a conflict');
+    const before = git(work, 'rev-parse', 'HEAD');
+    const r = start();
+    assert.equal(git(work, 'rev-parse', 'HEAD'), before);
+    assert.match(
+      r.stdout,
+      /! feature is behind origin\/feature while a merge or rebase is in progress: finish or abort it, then merge origin\/feature\./,
+    );
+    assert.doesNotMatch(r.stdout, /with local changes/);
+  });
+
   test('leaves a branch that has diverged from GitHub, and says to merge', () => {
     onPushedBranch();
     pushedElsewhere();
