@@ -616,6 +616,16 @@ export async function taskDone(
     snap?.head,
   );
   const p = sessionProgress(core, sessionId)!;
+  const boundary = boundaryInstruction(core, session, task.task_id);
+  if (!boundary.continue)
+    core.store.append({
+      type: 'task.boundary_delivered',
+      actor: agentActor(sessionId),
+      scope: scopeOf(session, projectId, { taskId: task.task_id }),
+      meta: { sessionId, taskId: task.task_id, reason: boundary.reason },
+      causationId: done.id,
+      source: 'mcp',
+    });
   return {
     ok: true,
     flagged: flag,
@@ -628,7 +638,7 @@ export async function taskDone(
       pct: p.pct,
     },
     phaseCompleted,
-    boundary: boundaryInstruction(core, session, task.task_id),
+    boundary,
   };
 }
 

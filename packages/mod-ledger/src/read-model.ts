@@ -207,6 +207,10 @@ export class LedgerReadModel {
   hasManifest(sessionId: string): boolean {
     return this.one('SELECT 1 AS x FROM ledger_manifests WHERE session_id = ?', sessionId) !== null;
   }
+  /** The boundary stop delivered in the session's current turn, if any (G-54). */
+  boundaryStop(sessionId: string): { task_id: string; reason: string } | null {
+    return this.one('SELECT task_id, reason FROM ledger_boundary_stops WHERE session_id = ?', sessionId);
+  }
   manifestsOfProject(projectId: string): ManifestRow[] {
     return this.many('SELECT * FROM ledger_manifests WHERE project_id = ? ORDER BY declared_seq', projectId);
   }

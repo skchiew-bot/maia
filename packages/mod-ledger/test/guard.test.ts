@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { SessionInfo } from '@aoc/contracts';
-import { NO_MANIFEST_REASON } from '../src';
+import { BOUNDARY_STOP_REASON, NO_MANIFEST_REASON } from '../src';
 import { createHarness, PLAN, type Harness } from './harness';
 
 let h: Harness;
@@ -61,5 +61,84 @@ describe('no-manifest guard (plan gate, §4)', () => {
     const projectId = h.project();
     const s = h.session({ sessionId: 'ses_noreg', projectId, processType: 'rollback-verify' });
     expect(evaluate(h, s, 'Edit')).toMatchObject({ decision: 'deny', blockReason: 'no_manifest' });
+  });
+});
+
+describe('boundary-stop guard (G-54, §5, §10, R7)', () => {
+  const evidence = (n: number) => ({ kind: 'test', ref: `test/widget.test.ts > case ${n}` });
+  const turnStarted = (sessionId: string, turn: number) =>
+    h.t.rt.store.append({
+      type: 'session.turn_started',
+      actor: { kind: 'system', id: 'supervisor' },
+      scope: { sessionId },
+      meta: { sessionId, turn, reason: 'resume' },
+      payload: {},
+      source: 'supervisor',
+    });
+
+  it('after a task_done told the agent to stop, denies every tool call of the turn until the next turn starts', async () => {
+    h = await createHarness();
+    const projectId = h.project();
+    const s = h.session({ sessionId: 'ses_stop', projectId, threadId: h.thread(projectId) });
+    await h.mcp('declare_plan', 'ses_stop', PLAN);
+    h.toolUsed('ses_stop');
+    await h.mcp('task_done', 'ses_stop', { task_id: 't1', evidence: evidence(1) });
+    expect(evaluate(h, s, 'Edit').decision).toBe('allow');
+
+    h.supervisor.stops.add('ses_stop');
+    h.toolUsed('ses_stop');
+    await h.mcp('task_done', 'ses_stop', { task_id: 't2', evidence: evidence(2) });
+    const delivered = h.t.rt.store.list({ sessionId: 'ses_stop', types: ['task.boundary_delivered'] });
+    expect(delivered.map((e) => e.meta)).toEqual([
+      { sessionId: 'ses_stop', taskId: 't2', reason: 'stop_requested' },
+    ]);
+    for (const tool of [
+      'Edit',
+      'Bash',
+      'Read',
+      'Grep',
+      'mcp__aoc__task_done',
+      'mcp__github__create_pull_request',
+    ]) {
+      const r = evaluate(h, s, tool);
+      expect(r, tool).toMatchObject({
+        decision: 'deny',
+        guard: 'boundary-stop',
+        reason: BOUNDARY_STOP_REASON,
+      });
+      expect(r.blockReason, tool).toBeUndefined();
+    }
+    // Observed sessions are never blocked by AOC.
+    expect(evaluate(h, { ...s, mode: 'observed' }, 'Edit').decision).toBe('allow');
+
+    turnStarted('ses_stop', 2);
+    expect(evaluate(h, s, 'Edit').decision).toBe('allow');
+  });
+
+  it('a credit cap and a rollover stop the turn the same way; a boundary that continues does not', async () => {
+    h = await createHarness();
+    const projectId = h.project();
+    const s = h.session({ sessionId: 'ses_cap', projectId, threadId: h.thread(projectId) });
+    await h.mcp('declare_plan', 'ses_cap', PLAN);
+    h.credits.next = {
+      continue: false,
+      reason: 'credit_cap',
+      instruction: 'Credit cap reached; end your turn.',
+    };
+    h.toolUsed('ses_cap');
+    await h.mcp('task_done', 'ses_cap', { task_id: 't1', evidence: evidence(1) });
+    expect(evaluate(h, s, 'Bash')).toMatchObject({ decision: 'deny', guard: 'boundary-stop' });
+
+    turnStarted('ses_cap', 2);
+    h.credits.next = { continue: true };
+    h.t.sessions!.context.set('ses_cap', 900_000);
+    h.toolUsed('ses_cap');
+    await h.mcp('task_done', 'ses_cap', { task_id: 't2', evidence: evidence(2) });
+    expect(evaluate(h, s, 'Bash')).toMatchObject({ decision: 'deny', guard: 'boundary-stop' });
+    expect(
+      h.t.rt.store
+        .list({ sessionId: 'ses_cap', types: ['task.boundary_delivered'] })
+        .map((e) => e.meta.reason),
+    ).toEqual(['credit_cap', 'rollover']);
   });
 });
