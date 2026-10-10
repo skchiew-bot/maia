@@ -394,18 +394,21 @@ export class Supervisor implements SupervisorService {
     prepareHomesRoot(iso);
     const workspaces = resolve(sup.workspacesDir);
     mkdirSync(workspaces, { recursive: true });
-    selfCheck({
+    const warnings = selfCheck({
       iso,
       secrets,
       reach: [iso.homesRoot, workspaces],
       commands: [[sup.claudeBin, ...sup.claudeArgsPrefix], sup.hookCommand, sup.mcpCommand].filter((c) => c.length),
       path: this.sourceEnv().PATH ?? '/usr/local/bin:/usr/bin:/bin',
+      production: config.mode === 'production',
     });
+    for (const w of warnings) this.log.warn(w);
     const stale = removeStaleSessionFiles(iso.homesRoot);
     this.log.info('session isolation verified', {
       sessionUser: iso.writer.name,
       readOnlySessionUser: iso.reader.name,
       runner: iso.runner.length > 0,
+      namespaces: iso.namespaces !== null,
       staleKeyCopiesRemoved: stale,
     });
   }
