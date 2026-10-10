@@ -264,6 +264,62 @@ describe('SessionStart hook: claude-session-start.mjs', () => {
     assert.match(r.stdout, /feature @ \w+: 1 ahead, 1 behind origin\/feature/);
   });
 
+  /** Another clone pushes one commit to feature, as the other account's session would. */
+  function pushedElsewhere() {
+    const other = join(tmp, 'other');
+    git(tmp, 'clone', '-q', '-b', 'feature', origin, other);
+    commit(other, 'remote.txt', 'pushed elsewhere');
+    git(other, 'push', '-q');
+    return git(other, 'rev-parse', 'HEAD');
+  }
+
+  test('fast-forwards a clean branch that is only behind GitHub', () => {
+    onPushedBranch();
+    const remoteHead = pushedElsewhere();
+    const r = start();
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /Caught up with GitHub: fast-forwarded feature by 1 commit\.\n/);
+    assert.equal(git(work, 'rev-parse', 'HEAD'), remoteHead);
+    assert.match(r.stdout, /feature @ \w+: 0 ahead, 0 behind origin\/feature/);
+  });
+
+  test('leaves a branch that is behind with local changes, and says what to do', () => {
+    onPushedBranch();
+    pushedElsewhere();
+    const before = git(work, 'rev-parse', 'HEAD');
+    writeFileSync(join(work, 'feature.txt'), 'edited\n');
+    const r = start();
+    assert.equal(git(work, 'rev-parse', 'HEAD'), before);
+    assert.match(
+      r.stdout,
+      /! feature is behind origin\/feature with local changes: commit them, then merge origin\/feature\./,
+    );
+  });
+
+  test('leaves a branch that has diverged from GitHub, and says to merge', () => {
+    onPushedBranch();
+    pushedElsewhere();
+    commit(work, 'local.txt', 'local only');
+    const before = git(work, 'rev-parse', 'HEAD');
+    const r = start();
+    assert.equal(git(work, 'rev-parse', 'HEAD'), before);
+    assert.match(
+      r.stdout,
+      /! feature and origin\/feature have both moved: merge origin\/feature before pushing\./,
+    );
+  });
+
+  test('does not fast-forward when the fetch failed', () => {
+    onPushedBranch();
+    pushedElsewhere();
+    git(work, 'fetch', '-q');
+    const before = git(work, 'rev-parse', 'HEAD');
+    git(work, 'remote', 'set-url', 'origin', join(tmp, 'missing.git'));
+    const r = start();
+    assert.equal(git(work, 'rev-parse', 'HEAD'), before);
+    assert.doesNotMatch(r.stdout, /Caught up/);
+  });
+
   test('says when the branch is not on GitHub yet', () => {
     git(work, 'checkout', '-q', '-b', 'fresh');
     const r = start();

@@ -42,7 +42,8 @@ packages/demo        demo seeder + `live` launcher (real sessions on claude-sim;
 One person works on this repo from two Claude accounts and switches when one reaches a usage limit. A new session, in
 either account, sees only GitHub. The hooks in `.claude/settings.json` start and stop every session the same way.
 - **One task = one branch = one PR.** Open a draft PR at the first push. To continue a task, work on its branch
-  (`/pickup`), never start it again on a new one; the SessionStart status lists the branches with unmerged work.
+  (`/pickup`), never start it again on a new one. The SessionStart hook fast-forwards a clean branch that is only
+  behind GitHub and lists the branches with unmerged work.
   Once a branch's PR is merged, restart the branch from the latest default branch before new work (the same name is
   fine); never keep committing on top of merged history.
 - **Checkpoint after every verified step:** commit (`wip: …` while red, with a `Next: <next step>` trailer) and push to

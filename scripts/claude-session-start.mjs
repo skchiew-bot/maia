@@ -4,12 +4,13 @@
  * accounts and moves to the other one when a usage limit is reached, so a session in either account starts from what
  * is on GitHub and must learn where the work stands (CLAUDE.md, "Sessions and handoff"). In a cloud session the full
  * history is fetched (the clone is shallow, and scripts/check-docs.mjs reads every commit subject) and the dependencies
- * are installed from the lockfile. Then, in any session, a short status goes to stdout, which Claude Code adds to the
+ * are installed from the lockfile. In any session, a branch that is only behind GitHub, with nothing local to lose, is
+ * fast-forwarded. Then a short status goes to stdout, which Claude Code adds to the
  * session's context. A failing step reports one line and the hook still exits 0: it must never stop a session starting.
  */
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -59,6 +60,33 @@ if (symref) git('symbolic-ref', 'refs/remotes/origin/HEAD', `refs/remotes/origin
 const defaultBranch =
   symref?.[1] ??
   git('symbolic-ref', '-q', '--short', 'refs/remotes/origin/HEAD').out.replace(/^origin\//, '');
+
+// A resumed session's copy falls behind when the other account pushed meanwhile. Catch up only when nothing local can
+// be lost (a clean tree, no commits of its own, no merge or rebase under way); otherwise say what to do. Before the
+// install, so the lockfile it installs from is the current one.
+const current = git('symbolic-ref', '-q', '--short', 'HEAD').out;
+if (fetch.ok && current && git('rev-parse', '-q', '--verify', `refs/remotes/origin/${current}`).ok) {
+  const [ahead, behind] = counts(`HEAD...origin/${current}`);
+  const dirty = git('status', '--porcelain').out !== '';
+  const busy = ['MERGE_HEAD', 'rebase-merge', 'rebase-apply'].some((p) => {
+    const path = git('rev-parse', '--git-path', p).out;
+    return path !== '' && existsSync(resolve(root, path));
+  });
+  if (behind && !ahead && !dirty && !busy) {
+    const ff = git('merge', '--ff-only', '--quiet', `origin/${current}`);
+    lines.push(
+      ff.ok
+        ? `Caught up with GitHub: fast-forwarded ${current} by ${plural(behind, 'commit')}.`
+        : `! Could not fast-forward ${current} to origin/${current}: ${lastLine(ff.err)}`,
+    );
+  } else if (behind && ahead) {
+    lines.push(`! ${current} and origin/${current} have both moved: merge origin/${current} before pushing.`);
+  } else if (behind) {
+    lines.push(
+      `! ${current} is behind origin/${current} with local changes: commit them, then merge origin/${current}.`,
+    );
+  }
+}
 
 if (
   cloud &&
