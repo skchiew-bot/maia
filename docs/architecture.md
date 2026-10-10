@@ -264,8 +264,8 @@ The supervisor is a module inside aocd (`SupervisorService` in
   pins still count.
 
 Not in place yet (see the [gap list](compliance/gaps.md)): a launch is not failed when no `SessionStart` hook arrives
-within N seconds (O-15, G-47); a sidecar that dies is not restarted (G-51); and Claude Code's auto-compaction
-threshold is not aligned with the rollover threshold (ADR-0008).
+within N seconds (O-15, G-47); and Claude Code's auto-compaction threshold is not aligned with the rollover threshold
+(ADR-0008).
 
 ### 2.3 Per-session sidecar
 
@@ -297,8 +297,9 @@ Thinking must be told apart from Stalled (§2.1). The sidecar fills that gap:
   appends `usage.reconciled` with `match`, `overhead` (compaction usage that is only in `modelUsage`),
   `under_reported`, `over_reported`, `regressed` or `unverified`. Tower counts the three discrepancy statuses as the
   `metering_discrepancy` signal.
-- **A sidecar that dies is not restarted** (G-51): its heartbeats stop, so the session shows Dead while its process
-  lives, and the turn's usage is flagged `under_reported`.
+- **A sidecar that crashes during its turn is started again** (G-51): the supervisor restarts it with the same
+  arguments, token and state directory, up to three times per turn. A sidecar that exits cleanly (exit 0) or with
+  unusable arguments (exit 2) is not restarted.
 
 ### 2.4 AOC MCP server: the agent's structured voice
 
