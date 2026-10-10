@@ -51,8 +51,8 @@
 
 Checked against the real Claude Code ([research §13.3, D8](../research/claude-code-integration.md#133-divergences-found-and-fixed)): a model ignored the
 plain "do not start another task" notice and did the next step. The supervisor still ended the session at the end of
-the turn, and the notice now says that the order outranks the prompt. Within a turn, obedience rests on the model until
-a guard denies tool calls after a stop (gap G-54).
+the turn, and the notice now says that the order outranks the prompt. Within the turn, the `boundary-stop` guard now
+denies every tool call after the stop until the next turn starts (gap G-54, closed in `3c2fdf4`).
 
 ## Alternatives rejected
 
