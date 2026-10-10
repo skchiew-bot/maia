@@ -475,15 +475,14 @@ timeline flatters whoever declares the most (§9, R9).
 - **Controls:**
   - Evidence is mandatory and schema-checked: a test id, a commit SHA or a diff ref (Built, MCP schema).
   - The ledger verifies the ref (`evidenceVerified`) and flags `no_file_change` (no git change since the previous
-    close, from the working-tree fingerprint, so Bash-made changes count) and `evidence_unverified` (Built).
+    close, from the working-tree fingerprint, so Bash-made changes count, when the previous close changed nothing
+    either or this is the first close) and `evidence_unverified` (Built).
   - The flagged count sits next to the percentage (Built, the phase bar of the project page).
   - The Tower tracks `no_file_change_closes` and `evidence_unverified` (Built, `mod-tower`).
 - **Residual:** evidence proves **change**, not correctness. A trivial commit satisfies the rule. Acceptance
-  tests, UAT and the go-live gate test correctness. The checks are also loose and noisy (gap G-52, found by the
-  [real-CLI check](../research/claude-code-integration.md#137-requested-changes-for-code-the-verifier-does-not-own)):
-  a task that cannot change files (run the tests, push) is flagged `no_file_change` even when its evidence is
-  verified (5 of 11 closes), a read-only session's evidence is always `evidence_unverified`, and a `test` ref passes
-  when it merely looks like a test id (`file > command`). Read the flags as a reason to look, not as a finding.
+  tests, UAT and the go-live gate test correctness. One empty close after real work is not flagged (G-52, so that
+  running the tests or pushing is not noise), so real and empty closes can alternate unflagged; a read-only close
+  proves only that the file it names exists. Read the flags as a reason to look, not as a finding.
 
 ### T-8. Self-approval and separation of duties
 
@@ -790,7 +789,7 @@ Now (`mod-change`, `provenance.ts`) a commit is traced only when
 | R6 | Audit log and keys are a single point of total loss | High | [Key custody](../runbooks/key-custody.md): KEK custody, separate off-host backups, restore drill. Production refuses a KEK in the environment or beside the data; sealed backups under a separate key, and `aocd restore` (G-21); erasure clean-up in `aoc.db` (G-39) | Built (refusals, backups, restore) + Ops | KEK custody, escrow and the restore drill are operator work (P-03); backup retention against the erasure promise (O-12); no KEK rotation tool (O-23, G-47) |
 | R7 | A credit cap kills a session mid-task | Medium | Enforcement only at task boundaries; no guard, no usage reactor in `mod-credits`; 25 %-once grant (ADR-0007) | Built | Overspend within a task. After the stop every tool call of the turn is denied (G-54, closed); the turn ends when the model ends it |
 | R8 | Credits push work onto the cheap model | Medium | `routeModel()` ignores budget; discovery on Opus (ADR-0005) | Built | A human picks the type |
-| R9 | The shared timeline inflates | Medium | Evidence per task; flags; weights; audited amendments; Tower anomalies (T-6, T-7) | Built | Self-declared sizes; trivial commits; noisy flags (G-52) |
+| R9 | The shared timeline inflates | Medium | Evidence per task; flags; weights; audited amendments; Tower anomalies (T-6, T-7) | Built | Self-declared sizes; trivial commits; one empty close after each real one goes unflagged (G-52) |
 | R10 | The lessons rulebook grows without bound | Medium | Scoped lessons; retirement after 20 unused runs; payoff tracking; human binding | Built | Reviewer fatigue (T-15) |
 | R11 | Repeat detection becomes per-person blame | Medium | No user id in error events; class-level aggregation; Tower scope never a person (T-16) | Built | The session-owner join exists; enforced by policy |
 | R12 | A rate edit restates closed days | Medium | Rate cards apply forward only; `rollup.closed` carries its figures and rate-card version, so a rebuild reproduces them | Built | — |
