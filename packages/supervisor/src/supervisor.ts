@@ -137,6 +137,8 @@ export interface SupervisorModuleOptions {
   sidecarGraceMs?: number;
   /** Time a sidecar that was told to stop gets for its last report, at a session's end and at shutdown (default 5 s). */
   sidecarFlushMs?: number;
+  /** Delay before a crashed sidecar is started again, times the restart's number (default 1 s, G-51). */
+  sidecarRestartDelayMs?: number;
   /** Retry delay for a usage limit whose reset time is unknown (default 30 min). */
   throttleFallbackMs?: number;
   /** Output items kept per session for GET /api/sessions/:id/output (default 500). */
@@ -182,6 +184,9 @@ type ContextInfo = { contextTokens: number; contextPct: number };
 
 const SYSTEM: Actor = { kind: 'system', id: 'supervisor' };
 const CLOSE_GRACE_MS = 2_000;
+/** A sidecar that crashes mid-turn is started again at most this often per turn (G-51). */
+const MAX_SIDECAR_RESTARTS = 3;
+const SIDECAR_RESTART_DELAY_MS = 1_000;
 /** A finished turn's sidecar is stopped (report what is left) once ready, else after this; killed after twice this. */
 const SIDECAR_GRACE_MS = 5_000;
 /** After SIGTERM a sidecar makes its final usage flush (one request, 4 s client timeout) and exits. */
@@ -249,6 +254,10 @@ interface LiveTurn {
   sidecar: ChildProcess | null;
   /** Settles once the sidecar handles SIGTERM (its ready line) or has exited. */
   sidecarReady: Promise<void> | null;
+  /** The supervisor asked this turn's sidecar to stop: its exit is expected, never restarted. */
+  sidecarStopping: boolean;
+  /** Sidecars started again after a crash during this turn (G-51). */
+  sidecarRestarts: number;
   exit: { code: number | null; signal: NodeJS.Signals | null } | null;
   settled: boolean;
   closed: Promise<void>;
@@ -1149,6 +1158,8 @@ export class Supervisor implements SupervisorService {
       killTimer: null,
       sidecar: null,
       sidecarReady: null,
+      sidecarStopping: false,
+      sidecarRestarts: 0,
       exit: null,
       settled: false,
       closed,
@@ -2442,6 +2453,7 @@ export class Supervisor implements SupervisorService {
    * exits. Without a ready line it is stopped after the grace, and killed after twice that. Settles once it has exited.
    */
   private stopSidecar(live: LiveTurn): Promise<void> {
+    live.sidecarStopping = true;
     const sc = live.sidecar;
     const running = () => !!sc && sc.exitCode === null && sc.signalCode === null;
     if (!sc || !running()) return Promise.resolve();
@@ -2510,7 +2522,10 @@ export class Supervisor implements SupervisorService {
         this.log.warn('sidecar failed', { sessionId: live.sessionId, err: err.message });
         gone();
       });
-      child.on('exit', gone);
+      child.on('exit', (code, signal) => {
+        gone();
+        this.restartSidecarIfCrashed(live, plan, child, code, signal);
+      });
       live.sidecarReady = new Promise<void>((ready) => {
         let seen = '';
         child.stdout!.setEncoding('utf8');
@@ -2526,6 +2541,33 @@ export class Supervisor implements SupervisorService {
     } catch (err) {
       this.log.warn('sidecar failed to start', { sessionId: live.sessionId, err: String(err) });
     }
+  }
+
+  /**
+   * A sidecar that crashes while its turn runs leaves the session looking Dead and its usage unreported (G-51): start
+   * it again, from the same state directory, a few times per turn. Exit 0 (its process ended, or it was told to stop)
+   * and exit 2 (unusable arguments, which a restart cannot fix) are not crashes.
+   */
+  private restartSidecarIfCrashed(
+    live: LiveTurn,
+    plan: SpawnPlan,
+    child: ChildProcess,
+    code: number | null,
+    signal: NodeJS.Signals | null,
+  ): void {
+    const crashed = signal !== null || (code !== 0 && code !== 2);
+    const turnRuns = () => !this.stopping && !live.exit && !live.sidecarStopping && live.sidecar === child;
+    if (!crashed || !turnRuns() || live.sidecarRestarts >= MAX_SIDECAR_RESTARTS) return;
+    live.sidecarRestarts++;
+    this.log.warn('sidecar exited during its turn; starting it again', {
+      sessionId: live.sessionId,
+      code,
+      signal,
+      restart: live.sidecarRestarts,
+    });
+    this.later(() => {
+      if (turnRuns()) this.startSidecar(live, plan);
+    }, (this.opts.sidecarRestartDelayMs ?? SIDECAR_RESTART_DELAY_MS) * live.sidecarRestarts);
   }
 
   private interruptOrphan(pid: number, claudeSessionId: string): void {

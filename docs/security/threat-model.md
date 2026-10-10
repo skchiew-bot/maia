@@ -225,7 +225,7 @@ environment, is inside Zone 3**, whatever its name. Zone 3 therefore runs as a s
 | S | The model forges heartbeats or usage | Process liveness from the supervisor wins; only the session's sidecar principal may report, its token in the sidecar's environment alone; every turn's usage is reconciled against the process's own `result.modelUsage` and a disagreement is flagged (`usage.reconciled`, Control Tower radar) ([T-4](#t-4-sidecar-spoofing)) | Built (O-3, O-5) | Without session isolation the model can read the sidecar's environment (same OS user): reconciliation flags what it forges, it does not prevent it |
 | T | The model edits its transcript | Continuous tailing with persisted offsets; per-turn reconciliation flags the difference ([T-5](#t-5-transcript-tampering)) | Built (O-5) | A shortfall in a turn that compacted reads as overhead |
 | I | The token is passed in argv and is readable by every local user through `ps` | The sidecar reads its token from its environment only (`--token` is refused), and it is the sidecar's own token, never the session's | Built | — |
-| D | The model kills the sidecar | Heartbeats stop, so the session shows Dead while the supervisor knows the process is alive; the turn's usage is flagged `under_reported`. The supervisor restarting the sidecar is not built (G-51) | Built (signals) / Required (restart, G-51) | — |
+| D | The model kills the sidecar | Heartbeats stop, so the session shows Dead while the supervisor knows the process is alive; the turn's usage is flagged `under_reported`. A sidecar that crashes (or is killed) during its turn is started again, up to three times per turn (G-51); one that exits 0, as SIGTERM makes it, is not, and with session isolation the model cannot signal it at all | Built | — |
 
 ### 3.8 AOC MCP server
 
@@ -434,8 +434,9 @@ environment.
 - **Residual:** without session isolation (development) the model shares the sidecar's OS user: it can read the
   sidecar token from `/proc/<pid>/environ` and plant spool or state files. Whatever that adds or hides disagrees
   with the process's own figures and is flagged; a flag is not a block (metering observes, §10). A batch that is
-  partly seen is still recorded whole (O-5), and a sidecar that dies is not restarted, so its session shows Dead
-  while its process lives and the turn's usage is flagged `under_reported` (G-51).
+  partly seen is still recorded whole (O-5, G-51). A sidecar that crashes is started again (G-51), but one sent
+  SIGTERM exits cleanly and is not: its session then shows Dead while its process lives and the turn's usage is
+  flagged `under_reported`.
 
 ### T-5. Transcript tampering
 

@@ -3,11 +3,21 @@
 // argv and env. With --hold it runs until SIGTERM (announced ready like the real one), records the signal in
 // <log>.signals, then exits once <dir>/release exists (or after 3 s): the window in which a real sidecar posts its
 // turn's last report. With --stubborn it records every SIGTERM and never exits on its own: a sidecar stuck in its flush.
-import { appendFileSync, existsSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const [log, ...args] = process.argv.slice(2);
 appendFileSync(log, JSON.stringify({ args, env: process.env }) + '\n');
+// --crash <n>: the first n starts crash (exit 1), counted in <log>.crashes; later starts run on as the rest says.
+const crash = args.indexOf('--crash');
+if (crash >= 0) {
+  const crashes = `${log}.crashes`;
+  const done = existsSync(crashes) ? readFileSync(crashes, 'utf8').length : 0;
+  if (done < Number(args[crash + 1])) {
+    appendFileSync(crashes, 'x');
+    process.exit(1);
+  }
+}
 const hold = args.indexOf('--hold');
 if (hold >= 0) {
   const release = join(args[hold + 1], 'release');
