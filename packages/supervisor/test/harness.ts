@@ -390,6 +390,8 @@ export async function createHarness(o: HarnessOptions = {}) {
         credentialProfilesFile: profilesFile,
         maxConcurrentSessions: 4,
         autoContinueLimit: 0,
+        // The fake claude runs no hooks, so it never sends SessionStart (tests of O-15 turn this on).
+        sessionStartTimeoutSec: 0,
         ...o.supervisor,
       },
     },

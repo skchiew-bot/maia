@@ -375,6 +375,25 @@ describe('supervisor + claude-sim: operator controls', () => {
   });
 });
 
+describe('supervisor + claude-sim: a turn must show its hooks run (O-15)', () => {
+  it('the real hook binary sends SessionStart, so the SessionStart timeout leaves a working session alone', async () => {
+    const own = await Harness.start({ supervisor: 'real', config: { supervisor: { sessionStartTimeoutSec: 3 } } });
+    try {
+      const dev = await own.user('builder', 'Hooked');
+      const { projectId } = await own.project(dev, 'Hooks');
+      const sessionId = await launchSim(own, dev, projectId, 'stall');
+      await waitFor(() => own.events({ types: ['tool.used'], sessionId }).some((e) => e.meta.toolName === 'Write'), { timeout: 60_000, what: 'the Write before the stall' });
+      await new Promise((r) => setTimeout(r, 4_500));
+      expect((await sessionDetail(own, sessionId, dev)).lifecycle).toBe('running');
+      expect(own.events({ types: ['session.lifecycle_changed'], sessionId }).map((e) => e.meta.reason)).not.toContain('session_start_missing');
+      await own.api('POST', `/api/sessions/${sessionId}/stop`, { as: dev, body: { immediate: true, reason: 'Done' } });
+      await untilSession(own, sessionId, dev, (d) => d.lifecycle === 'ended', 'the stopped session to end', 30_000);
+    } finally {
+      await own.close();
+    }
+  });
+});
+
 describe('supervisor + claude-sim: plan-limit throttle', () => {
   it('rate_limit_event rejected → Throttled until resetsAt → the throttle_resume job resumes after the reset', async () => {
     const dev = await h.user('builder', 'Throttled');

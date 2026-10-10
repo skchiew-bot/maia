@@ -258,6 +258,8 @@ interface LiveTurn {
   sidecarStopping: boolean;
   /** Sidecars started again after a crash during this turn (G-51). */
   sidecarRestarts: number;
+  /** This turn's hooks sent SessionStart (O-15). */
+  sessionStartSeen: boolean;
   exit: { code: number | null; signal: NodeJS.Signals | null } | null;
   settled: boolean;
   closed: Promise<void>;
@@ -1160,6 +1162,7 @@ export class Supervisor implements SupervisorService {
       sidecarReady: null,
       sidecarStopping: false,
       sidecarRestarts: 0,
+      sessionStartSeen: false,
       exit: null,
       settled: false,
       closed,
@@ -1266,6 +1269,7 @@ export class Supervisor implements SupervisorService {
     this.liveness()?.refresh(fresh.sessionId);
     this.pushOutput(fresh.sessionId, { kind: 'user_prompt', text: clip(plan.prompt) });
     this.startSidecar(live, plan);
+    this.awaitSessionStart(live);
     // Values never reach the log: only variable names.
     this.log.info('turn started', {
       sessionId: fresh.sessionId,
@@ -1559,6 +1563,31 @@ export class Supervisor implements SupervisorService {
     this.log.error('aoc mcp server not connected; aborting the turn', { sessionId: live.sessionId, status });
     if (live.interrupt?.kind !== 'stop') live.interrupt = { kind: 'abort', reason: 'mcp_unavailable' };
     this.signalInterrupt(live);
+  }
+
+  sessionStarted(sessionId: string): void {
+    const live = this.running.get(sessionId);
+    if (live) live.sessionStartSeen = true;
+  }
+
+  /**
+   * Fail closed (O-15): every turn's hooks send SessionStart (startup or resume); a turn that sends none within the
+   * timeout runs without AOC's hooks, so its guards, plan gate and audit would not hold. It is aborted like a turn
+   * without the AOC MCP server.
+   */
+  private awaitSessionStart(live: LiveTurn): void {
+    const timeoutSec = this.ctx.config.supervisor.sessionStartTimeoutSec;
+    if (!timeoutSec) return;
+    this.later(() => {
+      if (live.sessionStartSeen || live.exit || this.stopping || !live.started) return;
+      this.pushOutput(live.sessionId, {
+        kind: 'system',
+        text: `No SessionStart from AOC's hooks within ${timeoutSec} s: aborting this managed session`,
+      });
+      this.log.error('no SessionStart hook; aborting the turn', { sessionId: live.sessionId, timeoutSec });
+      if (live.interrupt?.kind !== 'stop') live.interrupt = { kind: 'abort', reason: 'session_start_missing' };
+      this.signalInterrupt(live);
+    }, timeoutSec * 1000);
   }
 
   /** SIGINT lets Claude Code end the turn itself (tool children, SessionEnd hooks); SIGKILL the group after the grace. */
