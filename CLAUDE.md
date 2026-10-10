@@ -114,3 +114,6 @@ Claude Code Stop hook (`.claude/settings.json`), which will not let a session fi
     (a PR merged, a gap closed) or the user asks what next, end with the choice itself: `AskUserQuestion` with 2–4
     concrete options, the recommended one first and labelled "(Recommended)", each saying what it does and its size.
     Never end such a turn with a list of options in text only.
+12. **A scripted source edit broke quoting** (`sed` put bare backticks inside a template literal; caught by tests, not
+    by review). After any `sed`/script edit of source, typecheck that package before running anything else, and prefer
+    the Edit tool for lines with quotes, backticks or `${}`.
