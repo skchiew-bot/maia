@@ -733,8 +733,8 @@ sessions made for other purposes, not a designed sample.
 
 - **mod-ledger**: `no_file_change` is flagged on tasks that cannot change files (run the tests, push, commit after a
   diff task) although the evidence is verified; read-only sessions' `task_done` evidence is always `evidence_unverified`.
-- **mod-change / mod-sessions**: a `PermissionRequest` denial (print mode refusing a command) is not audited as a
-  `tool.denied` event (the hook is relayed, nothing reads it), so a session that keeps hitting the permission wall (D1 before the fix) shows up only as the model's own words.
+- **mod-change / mod-sessions**: a `PermissionRequest` denial (print mode refusing a command) was not audited as a
+  `tool.denied` event (the hook was relayed, nothing read it), so a session that kept hitting the permission wall (D1 before the fix) showed up only as the model's own words. Done (G-53, `01fc78d`): recorded as `tool.denied` with guard `permission-mode`.
 - **config/process-types.json**: the writer types grant git verbs only. A task closed with `test` evidence needs a test
   runner (`Bash(npm test:*)` and the like, per project): in print mode a refused test run is a dead end.
 - **Boundary obedience** (credit cap, rollover, stop) rested on the model; D8 shows a model can ignore it. Done (G-54,

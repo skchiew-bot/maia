@@ -283,6 +283,10 @@ describe('supervisor + claude-sim: what a writer may run (print mode cannot prom
     const shown = shownToModel(sessionId).map(([, content]) => String(content));
     expect(shown.some((c) => /require approval: git switch main, git branch -D scratch$/.test(c))).toBe(true);
     expect(shown).toContain('Permission to use Bash with command git reset --hard HEAD~1 has been denied.');
+    // A refusal only a person could have lifted is audited, command in the body (G-53); a deny rule's (git reset) asks nobody.
+    const refused = h.events({ types: ['tool.denied'], sessionId }).filter((e) => e.meta.guard === 'permission-mode');
+    expect(refused.map((e) => [e.meta.toolName, e.meta.decision])).toEqual([['Bash', 'deny']]);
+    expect(String(payload(refused[0]!)!.inputSummary)).toContain('git switch main && git branch -D scratch');
     expect(execFileSync('git', ['log', '--format=%s'], { cwd: repo, encoding: 'utf8', env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' } }).split('\n')[0]).toBe('Add hello.txt');
   });
 });
