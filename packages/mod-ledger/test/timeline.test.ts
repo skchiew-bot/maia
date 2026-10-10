@@ -17,11 +17,11 @@ describe('session timeline (hero strip, §12)', () => {
     h.session({ sessionId: 'ses_a', projectId, startedAt: h.t.clock.iso() });
     await h.mcp('declare_plan', 'ses_a', PLAN);
     minutes(5);
+    await h.mcp('task_done', 'ses_a', { task_id: 't1', evidence: evidence('a') }); // T+5, an empty first close: flagged
+    minutes(5);
     h.toolUsed('ses_a');
     minutes(5);
-    await h.mcp('task_done', 'ses_a', { task_id: 't1', evidence: evidence('a') }); // T+10
-    minutes(5);
-    await h.mcp('task_done', 'ses_a', { task_id: 't2', evidence: evidence('b') }); // T+15, flagged, P1 complete
+    await h.mcp('task_done', 'ses_a', { task_id: 't2', evidence: evidence('b') }); // T+15, P1 complete
     minutes(5);
     await h.mcp('amend_plan', 'ses_a', {
       reason: 'pagination',
@@ -86,9 +86,9 @@ describe('session timeline (hero strip, §12)', () => {
       { phaseId: 'P2', name: 'API', startAt: at(t0, 15), endAt: null, doneWeight: 0, totalWeight: 13 },
     ]);
     expect(tl.marks.map((m) => [m.kind, m.label])).toEqual([
+      ['task_done', 't1 · no_file_change'],
       ['tool', 'Edit'],
-      ['task_done', 't1'],
-      ['task_done', 't2 · no_file_change'],
+      ['task_done', 't2'],
       ['phase_complete', 'Foundation'],
       ['amendment', 'v2: +1 −0 ~0'],
       ['drift', 'scope_growth'],

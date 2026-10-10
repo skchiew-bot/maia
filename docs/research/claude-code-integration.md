@@ -731,8 +731,10 @@ sessions made for other purposes, not a designed sample.
 
 ### 13.7 Requested changes for code the verifier does not own
 
-- **mod-ledger**: `no_file_change` is flagged on tasks that cannot change files (run the tests, push, commit after a
-  diff task) although the evidence is verified; read-only sessions' `task_done` evidence is always `evidence_unverified`.
+- **mod-ledger**: `no_file_change` was flagged on tasks that cannot change files (run the tests, push, commit after a
+  diff task) although the evidence was verified; read-only sessions' `task_done` evidence was always `evidence_unverified`.
+  Done (G-52, `ab7918a`): an empty close is flagged only after another empty close or as the first close; read-only
+  `diff` refs are verified against the workspace; a test ref holding a command line is refused.
 - **mod-change / mod-sessions**: a `PermissionRequest` denial (print mode refusing a command) was not audited as a
   `tool.denied` event (the hook was relayed, nothing read it), so a session that kept hitting the permission wall (D1 before the fix) showed up only as the model's own words. Done (G-53, `01fc78d`): recorded as `tool.denied` with guard `permission-mode`.
 - **config/process-types.json**: the writer types grant git verbs only. A task closed with `test` evidence needs a test

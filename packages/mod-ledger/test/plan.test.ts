@@ -292,15 +292,16 @@ describe('measured progress', () => {
         }),
       );
 
-    expect(results[0]!.flagged).toBeNull(); // one real edit backs the first close only
-    expect(results.slice(1).every((r) => r.flagged === 'no_file_change')).toBe(true);
+    // One real edit backs the first close; one empty close after real work is ordinary (G-52); every later one is flagged.
+    expect(results.slice(0, 2).map((r) => r.flagged)).toEqual([null, null]);
+    expect(results.slice(2).every((r) => r.flagged === 'no_file_change')).toBe(true);
     const p = h.ledger.sessionProgress('ses_gamer')!;
     expect([p.doneTasks, p.totalTasks]).toEqual([8, 9]); // 89% of tasks…
     expect(p.pct).toBe(50); // …but half the declared weight
-    expect(p.flaggedTasks).toBe(7);
+    expect(p.flaggedTasks).toBe(6);
 
     const project = h.ledger.projectProgress(projectId)!;
-    expect(project).toMatchObject({ doneWeight: 8, totalWeight: 8 + 8 + 5, flaggedTasks: 7 });
+    expect(project).toMatchObject({ doneWeight: 8, totalWeight: 8 + 8 + 5, flaggedTasks: 6 });
     expect(project.pct).toBe(38.1);
 
     const again = await h.mcp<McpErrorResult>(

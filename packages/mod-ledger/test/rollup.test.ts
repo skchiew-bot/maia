@@ -16,14 +16,15 @@ describe('GET /api/projects/rollup', () => {
     const cwd = h.repo();
     h.session({ sessionId: 'ses_a', projectId, cwd });
     await h.mcp('declare_plan', 'ses_a', PLAN);
-    writeFile(cwd, 'src/schema.ts', 'export const schema = 1;\n');
-    h.toolUsed('ses_a', { filePaths: [`${cwd}/src/schema.ts`] });
-    await h.mcp('task_done', 'ses_a', { task_id: 't1', evidence: { kind: 'diff', ref: 'src/schema.ts +1' } });
-    // No file change since the previous close: flagged, still counted (completes P1 and pins it).
+    // An empty first close (nothing changed since the plan): flagged, still counted.
     await h.mcp('task_done', 'ses_a', {
-      task_id: 't2',
+      task_id: 't1',
       evidence: { kind: 'test', ref: 'test/widget.test.ts > works' },
     });
+    writeFile(cwd, 'src/schema.ts', 'export const schema = 1;\n');
+    h.toolUsed('ses_a', { filePaths: [`${cwd}/src/schema.ts`] });
+    // Real work closes t2, which completes P1 and pins it.
+    await h.mcp('task_done', 'ses_a', { task_id: 't2', evidence: { kind: 'diff', ref: 'src/schema.ts +1' } });
     await h.mcp('amend_plan', 'ses_a', {
       reason: 'UAT feedback',
       add: [{ id: 't4', title: 'Export', size: 'm', phaseId: 'P2' }],
@@ -52,7 +53,7 @@ describe('GET /api/projects/rollup', () => {
         doneWeight: 5,
         totalWeight: 5,
         flaggedTasks: 1,
-        flaggedWeight: 3,
+        flaggedWeight: 2,
         completedAt: expect.any(String),
         pinnedTag: expect.stringMatching(/^aoc\/.+\/P1\/\d+$/),
         pinnedSha: expect.stringMatching(/^[0-9a-f]{40}$/),

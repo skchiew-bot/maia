@@ -111,13 +111,22 @@ export function testFileOf(ref: string): string | null {
 }
 
 /**
+ * A command line where a test id belongs (G-52): `test.js > npm test (node test.js)`, `pytest tests/x.py::t`. A runner
+ * counts when it starts the ref, a `>` part or a parenthesised part, so test names that merely contain such a word
+ * ("make sure it parses") still pass.
+ */
+const COMMAND_IN_REF =
+  /(?:^|[(>]\s*)(?:(?:npm|pnpm|yarn|bun)\s+(?:test|t|run|exec)\b|(?:node|deno|python3?|bash|sh)\s+\S+\.(?:[cm]?[jt]sx?|py|sh)\b|(?:pytest|vitest|jest|mocha|rspec|npx|bunx)(?:\s|$)|(?:go|cargo|make|dotnet|mvn|gradle)\s+test\b)/;
+
+/**
  * A test id is plausible when it names a test file, has test-runner structure ("file > suite > case",
  * "module::case", "Class#method"), or is a dotted/underscored test identifier ("tests.auth.test_login").
- * Prose such as "all tests pass" is not an id.
+ * Prose such as "all tests pass" is not an id, nor is a command line.
  */
 export function isPlausibleTestId(ref: string): boolean {
   const r = ref.trim();
   if (isPlaceholderRef(r)) return false;
+  if (COMMAND_IN_REF.test(r)) return false;
   if (testFileOf(r)) return true;
   if (/\s>\s|::|#[A-Za-z_]/.test(r)) return true;
   return /^[\w$./-]+$/.test(r) && /test|spec/i.test(r) && /[._/-]/.test(r);

@@ -1,6 +1,6 @@
 /** Handlers behind /ingest/mcp/* (the agent's structured voice, §2): plan manifests, evidence-backed closes, playbook steps. */
 import { existsSync } from 'node:fs';
-import { dirname, isAbsolute, join, relative } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import {
   TASK_SIZE_WEIGHT,
   type AmendPlanInput,
@@ -148,7 +148,10 @@ export async function declarePlan(
       treeFingerprint: base ? valueOr(base.fingerprint, null) : null,
       ...(base && timedOut(base.head, base.fingerprint) ? { baselineReason: 'git_timeout' as const } : {}),
       carriedOver: carry.carried,
-      shape: input.phases.map((ph) => ({ id: ph.id, tasks: ph.tasks.map((t) => ({ id: t.id, size: t.size })) })),
+      shape: input.phases.map((ph) => ({
+        id: ph.id,
+        tasks: ph.tasks.map((t) => ({ id: t.id, size: t.size })),
+      })),
     },
     payload: {
       ...(input.summary !== undefined ? { summary: input.summary } : {}),
@@ -318,6 +321,25 @@ interface Verdict {
 const VERIFIED: Verdict = { verified: true };
 const UNVERIFIED: Verdict = { verified: false };
 const UNKNOWN: Verdict = { verified: false, reason: 'git_timeout' };
+
+/**
+ * A read-only session changes nothing, so its evidence is the path of a file it inspected (G-52): the file must exist
+ * inside the session's working directory or the project repository. A path that leads out of them proves nothing.
+ */
+function verifyInspectedFile(ref: string, repo: string | null, cwd: string | null): Verdict {
+  const path = ref.trim().replace(/^\.\//, '');
+  if (!path || isPlaceholderRef(path)) return UNVERIFIED;
+  const dirs = [cwd, repo].filter((d): d is string => d !== null && existsSync(d)).map((d) => resolve(d));
+  // No working copy to check against: plausibility is all that can be verified.
+  if (!dirs.length) return VERIFIED;
+  return dirs.some((d) => {
+    const full = resolve(d, path);
+    const rel = relative(d, full);
+    return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel) && existsSync(full);
+  })
+    ? VERIFIED
+    : UNVERIFIED;
+}
 
 async function verifyTestFile(
   core: LedgerCore,
@@ -556,7 +578,9 @@ export async function taskDone(
   const [snap, checked] = await Promise.all([
     repo ? core.repoGit.snapshot(repo) : null,
     kind === 'diff'
-      ? null
+      ? before.session.readOnly
+        ? verifyInspectedFile(ref, repo, before.session.cwd)
+        : null
       : verifyCommitOrTest(core, kind, ref, { repo, cwd: before.session.cwd, manifest: before.manifest }),
   ]);
 
@@ -579,9 +603,14 @@ export async function taskDone(
       baselineMissing: baseline === null && baselineTimedOut(core, sessionId),
     });
   const verified = verdict.verified;
+  // R9 without the noise (G-52): one close that changes nothing right after one that did is ordinary (run the tests,
+  // push); a second empty close in a row, or an empty first close, is flagged. A read-only session changes nothing.
+  const previous = core.store.list({ sessionId, types: ['task.done'], order: 'desc', limit: 1 })[0];
+  const previousChanged =
+    !!previous && (Number(previous.meta.fileChangesSinceLast) > 0 || previous.meta.treeChanged === true);
   const flag = !verified
     ? 'evidence_unverified'
-    : fileChanges === 0 && !treeChanged
+    : !session.readOnly && fileChanges === 0 && !treeChanged && !previousChanged
       ? 'no_file_change'
       : null;
 
