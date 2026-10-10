@@ -82,7 +82,7 @@ describe('gated rollback (§8): verify on a branch, passkey decision only when c
     expect(repo.head('main')).toBe(bad);
     // The acceptance test ran sandboxed, with no credential, in a fresh checkout outside the project repository.
     expect(h.sup.calls.every((c) => c.credentialProfile === null)).toBe(true);
-    const run = h.sup.calls.find((c) => c.command.join(' ') === 'sh -c node test.js')!;
+    const run = h.sup.calls.find((c) => c.command.join(' ') === 'node test.js')!;
     expect(run).toMatchObject({
       env: { CI: '1' },
       sandbox: { handOver: [expect.stringContaining('aoc-rollback-verify-')] },
@@ -278,6 +278,27 @@ describe('gated rollback (§8): verify on a branch, passkey decision only when c
     // The card's free text sits with the change record the rollback is for, else with the project.
     expect(h.requested.get((await get(viaChange.rollbackId)).decisionId!)).toMatchObject({ bodyScope: changeId });
     expect(h.requested.get(pkg.decisionId!)).toMatchObject({ bodyScope: PROJECT });
+  });
+
+  it('never runs a change record’s acceptance test through a shell: a chained command does not run (G-50)', async () => {
+    await setup();
+    const marker = join(repo.dir, '..', `escaped-${process.pid}`);
+    const changeId = await draftAndAffirm(h, {
+      projectId: PROJECT,
+      scope: 'main',
+      owner: h.builder,
+      rollbackRef: good,
+      acceptanceTest: `node test.js; touch ${marker}`,
+    });
+    const { rollbackId } = await request({ targetRef: good, changeId });
+    await h.settle();
+    const v = (await get(rollbackId)).verification!;
+    // Not a command without a shell, so it is read as prose: the project's own command runs instead.
+    expect(v.report).toContain('Command: node test.js [from project]');
+    expect(v.clean).toBe(true);
+    expect(existsSync(marker)).toBe(false);
+    const run = h.sup.calls.at(-1)!;
+    expect(run.command).toEqual(['node', 'test.js']);
   });
 
   it('reports back when verification cannot run at all', async () => {

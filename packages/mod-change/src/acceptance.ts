@@ -1,12 +1,14 @@
 /** Acceptance tests for rollback verification (§8): which command to run, and a best-effort read of its results. Pure. */
 
+/**
+ * Programs an acceptance command may start by name. No shell (`sh`, `bash`) and no "run any package" launcher
+ * (`npx`, `bunx`): the command is run as argv without a shell (G-50), and these would bring the shell back.
+ */
 const RUNNERS = new Set([
   'npm',
   'pnpm',
   'yarn',
-  'npx',
   'bun',
-  'bunx',
   'deno',
   'node',
   'make',
@@ -28,8 +30,6 @@ const RUNNERS = new Set([
   'mix',
   'vitest',
   'jest',
-  'sh',
-  'bash',
   'ctest',
   'phpunit',
   'composer',
@@ -37,12 +37,82 @@ const RUNNERS = new Set([
   'sbt',
 ]);
 
+/** Arguments that turn a runner into "run this text as code": long options and subcommands, and short-option letters
+ * (which may be combined, as in `node -pe` or `python3 -Bc`). */
+const INLINE_CODE: Record<string, { words: ReadonlySet<string>; letters: string }> = {
+  node: { words: new Set(['--eval', '--print']), letters: 'ep' },
+  bun: { words: new Set(['--eval', '--print']), letters: 'ep' },
+  deno: { words: new Set(['eval']), letters: '' },
+  python: { words: new Set(), letters: 'c' },
+  python3: { words: new Set(), letters: 'c' },
+};
+
+function runsInlineCode(program: string, arg: string): boolean {
+  const rule = INLINE_CODE[program];
+  if (!rule) return false;
+  if (rule.words.has(arg.split('=')[0]!)) return true;
+  const short = /^-([A-Za-z]+)$/.exec(arg)?.[1];
+  return !!short && [...short].some((c) => rule.letters.includes(c));
+}
+
+/** `<runner> <subcommand>` pairs that start an arbitrary program. */
+const EXEC_SUBCOMMANDS: Record<string, ReadonlySet<string>> = {
+  npm: new Set(['exec', 'x']),
+  pnpm: new Set(['exec', 'dlx']),
+  yarn: new Set(['exec', 'dlx']),
+  bun: new Set(['x']),
+  bundle: new Set(['exec']),
+};
+
+/** Variables that load code or change which program runs. */
+const LOADER_ENV =
+  /^(PATH|NODE_OPTIONS|BASH_ENV|ENV|PYTHONSTARTUP|PYTHONPATH|PERL5OPT|RUBYOPT|LD_\w*|DYLD_\w*|GIT_\w*)$/;
+
+/** Characters a shell would act on. Without a shell they would be passed literally, so a line holding one is refused. */
+const SHELL_SYNTAX = /[;&|<>()$`\\{}*?[\]~!#\n]/;
+
+export interface AcceptanceCommand {
+  /** The command as written (after unwrapping), for the report. */
+  text: string;
+  /** Program and arguments, run without a shell. */
+  argv: string[];
+  /** Leading `NAME=value` assignments. */
+  env: Record<string, string>;
+}
+
+/** Splits on blanks, honouring '…' and "…" quotes; null when quotes do not close or shell syntax is outside them. */
+function words(line: string): string[] | null {
+  const out: string[] = [];
+  let cur: string | null = null;
+  let quote: '"' | "'" | null = null;
+  for (const ch of line) {
+    if (quote) {
+      if (ch === quote) quote = null;
+      else if (quote === '"' && (ch === '$' || ch === '`' || ch === '\\')) return null;
+      else cur += ch;
+    } else if (ch === "'" || ch === '"') {
+      quote = ch;
+      cur ??= '';
+    } else if (ch === ' ' || ch === '\t') {
+      if (cur !== null) out.push(cur);
+      cur = null;
+    } else if (SHELL_SYNTAX.test(ch)) {
+      return null;
+    } else cur = (cur ?? '') + ch;
+  }
+  if (quote) return null;
+  if (cur !== null) out.push(cur);
+  return out;
+}
+
 /**
- * The acceptance test as a runnable command, when it is one: a single line (optionally `backticked`, fenced or
- * `$ `-prefixed) whose program is a known test runner or a path such as `./scripts/accept.sh`. Prose acceptance
- * criteria return null.
+ * The acceptance test as a command to run without a shell (G-50), when it is one: a single line (optionally
+ * `backticked`, fenced or `$ `-prefixed) whose program is a known test runner or a script inside the checkout
+ * (`./scripts/accept.sh`), with no shell syntax, no inline code (`node -e`, `python -c`), no "run any program"
+ * subcommand (`npm exec`, `pnpm dlx`), no URL or `data:` argument and no loader variable (`NODE_OPTIONS`, `LD_*`).
+ * Anything else, prose acceptance criteria included, returns null.
  */
-export function acceptanceCommandOf(text: string | null | undefined): string | null {
+export function acceptanceCommandOf(text: string | null | undefined): AcceptanceCommand | null {
   if (!text) return null;
   let t = text.trim();
   const fenced = /^```[\w-]*\n([^\n]+)\n```$/.exec(t);
@@ -50,13 +120,25 @@ export function acceptanceCommandOf(text: string | null | undefined): string | n
   const inline = /^`([^`\n]+)`$/.exec(t);
   if (inline) t = inline[1]!.trim();
   if (t.startsWith('$ ')) t = t.slice(2).trim();
-  if (!t || t.includes('\n') || t.length > 500) return null;
-  const words = t.split(/\s+/);
+  if (!t || t.length > 500) return null;
+  const all = words(t);
+  if (!all?.length) return null;
+  const env: Record<string, string> = {};
   let i = 0;
-  while (i < words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i]!)) i++;
-  const program = words[i];
+  for (let m; i < all.length && (m = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/s.exec(all[i]!)); i++) {
+    if (LOADER_ENV.test(m[1]!)) return null;
+    env[m[1]!] = m[2]!;
+  }
+  const argv = all.slice(i);
+  const program = argv[0];
   if (!program) return null;
-  return RUNNERS.has(program) || /^\.{0,2}\/[\w./-]+$/.test(program) ? t : null;
+  const script = /^\.\/[\w.-]+(\/[\w.-]+)*$/.test(program) && !program.split('/').includes('..');
+  if (!script && !RUNNERS.has(program)) return null;
+  const args = argv.slice(1);
+  if (args.some((a) => runsInlineCode(program, a))) return null;
+  if (args[0] !== undefined && EXEC_SUBCOMMANDS[program]?.has(args[0])) return null;
+  if (args.some((a) => /^data:/i.test(a) || a.includes('://'))) return null;
+  return { text: t, argv, env };
 }
 
 export interface TestCounts {

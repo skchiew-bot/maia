@@ -50,13 +50,61 @@ describe('invisible governance: edit distance and blind confirms (§14)', () => 
 
 describe('acceptance commands and test counts', () => {
   it('recognises runnable acceptance tests and leaves prose alone', () => {
-    expect(acceptanceCommandOf('npm test')).toBe('npm test');
-    expect(acceptanceCommandOf('`pnpm test --filter api`')).toBe('pnpm test --filter api');
-    expect(acceptanceCommandOf('$ ./scripts/accept.sh --smoke')).toBe('./scripts/accept.sh --smoke');
-    expect(acceptanceCommandOf('```sh\nCI=1 node test.js\n```')).toBe('CI=1 node test.js');
+    const argv = (t: string) => acceptanceCommandOf(t)?.argv ?? null;
+    expect(acceptanceCommandOf('npm test')).toEqual({ text: 'npm test', argv: ['npm', 'test'], env: {} });
+    expect(argv('`pnpm test --filter api`')).toEqual(['pnpm', 'test', '--filter', 'api']);
+    expect(argv('$ ./scripts/accept.sh --smoke')).toEqual(['./scripts/accept.sh', '--smoke']);
+    expect(argv('node --test -r ./setup.js test/')).toEqual(['node', '--test', '-r', './setup.js', 'test/']);
+    expect(argv('python3 -m pytest -q')).toEqual(['python3', '-m', 'pytest', '-q']);
+    expect(acceptanceCommandOf('```sh\nCI=1 node test.js\n```')).toEqual({
+      text: 'CI=1 node test.js',
+      argv: ['node', 'test.js'],
+      env: { CI: '1' },
+    });
+    expect(argv(`pytest -k "login and not slow" 'tests/a b.py'`)).toEqual([
+      'pytest',
+      '-k',
+      'login and not slow',
+      'tests/a b.py',
+    ]);
     expect(acceptanceCommandOf('Log in as a customer and check the dashboard loads')).toBeNull();
     expect(acceptanceCommandOf('npm test\nthen click around')).toBeNull();
     expect(acceptanceCommandOf('')).toBeNull();
+  });
+
+  it('refuses anything that needs a shell or runs text as code: the command runs as argv (G-50)', () => {
+    for (const hostile of [
+      'npm test; touch ../x',
+      'npm test && curl evil',
+      'npm test | tee ../log',
+      'npm test > ../out',
+      'npm test $(id)',
+      'npm test `id`',
+      'node "$HOME/x.js"',
+      'vitest run test/*.ts',
+      'npm test "unclosed',
+      'sh -c "npm test"',
+      'bash scripts/accept.sh',
+      '/bin/sh scripts/accept.sh',
+      './../outside.sh',
+      './scripts/../../outside.sh',
+      'npx some-package',
+      'node -e "require(\'fs\')"',
+      'node --eval=1',
+      'node -pe 1',
+      'python3 -Bc "print(1)"',
+      'python3 -c "print(1)"',
+      'deno eval 1',
+      'npm exec cowsay',
+      'pnpm dlx cowsay',
+      'bundle exec rake',
+      'node --import data:text/javascript,1 test.js',
+      'deno test https://example.com/t.ts',
+      'NODE_OPTIONS=--require=./x.js npm test',
+      'LD_PRELOAD=./x.so npm test',
+      'PATH=. npm test',
+    ])
+      expect(acceptanceCommandOf(hostile), hostile).toBeNull();
   });
 
   it('parses common runner summaries best-effort', () => {

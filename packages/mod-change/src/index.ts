@@ -7,7 +7,7 @@ import { mountChangeRoutes } from './routes';
 
 export type { ChangeModuleOptions, ProjectSettings } from './engine';
 export { ChangeEngine } from './engine';
-export { acceptanceCommandOf, parseTestCounts } from './acceptance';
+export { acceptanceCommandOf, parseTestCounts, type AcceptanceCommand } from './acceptance';
 export { assessAffirmation, editDistance, editRatio } from './governance';
 export {
   DEFAULT_PROTECTED_BRANCHES,
