@@ -247,6 +247,23 @@ describe('hook ingest', () => {
     expect(t.rt.store.list({ types: ['tool.denied'] })).toHaveLength(1);
   });
 
+  it('records a prompt relayed by a managed session\'s hook as the agent\'s claim, not a supervisor fact (O-4, G-47)', async () => {
+    await setup();
+    const owner = t.user('builder');
+    launch(owner);
+    await t.json('POST', '/ingest/hook', {
+      headers: t.ingestHeaders('ses_A'),
+      body: hook('ses_A', CLAUDE_A, 'UserPromptSubmit', { prompt: 'Add the CSV importer' }),
+    });
+    const [prompt] = t.rt.store.list({ types: ['prompt.submitted'] });
+    expect(prompt).toMatchObject({
+      actor: { kind: 'agent', id: 'ses_A' },
+      source: 'hook',
+      meta: { sessionId: 'ses_A', origin: 'supervisor' },
+    });
+    expect(t.rt.store.readPayload(prompt!)).toEqual({ text: 'Add the CSV importer' });
+  });
+
   it('scopes session tokens to their own session', async () => {
     await setup();
     const owner = t.user('builder');
