@@ -40,12 +40,12 @@ describe('task_done evidence (§4, R9)', () => {
       treeChanged: true,
     });
 
-    // Nothing changed since that close: the next close is flagged even with a plausible test id.
+    // Nothing changed since that close, but the close before it did: running the tests is ordinary, not flagged (G-52).
     const r2 = await done('t2', 'test', 'test/widget.test.ts > works');
-    expect(r2.flagged).toBe('no_file_change');
+    expect(r2.flagged).toBeNull();
     expect(h.events('task.done')[1]!.meta).toMatchObject({
       evidenceVerified: true,
-      flag: 'no_file_change',
+      flag: null,
       fileChangesSinceLast: 0,
       treeChanged: false,
     });
@@ -92,8 +92,56 @@ describe('task_done evidence (§4, R9)', () => {
     ]);
     expect(tl.manifest[0]!.tasks.map((t) => [t.taskId, t.status, t.flag, t.evidence?.verified])).toEqual([
       ['t1', 'done', null, true],
-      ['t2', 'done', 'no_file_change', true],
+      ['t2', 'done', null, true],
     ]);
+  });
+
+  it('flags a second close in a row that changed nothing, and an empty first close, but never a read-only session (R9, G-52)', async () => {
+    const { cwd } = await setup();
+    // The first close of the session changed nothing at all: flagged.
+    expect((await done('t1', 'test', 'test/widget.test.ts > a')).flagged).toBe('no_file_change');
+    // Still nothing: flagged again.
+    expect((await done('t2', 'test', 'test/widget.test.ts > b')).flagged).toBe('no_file_change');
+    // Real work, then one empty close after it (push, run the tests): neither is flagged.
+    commit(cwd, 'src/routes.ts', 'export const routes = [];\n', 'routes');
+    const sha = git(cwd, 'rev-parse', 'HEAD');
+    expect((await done('t3', 'commit', sha)).flagged).toBeNull();
+    expect(h.events('task.done').map((e) => e.meta.flag)).toEqual(['no_file_change', 'no_file_change', null]);
+  });
+
+  it('a read-only session closes with the path of a file it inspected: verified inside its workspace, never flagged (G-52)', async () => {
+    h = await createHarness();
+    const projectId = h.project();
+    const cwd = h.repo({ 'src/parser.ts': 'export const parse = 1;\n' });
+    h.session({ sessionId: 'ses_ro', projectId, cwd, readOnly: true, processType: 'bug-triage' });
+    await h.mcp('declare_plan', 'ses_ro', PLAN);
+    const close = (task_id: string, ref: string) =>
+      h.mcp<TaskDoneResult>('task_done', 'ses_ro', { task_id, evidence: { kind: 'diff', ref } });
+    expect((await close('t1', 'src/parser.ts')).flagged).toBeNull();
+    expect((await close('t2', './src/parser.ts')).flagged).toBeNull();
+    // A file that is not there, or a path that leaves the workspace, proves nothing.
+    expect((await close('t3', 'src/missing.ts')).flagged).toBe('evidence_unverified');
+    h.session({ sessionId: 'ses_ro2', projectId, cwd, readOnly: true, processType: 'bug-triage' });
+    await h.mcp('declare_plan', 'ses_ro2', PLAN);
+    for (const [task_id, ref] of [
+      ['t1', '../../../../etc/passwd'],
+      ['t2', '/etc/passwd'],
+    ] as const)
+      expect(
+        (await h.mcp<TaskDoneResult>('task_done', 'ses_ro2', { task_id, evidence: { kind: 'diff', ref } }))
+          .flagged,
+        ref,
+      ).toBe('evidence_unverified');
+  });
+
+  it('refuses a test ref that is a command line, not a test id (G-52)', async () => {
+    await setup();
+    for (const [task_id, ref] of [
+      ['t1', 'test/widget.test.ts > npm test (node test.js)'],
+      ['t2', 'pytest test/widget.test.ts'],
+      ['t3', 'test/widget.test.ts > works (npm run test)'],
+    ] as const)
+      expect((await done(task_id, 'test', ref)).flagged, ref).toBe('evidence_unverified');
   });
 
   it('flags unverifiable evidence: unknown or pre-plan commits, prose test ids, missing test files, diffs without changes', async () => {

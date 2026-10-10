@@ -103,7 +103,7 @@ export function buildSystemPrompt(i: SystemPromptInput): string {
   ];
   if (t.readOnly) {
     rules.push(
-      `9. This is a READ-ONLY session: never modify files. Diagnose, close your plan's tasks with \`mcp__aoc__task_done\` (evidence: the path of a file you inspected), make \`mcp__aoc__report_diagnosis\` your last tool call, then end your turn.`,
+      `9. This is a READ-ONLY session: never modify files. Diagnose, close your plan's tasks with \`mcp__aoc__task_done\` (evidence kind \`diff\`, ref: the path of a file you inspected, relative to your working directory), make \`mcp__aoc__report_diagnosis\` your last tool call, then end your turn.`,
     );
   }
   if (i.gitPush) {

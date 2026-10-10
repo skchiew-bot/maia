@@ -38,6 +38,8 @@ interface MSession {
   tasks: Map<string, MTask>;
   /** File-changing tool calls since the last close. */
   fileChanges: number;
+  /** Whether this session's last close changed files (R9 flags only a second empty close in a row, G-52). */
+  lastCloseChanged: boolean;
   /** The session held the thread's writer lock and released it (a source for carry-over), or holds it now. */
   released: boolean;
   writer: boolean;
@@ -99,7 +101,7 @@ describe('plans, closes, amendments and rollovers against a model (§4, §5, §9
         const newSession = () => {
           const id = `ses_l${++nSession}`;
           h!.session({ sessionId: id, projectId, threadId });
-          const s: MSession = { id, declared: false, version: 0, tasks: new Map(), fileChanges: 0, released: false, writer: false };
+          const s: MSession = { id, declared: false, version: 0, tasks: new Map(), fileChanges: 0, lastCloseChanged: false, released: false, writer: false };
           sessions.push(s);
           if (!h!.ledger.acquireWriter(threadId, id, supervisor)) problems.push(`${id}: could not take the writer lock`);
           s.writer = true;
@@ -246,7 +248,7 @@ describe('plans, closes, amendments and rollovers against a model (§4, §5, §9
           // No repository in this world: a commit cannot be checked, a diff counts when it says something, a test id when it is plausible.
           const verified = kind === 'commit' ? false : kind === 'test' ? PLAUSIBLE_TESTS.includes(ref) : GOOD_DIFFS.includes(ref);
           const want = !t ? 422 : t.status === 'open' ? 200 : 409;
-          const flag = !verified ? 'evidence_unverified' : s.fileChanges === 0 ? 'no_file_change' : null;
+          const flag = !verified ? 'evidence_unverified' : s.fileChanges === 0 && !s.lastCloseChanged ? 'no_file_change' : null;
           const before = { session: sessionTotals(s), thread: aggregateTotals(sessions), seq: h!.t.rt.store.head().seq };
           const r = await call('task_done', s.id, { task_id: taskId, evidence: { kind, ref } });
           log.push(`close ${s.id}/${taskId} ${kind} "${ref}" fileChanges=${s.fileChanges} → ${r.status}${r.body?.flagged ? ` flagged ${r.body.flagged}` : ''}`);
@@ -263,6 +265,7 @@ describe('plans, closes, amendments and rollovers against a model (§4, §5, §9
           if (m.flag !== flag || m.evidenceVerified !== verified || m.fileChangesSinceLast !== s.fileChanges) problems.push(`task_done ${s.id}/${taskId}: audited ${JSON.stringify(m)}, rules say flag=${flag} verified=${verified} changes=${s.fileChanges}`);
           t!.status = 'done';
           t!.flagged = flag !== null;
+          s.lastCloseChanged = s.fileChanges > 0;
           s.fileChanges = 0;
           reached.closed++;
           if (flag) reached.flagged++;
