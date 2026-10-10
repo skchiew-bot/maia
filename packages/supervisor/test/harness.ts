@@ -303,6 +303,8 @@ export interface HarnessOptions {
   sidecarHold?: boolean;
   /** The fake sidecar ignores SIGTERM and never exits on its own (only SIGKILL ends it). */
   sidecarStubborn?: boolean;
+  /** The fake sidecar's first n starts crash (exit 1). */
+  sidecarCrashes?: number;
   /** Process types added to the stub registry. */
   types?: ProcessType[];
   /** aocd environment entries added to (or, with undefined, removed from) the default one (e.g. FAKE_SIDECAR_LINGER=1). */
@@ -382,6 +384,7 @@ export async function createHarness(o: HarnessOptions = {}) {
           sidecarLog,
           ...(o.sidecarHold ? ['--hold', sidecarHoldDir] : []),
           ...(o.sidecarStubborn ? ['--stubborn'] : []),
+          ...(o.sidecarCrashes !== undefined ? ['--crash', String(o.sidecarCrashes)] : []),
         ],
         envAllowlist: [...defaultConfig().supervisor.envAllowlist, 'FAKE_CLAUDE_LOG', 'FAKE_SIDECAR_LINGER'],
         credentialProfilesFile: profilesFile,

@@ -319,6 +319,43 @@ describe('turn end: crash, auto-continue, completion, credit cap', () => {
     await h.waitRevoked(token);
   });
 
+  it('starts a sidecar again when it crashes during its turn, with the same arguments and token (G-51)', async () => {
+    h = await createHarness({ sidecarHold: true, sidecarCrashes: 1, module: { sidecarRestartDelayMs: 10 } });
+    const gate = h.gate();
+    const id = await h.launch(`[[fake:gated,normal|gate=${gate.path}]] Work`);
+    await h.waitFor(() => h!.sidecarCalls().length === 2, 'the crashed sidecar to be started again');
+    const [first, second] = h.sidecarCalls();
+    expect(second!.args).toEqual(first!.args);
+    expect(second!.args).toEqual(expect.arrayContaining(['--session', id, '--state-dir']));
+    expect(second!.env.AOC_INGEST_TOKEN).toBe(first!.env.AOC_INGEST_TOKEN);
+    // The restarted sidecar is the turn's own: the end of the turn stops it, and nothing starts it again.
+    gate.open();
+    await h.waitFor(() => h!.sidecarSignals().length === 1, 'the restarted sidecar to be stopped at the turn end');
+    h.releaseSidecars();
+    await new Promise((r) => setTimeout(r, 200));
+    expect(h.sidecarCalls()).toHaveLength(2);
+  });
+
+  it('gives up after three restarts in a turn, and never restarts a sidecar that exited cleanly (G-51)', async () => {
+    h = await createHarness({ sidecarCrashes: 10, module: { sidecarRestartDelayMs: 10 } });
+    const gate = h.gate();
+    await h.launch(`[[fake:gated,normal|gate=${gate.path}]] Work`);
+    await h.waitFor(() => h!.sidecarCalls().length === 4, 'three restarts');
+    await new Promise((r) => setTimeout(r, 300));
+    expect(h.sidecarCalls()).toHaveLength(4);
+    gate.open();
+    await h.close();
+
+    // The default fake sidecar exits 0 at once, like a real one whose process ended: not a crash.
+    h = await createHarness({ module: { sidecarRestartDelayMs: 10 } });
+    const open = h.gate();
+    await h.launch(`[[fake:gated,normal|gate=${open.path}]] Work`);
+    await h.waitFor(() => h!.sidecarCalls().length === 1, 'the sidecar to start');
+    await new Promise((r) => setTimeout(r, 300));
+    expect(h.sidecarCalls()).toHaveLength(1);
+    open.open();
+  });
+
   it('blocks when the credit cap is reached during a turn and resumes on a top-up', async () => {
     h = await createHarness();
     const gate = h.gate();

@@ -5,7 +5,7 @@
  * rollover to a successor session on the same thread.
  */
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -318,6 +318,35 @@ describe('supervisor + claude-sim: operator controls', () => {
     // A stopped session is no one's writer any more.
     expect(h.events({ types: ['thread.writer_released'], sessionId })).toHaveLength(1);
     expect(h.store.verifyChain().ok).toBe(true);
+  });
+
+  it('a sidecar killed during its turn is started again and the session keeps its liveness (G-51)', async () => {
+    const dev = await h.user('builder', 'Sidecar');
+    const { projectId } = await h.project(dev, 'Telemetry');
+    const sessionId = await launch(dev, projectId, 'stall');
+    await waitFor(() => h.events({ types: ['tool.used'], sessionId }).some((e) => e.meta.toolName === 'Write'), { timeout: 60_000, what: 'the Write before the stall' });
+    const sidecars = () =>
+      readdirSync('/proc')
+        .filter((p) => /^\d+$/.test(p))
+        .filter((p) => {
+          try {
+            const argv = readFileSync(`/proc/${p}/cmdline`, 'utf8').split('\0');
+            return argv.some((a) => a.includes('sidecar')) && argv.includes(sessionId);
+          } catch {
+            return false;
+          }
+        })
+        .map(Number);
+    const [first] = await waitFor(() => (sidecars().length ? sidecars() : undefined), { timeout: 30_000, what: 'the sidecar' });
+    process.kill(first!, 'SIGKILL');
+    const [second] = await waitFor(() => sidecars().filter((p) => p !== first).length ? sidecars().filter((p) => p !== first) : undefined, { timeout: 30_000, what: 'a new sidecar' });
+    expect(second).not.toBe(first);
+    const live = await until(sessionId, dev, (d) => d.lifecycle === 'running', 'the session to keep running');
+    expect(live.liveness?.state).not.toBe('dead');
+
+    await h.api('POST', `/api/sessions/${sessionId}/stop`, { as: dev, body: { immediate: true, reason: 'Done' } });
+    await until(sessionId, dev, (d) => d.lifecycle === 'ended', 'the stopped session to end', 30_000);
+    await waitFor(() => (sidecars().length === 0 ? true : undefined), { timeout: 30_000, what: 'the sidecar to finish' });
   });
 
   it('a crash shows Dead; restart resumes the transcript and the session finishes', async () => {
