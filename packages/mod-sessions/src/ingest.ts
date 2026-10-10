@@ -363,6 +363,28 @@ export class HookDispatcher {
         this.d.engine.recordActivity(s.sessionId, 'stream', now);
         return { exitCode: 0 };
       }
+      case 'PermissionRequest': {
+        // In print mode nobody can approve: Claude Code refuses the call unless a hook decides, and AOC's does not.
+        // An observed (interactive) session may still be approved by its human, so only managed ones are recorded.
+        const toolName = typeof h.tool_name === 'string' ? h.tool_name : '';
+        if (s.mode === 'managed' && toolName) {
+          this.ctx.store.append({
+            type: 'tool.denied',
+            actor: this.agent(s.sessionId),
+            scope,
+            meta: { sessionId: s.sessionId, toolName: toolName.slice(0, 128), guard: 'permission-mode', decision: 'deny', decisionId: null },
+            payload: {
+              reason: `Claude Code refused the call: in print mode nobody can approve it (permission mode ${String(h.permission_mode ?? 'unknown').slice(0, 40)}).`,
+              inputSummary: summarize(h.tool_input),
+            },
+            source: 'hook',
+            sourceTs: req.sentAt,
+            idempotencyKey: key('permission-denied'),
+          });
+        }
+        this.d.engine.recordActivity(s.sessionId, 'stream', now);
+        return { exitCode: 0 };
+      }
       case 'Stop':
       case 'SubagentStop':
         if (s.mode === 'observed' && h.hook_event_name === 'Stop') this.setLifecycle(s, 'idle', 'turn_ended', key('lc'));

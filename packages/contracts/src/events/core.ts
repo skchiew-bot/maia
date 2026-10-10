@@ -223,7 +223,8 @@ export const ACTIVITY_EVENTS = [
   defineEvent({
     type: 'tool.denied',
     owner: 'sessions',
-    description: 'A PreToolUse guard denied a tool call; may have raised a decision card.',
+    description:
+      "A PreToolUse guard denied a tool call (may have raised a decision card), or Claude Code's own permission layer refused it in a managed print-mode session (guard 'permission-mode', G-53).",
     meta: meta({
       sessionId: zId,
       toolName: z.string().min(1).max(128),

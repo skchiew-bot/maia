@@ -214,6 +214,39 @@ describe('hook ingest', () => {
     expect(t.rt.store.readPayload(used)).toMatchObject({ filePaths: ['/tmp/repo/a.ts'] });
   });
 
+  it('records a permission request Claude Code refuses in print mode as tool.denied, once, never for an observed session (G-53)', async () => {
+    await setup();
+    const owner = t.user('builder');
+    launch(owner);
+    const headers = t.ingestHeaders('ses_A');
+    const body = hook('ses_A', CLAUDE_A, 'PermissionRequest', {
+      tool_name: 'Bash',
+      tool_input: { command: 'git push origin feature/x' },
+      permission_mode: 'acceptEdits',
+      permission_suggestions: [],
+    });
+    expect(await t.json<HookIngestResponse>('POST', '/ingest/hook', { headers, body })).toEqual({ exitCode: 0 });
+    await t.json('POST', '/ingest/hook', { headers, body }); // a retried delivery
+    const denied = t.rt.store.list({ types: ['tool.denied'] });
+    expect(denied).toHaveLength(1);
+    expect(denied[0]!.meta).toEqual({ sessionId: 'ses_A', toolName: 'Bash', guard: 'permission-mode', decision: 'deny', decisionId: null });
+    // The command is in the encrypted body, never in the chained meta.
+    expect(JSON.stringify(denied[0]!.meta)).not.toContain('git push');
+    expect(t.rt.store.readPayload(denied[0]!)).toMatchObject({
+      inputSummary: '{"command":"git push origin feature/x"}',
+      reason: expect.stringContaining('permission mode acceptEdits'),
+    });
+
+    // In an interactive (observed) session a person may still approve it: nothing is recorded.
+    const claudeObs = randomUUID();
+    await t.json('POST', '/ingest/hook', { headers: t.ingestHeaders('observer'), body: hook(null, claudeObs, 'SessionStart', { source: 'startup' }, 'observed') });
+    await t.json('POST', '/ingest/hook', {
+      headers: t.ingestHeaders('observer'),
+      body: hook(null, claudeObs, 'PermissionRequest', { tool_name: 'Bash', tool_input: { command: 'ls' }, permission_suggestions: [] }, 'observed'),
+    });
+    expect(t.rt.store.list({ types: ['tool.denied'] })).toHaveLength(1);
+  });
+
   it('scopes session tokens to their own session', async () => {
     await setup();
     const owner = t.user('builder');
