@@ -225,7 +225,7 @@ the chain is part of what is being protected. Three external records:
   - settings validation and launch fail-closed checks (O-15, partly built);
   - the sidecar's token and principal (O-3, G-44), and the turn-end HEAD record (G-25).
 - [ ] **Change control:** the provenance algorithm (O-27, G-25) and the service-owned clone; isolation of rollback
-      verification and its acceptance command (G-50 is open); break-glass audit; immutable pin tags.
+      verification and its acceptance command (run as argv without a shell, G-50); break-glass audit; immutable pin tags.
 - [ ] **Audit:** anchoring to off-host records; Verify reads the remote and refuses to anchor a chain that no
       longer matches; the erasure API's authorisation (O-28, open); the self-modification guard (path resolution,
       symlinks, hard links, the Bash analysis, the external log's hash chain); the sealed backup format, the key

@@ -1068,7 +1068,7 @@ flowchart LR
   the target on a new branch in the service-owned clone, checks it out into a throwaway directory and runs that
   state's acceptance command there through `runIsolated`, as the session user and without a credential (the
   registry also lists a `rollback-verify` type, which nothing launches). The result is reported back before anything
-  touches main. The acceptance command is a free command line (gap G-50). The Approver approves only a clean result, with a passkey. There is
+  touches main. The acceptance command runs as a program and its arguments, never through a shell (G-50). The Approver approves only a clean result, with a passkey. There is
   no one-tap rollback from a phone onto the main line. Execution preserves history: the target state is committed
   on top of main as a fast-forward, nothing is force-pushed, and `rollback.failed` records a rollback that could not
   be applied (main is then left unchanged).
@@ -1226,7 +1226,7 @@ Open items. Owners, fixes and acceptance tests are in the [gap list](compliance/
 
 1. **Host set-up.** Session isolation (G-01), the credential profiles and the promotion remotes (R-02, G-04) are
    built, and production refuses to start without them, but a host has to be configured and the self-check has to
-   pass (P-13, P-22). The rollback acceptance command runs through a shell as the session user (G-50).
+   pass (P-13, P-22).
 2. **Provenance proves presence, not authorship.** A commit traces only through a session the platform linked to a
    gate and a HEAD it recorded (G-25), but a session that checks a foreign commit out gets it recorded for itself
    (threat model T-22). Commit signing would close that; it is not built.

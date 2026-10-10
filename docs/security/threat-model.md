@@ -209,7 +209,7 @@ environment, is inside Zone 3**, whatever its name. Zone 3 therefore runs as a s
 | E | A credential profile reaches the wrong session | The profile comes from the process type only; the registry schema forbids credentials on read-only types, and the supervisor drops them for read-only sessions anyway | Built | — |
 | E | **A builder extracts the credential its session holds** (asks the model to print it encoded, reads `/proc/<pid>/environ`, copies a key file) and pushes from their own machine (R-02, [wave 2](review-wave2.md)) | A push credential is never in a session: a profile's `env` and `files` stay with aocd. A session pushes with `git push aoc …` through the supervisor's gateway, which accepts it only during a turn, checks every ref against the profile's `push.refs`, refuses `main`, `release/*`, tags and deletions, and forwards it upstream with the credential itself ([runbook §4, item 11](../runbooks/credential-isolation.md)). A session holds only the profile's read-only `session` part | Built | The gateway authenticates with the session's ingest token, which the model can read (T-3, R-01): it can push what `push.refs` allows, during a turn, and nothing more. Credentials that are not git (a deploy API, a cloud CLI) have no proxy yet. With `isolation: "none"` sessions can read the profiles file |
 | I | aocd secrets leak into sessions | `envAllowlist` copies only named variables, and never an `AOC_*` variable of aocd's own. With session isolation each session has its own `HOME`, `CLAUDE_CONFIG_DIR` and `TMPDIR` and runs as an unprivileged OS user that can read none of aocd's files (G-01) | Built | The default allowlist includes the Claude credentials (O-14). With `isolation: "none"` (development) a session shares the service user's home directory: its SSH keys, git and `gh` credentials and Claude login state |
-| E | **The agent runs code as the supervisor or aocd** through git hooks or config in its workspace, or through acceptance tests the supervisor executes | Privileged git never runs in an agent-writable tree ([T-2](#t-2-code-execution-through-git-configuration-in-agent-workspaces)): promotion, tags and rollback verification use a service-owned clone with hooks, fsmonitor, signing and transports off; AOC's other git in a project repository runs as the repository's owner, never with `safe.directory`; acceptance tests run as the session user, without a credential | Built (G-04) | Acceptance commands are free command lines run unprivileged (G-50); with isolation off the kernel git runs as aocd, with hardened flags |
+| E | **The agent runs code as the supervisor or aocd** through git hooks or config in its workspace, or through acceptance tests the supervisor executes | Privileged git never runs in an agent-writable tree ([T-2](#t-2-code-execution-through-git-configuration-in-agent-workspaces)): promotion, tags and rollback verification use a service-owned clone with hooks, fsmonitor, signing and transports off; AOC's other git in a project repository runs as the repository's owner, never with `safe.directory`; acceptance tests run as the session user, without a credential | Built (G-04, G-50) | Acceptance commands run as argv without a shell, unprivileged (G-50, closed), but a runner's own options can still load code the text names; with isolation off the kernel git runs as aocd, with hardened flags |
 | T | A workspace `.claude/settings*.json`, or the session's own `~/.claude/settings.json`, switches off AOC's hooks or overrides its environment (F-05) | Each turn fails closed (409 `workspace_settings_override` or `session_settings_override`) when those files set `disableAllHooks` or `env`, are not plain JSON or are links | Built | Other Claude Code state in the session's `HOME` is not checked |
 | E | A session works outside its project (R-09) | The working directory must resolve, through symlinks, inside the project's repository or its own directory under `supervisor.workspacesDir`, and is checked again every turn (409 `cwd_outside_project`) | Built | It limits where a session starts, not what its OS user may read |
 | D | A reactor replay launches a second session, or a launch for a typo creates a project | Launches carry an idempotency key chained on `session.launch_requested` (R-07); an unknown project is a 404 `unknown_project` and appends nothing | Built | — |
@@ -320,7 +320,7 @@ advisory, and the audit trail and metering have holes (R1, §3).
 
 ### T-2. Code execution through git configuration in agent workspaces
 
-**Closed by G-04 (merge `6adc600`), with one residual (G-50).** This was a critical finding of this review. An agent
+**Closed by G-04 (merge `6adc600`); its residual G-50 closed in `8aa2d53`.** This was a critical finding of this review. An agent
 can write `.git/config`, `.git/hooks/*` and `.gitattributes` in its own workspace. Git runs commands named in those
 files:
 
@@ -357,11 +357,13 @@ What the code does now:
   `core.sshCommand` change nothing: promotion and rollback still succeed), `packages/kernel/test/git.test.ts`,
   `packages/supervisor/test/isolated.test.ts` and `packages/hooks/test/prepush.test.ts`.
 - **Residual:**
-  - **G-50.** The acceptance command comes from the change record's `acceptanceTest` field (drafted by AI, affirmed
-    by a Builder), from the project's `acceptanceCommand`, or is `npm test`. It is a free command line run with
-    `sh -c`, and only its first word is checked against a list of known runners that includes `sh` and `bash`, so
-    `npm test; <anything>` passes. It runs as the session user in a throwaway checkout and holds no credential, so
-    what it can do is what the session could already do. The fix is a fixed runner with arguments and no shell.
+  - **G-50 (closed, `8aa2d53`).** The acceptance command comes from the change record's `acceptanceTest` field
+    (drafted by AI, affirmed by a Builder), from the project's `acceptanceCommand`, or is `npm test`. It used to run
+    with `sh -c`; it now runs as argv without a shell, and `acceptanceCommandOf` refuses shell syntax, `sh`, `bash`,
+    `npx` and `bunx`, scripts outside the checkout, inline code (`node -e`, `python -c`), run-any-program
+    subcommands (`npm exec`, `pnpm dlx`), URL and `data:` arguments and loader variables. What remains is that a
+    runner's own options can still load code the text names (`make --eval`, `pytest -p`); it runs as the session
+    user in a throwaway checkout with no credential, and the report shows the command before the Approver decides.
   - A promotion remote that is a local path runs its own hooks inside the push, with the credential. That is for
     tests and same-host mirrors; use ssh or https.
   - With `supervisor.isolation: "none"` (development) git in project repositories and the acceptance command run as
@@ -809,7 +811,7 @@ the [gap list](../compliance/gaps.md), which tracks owners and acceptance tests.
 **Highest priority, before any real credential or real data:**
 
 1. O-1 and O-2: a separate sandbox user, and no privileged git or repository code in agent-writable trees. Built
-   (G-01, G-04, G-49); what remains is the host set-up (P-13, P-22) and G-50.
+   (G-01, G-04, G-49, G-50); what remains is the host set-up (P-13, P-22).
 2. O-27: provenance from AOC's own records, not from commit messages. Built (G-25); commit signing would close the
    residual in T-22.
 3. O-8, decided (no sole-Approver exception): appoint a second Approver with a passkey, or the CEO's own
@@ -821,7 +823,7 @@ the [gap list](../compliance/gaps.md), which tracks owners and acceptance tests.
 | # | Item | Type | Owner | Related |
 | --- | --- | --- | --- | --- |
 | O-1 | Run every managed session (`claude`, hooks, MCP server, the model's tools) as a separate unprivileged OS user, or in a per-session container, with a home directory of its own that holds no credentials. **Done (G-01):** `supervisor.isolation: "user"` runs every turn as `sessionUser` (`readOnlySessionUser` for read-only types) with its own `HOME`, `CLAUDE_CONFIG_DIR` and `TMPDIR`; aocd runs as root; production refuses `"none"`, and a startup self-check refuses to start while a session user can read aocd's files. Sessions of one kind that run at the same time share an OS user, each turn in a PID and mount namespace of its own (G-49, done). Remaining: the host set-up (P-13) | Done + Ops | `supervisor`, Ops | T-2, T-3, T-4, R1, R6, gaps G-01, G-49, P-13 |
-| O-2 | Never run privileged git or tests in agent-writable trees. Inspect as the sandbox user with hardened flags; promote, tag and roll back from a service-owned clone fetched by SHA; never set `safe.directory=*`. **Done (G-04).** Remaining: the acceptance command still runs through a shell (G-50) | Done; follow-up change | `kernel` (git), `supervisor`, `mod-change`, `mod-ledger` | T-2, gaps G-04, G-50 |
+| O-2 | Never run privileged git or tests in agent-writable trees. Inspect as the sandbox user with hardened flags; promote, tag and roll back from a service-owned clone fetched by SHA; never set `safe.directory=*`. **Done (G-04).** The acceptance command runs as argv, never through a shell (G-50, done) | Done | `kernel` (git), `supervisor`, `mod-change`, `mod-ledger` | T-2, gaps G-04, G-50 |
 | O-3 | Give the sidecar its own principal, outside the `claude` environment. **Done (G-44):** a sidecar token per session, only in the sidecar's environment; sidecar reports refuse the session token, live and spooled; revoked once the last report is in. Out of the model's reach only with session isolation (O-1) | Change | `supervisor`, `sidecar`, `mod-identity`, `mod-sessions` | T-3, T-4, T-14, gap G-44 |
 | O-4 | Record hook-relayed events with the agent as actor. A managed `UserPromptSubmit` is recorded today as a supervisor prompt; the supervisor already records what it injects (`session.turn_started.injectedText`) | Change | `mod-sessions` | T-3, gap G-47 |
 | O-5 | Count usage only from the sidecar principal; record only the unseen part of a partially seen batch; reconcile each invocation against the supervisor-observed `result.modelUsage` (cumulative, so take differences). **Mostly done (G-44):** usage counts only from the sidecar principal, and every turn is reconciled (`usage.reconciled`, Tower `metering_discrepancy`). Remaining: record only the unseen part of a partially seen batch | Change | `mod-sessions`, `supervisor`, `mod-metering` | T-4, T-5, T-14, gaps G-44, G-51 |

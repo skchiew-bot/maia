@@ -110,3 +110,7 @@ Claude Code Stop hook (`.claude/settings.json`), which will not let a session fi
     user). Before pushing, run `scripts/check.sh` with the Node version CI uses (the `engines` minimum, which CI
     tests), `GIT_CONFIG_GLOBAL=/dev/null`, and run tests that touch file modes or ownership as a non-root user too
     (root ignores a read-only directory, including in cleanup).
+11. **Next steps given as prose the user had to answer by typing** (asked for several times). When a task finishes
+    (a PR merged, a gap closed) or the user asks what next, end with the choice itself: `AskUserQuestion` with 2–4
+    concrete options, the recommended one first and labelled "(Recommended)", each saying what it does and its size.
+    Never end such a turn with a list of options in text only.

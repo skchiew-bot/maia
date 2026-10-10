@@ -43,6 +43,7 @@ import {
   isClean,
   parseTestCounts,
   verificationReport,
+  type AcceptanceCommand,
   type VerificationOutcome,
 } from './acceptance';
 import {
@@ -1253,21 +1254,22 @@ export class ChangeEngine implements ChangeService {
         return {
           ...base,
           problem:
-            'no acceptance command: the change acceptance test is not a command, the project has no acceptanceCommand and there is no package.json',
+            'no acceptance command: the change acceptance test is not a command that runs without a shell, the project has no such acceptanceCommand and there is no package.json',
         };
       const started = this.ctx.clock.now();
+      // argv, never a shell: a change record's text cannot chain a second command (G-50).
       const res = await this.isolated({
         cwd: dir,
-        command: ['sh', '-c', cmd.command],
+        command: cmd.command.argv,
         credentialProfile: null,
         timeoutMs: this.o.verifyTimeoutMs,
-        env: { CI: '1', HOME: join(root, 'home'), TMPDIR: join(root, 'tmp') },
+        env: { ...cmd.command.env, CI: '1', HOME: join(root, 'home'), TMPDIR: join(root, 'tmp') },
         sandbox: { handOver: [root] },
       });
       const output = [res.stdout, res.stderr].filter((s) => s.trim()).join('\n');
       return {
         ...base,
-        command: cmd.command,
+        command: cmd.command.text,
         commandSource: cmd.source,
         exitCode: res.exitCode,
         durationMs: this.ctx.clock.now() - started,
@@ -1284,18 +1286,22 @@ export class ChangeEngine implements ChangeService {
   private acceptanceCommandFor(
     r: RollbackRow,
     dir: string,
-  ): { command: string; source: 'change' | 'project' | 'package.json' } | null {
+  ): { command: AcceptanceCommand; source: 'change' | 'project' | 'package.json' } | null {
     if (r.change_id) {
       const fromChange = acceptanceCommandOf(
         this.read.fields(r.change_id).find((f) => f.field === 'acceptanceTest')?.value,
       );
       if (fromChange) return { command: fromChange, source: 'change' };
     }
-    const project =
-      this.o.projects[r.project_id]?.acceptanceCommand ?? this.read.project(r.project_id)?.acceptance_command;
+    const project = acceptanceCommandOf(
+      this.o.projects[r.project_id]?.acceptanceCommand ?? this.read.project(r.project_id)?.acceptance_command,
+    );
     if (project) return { command: project, source: 'project' };
     if (existsSync(join(dir, 'package.json')))
-      return { command: 'npm test --silent', source: 'package.json' };
+      return {
+        command: { text: 'npm test --silent', argv: ['npm', 'test', '--silent'], env: {} },
+        source: 'package.json',
+      };
     return null;
   }
 
