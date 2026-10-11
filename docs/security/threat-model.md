@@ -627,8 +627,9 @@ while it processed untrusted input, or distillation over sessions that read inje
     level) (Built).
   - Lessons are scoped, never global, and retire when unused (Built).
   - Payoff tracking makes useless lessons visible (Built).
-  - Show the provenance (source errors and sessions) on the card, cap the text length, highlight invisible and
-    confusable characters, and never auto-propose from sessions that processed untrusted input (O-17).
+  - The card shows the provenance (source errors and sessions, flagging those that read untrusted input), text is
+    length-capped, invisible characters and mixed-alphabet words are marked, and the AI never auto-proposes from
+    sessions that read untrusted input (O-17, Built).
 - **Residual:** reviewer fatigue. Keep the volume low through retirement and scoping (R10).
 
 ### T-16. Per-person blame makes error reporting go dark
@@ -840,7 +841,7 @@ the [gap list](../compliance/gaps.md), which tracks owners and acceptance tests.
 | O-14 | Claude credentials reach every session through `envAllowlist` and are readable by the model. Restrict egress, prefer per-host login state over environment tokens where possible, and evaluate Claude Code's tool sandboxing on the deployed version | **Decision** + change | CEO, `supervisor` | T-3, gap P-20 |
 | O-15 | Launch fail-closed checks. **Done:** generated settings are validated, a turn aborts unless `aoc` is `connected`, and a turn with no `SessionStart` within `supervisor.sessionStartTimeoutSec` is aborted (`7d1369e`) | Done | `supervisor`, `hooks` | T-20, gap G-47 |
 | O-16 | Rate limits: per-session decision-card creation, ingest, uploads per Requester, SSE connections per user. Also stream portal uploads to disk instead of parsing up to about 200 MiB in memory. **Done:** body caps, the observer-token limits (R-13), the evidence-pack and manual-backup limits, the push gateway's limit, at most `decisions.maxOpenAgentDecisionsPerSession` open agent cards per session (`7d1369e`), and a managed session's ingest per session and token kind (`b323871`) | Change | `mod-sessions`, `mod-decisions`, `mod-intake`, `daemon` | T-17, §3, gap G-47 |
-| O-17 | Lesson and playbook hygiene: provenance on the card, text length caps, highlighted invisible characters, no auto-proposal from untrusted-input sessions | Change | `mod-learning`, `mod-registry` | T-15, gap G-47 |
+| O-17 | Lesson and playbook hygiene. **Done** (`c5cf2ef`): the card and the proposal event name the sources (a lesson's error count and sessions, a playbook's sessions and ticket) and flag those that read untrusted input (read-only or triage sessions, requester UAT comments); lesson and playbook text is length-capped and a playbook holds at most 100 steps; the console marks hidden characters and mixed-alphabet words on every decision card, the lesson drawer and the playbook list, and a playbook that hides any is decided on its card; the `learning.ai` job never proposes from a class that recurred in an untrusted session | Done | `mod-learning`, `mod-registry` | T-15, gap G-47 |
 | O-18 | FX session: confirm the 1700 end-of-day middle rate (the default: page scrape cross-checked with the API, from 18:00 MYT) or mandate the 1200 noon rate (from 13:00, API figure only, no page cross-check). The research defaults are built: explicit `?session=`, 4-dp comparison, 1.25 % soft flag, alert after 3 weekdays without a live rate | Decision (CEO, FinOps) | CEO; `mod-fx` | R13, gaps G-36, P-19 |
 | O-19 | Extend passkeys beyond go-live, rollback and break-glass to every Approver gate (fix plan, main/production/data change requests, protected operations, lesson binding, top-ups) | **Decision (CEO)** | CEO, `mod-identity` | T-8, gap P-20 |
 | O-20 | Durability: keep `synchronous = NORMAL` (may lose the last transactions on power loss) or switch `aoc.db` to `FULL` | Decision (architect) | Platform architect | ADR-0002, gap P-20 |
