@@ -8,6 +8,22 @@ const zKeyId = z.string().regex(/^[0-9a-f]{16}$/);
 const zCount = z.number().int().min(0);
 export const BACKUP_STAGES = ['key', 'snapshot', 'package', 'copy', 'prune'] as const;
 
+/** Why a scope is crypto-shredded (`body.erased.reason`). */
+export const ERASURE_REASONS = ['pdpa_request', 'secret_leak', 'retention', 'other'] as const;
+export type ErasureReason = (typeof ERASURE_REASONS)[number];
+/** At most this many scopes in one erasure request. */
+export const MAX_ERASURE_SCOPES = 20;
+/**
+ * A body scope id as the erasure API takes it: an id (ses_…, tkt_…, user:usr_…, a module label, a project id),
+ * never a path segment. The body store maps odd ids to hashes (F-04), and the API refuses them anyway.
+ */
+export const zScopeId = z
+  .string()
+  .min(1)
+  .max(64)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9_.:#@-]*$/, 'a scope id starts with a letter or a digit')
+  .refine((s) => !s.includes('..') && !s.endsWith('.'), 'a scope id is an id, not a path');
+
 export const AUDIT_EVENTS = [
   defineEvent({
     type: 'anchor.created',
@@ -53,8 +69,22 @@ export const AUDIT_EVENTS = [
     type: 'body.erased',
     owner: 'audit',
     description: 'Crypto-shred: a body-store key scope destroyed (PDPA erasure / leaked secret). Chain stays valid.',
-    meta: meta({ scopeId: z.string().max(64), reason: z.enum(['pdpa_request', 'secret_leak', 'retention', 'other']), erasedBy: z.string().max(64), bodyCount: z.number().int().min(0), decisionId: zId.nullable() }),
+    meta: meta({ scopeId: z.string().max(64), reason: z.enum(ERASURE_REASONS), erasedBy: z.string().max(64), bodyCount: z.number().int().min(0), decisionId: zId.nullable() }),
     payload: null,
+  }),
+  defineEvent({
+    type: 'erasure.requested',
+    owner: 'audit',
+    description:
+      'Someone asked for named body scopes to be crypto-shredded (O-28). The request is an erasure_request decision card for the Approver; an erasure needs its approval.',
+    meta: meta({
+      requestId: zId,
+      decisionId: zId,
+      scopeIds: z.array(zScopeId).min(1).max(MAX_ERASURE_SCOPES),
+      reason: z.enum(ERASURE_REASONS),
+    }),
+    /** Why, in the requester's words. */
+    payload: payload({ rationale: z.string() }),
   }),
   defineEvent({
     type: 'selfmod.blocked',

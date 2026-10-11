@@ -5,6 +5,8 @@ import type {
   AuditEventPageDTO,
   AuditHealthDTO,
   EraseResultDTO,
+  ErasureReason,
+  ErasureRequestDTO,
   VerifyReportDTO,
 } from '@aoc/contracts';
 import { payloadAccess } from '../src';
@@ -16,12 +18,25 @@ afterEach(async () => {
   a = null;
 });
 
+/** The Builder asks to erase `scopeIds` and the Approver approves: the decision id an erasure needs (O-28). */
+async function approvedErasure(at: AuditTest, scopeIds: string[], reason: ErasureReason = 'pdpa_request'): Promise<string> {
+  const req = await at.t.json<ErasureRequestDTO>('POST', '/api/audit/erasure-requests', {
+    headers: at.builder.headers,
+    body: { scopeIds, reason, rationale: 'The data subject asked by email on 2026-10-01' },
+    expect: 201,
+  });
+  await at.t.decisions!.resolve(req.decisionId, { optionId: 'approve' }, at.approver.user);
+  return req.decisionId;
+}
+
 describe('permissions', () => {
   const routes: {
     method: string;
     path: string;
-    perm: 'audit.view' | 'audit.verify' | 'audit.erase';
+    perm: 'audit.view' | 'audit.verify' | 'audit.erase' | 'audit.erase_request';
     body?: unknown;
+    /** The status a permitted caller gets (the erase body names no approved request). */
+    ok?: number;
   }[] = [
     { method: 'GET', path: '/api/audit/events', perm: 'audit.view' },
     { method: 'GET', path: '/api/audit/events/1', perm: 'audit.view' },
@@ -33,18 +48,26 @@ describe('permissions', () => {
       method: 'POST',
       path: '/api/audit/erase',
       perm: 'audit.erase',
-      body: { scopeId: 'ses_nobody', reason: 'retention' },
+      body: { scopeId: 'ses_nobody', decisionId: 'dec_nope' },
+      ok: 422,
+    },
+    {
+      method: 'POST',
+      path: '/api/audit/erasure-requests',
+      perm: 'audit.erase_request',
+      body: { scopeIds: ['ses_nobody'], reason: 'retention', rationale: 'kept past its period' },
+      ok: 201,
     },
   ];
 
-  it.each(routes)('$method $path requires $perm', async ({ method, path, perm, body }) => {
+  it.each(routes)('$method $path requires $perm', async ({ method, path, perm, body, ok = 200 }) => {
     a = await auditRuntime();
     const { t } = a;
     expect((await t.request(method, path, { body })).status).toBe(401);
     expect((await t.request(method, path, { headers: a.requester.headers, body })).status).toBe(403);
     const builder = await t.request(method, path, { headers: a.builder.headers, body });
-    expect(builder.status).toBe(perm === 'audit.erase' ? 403 : 200);
-    expect((await t.request(method, path, { headers: a.approver.headers, body })).status).toBe(200);
+    expect(builder.status).toBe(perm === 'audit.erase' ? 403 : ok);
+    expect((await t.request(method, path, { headers: a.approver.headers, body })).status).toBe(ok);
   });
 });
 
@@ -168,7 +191,7 @@ describe('audit read API', () => {
 
     await t.json('POST', '/api/audit/erase', {
       headers: a.approver.headers,
-      body: { scopeId: 'ses_a', reason: 'pdpa_request' },
+      body: { scopeId: 'ses_a', decisionId: await approvedErasure(a, ['ses_a']) },
     });
     expect(
       await t.json<AuditEventDetailDTO>('GET', `/api/audit/events/${e.seq}`, { headers: a.approver.headers }),
@@ -295,24 +318,25 @@ describe('erasure (crypto-shred)', () => {
     const keep = nudge(t, 'ses_keep', 'keep me');
     await t.json('POST', '/api/audit/anchor', { headers: a.approver.headers });
 
+    const decisionId = await approvedErasure(a, ['ses_pdpa']);
     expect(
       (
         await t.request('POST', '/api/audit/erase', {
           headers: a.builder.headers,
-          body: { scopeId: 'ses_pdpa', reason: 'pdpa_request' },
+          body: { scopeId: 'ses_pdpa', decisionId },
         })
       ).status,
     ).toBe(403);
     const res = await t.json<EraseResultDTO>('POST', '/api/audit/erase', {
       headers: a.approver.headers,
-      body: { scopeId: 'ses_pdpa', reason: 'pdpa_request' },
+      body: { scopeId: 'ses_pdpa', decisionId },
     });
     expect(res).toMatchObject({
       scopeId: 'ses_pdpa',
       reason: 'pdpa_request',
       bodiesErased: 2,
       eventsInScope: 2,
-      decisionId: null,
+      decisionId,
     });
     const erased = t.rt.store.get(res.eventSeq)!;
     expect(erased.type).toBe('body.erased');
@@ -321,7 +345,7 @@ describe('erasure (crypto-shred)', () => {
       reason: 'pdpa_request',
       erasedBy: a.approver.user.id,
       bodyCount: 2,
-      decisionId: null,
+      decisionId,
     });
     expect(erased.actor).toEqual({ kind: 'human', id: a.approver.user.id });
 
@@ -336,31 +360,43 @@ describe('erasure (crypto-shred)', () => {
 
     const again = await t.json<EraseResultDTO>('POST', '/api/audit/erase', {
       headers: a.approver.headers,
-      body: { scopeId: 'ses_pdpa', reason: 'retention' },
+      body: { scopeId: 'ses_pdpa', decisionId: await approvedErasure(a, ['ses_pdpa'], 'retention') },
     });
-    expect(again.bodiesErased).toBe(0);
+    expect(again).toMatchObject({ reason: 'retention', bodiesErased: 0 });
   });
 
-  it('validates the request and the referenced decision', async () => {
+  it('validates the request body', async () => {
+    a = await auditRuntime();
+    const { t } = a;
+    for (const body of [
+      { scopeId: 'ses a', decisionId: 'dec_x' },
+      { scopeId: 'ses_a' },
+      { scopeId: 'ses_a', decisionId: 'dec_x', reason: 'because' },
+      { scopeId: 'ses_a', decisionId: 'dec_x', extra: 1 },
+    ])
+      expect((await t.request('POST', '/api/audit/erase', { headers: a.approver.headers, body })).status).toBe(422);
+    for (const body of [
+      { scopeIds: [], reason: 'retention', rationale: 'x' },
+      { scopeIds: ['ses_a', 'ses_a'], reason: 'retention', rationale: 'x' },
+      { scopeIds: ['../x'], reason: 'retention', rationale: 'x' },
+      { scopeIds: ['ses_a'], reason: 'retention', rationale: '  ' },
+    ])
+      expect(
+        (await t.request('POST', '/api/audit/erasure-requests', { headers: a.builder.headers, body })).status,
+      ).toBe(422);
+  });
+
+  it('erases only under an approved erasure request that names the scope, once, by someone other than its requester (O-28, G-47)', async () => {
     a = await auditRuntime();
     const { t } = a;
     const h = a.approver.headers;
-    for (const body of [
-      { scopeId: 'ses a', reason: 'pdpa_request' },
-      { scopeId: 'ses_a', reason: 'because' },
-      { scopeId: 'ses_a', reason: 'other', extra: 1 },
-    ]) {
-      expect((await t.request('POST', '/api/audit/erase', { headers: h, body })).status).toBe(422);
-    }
-    expect(
-      (
-        await t.request('POST', '/api/audit/erase', {
-          headers: h,
-          body: { scopeId: 'ses_a', reason: 'secret_leak', decisionId: 'dec_nope' },
-        })
-      ).status,
-    ).toBe(422);
-    const card = t.decisions!.request(
+    nudge(t, 'ses_a', 'a leaked token');
+    nudge(t, 'ses_b', 'another');
+    const erase = (body: Record<string, unknown>, headers = h) => t.request('POST', '/api/audit/erase', { headers, body });
+
+    // Any other decision, even a resolved one, does not authorise an erasure.
+    expect((await erase({ scopeId: 'ses_a', decisionId: 'dec_nope' })).status).toBe(422);
+    const other = t.decisions!.request(
       {
         kind: 'protected_operation',
         title: 'Erase leaked token',
@@ -372,20 +408,79 @@ describe('erasure (crypto-shred)', () => {
       },
       { kind: 'human', id: a.builder.user.id },
     );
-    expect(
-      (
-        await t.request('POST', '/api/audit/erase', {
-          headers: h,
-          body: { scopeId: 'ses_a', reason: 'secret_leak', decisionId: card.id },
-        })
-      ).status,
-    ).toBe(409);
-    await t.decisions!.resolve(card.id, { optionId: 'yes' }, a.approver.user);
+    await t.decisions!.resolve(other.id, { optionId: 'yes' }, a.approver.user);
+    expect(await (await erase({ scopeId: 'ses_a', decisionId: other.id })).json()).toMatchObject({
+      error: { code: 'not_an_erasure_request' },
+    });
+
+    // The request is a card for the Approver that its requester cannot resolve; open or rejected, it erases nothing.
+    const req = await t.json<ErasureRequestDTO>('POST', '/api/audit/erasure-requests', {
+      headers: a.builder.headers,
+      body: { scopeIds: ['ses_a'], reason: 'secret_leak', rationale: 'A token was pasted into a prompt' },
+      expect: 201,
+    });
+    expect(req).toMatchObject({ scopeIds: ['ses_a'], reason: 'secret_leak', requesterId: a.builder.user.id, eventsInScope: { ses_a: 1 } });
+    const card = t.decisions!.get(req.decisionId)!;
+    expect(card).toMatchObject({ kind: 'erasure_request', requiredRole: 'approver', requesterId: a.builder.user.id });
+    expect(t.decisions!.canResolve(card, a.builder.user).ok).toBe(false);
+    const requested = t.rt.store.list({ types: ['erasure.requested'] })[0]!;
+    expect(requested.meta).toEqual({ requestId: req.requestId, decisionId: req.decisionId, scopeIds: ['ses_a'], reason: 'secret_leak' });
+    expect(requested.actor).toEqual({ kind: 'human', id: a.builder.user.id });
+    expect(t.rt.store.readPayload(requested)).toEqual({ rationale: 'A token was pasted into a prompt' });
+    expect(await (await erase({ scopeId: 'ses_a', decisionId: req.decisionId })).json()).toMatchObject({
+      error: { code: 'erasure_not_approved' },
+    });
+
+    const rejected = await t.json<ErasureRequestDTO>('POST', '/api/audit/erasure-requests', {
+      headers: a.builder.headers,
+      body: { scopeIds: ['ses_b'], reason: 'other', rationale: 'not needed after all' },
+      expect: 201,
+    });
+    await t.decisions!.resolve(rejected.decisionId, { optionId: 'reject' }, a.approver.user);
+    expect((await erase({ scopeId: 'ses_b', decisionId: rejected.decisionId })).status).toBe(409);
+
+    await t.decisions!.resolve(req.decisionId, { optionId: 'approve' }, a.approver.user);
+    // Approved, but only for the scope and the reason it names.
+    expect(await (await erase({ scopeId: 'ses_b', decisionId: req.decisionId })).json()).toMatchObject({
+      error: { code: 'scope_not_approved' },
+    });
+    expect(await (await erase({ scopeId: 'ses_a', decisionId: req.decisionId, reason: 'retention' })).json()).toMatchObject({
+      error: { code: 'reason_mismatch' },
+    });
     const res = await t.json<EraseResultDTO>('POST', '/api/audit/erase', {
       headers: h,
-      body: { scopeId: 'ses_a', reason: 'secret_leak', decisionId: card.id },
+      body: { scopeId: 'ses_a', decisionId: req.decisionId },
     });
-    expect(res.decisionId).toBe(card.id);
-    expect(t.rt.store.get(res.eventSeq)!.meta.decisionId).toBe(card.id);
+    expect(res).toMatchObject({ scopeId: 'ses_a', reason: 'secret_leak', decisionId: req.decisionId, bodiesErased: 1 });
+    expect(t.rt.store.get(res.eventSeq)!.meta).toMatchObject({ decisionId: req.decisionId, reason: 'secret_leak' });
+
+    // An approval is spent once its scope is erased: what is written to the scope later needs a new request.
+    nudge(t, 'ses_a', 'written after the erasure');
+    expect(await (await erase({ scopeId: 'ses_a', decisionId: req.decisionId })).json()).toMatchObject({
+      error: { code: 'already_erased' },
+    });
+  });
+
+  it('the Approver who requested an erasure cannot carry it out (O-28, G-47)', async () => {
+    a = await auditRuntime();
+    const { t } = a;
+    const second = t.user('approver', 'Second approver');
+    const req = await t.json<ErasureRequestDTO>('POST', '/api/audit/erasure-requests', {
+      headers: a.approver.headers,
+      body: { scopeIds: ['ses_a'], reason: 'retention', rationale: 'kept past its period' },
+      expect: 201,
+    });
+    await t.decisions!.resolve(req.decisionId, { optionId: 'approve' }, second.user);
+    const mine = await t.request('POST', '/api/audit/erase', {
+      headers: a.approver.headers,
+      body: { scopeId: 'ses_a', decisionId: req.decisionId },
+    });
+    expect(mine.status).toBe(403);
+    expect(await mine.json()).toMatchObject({ error: { code: 'requester_cannot_erase' } });
+    const theirs = await t.request('POST', '/api/audit/erase', {
+      headers: second.headers,
+      body: { scopeId: 'ses_a', decisionId: req.decisionId },
+    });
+    expect(theirs.status).toBe(200);
   });
 });

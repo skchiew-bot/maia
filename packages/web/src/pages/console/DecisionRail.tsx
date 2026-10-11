@@ -28,6 +28,7 @@ export const DECISION_KIND_WORD: Record<DecisionKind, string> = {
   triage_reconciliation: 'Triage reconciliation',
   low_confidence_diagnosis: 'Low-confidence diagnosis',
   uat_signoff: 'UAT sign-off',
+  erasure_request: 'Erasure request',
 };
 
 const ROLE_WORD: Record<Role, string> = { approver: 'An Approver', builder: 'A Builder', requester: 'The requester' };

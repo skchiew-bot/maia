@@ -10,6 +10,8 @@ export const auditProjector: Projector = {
     'aud_verifications',
     'aud_config',
     'aud_erasures',
+    'aud_erasure_requests',
+    'aud_erasure_request_scopes',
     'aud_selfmod',
     'aud_backups',
     'aud_backup_failures',
@@ -27,6 +29,11 @@ export const auditProjector: Projector = {
     `CREATE TABLE IF NOT EXISTS aud_erasures (
       event_seq INTEGER PRIMARY KEY, scope_id TEXT NOT NULL, reason TEXT NOT NULL, erased_by TEXT NOT NULL, body_count INTEGER NOT NULL,
       decision_id TEXT, at TEXT NOT NULL)`,
+    `CREATE TABLE IF NOT EXISTS aud_erasure_requests (
+      request_id TEXT PRIMARY KEY, decision_id TEXT NOT NULL UNIQUE, reason TEXT NOT NULL, requester_id TEXT NOT NULL,
+      event_seq INTEGER NOT NULL, at TEXT NOT NULL)`,
+    `CREATE TABLE IF NOT EXISTS aud_erasure_request_scopes (
+      request_id TEXT NOT NULL, scope_id TEXT NOT NULL, PRIMARY KEY (request_id, scope_id))`,
     'CREATE TABLE IF NOT EXISTS aud_selfmod (event_seq INTEGER PRIMARY KEY, session_id TEXT NOT NULL, rule TEXT NOT NULL, path_hash TEXT NOT NULL, at TEXT NOT NULL)',
     `CREATE TABLE IF NOT EXISTS aud_backups (
       event_seq INTEGER PRIMARY KEY, backup_id TEXT NOT NULL, at TEXT NOT NULL, file TEXT NOT NULL, bytes INTEGER NOT NULL,
@@ -39,6 +46,7 @@ export const auditProjector: Projector = {
     'chain.verified',
     'config.changed',
     'body.erased',
+    'erasure.requested',
     'selfmod.blocked',
     'backup.completed',
     'backup.failed',
@@ -103,6 +111,19 @@ export const auditProjector: Projector = {
           e.ts,
         );
         break;
+      case 'erasure.requested': {
+        db.prepare('INSERT OR IGNORE INTO aud_erasure_requests VALUES (?,?,?,?,?,?)').run(
+          m.requestId as string,
+          m.decisionId as string,
+          m.reason as string,
+          e.actor.id,
+          e.seq,
+          e.ts,
+        );
+        const scope = db.prepare('INSERT OR IGNORE INTO aud_erasure_request_scopes VALUES (?,?)');
+        for (const s of m.scopeIds as string[]) scope.run(m.requestId as string, s);
+        break;
+      }
       case 'selfmod.blocked':
         db.prepare('INSERT OR IGNORE INTO aud_selfmod VALUES (?,?,?,?,?)').run(
           e.seq,

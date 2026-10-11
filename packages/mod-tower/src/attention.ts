@@ -51,13 +51,18 @@ export const DECISION_LABEL: Record<DecisionKind, string> = {
   triage_reconciliation: 'Triage disagreement',
   low_confidence_diagnosis: 'Low-confidence diagnosis',
   uat_signoff: 'UAT sign-off',
+  erasure_request: 'Erasure request',
 };
 
-/** Judgement calls with several real options: the inline action opens them for review instead of approving. */
+/**
+ * Judgement calls with several real options, and erasures, which cannot be undone: the inline action opens them for
+ * review instead of approving.
+ */
 const REVIEW_KINDS: ReadonlySet<DecisionKind> = new Set<DecisionKind>([
   'fx_discrepancy',
   'triage_reconciliation',
   'low_confidence_diagnosis',
+  'erasure_request',
 ]);
 
 const STAGE_LABEL: Record<TicketStage, string> = {
