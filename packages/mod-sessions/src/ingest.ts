@@ -16,7 +16,7 @@ import {
 import { HttpError, readJson, requireIngest, sha256hex, type App, type Ctx, type ModuleContext } from '@aoc/kernel';
 import { z } from 'zod';
 import type { SessionsEngine } from './engine';
-import type { ObserverLimiter } from './rate-limit';
+import type { ObserverLimiter, SessionLimiter } from './rate-limit';
 
 /**
  * A client timestamp is chained in clear (as an event's sourceTs or a meta field) and parsed by projectors, so it must
@@ -196,11 +196,12 @@ export interface IngestDeps {
   ctx: ModuleContext;
   engine: SessionsEngine;
   observerLimiter: ObserverLimiter;
+  sessionLimiter: SessionLimiter;
 }
 
-function rateLimited(c: Ctx | null, waitMs: number, what: string): HttpError {
+function rateLimited(c: Ctx | null, waitMs: number, what: string, limit = 'Observer token'): HttpError {
   c?.header('retry-after', String(Math.max(1, Math.ceil(waitMs / 1000))));
-  return new HttpError(429, 'rate_limited', `Observer token rate limit: too many ${what}`, { retryAfterMs: waitMs });
+  return new HttpError(429, 'rate_limited', `${limit} rate limit: too many ${what}`, { retryAfterMs: waitMs });
 }
 
 export class HookDispatcher {
@@ -471,15 +472,22 @@ export class HookDispatcher {
 export function registerIngestRoutes(app: App, d: IngestDeps): void {
   const { ctx, engine } = d;
   const hooks = new HookDispatcher(d);
-  /** One request off an observer token's budget (`cost` for a spool flush), before its body is parsed. */
-  const chargeObserver = (c: Ctx, cost = 1) => {
+  /**
+   * One request off the principal's budget (`cost` for a spool flush), before its body is parsed: per observer token,
+   * or per managed session and token kind. The system token is not limited.
+   */
+  const charge = (c: Ctx, cost = 1) => {
     const p = c.get('ingest');
-    if (p?.kind !== 'observer') return;
-    const wait = d.observerLimiter.request(p.tokenId, cost);
-    if (wait) throw rateLimited(c, wait, 'requests');
+    if (p?.kind === 'observer') {
+      const wait = d.observerLimiter.request(p.tokenId, cost);
+      if (wait) throw rateLimited(c, wait, 'requests');
+    } else if (p?.kind === 'session' || p?.kind === 'sidecar') {
+      const wait = d.sessionLimiter.request(p.kind, p.sessionId, cost);
+      if (wait) throw rateLimited(c, wait, 'requests', 'Session');
+    }
   };
   app.use('/ingest/*', async (c, next) => {
-    chargeObserver(c);
+    charge(c);
     await next();
   });
 
@@ -623,7 +631,7 @@ export function registerIngestRoutes(app: App, d: IngestDeps): void {
     const body = await readJson(c, SpoolSchema);
     // Hooks, observed hooks and sidecars all spool; replay() holds each item to its live route's principal rules.
     const p = requireIngest(c, { allowObserver: true, allowSidecar: true });
-    if (body.items.length > 1) chargeObserver(c, body.items.length - 1);
+    if (body.items.length > 1) charge(c, body.items.length - 1);
     const res: SpoolFlushResponse = { accepted: 0, duplicates: 0, rejected: 0 };
     for (const item of body.items as SpoolItem[]) {
       try {
