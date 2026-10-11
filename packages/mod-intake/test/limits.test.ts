@@ -160,3 +160,77 @@ describe('intake submissions per Requester (O-16)', () => {
     expect((await submitAs(a, 'Next hour')).status).toBe(201);
   });
 });
+
+describe('portal uploads are read as a stream (O-16)', () => {
+  const BOUNDARY = 'aocTestBoundary';
+  const fieldPart = (name: string, value: string) =>
+    `--${BOUNDARY}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`;
+  const filePart = (name: string, type: string) =>
+    `--${BOUNDARY}\r\nContent-Disposition: form-data; name="files"; filename="${name}"\r\nContent-Type: ${type}\r\n\r\n`;
+  const textFields = fieldPart('title', 'Blank form') + fieldPart('description', 'The claim form goes blank after I attach a file.');
+
+  /** A body that sends `head` and then never ends: a route that waited for the whole form would never answer. */
+  function endless(head: Buffer) {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(head));
+      },
+      pull: () => new Promise<void>(() => {}),
+      cancel() {
+        cancelled = true;
+      },
+    });
+    return { body, cancelled: () => cancelled };
+  }
+  const post = (headers: Record<string, string>, body: ReadableStream<Uint8Array> | string) =>
+    t.app.request('/portal/api/intakes', {
+      method: 'POST',
+      headers: { ...headers, 'content-type': `multipart/form-data; boundary=${BOUNDARY}` },
+      body,
+      duplex: 'half',
+    } as RequestInit);
+
+  it('refuses a file whose magic bytes are not an accepted type before the rest of the request arrives (O-16, G-47)', async () => {
+    await setup();
+    const { headers } = t.user('requester');
+    const upload = endless(Buffer.concat([Buffer.from(textFields + filePart('run.png', 'image/png')), Buffer.from('#!/bin/sh\necho owned\n')]));
+    const res = await post(headers, upload.body);
+    expect(res.status).toBe(415);
+    expect(await res.json()).toMatchObject({ error: { code: 'unsupported_media' } });
+    expect(upload.cancelled()).toBe(true);
+    expect(t.rt.store.list({ types: ['intake.submitted'] })).toHaveLength(0);
+  });
+
+  it('refuses a file once it passes the cap for its kind, without reading the rest (O-16, G-47)', async () => {
+    await setup(); // images are capped at 1024 bytes here
+    const { headers } = t.user('requester');
+    const upload = endless(Buffer.concat([Buffer.from(textFields + filePart('big.png', 'image/png')), PNG, Buffer.alloc(1100)]));
+    const res = await post(headers, upload.body);
+    expect(res.status).toBe(413);
+    expect(await res.json()).toMatchObject({ error: { code: 'too_large' } });
+    expect(upload.cancelled()).toBe(true);
+  });
+
+  it('refuses one file too many at its first byte (O-16, G-47)', async () => {
+    await setup(); // at most 3 attachments here
+    const { headers } = t.user('requester');
+    const three = [1, 2, 3].map((i) => Buffer.concat([Buffer.from(filePart(`s${i}.png`, 'image/png')), PNG, Buffer.from('\r\n')]));
+    const upload = endless(Buffer.concat([Buffer.from(textFields), ...three, Buffer.from(filePart('s4.png', 'image/png')), PNG.subarray(0, 1)]));
+    const res = await post(headers, upload.body);
+    expect(res.status).toBe(413);
+    expect(await res.json()).toMatchObject({ error: { code: 'too_many_files' } });
+    expect(upload.cancelled()).toBe(true);
+  });
+
+  it('answers 400 for a body that is not a valid multipart form, and 415 for one that is not multipart at all', async () => {
+    await setup();
+    const { headers } = t.user('requester');
+    const malformed = await post(headers, 'not a form');
+    expect(malformed.status).toBe(400);
+    expect(await malformed.json()).toMatchObject({ error: { code: 'invalid_form' } });
+    const json = await t.app.request('/portal/api/intakes', { method: 'POST', headers: { ...headers, 'content-type': 'application/json' }, body: '{}' });
+    expect(json.status).toBe(415);
+    expect(t.rt.store.list({ types: ['intake.submitted'] })).toHaveLength(0);
+  });
+});

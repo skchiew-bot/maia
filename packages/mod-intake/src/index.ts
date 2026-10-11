@@ -16,9 +16,10 @@ import {
 import { HttpError, readJson, requireIngest, requirePermission, requireUser, type AocModule, type ModuleContext } from '@aoc/kernel';
 import { z } from 'zod';
 import { INTAKE_ACTOR, IntakeFlow, type TicketRow } from './flow';
+import { readIntakeForm } from './multipart';
 import { intakeProjector } from './projector';
 import { DEFAULT_SUBMISSION_LIMITS, SubmissionLimiter, type SubmissionLimits } from './submission-limit';
-import { ACCEPTED_MEDIA, declaredMatches, resolveScanner, safeFileName, sha256, sniff, type ResolvedScanner, type Scanner } from './upload';
+import { ACCEPTED_MEDIA, resolveScanner, sha256, type ResolvedScanner, type Scanner } from './upload';
 
 export { sniff, builtinScanner, clamavScanner, resolveScanner, safeFileName, type Scanner, type ScannerStatus } from './upload';
 export { IntakeFlow } from './flow';
@@ -237,8 +238,19 @@ export function createIntakeModule(opts: IntakeModuleOptions = {}): AocModule {
           c.header('retry-after', String(Math.ceil(wait / 1000)));
           throw new HttpError(429, 'rate_limited', `At most ${submissions.perHour} submissions per hour; please try again later`, { retryAfterMs: wait });
         }
-        const form = await c.req.parseBody({ all: true });
-        const field = (k: string) => (typeof form[k] === 'string' ? (form[k] as string).trim() : '');
+        const { scanner, status } = scanning();
+        const form = await readIntakeForm(c.req.raw, {
+          maxFiles: cfg.maxAttachments,
+          // UTF-8 needs at most 4 bytes a character; character lengths are checked below.
+          maxFieldBytes: DESCRIPTION_LENGTH.max * 4,
+          capFor: (kind) => (kind.kind === 'video' ? cfg.maxVideoBytes : cfg.maxImageBytes),
+          beforeFirstFile() {
+            if (status.attachments !== 'refused') return;
+            ctx.log.warn('intake: attachments refused, no usable malware scanner', { scanner: status.active, reason: status.reason });
+            throw new HttpError(503, 'scanner_unavailable', 'Attachments cannot be scanned right now; please try again later or submit without attachments');
+          },
+        });
+        const field = (k: string) => (form.fields.get(k) ?? '').trim();
         const title = field('title');
         const description = field('description');
         const comment = field('comment') || undefined;
@@ -248,34 +260,20 @@ export function createIntakeModule(opts: IntakeModuleOptions = {}): AocModule {
         if (!SEVERITIES.includes(severity)) throw new HttpError(422, 'invalid', 'Unknown severity');
         const projectId = field('projectId') || defaultProject(ctx);
         if (!projectId || !projectExists(ctx, projectId)) throw new HttpError(422, 'invalid', 'Unknown product');
-        const raw = form['files'] ?? form['files[]'];
-        const files = (Array.isArray(raw) ? raw : raw ? [raw] : []).filter((f): f is File => typeof f !== 'string');
-        if (files.length > cfg.maxAttachments) throw new HttpError(413, 'too_many_files', `At most ${cfg.maxAttachments} attachments`);
-        const { scanner, status } = scanning();
-        if (files.length && status.attachments === 'refused') {
-          ctx.log.warn('intake: attachments refused, no usable malware scanner', { scanner: status.active, reason: status.reason });
-          throw new HttpError(503, 'scanner_unavailable', 'Attachments cannot be scanned right now; please try again later or submit without attachments');
-        }
 
         const ticketId = newId('ticket', ctx.clock.now());
         const accepted: { attachmentId: string; sha: string; mime: string; bytes: number; name: string; scan: string; scanner: string; buf: Buffer }[] = [];
-        for (const f of files) {
-          // Type and size are decided from the magic bytes and the part's size before the file is copied out.
-          const kind = sniff(Buffer.from(await f.slice(0, 16).arrayBuffer()));
-          if (!kind) throw new HttpError(415, 'unsupported_media', `${safeFileName(f.name)}: only PNG, JPEG, GIF, WebP, MP4, MOV, WebM or PDF are accepted`);
-          if (!declaredMatches(f.type, kind)) throw new HttpError(415, 'type_mismatch', `${safeFileName(f.name)}: file content does not match its declared type`);
-          const cap = kind.kind === 'video' ? cfg.maxVideoBytes : cfg.maxImageBytes;
-          if (f.size > cap) throw new HttpError(413, 'too_large', `${safeFileName(f.name)} exceeds ${Math.round(cap / 1048576)} MB`);
-          const buf = Buffer.from(await f.arrayBuffer());
-          const scan = scanner.scan(buf);
+        // Type and size were decided from the magic bytes and the byte count while the form was read.
+        for (const f of form.files) {
+          const scan = scanner.scan(f.buf);
           if (scan.verdict === 'infected') {
             ctx.log.warn('intake: infected upload rejected', { requester: auth.user.id, scanner: scan.scanner });
-            throw new HttpError(422, 'rejected', `${safeFileName(f.name)} was rejected by the malware scanner`);
+            throw new HttpError(422, 'rejected', `${f.name} was rejected by the malware scanner`);
           }
           if ((scan.verdict === 'unscanned' || scan.verdict === 'error') && cfg.requireScan) {
             throw new HttpError(503, 'scanner_unavailable', 'Attachments cannot be scanned right now; please try again later or submit without attachments');
           }
-          accepted.push({ attachmentId: newId('attachment', ctx.clock.now()), sha: sha256(buf), mime: kind.mime, bytes: buf.length, name: safeFileName(f.name), scan: scan.verdict, scanner: scan.scanner, buf });
+          accepted.push({ attachmentId: newId('attachment', ctx.clock.now()), sha: sha256(f.buf), mime: f.kind.mime, bytes: f.buf.length, name: f.name, scan: scan.verdict, scanner: scan.scanner, buf: f.buf });
         }
         // Media bodies are encrypted under the ticket's key scope (PDPA erasure shreds them); the chain holds hashes only.
         for (const a of accepted) ctx.store.bodies.putBlob(a.attachmentId, ticketId, a.buf, ctx.clock.iso());
