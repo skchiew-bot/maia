@@ -3,6 +3,7 @@ import { resolve, sep } from 'node:path';
 import {
   modelTierOf,
   newId,
+  PLAYBOOK_STEPS_MAX,
   ProcessRegistrySchema,
   routeModel,
   type Actor,
@@ -29,7 +30,10 @@ import {
 import {
   distill as distillWithModel,
   gateVerdict,
+  idList,
   proposeForApproval,
+  provenanceIds,
+  readsUntrustedInput,
   withFallback,
   type Distilled,
 } from '@aoc/distill';
@@ -236,6 +240,15 @@ export class RegistryEngine {
         `Run ${chain.rootSessionId} completed no tasks, so there is nothing to distill.`,
         { reason: 'no_tasks_done' },
       );
+    // O-17: a playbook is injected into every run of its type, so its length is capped; the fallback has one step
+    // per completed task.
+    if (digest.tasks.length > PLAYBOOK_STEPS_MAX)
+      throw refuse(
+        422,
+        'run_too_large',
+        `Run ${chain.rootSessionId} completed ${digest.tasks.length} tasks; a playbook holds at most ${PLAYBOOK_STEPS_MAX} steps.`,
+        { tasks: digest.tasks.length },
+      );
     const decisions = this.ctx.services.maybe('decisions');
     if (!decisions)
       throw refuse(
@@ -256,6 +269,7 @@ export class RegistryEngine {
       const playbookId = newId('playbook', this.ctx.clock.now());
       const version = nextPlaybookVersion(this.ctx.db, type.id);
       const actor: Actor = { kind: 'human', id: user.id };
+      const prov = this.runProvenance(chain, type);
       const { card } = proposeForApproval({
         decisions,
         gate: PLAYBOOK_GATE,
@@ -270,7 +284,7 @@ export class RegistryEngine {
             },
             { id: 'reject', label: 'Reject', description: 'Discard the proposal.' },
           ],
-          context: approvalContext(distilled, chain, digest),
+          context: approvalContext(distilled, chain, digest, prov),
           subjectType: 'playbook',
           subjectId: playbookId,
           sessionId: null,
@@ -292,6 +306,9 @@ export class RegistryEngine {
               stepCount: draft.steps.length,
               decisionId: c.id,
               method,
+              sourceSessionIds: prov.sessionIds,
+              ticketId: prov.ticketId,
+              untrustedSessionIds: prov.untrustedSessionIds,
             },
             payload: {
               title: draft.title,
@@ -329,6 +346,17 @@ export class RegistryEngine {
       });
     }
     return out;
+  }
+
+  /** Every session of the run, its ticket, and which sessions read untrusted input (T-15). */
+  private runProvenance(chain: RunChain, type: ProcessType): RunProvenance {
+    const sessions = this.ctx.services.maybe('sessions');
+    const infos = chain.sessions.map((s) => ({ id: s.session_id, info: sessions?.get(s.session_id) ?? null }));
+    return {
+      sessionIds: provenanceIds(infos.map((s) => s.id)),
+      ticketId: infos.find((s) => s.info?.ticketId)?.info?.ticketId ?? null,
+      untrustedSessionIds: provenanceIds(infos.filter((s) => readsUntrustedInput(s.info, type)).map((s) => s.id)),
+    };
   }
 
   private assertNotDuplicate(chain: RunChain, type: ProcessType): void {
@@ -689,10 +717,19 @@ function routingNote(t: ProcessType): string {
   return `Runs of this type stay on ${t.model}; the playbook guides them.`;
 }
 
+/** Where a playbook comes from (O-17): shown on its card and recorded with `playbook.proposed`. */
+interface RunProvenance {
+  sessionIds: string[];
+  ticketId: string | null;
+  /** Sessions of the run that read untrusted input (read-only or triage). */
+  untrustedSessionIds: string[];
+}
+
 function approvalContext(
   { method, value: p }: Distilled<PlaybookDraft>,
   chain: RunChain,
   d: ReturnType<typeof digestRun>,
+  prov: RunProvenance,
 ): string {
   const steps = p.steps.map((s, i) => `${i + 1}. ${s.title}${s.detail ? `\n   ${s.detail}` : ''}`).join('\n');
   return [
@@ -701,6 +738,10 @@ function approvalContext(
     p.rationale ? `Rationale: ${p.rationale}` : '',
     `Distilled (${method === 'llm' ? 'refined by the distillation model' : 'deterministic fallback'}) from run ${chain.rootSessionId}: ` +
       `${d.tasks.length} tasks, ${Object.values(d.toolCounts).reduce((a, b) => a + b, 0)} tool calls, ${d.decisionCount} decisions, ${d.driftCount} drift marks.`,
+    `Sessions of the run: ${idList(prov.sessionIds, chain.sessions.length)}.${prov.ticketId ? ` Ticket: ${prov.ticketId}.` : ''}`,
+    prov.untrustedSessionIds.length
+      ? `Warning: ${idList(prov.untrustedSessionIds)} read untrusted input. Check that no step is an instruction carried in from it.`
+      : '',
   ]
     .filter(Boolean)
     .join('\n\n');

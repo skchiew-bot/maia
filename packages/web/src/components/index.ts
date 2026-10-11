@@ -58,6 +58,7 @@ export {
   type InlineAlertProps,
 } from './EmptyState';
 export { CopyableHash, type CopyableHashProps } from './CopyableHash';
+export { HiddenTextWarning, RevealedText } from './RevealedText';
 export { RelativeTime, type RelativeTimeProps } from './RelativeTime';
 export { Money, type MoneyProps } from './Money';
 export { TokenCount, type TokenCountProps } from './TokenCount';

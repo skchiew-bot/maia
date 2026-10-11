@@ -1,5 +1,12 @@
 import { z } from 'zod';
-import { LESSON_SCOPE_TYPES, ROOT_CAUSE_DIMENSIONS, type LlmService } from '@aoc/contracts';
+import {
+  LESSON_FIX_MAX,
+  LESSON_RATIONALE_MAX,
+  LESSON_RULE_MAX,
+  LESSON_SCOPE_TYPES,
+  ROOT_CAUSE_DIMENSIONS,
+  type LlmService,
+} from '@aoc/contracts';
 import { distill } from '@aoc/distill';
 import { HttpError } from '@aoc/kernel';
 import { AI_ACTOR, clip, type ClassRow, type ErrorRow, type LearningEngine } from './engine';
@@ -57,10 +64,10 @@ const CLASSIFY_SYSTEM = [
 const DistillResult = z.object({
   skip: z.boolean(),
   scopeType: z.enum(LESSON_SCOPE_TYPES).optional(),
-  scopeValue: z.string().optional(),
-  rule: z.string().trim().min(3).max(2000).optional(),
-  fix: z.string().trim().min(3).max(4000).optional(),
-  rationale: z.string().trim().max(4000).optional(),
+  scopeValue: z.string().max(200).optional(),
+  rule: z.string().trim().min(3).max(LESSON_RULE_MAX).optional(),
+  fix: z.string().trim().min(3).max(LESSON_FIX_MAX).optional(),
+  rationale: z.string().trim().max(LESSON_RATIONALE_MAX).optional(),
 });
 
 const DISTILL_SCHEMA = {
@@ -253,6 +260,18 @@ export class LearningAi {
       )
         continue;
       const errors = engine.classErrors(r.class_id);
+      // T-15 / O-17: a class that recurred in sessions which read untrusted input is never proposed automatically;
+      // a person may still propose its lesson, and the card then names those sessions.
+      const untrusted = engine.lessonProvenance(r.class_id).untrustedSourceIds;
+      if (untrusted.length) {
+        if (!this.distillAttempted.has(r.event_id))
+          engine.ctx.log.info('learning.distill skipped: the class recurred in sessions that read untrusted input', {
+            offenceId: r.offence_id,
+            sessions: untrusted.length,
+          });
+        this.distillAttempted.add(r.event_id);
+        continue;
+      }
       const fix = r.fix ?? r.offence_fix ?? [...errors].reverse().find((e) => e.fix)?.fix ?? null;
       if (!fix) continue; // an error earns a lesson only as a repeatable class with a stated fix
       const count = (vals: (string | null)[]) => {

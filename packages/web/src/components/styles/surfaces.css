@@ -629,3 +629,19 @@
 .aoc-resource > .aoc-alert {
   margin-bottom: var(--sp-3);
 }
+
+/* ---- Revealed text (O-17): hidden characters and mixed-alphabet words in untrusted text ---- */
+.aoc-hidden-char {
+  padding: 0 2px;
+  border-radius: 3px;
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+}
+.aoc-confusable {
+  background: none;
+  color: inherit;
+  text-decoration: underline wavy var(--warn);
+  text-underline-offset: 3px;
+}

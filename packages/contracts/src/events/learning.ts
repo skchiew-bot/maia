@@ -12,6 +12,10 @@ export type RootCauseAssigner = (typeof ROOT_CAUSE_ASSIGNERS)[number];
 /** Lessons are scoped to a process type or a code area — never global (R10). */
 export const LESSON_SCOPE_TYPES = ['process_type', 'code_area'] as const;
 export type LessonScopeType = (typeof LESSON_SCOPE_TYPES)[number];
+/** Length caps on a lesson's text (O-17), for a person's proposal and the model's alike. */
+export const LESSON_RULE_MAX = 2000;
+export const LESSON_FIX_MAX = 4000;
+export const LESSON_RATIONALE_MAX = 4000;
 
 export const LEARNING_EVENTS = [
   defineEvent({
@@ -88,8 +92,20 @@ export const LEARNING_EVENTS = [
       scopeType: z.enum(LESSON_SCOPE_TYPES),
       scopeValue: z.string().max(200),
       decisionId: zId,
+      /**
+       * Provenance (O-17), absent on events written before it: how many errors of the class the lesson rests on,
+       * the most recent sessions they came from, and which of those read untrusted input.
+       */
+      sourceErrors: z.number().int().min(0).optional(),
+      sourceSessionIds: z.array(zId).max(20).optional(),
+      untrustedSourceIds: z.array(zId).max(20).optional(),
     }),
-    payload: payload({ rule: z.string(), fix: z.string(), rationale: z.string().optional() }),
+    // Capped (O-17): every bound lesson is injected into each session in its scope.
+    payload: payload({
+      rule: z.string().max(LESSON_RULE_MAX),
+      fix: z.string().max(LESSON_FIX_MAX),
+      rationale: z.string().max(LESSON_RATIONALE_MAX).optional(),
+    }),
   }),
   defineEvent({
     type: 'lesson.bound',

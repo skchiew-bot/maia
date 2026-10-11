@@ -6,3 +6,4 @@
  */
 export * from './engine';
 export * from './gate';
+export * from './provenance';

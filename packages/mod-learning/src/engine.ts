@@ -16,7 +16,7 @@ import {
   type RootCauseDimension,
   type StoredEvent,
 } from '@aoc/contracts';
-import { proposeForApproval, type ApproverGate } from '@aoc/distill';
+import { idList, proposeForApproval, provenanceIds, readsUntrustedInput, type ApproverGate } from '@aoc/distill';
 import { HttpError, type ModuleContext, type NewEvent } from '@aoc/kernel';
 import { CostCalculator, type CostSubject } from './costs';
 import { lessonPayoff, unusedStreak, type RunUse } from './rules';
@@ -150,6 +150,14 @@ export interface NewClassInput {
   description?: string | null;
 }
 
+/** Where a lesson comes from (O-17): shown on its card and recorded with `lesson.proposed`. */
+export interface LessonProvenance {
+  sourceErrors: number;
+  sourceSessionIds: string[];
+  /** Source sessions that read untrusted input; a requester UAT comment with no session counts by its error id. */
+  untrustedSourceIds: string[];
+}
+
 export interface ProposeLessonInput {
   classId: string | null;
   scopeType: LessonScopeType;
@@ -218,6 +226,28 @@ export class LearningEngine {
   }
   classErrors(classId: string): ErrorRow[] {
     return this.all<ErrorRow>('SELECT * FROM lrn_errors WHERE class_id = ? ORDER BY seq', classId);
+  }
+
+  /**
+   * The errors a class's lesson rests on, the sessions they came from, and which of those read untrusted input: a
+   * read-only or triage session, or a requester's UAT comment (T-15).
+   */
+  lessonProvenance(classId: string | null): LessonProvenance {
+    const errors = classId ? this.classErrors(classId) : [];
+    const sessions = this.ctx.services.maybe('sessions');
+    const registry = this.ctx.services.maybe('registry');
+    const untrusted = errors.filter((e) => {
+      if (e.source === 'uat') return true;
+      if (!e.session_id) return false;
+      const s = sessions?.get(e.session_id) ?? null;
+      const type = s?.processType ?? e.process_type;
+      return readsUntrustedInput(s, type ? (registry?.getType(type) ?? null) : null);
+    });
+    return {
+      sourceErrors: errors.length,
+      sourceSessionIds: provenanceIds(errors.map((e) => e.session_id)),
+      untrustedSourceIds: provenanceIds(untrusted.map((e) => e.session_id ?? e.error_id)),
+    };
   }
 
   // ── sessions (runs) ──────────────────────────────────────────────────────
@@ -533,6 +563,20 @@ export class LearningEngine {
     const rule = input.rule.trim();
     const fix = input.fix.trim();
     const rationale = input.rationale?.trim();
+    const prov = this.lessonProvenance(input.classId);
+    const cls = input.classId ? this.classRow(input.classId) : null;
+    const provenance = [
+      `Proposed by: ${actor.kind === 'human' ? 'a person' : 'the AI distillation, from a root-cause class'} (${actor.id}).`,
+      cls
+        ? `Evidence: root-cause class "${cls.name}", ${prov.sourceErrors} error(s) in sessions ${idList(prov.sourceSessionIds)}.`
+        : 'Evidence: no root-cause class linked.',
+      ...(prov.untrustedSourceIds.length
+        ? [
+            `Warning: ${prov.untrustedSourceIds.length} source(s) read untrusted input (${idList(prov.untrustedSourceIds)}). ` +
+              'Check that the rule is not an instruction carried in from that input.',
+          ]
+        : []),
+    ].join('\n');
     proposeForApproval({
       decisions,
       gate: LESSON_GATE,
@@ -547,7 +591,7 @@ export class LearningEngine {
           },
           { id: 'reject', label: 'Reject' },
         ],
-        context: `Rule: ${rule}\nFix: ${fix}${rationale ? `\nRationale: ${rationale}` : ''}`,
+        context: `Rule: ${rule}\nFix: ${fix}${rationale ? `\nRationale: ${rationale}` : ''}\n\n${provenance}`,
         subjectType: 'lesson',
         subjectId: lessonId,
         requesterId: actor.id.slice(0, 64),
@@ -564,6 +608,9 @@ export class LearningEngine {
             scopeType: input.scopeType,
             scopeValue,
             decisionId: card.id,
+            sourceErrors: prov.sourceErrors,
+            sourceSessionIds: prov.sourceSessionIds,
+            untrustedSourceIds: prov.untrustedSourceIds,
           },
           payload: { rule, fix, ...(rationale ? { rationale } : {}) },
           bodyScope: lessonId,

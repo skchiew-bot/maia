@@ -2,6 +2,13 @@
 import { z } from 'zod';
 import { defineEvent, meta, payload, zId, zLabel } from './define';
 
+/** Length caps on a playbook's text (O-17): an approved playbook is injected into every run of its type. */
+export const PLAYBOOK_TITLE_MAX = 200;
+export const PLAYBOOK_STEPS_MAX = 100;
+export const PLAYBOOK_STEP_TITLE_MAX = 200;
+export const PLAYBOOK_STEP_DETAIL_MAX = 2000;
+export const PLAYBOOK_RATIONALE_MAX = 4000;
+
 export const REGISTRY_EVENTS = [
   defineEvent({
     type: 'registry.changed',
@@ -29,8 +36,27 @@ export const REGISTRY_EVENTS = [
       decisionId: zId,
       /** llm = refined by the distillation model; fallback = deterministic ordered task titles. */
       method: z.enum(['llm', 'fallback']),
+      /**
+       * Provenance (O-17), absent on events written before it: every session of the run (the most recent ones),
+       * the ticket it worked on, and the sessions that read untrusted input.
+       */
+      sourceSessionIds: z.array(zId).max(20).optional(),
+      ticketId: zId.nullable().optional(),
+      untrustedSessionIds: z.array(zId).max(20).optional(),
     }),
-    payload: payload({ title: z.string(), steps: z.array(z.object({ id: zId, title: z.string(), detail: z.string().optional() })), rationale: z.string().optional() }),
+    payload: payload({
+      title: z.string().max(PLAYBOOK_TITLE_MAX),
+      steps: z
+        .array(
+          z.object({
+            id: zId,
+            title: z.string().max(PLAYBOOK_STEP_TITLE_MAX),
+            detail: z.string().max(PLAYBOOK_STEP_DETAIL_MAX).optional(),
+          }),
+        )
+        .max(PLAYBOOK_STEPS_MAX),
+      rationale: z.string().max(PLAYBOOK_RATIONALE_MAX).optional(),
+    }),
   }),
   defineEvent({
     type: 'playbook.approved',
