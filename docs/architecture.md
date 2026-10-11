@@ -562,10 +562,12 @@ can never share a directory.
 
 ### 5.5 Crypto-shred
 
-`EventStore.eraseScope(scopeId)`, exposed through `mod-audit`'s erase API with a scope id, a reason and a decision
-id (permission `audit.erase`, Approver only). The decision id is optional and is only checked to be a resolved
-decision, so the procedure in the [key custody runbook](runbooks/key-custody.md#6-crypto-shred) ties each erasure to
-an approved change request (threat model O-28). The erasure is write-ahead: the record is validated and appended
+`EventStore.eraseScope(scopeId)`, exposed through `mod-audit`'s erase API with a scope id and a decision id
+(permission `audit.erase`, Approver only). The decision must be an approved `erasure_request`: someone with
+`audit.erase_request` raised it through `POST /api/audit/erasure-requests` (`erasure.requested` fixes its scopes and
+reason), its requester cannot approve it, and the Approver who erases cannot be its requester. Each scope it names can
+be erased once under it, and the erasure records the request's reason (threat model O-28,
+[key custody](runbooks/key-custody.md#6-crypto-shred)). The erasure is write-ahead: the record is validated and appended
 before anything is shredded, so a failing record never leaves shredded bodies without a trace in the chain
 ([wave 4](security/review-wave4.md)). In order:
 
