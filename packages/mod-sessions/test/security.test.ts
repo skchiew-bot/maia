@@ -250,6 +250,42 @@ describe('observer tokens are rate limited per token (R-13)', () => {
   });
 });
 
+describe('managed sessions are rate limited per session and token kind (O-16)', () => {
+  const managed = (sid: string, claudeId: string) => hook(sid, claudeId, 'PostToolUse', { tool_name: 'Read', tool_input: { file_path: '/x' }, tool_response: {} });
+
+  it("answers 429 with Retry-After once a session token spends its budget, leaving the sidecar and other sessions alone (O-16, G-47)", async () => {
+    t = await createTestRuntime({ modules: [createSessionsModule({ sweepIntervalMs: 0, sessionLimits: { requestsPerMinute: 60, requestBurst: 3 } })] });
+    const owner = t.user('builder');
+    launch(owner, 'ses_A', CLAUDE_A);
+    const claudeB = randomUUID();
+    launch(owner, 'ses_B', claudeB);
+    const a = t.ingestHeaders('ses_A');
+    for (let i = 0; i < 3; i++) expect((await t.request('POST', '/ingest/hook', { headers: a, body: managed('ses_A', CLAUDE_A) })).status).toBe(200);
+    const limited = await t.request('POST', '/ingest/hook', { headers: a, body: managed('ses_A', CLAUDE_A) });
+    expect(limited.status).toBe(429);
+    expect(limited.headers.get('retry-after')).toBe('1');
+    // a second token of the same session shares the budget, and spool items count one each
+    expect((await t.request('POST', '/ingest/hook', { headers: t.ingestHeaders('ses_A'), body: managed('ses_A', CLAUDE_A) })).status).toBe(429);
+    // the sidecar keeps reporting, and so does another session
+    expect((await t.request('POST', '/ingest/heartbeat', { headers: t.sidecarHeaders('ses_A'), body: { sessionId: 'ses_A', pid: 4242, alive: true, at: t.clock.iso(), transcriptBytes: 0, lastTranscriptWriteAt: null } })).status).toBe(200);
+    const b = t.ingestHeaders('ses_B');
+    expect((await t.request('POST', '/ingest/hook', { headers: b, body: managed('ses_B', claudeB) })).status).toBe(200);
+    expect((await t.request('POST', '/ingest/spool', { headers: b, body: { items: [1, 2, 3].map(() => ({ path: '/ingest/hook', body: managed('ses_B', claudeB), queuedAt: t.clock.iso() })) } })).status).toBe(429);
+    t.clock.advance(1000); // one request per second refills
+    expect((await t.request('POST', '/ingest/hook', { headers: a, body: managed('ses_A', CLAUDE_A) })).status).toBe(200);
+  });
+
+  it('limits the sidecar too, on a budget of its own (O-16, G-47)', async () => {
+    t = await createTestRuntime({ modules: [createSessionsModule({ sweepIntervalMs: 0, sessionLimits: { requestsPerMinute: 60, requestBurst: 2 } })] });
+    launch(t.user('builder'));
+    const sidecar = t.sidecarHeaders('ses_A');
+    const beat = () => t.request('POST', '/ingest/heartbeat', { headers: sidecar, body: { sessionId: 'ses_A', pid: 4242, alive: true, at: t.clock.iso(), transcriptBytes: 0, lastTranscriptWriteAt: null } });
+    expect((await beat()).status).toBe(200);
+    expect((await beat()).status).toBe(200);
+    expect((await beat()).status).toBe(429);
+  });
+});
+
 describe('observer tokens never write into managed sessions', () => {
   it('rejects observed-mode events that address a managed session by its claude session id', async () => {
     await setup();

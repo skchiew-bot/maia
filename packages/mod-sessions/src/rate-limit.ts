@@ -49,6 +49,34 @@ export interface ObserverLimits {
 
 export const DEFAULT_OBSERVER_LIMITS: ObserverLimits = { requestsPerMinute: 600, requestBurst: 1000, newSessionsPerHour: 60 };
 
+export interface SessionLimits {
+  /** Sustained ingest requests per minute per managed session and token kind (a spool item counts as one). */
+  requestsPerMinute: number;
+  /** Requests a session may send at once before the sustained rate applies. */
+  requestBurst: number;
+}
+
+export const DEFAULT_SESSION_LIMITS: SessionLimits = { requestsPerMinute: 600, requestBurst: 1000 };
+
+/**
+ * A managed session's token sits in the model's environment (threat model, D: event floods), so per session its
+ * ingest is rate limited. The session token and the sidecar token have separate budgets: a model flooding with its
+ * own token cannot starve the sidecar's heartbeats and usage reports.
+ */
+export class SessionLimiter {
+  private readonly requests: TokenBuckets;
+
+  constructor(limits: Partial<SessionLimits>, now: () => number) {
+    const l = { ...DEFAULT_SESSION_LIMITS, ...limits };
+    this.requests = new TokenBuckets(l.requestBurst, l.requestsPerMinute / 60_000, now);
+  }
+
+  /** 0 when allowed, else ms to wait. */
+  request(kind: 'session' | 'sidecar', sessionId: string, cost = 1): number {
+    return this.requests.take(`${kind}:${sessionId}`, cost);
+  }
+}
+
 /**
  * The observer token is a shared bearer on developer machines (threat model T-12): per token, observed ingest is
  * rate limited and so is the creation of observed sessions, so one holder can neither flood the sole writer nor
