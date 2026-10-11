@@ -17,16 +17,20 @@ import { HttpError, readJson, requireIngest, requirePermission, requireUser, typ
 import { z } from 'zod';
 import { INTAKE_ACTOR, IntakeFlow, type TicketRow } from './flow';
 import { intakeProjector } from './projector';
+import { DEFAULT_SUBMISSION_LIMITS, SubmissionLimiter, type SubmissionLimits } from './submission-limit';
 import { ACCEPTED_MEDIA, declaredMatches, resolveScanner, safeFileName, sha256, sniff, type ResolvedScanner, type Scanner } from './upload';
 
 export { sniff, builtinScanner, clamavScanner, resolveScanner, safeFileName, type Scanner, type ScannerStatus } from './upload';
 export { IntakeFlow } from './flow';
+export { DEFAULT_SUBMISSION_LIMITS, type SubmissionLimits } from './submission-limit';
 
 export interface IntakeModuleOptions {
   /** Override the configured scanner (tests / custom AV integration); an AV engine unless named `builtin` or `none`. */
   scanner?: Scanner;
   /** PATH lookup for the ClamAV clients (tests). */
   findBinary?: (binary: string) => string | null;
+  /** Per-Requester limits on intake submissions (defaults: DEFAULT_SUBMISSION_LIMITS). */
+  submissionLimits?: Partial<SubmissionLimits>;
 }
 
 const McpBody = z.object({ sessionId: z.string(), input: z.unknown() });
@@ -215,6 +219,10 @@ export function createIntakeModule(opts: IntakeModuleOptions = {}): AocModule {
     ],
     routes(app, ctx) {
       const cfg = ctx.config.intake;
+      const submissions = new SubmissionLimiter(
+        { ...DEFAULT_SUBMISSION_LIMITS, ...opts.submissionLimits }.perRequesterPerHour,
+        () => ctx.clock.now(),
+      );
 
       // ── requester portal ────────────────────────────────────────────────────
       app.get('/portal/api/limits', (c) => {
@@ -224,6 +232,11 @@ export function createIntakeModule(opts: IntakeModuleOptions = {}): AocModule {
 
       app.post('/portal/api/intakes', async (c) => {
         const auth = requirePermission(c, 'intake.submit');
+        const wait = submissions.take(auth.user.id);
+        if (wait) {
+          c.header('retry-after', String(Math.ceil(wait / 1000)));
+          throw new HttpError(429, 'rate_limited', `At most ${submissions.perHour} submissions per hour; please try again later`, { retryAfterMs: wait });
+        }
         const form = await c.req.parseBody({ all: true });
         const field = (k: string) => (typeof form[k] === 'string' ? (form[k] as string).trim() : '');
         const title = field('title');
