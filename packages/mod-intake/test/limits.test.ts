@@ -120,3 +120,43 @@ describe('GET /portal/api/limits', () => {
     );
   });
 });
+
+describe('intake submissions per Requester (O-16)', () => {
+  const submitAs = (headers: Record<string, string>, title: string) => {
+    const fd = new FormData();
+    fd.set('title', title);
+    fd.set('description', 'The claim form goes blank after I attach a file.');
+    return t.app.request('/portal/api/intakes', { method: 'POST', headers, body: fd });
+  };
+
+  it('answers 429 with Retry-After once a Requester has used the hour, before reading the form, leaving other Requesters alone (O-16, G-47)', async () => {
+    t = await createTestRuntime({
+      modules: [createIntakeModule({ scanner: builtinScanner, submissionLimits: { perRequesterPerHour: 2 } })],
+    });
+    t.rt.store.append({
+      type: 'project.created',
+      actor: { kind: 'system', id: 'test' },
+      scope: { projectId: 'prj_1' },
+      meta: { projectId: 'prj_1', slug: 'claims' },
+      payload: { name: 'Claims' },
+      source: 'system',
+    });
+    const a = t.user('requester').headers;
+    const b = t.user('requester').headers;
+    expect((await submitAs(a, 'First report')).status).toBe(201);
+    // a submission the route rejects still counts
+    expect((await submitAs(a, 'x')).status).toBe(422);
+    const limited = await submitAs(a, 'Third report');
+    expect(limited.status).toBe(429);
+    expect(limited.headers.get('retry-after')).toBe('3600');
+    expect(((await limited.json()) as { error: { code: string } }).error.code).toBe('rate_limited');
+    // refused before the form is read: even a body that is not a form gets 429, not 400/422
+    expect(
+      (await t.app.request('/portal/api/intakes', { method: 'POST', headers: { ...a, 'content-type': 'multipart/form-data; boundary=x' }, body: 'not a form' })).status,
+    ).toBe(429);
+    expect((await submitAs(b, 'Another requester')).status).toBe(201);
+    expect(t.rt.store.list({ types: ['intake.submitted'] })).toHaveLength(2);
+    t.clock.advance(3_600_000); // the first submission leaves the rolling hour
+    expect((await submitAs(a, 'Next hour')).status).toBe(201);
+  });
+});

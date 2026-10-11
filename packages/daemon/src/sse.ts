@@ -1,6 +1,7 @@
 import type { Context } from 'hono';
 import {
   EventStore,
+  HttpError,
   requirePermission,
   type AocRuntime,
   type AppEnv,
@@ -16,6 +17,8 @@ export interface StreamOptions {
   replayLimit?: number;
   /** Bytes queued for a client that is not reading before it is dropped (it reconnects and replays). */
   maxBufferedBytes?: number;
+  /** Streams one user may hold open at once; one more is refused with 429 (O-16). */
+  maxStreamsPerUser?: number;
 }
 
 export interface StreamHub {
@@ -49,17 +52,27 @@ export function createStreamHub(runtime: AocRuntime, opts: StreamOptions = {}): 
   const retryMs = opts.retryMs ?? 3000;
   const replayLimit = opts.replayLimit ?? 1000;
   const maxBufferedBytes = opts.maxBufferedBytes ?? 1024 * 1024;
+  const maxStreamsPerUser = opts.maxStreamsPerUser ?? 10;
   const open = new Set<() => void>();
+  // Each open stream holds a socket, a timer and a broadcaster subscription: a user cannot open them without bound.
+  const perUser = new Map<string, number>();
 
   const handle = (c: Context<AppEnv>): Response => {
     const auth = requirePermission(c, 'session.view');
     // Hono answers HEAD by running the GET handler and dropping the body unread: never open a stream for it.
     if (c.req.method === 'HEAD') return new Response(null, { headers: STREAM_HEADERS });
+    const userId = auth.user.id;
+    if ((perUser.get(userId) ?? 0) >= maxStreamsPerUser) {
+      c.header('retry-after', '30');
+      throw new HttpError(429, 'too_many_streams', `At most ${maxStreamsPerUser} open event streams per user; close another tab or window`, { retryAfterMs: 30_000 });
+    }
     const lastId = parseEventId(c.req.header('last-event-id') ?? c.req.query('lastEventId'));
     let cleanup = () => {};
     const body = new ReadableStream<Uint8Array>(
       {
         start(controller) {
+          // Counted before anything can call cleanup(), which releases it exactly once.
+          perUser.set(userId, (perUser.get(userId) ?? 0) + 1);
           let done = false;
           let unsubscribe = () => {};
           let timer: NodeJS.Timeout | undefined;
@@ -74,6 +87,9 @@ export function createStreamHub(runtime: AocRuntime, opts: StreamOptions = {}): 
             clearInterval(timer);
             unsubscribe();
             open.delete(stop);
+            const n = (perUser.get(userId) ?? 1) - 1;
+            if (n > 0) perUser.set(userId, n);
+            else perUser.delete(userId);
           };
           const write = (text: string) => {
             if (done) return;
