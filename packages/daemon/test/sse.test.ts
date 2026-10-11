@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { EventHeader } from '@aoc/contracts';
 import { bootTestServer, removeTempDirs, SseReader, type TestServer } from './helpers';
 
@@ -163,6 +163,30 @@ describe('GET /api/stream', () => {
     const frames = await sse.until((f) => f.comment !== undefined);
     expect(frames.at(-1)).toEqual({ comment: 'ping' });
     await sse.cancel();
+  });
+
+  it('refuses a user one stream more than the per-user cap, leaving other users alone, and frees the slot when a stream closes (O-16, G-47)', async () => {
+    const t = await boot({ sse: { maxStreamsPerUser: 2 } });
+    const builder = t.user('builder');
+    const open = async (headers: Record<string, string>) => {
+      const sse = new SseReader(await t.request('/api/stream', { headers }));
+      await sse.next();
+      return sse;
+    };
+    const first = await open(builder.headers);
+    await open(builder.headers);
+    const refused = await t.request('/api/stream', { headers: builder.headers });
+    expect(refused.status).toBe(429);
+    expect(refused.headers.get('retry-after')).toBe('30');
+    expect(await refused.json()).toMatchObject({ error: { code: 'too_many_streams' } });
+    expect(t.aoc.runtime.broadcaster.size).toBe(2);
+    // the cap is per user, not per role
+    await open(t.user('builder').headers);
+    await first.cancel();
+    await vi.waitFor(() => expect(t.aoc.runtime.broadcaster.size).toBe(2));
+    await open(builder.headers);
+    t.aoc.closeStreams();
+    await open(builder.headers);
   });
 
   it('closeStreams() ends open streams (shutdown)', async () => {
