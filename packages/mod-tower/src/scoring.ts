@@ -46,6 +46,7 @@ export function decisionImpact(kind: DecisionKind, test: DecisionTest | null): n
     case 'fx_discrepancy':
       return 11;
     case 'change_request':
+    case 'erasure_request':
       return 10;
     case 'lesson_binding':
     case 'playbook_approval':

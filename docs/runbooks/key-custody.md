@@ -145,7 +145,7 @@ Crypto-shred makes the bodies of one scope unrecoverable while the chain stays v
 - `other`.
 
 **Approval.** Erasure touches data, so it bounces to the Approver (§6 of the spec). The `audit.erase` permission is
-Approver-only.
+Approver-only, and the API erases only under an approved erasure request (threat model O-28).
 
 1. **Identify the scope or scopes.** The `bodyScope` of the affected events:
    - a ticket `tkt_…`: the requester's text and media;
@@ -159,12 +159,17 @@ Approver-only.
    List the affected events with an audit query on the scope id, and read their types.
 2. **Assess the impact.** Everything in the scope goes, not only the offending item. The chain still proves that
    each event existed (type, actor, time, ids). Evidence packs show `[erased]` for the text.
-3. **Raise a change request** (scope `data`) naming the scope ids, the reason, the impact, and the backup
-   retention date that will complete the erasure. Whoever submits it cannot approve it, so while the CEO is the
-   only Approver, a Builder (or the DPO's delegate) submits it.
-4. **The Approver approves.** Record the decision id.
-5. **Execute** the erasure: `POST /api/audit/erase {scopeId, reason, decisionId}` (permission `audit.erase`,
-   Approver only; `reason` is one of the four triggers above). It is write-ahead: it validates the record, lets
+3. **Raise an erasure request**: on the console's Audit page (Erasure), or `POST /api/audit/erasure-requests
+   {scopeIds, reason, rationale}` (permission `audit.erase_request`; up to 20 scopes; `reason` is one of the four
+   triggers above). Put the impact and the backup retention date that will complete the erasure in the rationale.
+   It becomes an `erasure_request` decision card for the Approver, and `erasure.requested` records the scopes and
+   the reason. Its requester can never approve it, and the Approver who erases cannot be its requester, so while the
+   CEO is the only Approver, a Builder (or the DPO's delegate) raises it.
+4. **The Approver approves** the card in Decisions.
+5. **Execute** the erasure, once per scope: the Audit page's erase form, or `POST /api/audit/erase {scopeId,
+   decisionId}` (permission `audit.erase`, Approver only). aocd refuses it unless the decision is that approved
+   request, it names the scope, and the scope was not already erased under it; `body.erased` records the request's
+   reason. It is write-ahead: it validates the record, lets
    every projector scrub its copies (`onErase`), appends `body.erased {scopeId, reason, erasedBy, bodyCount,
    decisionId}`, then destroys every DEK generation of the scope, deletes the ciphertext rows and blob files and
    checkpoints `bodies.db`, then runs a `VACUUM` of `aoc.db` and truncates its WAL. It answers with the number of
@@ -172,10 +177,8 @@ Approver-only.
    `aoc.db`, so expect the console and the hooks to wait that long on a large log: erase in a quiet moment. If a
    backup is reading while you erase, the WAL cannot be truncated and aocd logs a warning; run `aoc backup list`,
    wait for the backup to finish and erase again, or let the next checkpoint do it. If aocd crashes between the
-   record and the shred, the bodies are still readable although `body.erased` is chained: run the erasure again
-   (gap G-57). **Always pass the approved change request's decision id.**
-   The API accepts an erasure without one, and checks only that a given decision is resolved, not that it
-   approved this erasure (threat model O-28): the procedure, not the code, ties the two together.
+   record and the shred, the bodies are still readable although `body.erased` is chained (gap G-57). The request is
+   spent for that scope, so raise a new one for it and erase again.
 6. **The `aoc.db` gap is closed in code** (threat model O-24, gap G-39): `aoc.db` runs with `secure_delete`, and
    `eraseScope` itself runs the `VACUUM` and truncates the WAL (step 5). Do it by hand only for an erasure made by an
    earlier build, or when aocd logged `VACUUM after an erasure failed` (the erasure is still reported as done, for

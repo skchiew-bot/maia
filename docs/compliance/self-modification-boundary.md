@@ -227,7 +227,7 @@ the chain is part of what is being protected. Three external records:
 - [ ] **Change control:** the provenance algorithm (O-27, G-25) and the service-owned clone; isolation of rollback
       verification and its acceptance command (run as argv without a shell, G-50); break-glass audit; immutable pin tags.
 - [ ] **Audit:** anchoring to off-host records; Verify reads the remote and refuses to anchor a chain that no
-      longer matches; the erasure API's authorisation (O-28, open); the self-modification guard (path resolution,
+      longer matches; the erasure API's authorisation (O-28: an approved erasure request names each scope); the self-modification guard (path resolution,
       symlinks, hard links, the Bash analysis, the external log's hash chain); the sealed backup format, the key
       separation checks and the restore verification (G-21).
 - [ ] **Evidence:** packs that check anchors against the off-host records (O-29, G-42).

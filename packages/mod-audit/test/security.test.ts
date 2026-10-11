@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import type { EraseResultDTO } from '@aoc/contracts';
+import type { EraseResultDTO, ErasureRequestDTO } from '@aoc/contracts';
 import { BoundaryMatcher } from '../src';
 import { analyzeBash } from '../src/selfmod/shell';
 import { auditRuntime, nudge, type AuditTest } from './helpers';
@@ -37,7 +37,7 @@ describe('the erase API takes scope ids, never path segments (defence in depth o
     for (const scopeId of ['.', '..', '.hidden', '..ses_a', 'ses..a', 'ses_a.']) {
       const res = await a.t.request('POST', '/api/audit/erase', {
         headers: a.approver.headers,
-        body: { scopeId, reason: 'other' },
+        body: { scopeId, decisionId: 'dec_any' },
       });
       expect(res.status, scopeId).toBe(422);
     }
@@ -49,9 +49,15 @@ describe('the erase API takes scope ids, never path segments (defence in depth o
     const { t } = a;
     for (const scopeId of ['ses_01JTESTAAAAAAAAAAAAAAAAAAA', 'user:usr_01JTESTBBBBBBBBBBBBBBBBBBB', 'global', 'prj.demo']) {
       const e = nudge(t, scopeId, `personal data in ${scopeId}`);
+      const req = await t.json<ErasureRequestDTO>('POST', '/api/audit/erasure-requests', {
+        headers: a.builder.headers,
+        body: { scopeIds: [scopeId], reason: 'pdpa_request', rationale: 'the data subject asked' },
+        expect: 201,
+      });
+      await t.decisions!.resolve(req.decisionId, { optionId: 'approve' }, a.approver.user);
       const res = await t.json<EraseResultDTO>('POST', '/api/audit/erase', {
         headers: a.approver.headers,
-        body: { scopeId, reason: 'pdpa_request' },
+        body: { scopeId, decisionId: req.decisionId },
       });
       expect(res.scopeId).toBe(scopeId);
       expect(t.rt.store.readPayload(e), scopeId).toBeNull();

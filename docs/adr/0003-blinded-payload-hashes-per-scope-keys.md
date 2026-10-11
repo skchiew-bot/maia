@@ -56,8 +56,8 @@
 Erasure is complete in the live databases: `aoc.db` runs with `secure_delete = ON`, its WAL is truncated after each
 erasure, and the knowledge layer's FTS5 index is merged (threat model O-24, review finding F-08). aocd's own backups are
 sealed under a key that differs from the KEK and are pruned after `audit.backupRetentionDays` (35): an erasure is
-complete only when the last older backup has expired. Whether an erasure must reference an approved request is still
-open (O-28, gap G-47).
+complete only when the last older backup has expired. An erasure must reference an approved erasure request that names
+the scope, raised by someone other than the person erasing (O-28).
 
 ## Alternatives rejected
 

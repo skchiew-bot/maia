@@ -14,6 +14,7 @@ export type GovernancePermission = Extract<
   | 'audit.view'
   | 'audit.verify'
   | 'audit.erase'
+  | 'audit.erase_request'
   | 'evidence.generate'
   | 'mapping.stamp'
   | 'gate.approve'
@@ -27,6 +28,7 @@ const OPERATOR: ReadonlySet<GovernancePermission> = new Set([
   'promotion.request',
   'audit.view',
   'audit.verify',
+  'audit.erase_request',
   'evidence.generate',
 ]);
 const APPROVER_ONLY: ReadonlySet<GovernancePermission> = new Set([

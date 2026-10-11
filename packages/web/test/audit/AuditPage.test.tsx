@@ -99,8 +99,12 @@ function routes(extra: Record<string, unknown> = {}) {
       decisions: [
         decisionCard({
           id: 'dec_01ERASE0000000000000000001',
-          title: 'Erase the claims session bodies (PDPA request)',
+          kind: 'erasure_request',
+          title: 'Erasure request',
+          question: 'Approve crypto-shredding one body scope for a PDPA request from the data subject?',
         }),
+        // Approved, but not an erasure request: never offered.
+        decisionCard({ id: 'dec_01CHANGE000000000000000001' }),
       ],
     },
     ...extra,
@@ -220,7 +224,7 @@ describe('Audit', { timeout: 30_000 }, () => {
     );
   });
 
-  it('lets only an Approver crypto-shred, and only against a resolved decision', async () => {
+  it('lets only an Approver crypto-shred, and only under an approved erasure request (O-28)', async () => {
     const calls = installApi(
       routes({
         'POST /api/audit/erase': {
@@ -238,39 +242,62 @@ describe('Audit', { timeout: 30_000 }, () => {
     const erase = await screen.findByRole('region', { name: 'Erasure (crypto-shred)' });
     await user.click(within(erase).getByRole('button', { name: 'Crypto-shred this scope' }));
     expect(
-      within(erase).getByText('Erasure needs a resolved decision that authorises it.'),
+      within(erase).getByText('Erasure needs an approved erasure request that names this scope.'),
     ).toBeInTheDocument();
+    const requests = within(erase).getByRole('combobox', { name: /Approved erasure request/ });
+    expect(within(requests).queryByRole('option', { name: /dec_01CHANGE/ })).not.toBeInTheDocument();
     expect(calls.some((c) => c.method === 'POST')).toBe(false);
 
     const scope = 'ses_01M4FAFKJ0HS6W702V2VZ0N2MV';
     await user.type(within(erase).getByRole('textbox', { name: /Body scope/ }), scope);
-    await user.selectOptions(within(erase).getByRole('combobox', { name: /Reason/ }), 'pdpa_request');
-    await user.selectOptions(
-      within(erase).getByRole('combobox', { name: /Authorising decision/ }),
-      'dec_01ERASE0000000000000000001',
-    );
+    await user.selectOptions(requests, 'dec_01ERASE0000000000000000001');
     await user.type(within(erase).getByRole('textbox', { name: /Type the scope id again/ }), scope);
     await user.click(within(erase).getByRole('button', { name: 'Crypto-shred this scope' }));
 
     expect(await within(erase).findByText(`Scope ${scope} erased`)).toBeInTheDocument();
     expect(calls.find((c) => c.method === 'POST')!.body).toEqual({
       scopeId: scope,
-      reason: 'pdpa_request',
       decisionId: 'dec_01ERASE0000000000000000001',
     });
+    expect(calls.some((c) => c.path === '/api/decisions' && c.query.get('kind') === 'erasure_request')).toBe(true);
   });
 
-  it('shows Builders the erasure rule instead of the form', async () => {
-    installApi(
+  it('lets Builders ask for an erasure, never carry one out (O-28)', async () => {
+    const calls = installApi(
       routes({
         'GET /api/audit/health': health({ lastAnchor: { ...health().lastAnchor!, at: ago(30 * HOUR) } }),
+        'POST /api/audit/erasure-requests': {
+          requestId: 'erq_01REQ00000000000000000001',
+          decisionId: 'dec_01ERASE0000000000000000002',
+          scopeIds: ['ses_a', 'tkt_b'],
+          reason: 'secret_leak',
+          requesterId: WEIJIE.id,
+          createdAt: ago(0),
+          eventsInScope: { ses_a: 3, tkt_b: 7 },
+        },
       }),
     );
+    const user = userEvent.setup({ delay: null });
     renderPage(<AuditPage />, { path: '/audit', route: '/audit', user: WEIJIE });
     const erase = await screen.findByRole('region', { name: 'Erasure (crypto-shred)' });
-    expect(within(erase).getByText('Erasure needs the Approver')).toBeInTheDocument();
     // An anchor older than the 26-hour threshold is called out as such.
     expect(await screen.findByText('older than 1d 2h')).toBeInTheDocument();
     expect(within(erase).queryByRole('button', { name: 'Crypto-shred this scope' })).not.toBeInTheDocument();
+
+    await user.click(within(erase).getByRole('button', { name: 'Request the erasure' }));
+    expect(within(erase).getByText('Enter 1 to 20 body scope ids, separated by spaces or commas.')).toBeInTheDocument();
+    expect(calls.some((c) => c.method === 'POST')).toBe(false);
+
+    await user.type(within(erase).getByRole('textbox', { name: /Body scopes/ }), 'ses_a, tkt_b ses_a');
+    await user.selectOptions(within(erase).getByRole('combobox', { name: /Reason/ }), 'secret_leak');
+    await user.type(within(erase).getByRole('textbox', { name: /Why, and the impact/ }), 'A key was pasted');
+    await user.click(within(erase).getByRole('button', { name: 'Request the erasure' }));
+    expect(await within(erase).findByText('Request sent')).toBeInTheDocument();
+    expect(calls.find((c) => c.method === 'POST')!.body).toEqual({
+      scopeIds: ['ses_a', 'tkt_b'],
+      reason: 'secret_leak',
+      rationale: 'A key was pasted',
+    });
+    expect(within(erase).getByText(/ses_a \(3\), tkt_b \(7\)/)).toBeInTheDocument();
   });
 });

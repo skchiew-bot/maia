@@ -115,6 +115,7 @@ describe('cost of delay (pure)', () => {
       triage_reconciliation: 20,
       low_confidence_diagnosis: 20,
       uat_signoff: null,
+      erasure_request: 10,
     });
     // Tests that bounce to the Approver (per the decision contract) weigh more than the builder's own calls.
     expect(

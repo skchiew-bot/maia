@@ -31,7 +31,7 @@ import { useLatest } from '../../lib/dom';
 import { formatDuration, formatInteger } from '../../lib/format';
 import { useProjects } from '../changes/projects';
 import { AnchorsPanel } from './Anchors';
-import { ErasureForm, ErasureHistory } from './Erasure';
+import { ErasureForm, ErasureHistory, ErasureRequestForm } from './Erasure';
 import { SelfModBlocks } from './SelfMod';
 import { EventDrawer } from './EventDrawer';
 import { Explorer, type ExplorerFilters } from './Explorer';
@@ -122,6 +122,7 @@ function AuditView() {
 
   const canVerify = can(user, 'audit.verify');
   const canErase = can(user, 'audit.erase');
+  const canRequestErasure = can(user, 'audit.erase_request');
 
   const range = (RANGES.has(params.get('range') as RangePreset) ? params.get('range') : '7d') as RangePreset;
   const filters: ExplorerFilters = useMemo(
@@ -377,15 +378,17 @@ function AuditView() {
         <Widget
           span={7}
           title="Erasure (crypto-shred)"
-          subtitle={canErase ? 'Approver only · needs a resolved decision' : 'Approver only'}
+          subtitle={canErase ? 'Approver only · needs an approved erasure request' : 'Approver only · anyone may ask'}
           info="Bodies (file contents, personal data, captures) live in a per-scope encrypted store; only their blinded hashes are chained. Destroying a scope's key erases its bodies while the chain stays valid (§13, PDPA)."
         >
           {canErase ? (
             <ErasureForm onErased={() => erasures.reload()} />
+          ) : canRequestErasure ? (
+            <ErasureRequestForm />
           ) : (
             <InlineAlert tone="info" title="Erasure needs the Approver">
-              Only an Approver can crypto-shred a scope, against a resolved decision. Every erasure is listed
-              here for everyone.
+              Only an Approver can crypto-shred a scope, under an approved erasure request. Every erasure is
+              listed here for everyone.
             </InlineAlert>
           )}
           <h3 className="audit-subtitle">Erasures</h3>
