@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { ADMIN_EVENTS } from './admin';
 import { AUDIT_EVENTS } from './audit';
 import { CHANGE_EVENTS } from './change';
 import { CORE_EVENTS } from './core';
@@ -26,6 +27,7 @@ export * from './registry';
 export * from './audit';
 export * from './evidence';
 export * from './intake';
+export * from './admin';
 
 export const ALL_EVENTS = [
   ...CORE_EVENTS,
@@ -40,6 +42,7 @@ export const ALL_EVENTS = [
   ...AUDIT_EVENTS,
   ...EVIDENCE_EVENTS,
   ...INTAKE_EVENTS,
+  ...ADMIN_EVENTS,
 ] as const;
 
 export type EventMap = EventMapOf<typeof ALL_EVENTS>;

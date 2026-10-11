@@ -1,6 +1,7 @@
 import { Command, CommanderError } from 'commander';
 import { AOC_ENV } from '@aoc/contracts';
 import pkg from '../package.json' with { type: 'json' };
+import { registerAdmin } from './commands/admin';
 import { registerAudit } from './commands/audit';
 import { registerAuth } from './commands/auth';
 import { registerBackup } from './commands/backup';
@@ -58,6 +59,7 @@ export function buildProgram(ctx: CommandContext): Command {
   registerProjects(program, ctx);
   registerAudit(program, ctx);
   registerBackup(program, ctx);
+  registerAdmin(program, ctx);
   registerUsers(program, ctx);
   registerHooks(program, ctx);
   registerDoctor(program, ctx);
