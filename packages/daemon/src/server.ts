@@ -11,6 +11,7 @@ import {
   type Clock,
   type Logger,
 } from '@aoc/kernel';
+import { mountAdmin } from './admin';
 import { resolveHelperCommands } from './config';
 import { bodyLimit, csrfGuard, requestId, securityHeaders } from './http';
 import { resolveLlm } from './llm';
@@ -54,7 +55,7 @@ export interface AocServer {
 /**
  * aocd's composition root: one AocRuntime (the sole writer of the event log) with every module, and
  * the Hono app around it — request id, security headers, CSRF guard, body limits, module routes,
- * health, the operator event stream and the static UI.
+ * health, the audited admin actions, the operator event stream and the static UI.
  */
 export async function createAocServer(config: AocConfig, opts: AocServerOptions = {}): Promise<AocServer> {
   const log = opts.log ?? createLogger();
@@ -88,6 +89,7 @@ export async function createAocServer(config: AocConfig, opts: AocServerOptions 
   app.use('*', csrfGuard(config));
   app.use('*', bodyLimit(config));
   runtime.mount(app);
+  mountAdmin(app, runtime);
 
   app.get('/api/health', (c) => {
     const degraded = runtime.store.projectionHealth().filter((p) => p.status !== 'ok').length;

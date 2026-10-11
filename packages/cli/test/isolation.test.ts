@@ -175,6 +175,7 @@ const EXTRA_ARGS: Record<string, string[]> = {
   'hooks install-observed': ['--command', 'node /opt/aoc/aoc-hook.mjs'],
 };
 const OPTION_VALUES: Record<string, string> = { '--from': '2026-10-01', '--to': '2026-10-02' };
+const ARG_VALUES: Record<string, string> = { seq: '1' };
 
 interface Leaf {
   path: string[];
@@ -183,7 +184,7 @@ interface Leaf {
 
 function leaves(cmd: Command, path: string[] = []): Leaf[] {
   if (cmd.commands.length) return cmd.commands.flatMap((c) => leaves(c, [...path, c.name()]));
-  const args = cmd.registeredArguments.filter((a) => a.required).map((a) => `x-${a.name()}`);
+  const args = cmd.registeredArguments.filter((a) => a.required).map((a) => ARG_VALUES[a.name()] ?? `x-${a.name()}`);
   const opts = (cmd.options as readonly Option[])
     .filter((o) => o.mandatory)
     .flatMap((o) => [o.long!, o.argChoices?.[0] ?? OPTION_VALUES[o.long!] ?? 'x-value']);

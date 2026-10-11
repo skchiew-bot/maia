@@ -23,6 +23,7 @@ const APPROVER_ONLY: Permission[] = [
   'credit.topup_approve',
   'credit.view_all',
   'gate.approve',
+  'ops.admin',
   'ratecard.edit',
   'session.drive_any',
   'ticket.close_any',
@@ -234,6 +235,9 @@ const ROUTES: Record<string, Aud> = {
   'GET /api/tower': 'audit.view',
   // daemon
   'GET /api/health': 'public',
+  'POST /api/admin/reactors/:name/redrive': 'ops.admin',
+  'POST /api/admin/projections/rebuild': 'ops.admin',
+  'POST /api/admin/jobs/:name/run': 'ops.admin',
   'GET /api/stream': 'session.view',
 };
 
@@ -260,6 +264,7 @@ const fill = (path: string): string =>
     .replace(':seq', '999999')
     .replace(':date', '2026-10-01')
     .replace(':field', 'impact')
+    .replace(':name', 'x_missing')
     .replace(':id', 'x_missing');
 
 const statusCell = (s: number): string => (s === 401 ? '.' : s === 403 ? 'x' : s >= 500 ? '!' : '+');

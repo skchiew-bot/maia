@@ -34,6 +34,9 @@ export const API_PATHS = {
   evidencePackDownload: (packId: string) => `/api/evidence/packs/${enc(packId)}/download`,
   users: '/api/users',
   userTokens: (userId: string) => `/api/users/${enc(userId)}/tokens`,
+  adminRedrive: (reactor: string) => `/api/admin/reactors/${enc(reactor)}/redrive`,
+  adminRebuild: '/api/admin/projections/rebuild',
+  adminRunJob: (job: string) => `/api/admin/jobs/${enc(job)}/run`,
 } as const;
 
 /** Query parameter names the CLI sends. */

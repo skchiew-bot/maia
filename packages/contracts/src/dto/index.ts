@@ -12,3 +12,4 @@ export * from './audit';
 export * from './evidence';
 export * from './intake';
 export * from './tower';
+export * from './admin';

@@ -54,6 +54,20 @@ interface QueuedReaction {
   reactor: Reactor;
   e: StoredEvent;
   payload: JsonValue | null;
+  /** Set for an operator's re-drive: told how it went once its attempts are done. */
+  redriven?: (err: unknown) => void;
+}
+
+/** How an operator's re-drive of one dead-lettered reaction went (O-26). */
+export type RedriveResult =
+  | { status: 'ok' }
+  | { status: 'failed'; error: string }
+  | { status: 'unknown_reactor' | 'not_dead_lettered' | 'stopping' };
+
+/** How one run of a job went; also recorded in `job_runs`. */
+export interface JobRunResult {
+  status: 'ok' | 'error';
+  error: string | null;
 }
 
 /**
@@ -175,6 +189,11 @@ export class AocRuntime {
               lastErr = err;
             }
           }
+          // A re-drive replaces the dead letter it retried: gone on success, rewritten with the new error on failure.
+          if (item.redriven)
+            this.store.db
+              .prepare('DELETE FROM reactor_failures WHERE reactor = ? AND seq = ?')
+              .run(item.reactor.name, item.e.seq);
           if (lastErr) {
             this.opts.log.error('reactor failed', { reactor: item.reactor.name, seq: item.e.seq, err: String(lastErr) });
             this.store.db
@@ -182,6 +201,7 @@ export class AocRuntime {
               .run(item.reactor.name, item.e.seq, String(lastErr).slice(0, 1000), this.opts.clock.iso());
           }
           this.store.db.prepare('UPDATE reactor_cursors SET seq = MAX(seq, ?) WHERE name = ?').run(item.e.seq, item.reactor.name);
+          item.redriven?.(lastErr);
         }
       } finally {
         this.draining = null;
@@ -189,6 +209,36 @@ export class AocRuntime {
       }
     })();
     return settled;
+  }
+
+  /**
+   * Re-run one reactor on one event whose reaction was dead-lettered (an operator action, O-26). It joins the
+   * reactor queue, so it runs in order with live reactions and gets the same 3 attempts. Reactors are idempotent,
+   * so a reaction that partly happened before it failed is not doubled.
+   */
+  async redrive(reactorName: string, seq: number): Promise<RedriveResult> {
+    if (this.stopRequested) return { status: 'stopping' };
+    const reactor = this.reactors.find((r) => r.name === reactorName);
+    if (!reactor) return { status: 'unknown_reactor' };
+    const dead = this.store.db
+      .prepare('SELECT COUNT(*) AS n FROM reactor_failures WHERE reactor = ? AND seq = ?')
+      .get(reactorName, seq) as { n: number };
+    const e = dead.n ? this.store.get(seq) : null;
+    if (!e) return { status: 'not_dead_lettered' };
+    let done = false;
+    let failure: unknown = null;
+    this.queue.push({
+      reactor,
+      e,
+      payload: this.store.readPayload(e),
+      redriven: (err) => {
+        done = true;
+        failure = err;
+      },
+    });
+    await this.drain();
+    if (!done) return { status: 'stopping' };
+    return failure ? { status: 'failed', error: String(failure).slice(0, 1000) } : { status: 'ok' };
   }
 
   /** Mount auth middleware, module routes and the error handler on a Hono app. */
@@ -225,6 +275,10 @@ export class AocRuntime {
     return this.opts.modules.flatMap((m) => m.jobs ?? []);
   }
 
+  jobNames(): string[] {
+    return this.jobs.map((j) => j.name);
+  }
+
   /**
    * Run every job that is due at clock.now(). Daily jobs run once per local date at/after `dailyAt`. The tick is
    * tracked so that stop() waits for it, and no further job starts once the runtime is stopping.
@@ -252,17 +306,17 @@ export class AocRuntime {
     return ran;
   }
 
-  runJob(name: string): Promise<void> {
+  runJob(name: string): Promise<JobRunResult> {
     if (this.stopRequested) return Promise.reject(new Error(`cannot run job ${name}: the runtime is stopping`));
     return this.trackJob(() => this.execute(name));
   }
 
-  private async execute(name: string): Promise<void> {
+  private async execute(name: string): Promise<JobRunResult> {
     const job = this.jobs.find((j) => j.name === name);
     if (!job) throw new Error(`unknown job ${name}`);
     const now = this.opts.clock.now();
     const local = localParts(now, this.opts.config.timezone);
-    let status = 'ok';
+    let status: JobRunResult['status'] = 'ok';
     let error: string | null = null;
     try {
       await job.run(this.ctx);
@@ -277,7 +331,7 @@ export class AocRuntime {
         job: name,
         status,
       });
-      return;
+      return { status, error };
     }
     this.store.db
       .prepare(
@@ -286,6 +340,7 @@ export class AocRuntime {
       )
       .run(name, new Date(now).toISOString(), local.date, status, error);
     await this.drain();
+    return { status, error };
   }
 
   startJobs(intervalMs = 30_000): void {
