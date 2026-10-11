@@ -22,6 +22,7 @@ const POLICY_KINDS: ReadonlySet<DecisionCardView['kind']> = new Set([
   'lesson_binding',
   'playbook_approval',
   'fx_discrepancy',
+  'erasure_request',
 ]);
 
 /** Kind word, the decision test or policy chip, and the passkey marker — the card's identity line. */

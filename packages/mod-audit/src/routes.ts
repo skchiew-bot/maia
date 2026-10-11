@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import {
+  EraseInputSchema,
+  ErasureRequestInputSchema,
   hasPermission,
   zId,
   type AnchorListDTO,
@@ -20,6 +22,7 @@ import {
   type App,
   type ModuleContext,
 } from '@aoc/kernel';
+import { authoriseErasure, requestErasure } from './erasure';
 import type { AuditService } from './service';
 import { payloadAccess } from './visibility';
 
@@ -40,21 +43,6 @@ const EventsQuery = z.object({
   ticketId: zId.optional(),
   actorId: z.string().max(128).optional(),
 });
-
-const EraseBody = z
-  .object({
-    // A body scope is an id (ses_…, tkt_…, user:usr_…, a module label, a project id), never a path segment: the body
-    // store maps odd ids to hashes (F-04), and the API refuses them anyway.
-    scopeId: z
-      .string()
-      .min(1)
-      .max(64)
-      .regex(/^[A-Za-z0-9][A-Za-z0-9_.:#@-]*$/, 'a scope id starts with a letter or a digit')
-      .refine((s) => !s.includes('..') && !s.endsWith('.'), 'a scope id is an id, not a path'),
-    reason: z.enum(['pdpa_request', 'secret_leak', 'retention', 'other']),
-    decisionId: zId.nullish(),
-  })
-  .strict();
 
 export function headerDTO(e: StoredEvent): AuditEventHeaderDTO {
   return {
@@ -217,28 +205,30 @@ export function registerAuditRoutes(app: App, ctx: ModuleContext, svc: () => Aud
     throw new HttpError(502, 'backup_failed', `Backup failed: ${r.reason}`, { stage: r.stage, reason: r.reason });
   });
 
+  // O-28: an erasure request is anyone's to raise with audit.erase_request; only the Approver approves it, never its
+  // requester, and only an approved request lets an Approver erase the scopes it names.
+  app.post('/api/audit/erasure-requests', async (c) => {
+    const auth = requirePermission(c, 'audit.erase_request');
+    const body = await readJson(c, ErasureRequestInputSchema);
+    return c.json(requestErasure(ctx, auth.user, body), 201);
+  });
+
   app.post('/api/audit/erase', async (c) => {
     const auth = requirePermission(c, 'audit.erase');
-    const body = await readJson(c, EraseBody);
-    const decisionId = body.decisionId ?? null;
-    if (decisionId) {
-      const card = ctx.services.maybe('decisions')?.get(decisionId) ?? null;
-      if (!card)
-        throw new HttpError(422, 'unknown_decision', 'decisionId does not reference a known decision');
-      if (card.status !== 'resolved')
-        throw new HttpError(409, 'decision_not_resolved', 'The referenced decision is not resolved');
-    }
+    const body = await readJson(c, EraseInputSchema);
+    const reason = authoriseErasure(ctx, auth.user, body);
+    const decisionId = body.decisionId;
     const eventsInScope = (
       db.prepare('SELECT COUNT(*) AS n FROM events WHERE body_scope = ?').get(body.scopeId) as { n: number }
     ).n;
     const e = store.eraseScope(body.scopeId, {
       actor: { kind: 'human', id: auth.user.id },
-      reason: body.reason,
+      reason,
       decisionId,
     });
     const out: EraseResultDTO = {
       scopeId: body.scopeId,
-      reason: body.reason,
+      reason,
       bodiesErased: Number(e.meta.bodyCount ?? 0),
       eventsInScope,
       eventSeq: e.seq,

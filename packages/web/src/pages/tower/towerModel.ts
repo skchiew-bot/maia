@@ -58,6 +58,7 @@ const DECISION_ROW_LABEL: Record<DecisionKind, string> = {
   triage_reconciliation: 'Triage reconciliation',
   low_confidence_diagnosis: 'Low-confidence diagnosis',
   uat_signoff: 'UAT sign-off',
+  erasure_request: 'Erasure request',
 };
 
 /** Decision-latency row names (§ mock: "Rollback", "Go-live", "Fix plan"). */
@@ -76,6 +77,7 @@ const LATENCY_KIND_LABEL: Partial<Record<string, string>> = {
   triage_reconciliation: 'Triage reconciliation',
   low_confidence_diagnosis: 'Low-confidence diagnosis',
   uat_signoff: 'UAT sign-off',
+  erasure_request: 'Erasure request',
 };
 
 const TICKET_STAGE_LABEL: Record<TicketStage, string> = {

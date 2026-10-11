@@ -66,6 +66,7 @@ export const DECISION_KINDS = [
   'triage_reconciliation', // parallel triage agents disagree (R17)
   'low_confidence_diagnosis', // bounce low-confidence root cause to a human
   'uat_signoff', // requester tests on UAT
+  'erasure_request', // crypto-shred named body scopes: raised by one person, approved by the Approver (O-28)
 ] as const;
 export type DecisionKind = (typeof DECISION_KINDS)[number];
 
@@ -134,5 +135,6 @@ export const ID_PREFIX = {
   evidencePack: 'evp',
   topup: 'tpu',
   event: 'evt',
+  erasureRequest: 'erq',
 } as const;
 export type IdKind = keyof typeof ID_PREFIX;

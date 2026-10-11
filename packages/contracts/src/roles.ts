@@ -9,7 +9,8 @@ export const PERMISSIONS = [
   'audit.view', // full audit trail
   'audit.verify',
   'audit.backup', // run an encrypted backup of the audit state on demand (Approver only, like audit.erase)
-  'audit.erase', // crypto-shred a scope (PDPA)
+  'audit.erase', // crypto-shred a scope (PDPA), only under an approved erasure request
+  'audit.erase_request', // ask for an erasure: the request becomes an Approver decision card (O-28)
   'decision.view',
   'decision.resolve', // subject to per-kind policy (decisions.ts)
   'change.create',
@@ -47,6 +48,7 @@ const BUILDER: Permission[] = [
   'session.drive_own',
   'audit.view',
   'audit.verify',
+  'audit.erase_request',
   'decision.view',
   'decision.resolve',
   'change.create',

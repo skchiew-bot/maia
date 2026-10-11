@@ -1,4 +1,7 @@
 /** Read models / DTOs for mod-audit (§13: anchors, verify-against-anchor, erasure, audit trail). */
+import { z } from 'zod';
+import { ERASURE_REASONS, MAX_ERASURE_SCOPES, zScopeId, type ErasureReason } from '../events/audit';
+import { zId } from '../events/define';
 import type { Actor, EventSource, JsonObject, JsonValue, Scope } from '../envelope';
 
 export type AnchorProviderName = 'git' | 'rfc3161';
@@ -126,11 +129,50 @@ export interface AnchorResultDTO {
 
 export interface EraseResultDTO {
   scopeId: string;
-  reason: 'pdpa_request' | 'secret_leak' | 'retention' | 'other';
+  reason: ErasureReason;
   bodiesErased: number;
   eventsInScope: number;
   eventSeq: number;
-  decisionId: string | null;
+  /** The approved erasure request's decision (O-28). */
+  decisionId: string;
+}
+
+/** `POST /api/audit/erase`: one scope, under an approved erasure request (O-28). */
+export const EraseInputSchema = z
+  .object({
+    scopeId: zScopeId,
+    /** The approved `erasure_request` decision that lists this scope. */
+    decisionId: zId,
+    /** Optional: when given, it must be the request's reason. */
+    reason: z.enum(ERASURE_REASONS).optional(),
+  })
+  .strict();
+export type EraseInput = z.infer<typeof EraseInputSchema>;
+
+/** `POST /api/audit/erasure-requests`: ask the Approver to approve crypto-shredding these scopes (O-28). */
+export const ErasureRequestInputSchema = z
+  .object({
+    scopeIds: z
+      .array(zScopeId)
+      .min(1)
+      .max(MAX_ERASURE_SCOPES)
+      .refine((ids) => new Set(ids).size === ids.length, 'each scope once'),
+    reason: z.enum(ERASURE_REASONS),
+    /** Why, and the impact assessed (key custody §6). Shown to the Approver on the card. */
+    rationale: z.string().trim().min(1).max(4000),
+  })
+  .strict();
+export type ErasureRequestInput = z.infer<typeof ErasureRequestInputSchema>;
+
+export interface ErasureRequestDTO {
+  requestId: string;
+  decisionId: string;
+  scopeIds: string[];
+  reason: ErasureReason;
+  requesterId: string;
+  createdAt: string;
+  /** Events in each scope when the request was made: what an approval would shred. */
+  eventsInScope: Record<string, number>;
 }
 
 /** One `backup.completed` (G-21). The backup directory itself is configuration and is not exposed. */

@@ -17,6 +17,7 @@ export const DECISION_KIND_LABEL: Record<DecisionKind, string> = {
   triage_reconciliation: 'Triage reconciliation',
   low_confidence_diagnosis: 'Low-confidence diagnosis',
   uat_signoff: 'UAT sign-off',
+  erasure_request: 'Erasure request',
 };
 
 /**

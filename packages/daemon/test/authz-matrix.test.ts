@@ -215,6 +215,7 @@ const ROUTES: Record<string, Aud> = {
   'GET /api/audit/backups': 'audit.view',
   'POST /api/audit/backup': 'audit.backup',
   'POST /api/audit/erase': 'audit.erase',
+  'POST /api/audit/erasure-requests': 'audit.erase_request',
   'GET /api/compliance/mapping': 'audit.view',
   'POST /api/compliance/mapping/stamp': 'mapping.stamp',
   'POST /api/evidence/packs': 'evidence.generate',
