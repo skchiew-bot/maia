@@ -609,6 +609,10 @@ export class EventStore {
       this.opts.log.warn('the WAL could not be truncated after an erasure: a reader holds an older snapshot, so pre-erasure pages stay in aoc.db and its WAL until the next checkpoint');
   }
 
+  projectorNames(): string[] {
+    return this.projectors.map((p) => p.name);
+  }
+
   /**
    * Drop and rebuild projections from the log (payloads decrypted; null where erased). An event a projector cannot
    * handle is isolated exactly as it is live: skipped for that projector, which is marked degraded again. Aborting

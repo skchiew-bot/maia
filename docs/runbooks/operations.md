@@ -192,8 +192,9 @@ SELECT seq, ts, type FROM events ORDER BY seq DESC LIMIT 5;
 SQL
 ```
 
-Never write to `aoc.db` with `sqlite3` while aocd runs. The only manual writes this runbook allows are the
-`projection_state` reset in §4 and the reactor cursor reset in §5, both with aocd stopped.
+Never write to `aoc.db` with `sqlite3` while aocd runs. Rebuilds, re-drives and job runs go through `aoc admin`
+(§4, §5, §7), which records each one. The only manual write this runbook allows is the `projection_state` reset in
+§4, with aocd stopped, for when aocd cannot start.
 
 ## 4. Rebuilding projections
 
@@ -219,17 +220,25 @@ projector that is new on an existing log, whose fingerprint changed, or that is 
 3. **Make sure the right KEK is configured.** A rebuild reads every body; with a wrong KEK it fails and rolls
    back. Never let aocd start with a generated key
    ([key custody §3](key-custody.md#3-store-the-kek-options-weakest-to-strongest)).
-4. Force the rebuild of the named projectors only (for example `sessions`, `decisions`). No admin command exists
-   for it (threat model O-26). With aocd **stopped**, delete their `projection_state` rows; at the next start aocd
-   treats them as new and rebuilds them from the log:
+4. Rebuild the named projectors only (for example `sessions`, `decisions`), with the Approver's token:
+
+   ```bash
+   aoc admin rebuild sessions decisions --reason "open decisions did not match the log"
+   ```
+
+   aocd records it as `admin.projections_rebuilt`: who ran it (the actor), the projectors, the outcome and the
+   projectors left degraded (in the clear), and the reason (encrypted). The command exits 1 when the rebuild failed
+   (it rolled back) or left a projector degraded. Hooks wait while it runs.
+
+   **If aocd cannot start**, the startup rebuild is the fallback. With aocd **stopped**, delete the projectors'
+   `projection_state` rows; at the next start aocd treats them as new and rebuilds them from the log. This bypasses
+   the audit event, so record it as a change record:
 
    ```bash
    systemctl stop aocd
    sqlite3 /var/lib/aoc/data/aoc.db "DELETE FROM projection_state WHERE name IN ('sessions', 'decisions');"
    systemctl start aocd
    ```
-
-   Record it as a change record: it is an operator action on governed state.
 5. Check: the log line `projections rebuilt from the log`; no `degraded` rows; spot-check counts against the event
    log (for example open decisions against `decision.requested` minus resolved, withdrawn and expired); run Verify.
 
@@ -263,18 +272,18 @@ A dead-lettered reaction means something that should have happened did not.
 2. Read the event (`SELECT type, meta FROM events WHERE seq = ?`) and the error. Typical causes: a dependency was
    unavailable (supervisor at capacity, a git repository missing), a module bug, or data erased in between.
 3. Fix the cause: deploy the fix, or restore the dependency.
-4. **Re-drive.** Until a re-drive command exists (threat model O-26), reset that reactor's cursor, with aocd
-   **stopped**:
+4. **Re-drive** that one reaction, with the Approver's token, while aocd runs:
 
    ```bash
-   systemctl stop aocd
-   sqlite3 /var/lib/aoc/data/aoc.db "UPDATE reactor_cursors SET seq = <failed_seq - 1> WHERE name = '<reactor>';"
-   systemctl start aocd
+   aoc admin redrive <reactor> <failed_seq> --reason "supervisor capacity restored"
    ```
 
-   On start, the reactor catches up from that cursor. Reactors are idempotent (they check `causationId` before
-   appending), so events after `failed_seq` that were already handled are skipped. Record the re-drive as a change
-   record. It is an operator action on governed state.
+   The reactor runs again on that event, in order with live reactions and with the same 3 attempts. Reactors are
+   idempotent (they check `causationId` before appending), so a part that already happened is not doubled. On
+   success the `reactor_failures` row goes; on failure it is rewritten with the new error and the command exits 1.
+   Only a dead-lettered (reactor, seq) pair can be re-driven: any other is refused (409). aocd records each attempt
+   as `admin.reactor_redriven`, with who ran it, the reactor, the seq and the outcome (in the clear) and the reason
+   and any error (encrypted).
 5. Confirm that the expected follow-up event now exists (for example `session.turn_started {reason:
    decision_answered}`).
 
@@ -318,10 +327,11 @@ high-value events are anchored as they happen.
 `aoc anchor` anchors the current chain head immediately. Use it after a missed anchor, before a backup, or
 after a high-value event ([anchoring](anchoring.md)).
 
-**Any other job:** the kernel can run a job immediately (`AocRuntime.runJob(name)`), but **no admin command
-exposes it yet** (threat model O-26). Until one does, a missed daily job runs at its next scheduled time; for FX, a
-missed day is carried forward and stamped as such, which is the designed behaviour, and an Approver can re-run the
-day's FX attempt with `POST /api/fx/run`. Every run updates `job_runs`.
+**Any other job:** `aoc admin run-job <name> --reason "…"` with the Approver's token runs it now and exits 1 if it
+failed. aocd records the run as `admin.job_run`, with who ran it, the job and the outcome (in the clear) and the
+reason and any error (encrypted). Otherwise a missed daily job runs at its next scheduled time; for FX, a missed day
+is carried forward and stamped as such, which is the designed behaviour, and an Approver can also re-run the day's
+FX attempt with `POST /api/fx/run`. Every run updates `job_runs`.
 Jobs must be idempotent: a daily job forced by hand runs again even if it already ran today.
 
 ## 8. Upgrades

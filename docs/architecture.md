@@ -623,7 +623,8 @@ in the [key custody runbook](runbooks/key-custody.md#6-crypto-shred).
   and they set `causationId` on everything they append.
 - A reaction gets 3 attempts. If all fail, it is recorded in `reactor_failures` and **the cursor still advances**:
   a poisoned event cannot stall the bus, but the failure is **not retried automatically**. Operators must review
-  `reactor_failures` (see [operations](runbooks/operations.md#5-reactor-failures)).
+  `reactor_failures` and re-drive a failed reaction with `aoc admin redrive`, which records the operator and the
+  reason as `admin.reactor_redriven` (see [operations](runbooks/operations.md#5-reactor-failures)).
 - A newly added reactor starts at the current head and does not process history.
 
 ### 5.8 Header-only SSE

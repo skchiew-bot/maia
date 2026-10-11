@@ -37,6 +37,7 @@ export const PERMISSIONS = [
   'uat.signoff_own',
   'users.manage',
   'project.manage',
+  'ops.admin', // re-drive a dead-lettered reaction, rebuild projections, run a job by hand (O-26)
 ] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 
