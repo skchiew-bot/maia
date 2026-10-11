@@ -44,9 +44,10 @@ Before installing:
 Prerequisites:
 
 - aocd is reachable from the developer machine (the `publicUrl`, through the company network or VPN);
-- an Approver has issued the developer an observer token. Observer tokens carry a label and an expiry, but are
-  not yet bound to a person (threat model O-6), so issue **one per developer**, label it with their name, and
-  revoke it when they leave.
+- an Approver has issued the developer their own observer token (Admin › Users › Issue observer token, choosing the
+  developer). It carries a label and an expiry and belongs to that developer: their observed sessions are recorded
+  under their name, and deactivating their account revokes it (threat model O-6). Tokens issued before tokens had an
+  owner record sessions without one: replace them.
 
 ```bash
 aoc login --token -                              # your user token from stdin; stored in ~/.aoc/client.json (0600)

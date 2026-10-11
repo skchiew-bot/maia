@@ -64,7 +64,13 @@ export const SESSION_EVENTS = [
     type: 'session.observed',
     owner: 'sessions',
     description: 'First sighting of an observed (non-managed) Claude Code session via global hooks — read-only.',
-    meta: meta({ sessionId: zId, claudeSessionId: z.string().min(1).max(64), projectId: zId.nullable() }),
+    meta: meta({
+      sessionId: zId,
+      claudeSessionId: z.string().min(1).max(64),
+      projectId: zId.nullable(),
+      /** The developer whose observer token reported it (O-6); absent or null for an unowned token. */
+      ownerId: zId.nullable().optional(),
+    }),
     payload: payload({ cwd: z.string(), transcriptPath: z.string() }),
   }),
   defineEvent({

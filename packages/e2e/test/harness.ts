@@ -524,8 +524,10 @@ export class Harness {
     return { user: created.user, token: issued.token, headers: { authorization: `Bearer ${issued.token}` } };
   }
 
-  async observerToken(): Promise<string> {
-    return (await this.api<IssuedTokenDto>('POST', '/api/tokens/observer', { as: this.owner, body: { label: 'e2e observer' } })).token;
+  /** An observer token for one developer (O-6): the owner's unless another user is named. */
+  async observerToken(forUser?: TestUser): Promise<string> {
+    const userId = (forUser ?? this.owner).user.id;
+    return (await this.api<IssuedTokenDto>('POST', '/api/tokens/observer', { as: this.owner, body: { label: 'e2e observer', userId } })).token;
   }
 
   // ── HTTP ───────────────────────────────────────────────────────────────────

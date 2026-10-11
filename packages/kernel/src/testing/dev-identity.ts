@@ -75,7 +75,7 @@ export class DevIdentityService implements IdentityService {
   }
   issueObserverToken(): string {
     const token = `aoc_o_${randomBytes(18).toString('hex')}`;
-    this.ingest.set(token, { kind: 'observer', tokenId: newId('token') });
+    this.ingest.set(token, { kind: 'observer', tokenId: newId('token'), userId: null });
     return token;
   }
   issueSystemToken(): string {

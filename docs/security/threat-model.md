@@ -243,7 +243,7 @@ environment, is inside Zone 3**, whatever its name. Zone 3 therefore runs as a s
 | T | Hooks are bypassed (`--bare`, `--safe-mode`, edited settings, work outside Claude Code) | Never the wall: credential isolation is ([T-1](#t-1-work-bypasses-the-platform)) | Ops | Observation of developer machines is best-effort |
 | I | An exit-2 denial leaks the hook command line | The daemon answers with a JSON deny; never put secrets on hook command lines | Built / Required | — |
 | D | aocd is slow, so hooks time out | Managed sessions fail closed (by design); keep aocd responsive | Built (daemon side) | Availability is coupled to aocd. Against the real CLI, 425 hook calls took 119 ms at the median, 312 ms at the 95th percentile and 609 ms at most, inside the 2.5 s PreToolUse budget ([research §13.5](../research/claude-code-integration.md#135-measured-numbers)) |
-| S | Observed events are forged with the observer token | [T-12](#t-12-observer-token-misuse) | Built (rate limits) / Required (O-6, a token per person) | — |
+| S | Observed events are forged with the observer token | [T-12](#t-12-observer-token-misuse) | Built (rate limits; a token per person, O-6, `6a247bc`) | Tokens issued before O-6 have no owner and stay unattributed until revoked |
 
 ### 3.10 Web console and intake portal
 
@@ -570,9 +570,10 @@ hook events, and post usage or throttle reports for any observed session.
   - Observed data is labelled `observed` and never feeds gates, credits or evidence (design rule).
   - Observer tokens are rate limited per token: 600 requests a minute with a burst of 1000, and 60 new observed
     sessions an hour, answered 429 with `Retry-After` (Built, R-13).
-  - Issue observer tokens **per person** (`token.issued {kind: observer, userId}`), so observed events can be
-    attributed and revoked individually (Required, O-6: today the Approver issues a token with a label and an
-    expiry, and no user id).
+  - Observer tokens are issued **per person** (`token.issued {kind: observer, userId}`): a new observed session is
+    owned by that developer, another developer's token cannot write into it (403), and deactivating the developer
+    revokes the token (Built, O-6, `6a247bc`). Tokens issued before that have no owner and keep working,
+    unattributed, until revoked.
 - **Residual:** a developer can falsify their own observed telemetry. That is low impact, because it is
   observational only.
 
@@ -828,7 +829,7 @@ the [gap list](../compliance/gaps.md), which tracks owners and acceptance tests.
 | O-3 | Give the sidecar its own principal, outside the `claude` environment. **Done (G-44):** a sidecar token per session, only in the sidecar's environment; sidecar reports refuse the session token, live and spooled; revoked once the last report is in. Out of the model's reach only with session isolation (O-1) | Change | `supervisor`, `sidecar`, `mod-identity`, `mod-sessions` | T-3, T-4, T-14, gap G-44 |
 | O-4 | Record hook-relayed events with the agent as actor. **Done** (`3eda4b7`): a managed `UserPromptSubmit` is recorded with the agent as actor; the supervisor's own record of what it injects is `session.turn_started.injectedText` | Done | `mod-sessions` | T-3, gap G-47 |
 | O-5 | Count usage only from the sidecar principal; record only the unseen part of a partially seen batch; reconcile each invocation against the supervisor-observed `result.modelUsage` (cumulative, so take differences). **Mostly done (G-44):** usage counts only from the sidecar principal, and every turn is reconciled (`usage.reconciled`, Tower `metering_discrepancy`). Remaining: record only the unseen part of a partially seen batch | Change | `mod-sessions`, `supervisor`, `mod-metering` | T-4, T-5, T-14, gaps G-44, G-51 |
-| O-6 | Bind each observer token to a person (today the Approver issues them with a label and an expiry, but no user id). **Rate limits are done (R-13):** per token, for observed ingest and for creating observed sessions | Change (binding still open) | `mod-identity`, `cli` | T-12, gap G-47 |
+| O-6 | Bind each observer token to a person. **Done** (`6a247bc`): the Approver names the developer when issuing it, their observed sessions are owned by them, and the token dies with their account. **Rate limits are done (R-13):** per token, for observed ingest and for creating observed sessions | Done | `mod-identity`, `cli` | T-12, gap G-47 |
 | O-7 | **Done for identity events**, which use the scope `user:<userId>`. It remains a review rule: every event type that carries personal data needs a scope that can be erased on its own, because the kernel default falls back to `global` | Review rule | Lead, module owners | ADR-0003, PDPA |
 | O-8 | Separation of duties with a single Approver. **Decided by the CEO on 2026-10-09:** no exception; `decisions.soleApproverFallback` stays `false`, so the Approver's own Approver-level requests wait for a second Approver. **Done:** the `decisions` settings are governed configuration, so turning the flag on is chained as `config.changed` (`bc0cc03`). Remaining: appoint a second Approver with a passkey | **Decided (CEO)**; follow-up Ops | CEO | T-8, R15, gaps G-35, P-11 |
 | O-9 | Route Requester UAT feedback through a human or a read-only triage pass before it reaches a credentialed build session. **Done (G-45):** the feedback reaches only a read-only triage pass, fenced in a random delimiter, and the build prompt carries the approved fix plan and no requester text. Remaining: restrict build-session network egress (O-14) | Done; egress is a decision | `mod-intake`, CEO | T-11, R4, gaps G-45, P-20 |

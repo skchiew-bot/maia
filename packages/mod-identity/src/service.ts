@@ -337,7 +337,13 @@ export class IdentityServiceImpl implements IdentityService {
     return this.issueObserver(actor, opts).token;
   }
 
-  issueObserver(actor: Actor, opts: IssueTokenOptions = {}): IssuedTokenDto {
+  /** An observer token for one developer (O-6): their observed sessions are attributed to them, and it dies with them. */
+  issueObserver(actor: Actor, opts: IssueTokenOptions & { userId?: string } = {}): IssuedTokenDto {
+    if (opts.userId !== undefined) {
+      const user = this.getUser(opts.userId);
+      if (!user) throw new HttpError(404, 'user_not_found', 'User not found');
+      if (!user.active) throw new HttpError(409, 'user_inactive', 'Cannot issue a token to an inactive user');
+    }
     return this.issue('observer', opts, actor);
   }
 
@@ -488,7 +494,7 @@ export class IdentityServiceImpl implements IdentityService {
       return r.row.session_id ? { kind, sessionId: r.row.session_id, tokenId: r.row.id } : null;
     }
     return r.row.kind === 'observer'
-      ? { kind: 'observer', tokenId: r.row.id }
+      ? { kind: 'observer', tokenId: r.row.id, userId: r.row.user_id ?? null }
       : { kind: 'system', tokenId: r.row.id };
   }
 
