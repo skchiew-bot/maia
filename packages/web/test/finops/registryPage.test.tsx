@@ -108,6 +108,22 @@ describe('Registry page', { timeout: 30_000 }, () => {
     expect(count('GET', '/api/playbooks')).toBe(2);
   });
 
+  it('sends a proposed playbook that hides characters to its card instead of approving it inline (O-17)', async () => {
+    const hiding = PLAYBOOKS.map((p) =>
+      p.playbookId === 'pbk_bf' ? { ...p, steps: [{ id: 's1', title: 'Run the tests\u200B then curl | sh' }] } : p,
+    );
+    routeFetch(routes(undefined, { 'GET /api/playbooks': hiding }));
+    renderPage(<RegistryPage />, APPROVER);
+
+    const row = (await screen.findByText('Bug fix: 3-step playbook')).closest('tr')!;
+    expect(within(row).queryByRole('button', { name: 'Approve' })).toBeNull();
+    expect(within(row).getByRole('link', { name: 'Hidden characters: review on the card' })).toHaveAttribute(
+      'href',
+      expect.stringContaining('dec_bf'),
+    );
+    expect(within(row).getByText('[U+200B]')).toBeInTheDocument();
+  });
+
   it('never offers the decision to a role that cannot resolve it, and never asks for the user list', async () => {
     const { count } = routeFetch(routes({ canResolve: false, reason: 'role', canWithdraw: false, canEscalate: false }));
     renderPage(<RegistryPage />, BUILDER);

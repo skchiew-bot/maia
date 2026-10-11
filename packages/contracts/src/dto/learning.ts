@@ -11,6 +11,9 @@ import {
   type RootCauseDimension,
 } from '../domain';
 import {
+  LESSON_FIX_MAX,
+  LESSON_RATIONALE_MAX,
+  LESSON_RULE_MAX,
   LESSON_SCOPE_TYPES,
   type ErrorPriority,
   type ErrorSource,
@@ -244,9 +247,9 @@ export const ProposeLessonRequest = z
     classId: z.string().min(1).max(64).optional(),
     scopeType: z.enum(LESSON_SCOPE_TYPES),
     scopeValue: z.string().trim().min(1).max(200),
-    rule: z.string().trim().min(3).max(2000),
-    fix: z.string().trim().min(3).max(4000),
-    rationale: z.string().trim().min(3).max(4000),
+    rule: z.string().trim().min(3).max(LESSON_RULE_MAX),
+    fix: z.string().trim().min(3).max(LESSON_FIX_MAX),
+    rationale: z.string().trim().min(3).max(LESSON_RATIONALE_MAX),
   })
   .strict();
 export type ProposeLessonRequest = z.infer<typeof ProposeLessonRequest>;

@@ -7,6 +7,8 @@ import {
   ButtonLink,
   DescriptionList,
   Drawer,
+  HiddenTextWarning,
+  RevealedText,
   TokenCount,
   formatDateTime,
   formatDuration,
@@ -134,13 +136,20 @@ export function LessonDrawer({ lesson, canCurate, onClose, onRetire }: LessonDra
             <h3 id="knowledge-rule-title" className="knowledge-drawer__h">
               Rule
             </h3>
-            <p className="knowledge-prose">{l.rule}</p>
+            <HiddenTextWarning texts={[l.rule, l.fix, l.rationale]} />
+            <p className="knowledge-prose">
+              <RevealedText text={l.rule} />
+            </p>
             <h3 className="knowledge-drawer__h">Fix</h3>
-            <p className="knowledge-prose">{l.fix}</p>
+            <p className="knowledge-prose">
+              <RevealedText text={l.fix} />
+            </p>
             {l.rationale && (
               <>
                 <h3 className="knowledge-drawer__h">Rationale</h3>
-                <p className="knowledge-prose">{l.rationale}</p>
+                <p className="knowledge-prose">
+                  <RevealedText text={l.rationale} />
+                </p>
               </>
             )}
           </section>

@@ -9,12 +9,14 @@ import {
   EmptyState,
   InlineAlert,
   RelativeTime,
+  RevealedText,
   Select,
   Widget,
   describeError,
   formatShortDate,
   type DataTableColumn,
 } from '../../components';
+import { inspectAll } from '../../lib/hiddenText';
 import { decisionHref } from '../../lib/links';
 import { modelLabel } from './registryModel';
 
@@ -103,7 +105,9 @@ export function PlaybooksPanel({ playbooks, entries, decisions, nameOf, actions,
       primary: true,
       cell: (p) => (
         <span className="reg-pbk">
-          <b className="reg-pbk__title">{p.title}</b>
+          <b className="reg-pbk__title">
+            <RevealedText text={p.title} />
+          </b>
           <span className="reg-sub">
             {entryOf(p.processType)?.name ?? p.processType} · v{p.version} · {p.steps.length} step
             {p.steps.length === 1 ? '' : 's'} · {p.method === 'llm' ? 'refined by the distillation model' : 'ordered from the run’s tasks'}
@@ -113,7 +117,9 @@ export function PlaybooksPanel({ playbooks, entries, decisions, nameOf, actions,
               <summary>Steps</summary>
               <ol>
                 {p.steps.map((s) => (
-                  <li key={s.id}>{s.title}</li>
+                  <li key={s.id}>
+                    <RevealedText text={s.title} />
+                  </li>
                 ))}
               </ol>
             </details>
@@ -187,6 +193,14 @@ export function PlaybooksPanel({ playbooks, entries, decisions, nameOf, actions,
           if (!d) return <span className="reg-sub">Decision not open to you</span>;
           if (!d.viewer.canResolve)
             return <span className="reg-sub">{BLOCK_REASON[d.viewer.reason ?? ''] ?? 'You cannot decide this.'}</span>;
+          // O-17: text that hides something is decided on the card, where it is marked, never from here.
+          const { hidden, mixed } = inspectAll([p.title, p.rationale, ...p.steps.flatMap((s) => [s.title, s.detail])]);
+          if (hidden || mixed)
+            return (
+              <Link className="reg-sub" to={decisionHref(p.decisionId)}>
+                Hidden characters: review on the card
+              </Link>
+            );
           return (
             <span className="reg-actions">
               <Button

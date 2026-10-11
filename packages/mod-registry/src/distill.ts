@@ -6,7 +6,18 @@
  */
 import { posix } from 'node:path';
 import { z } from 'zod';
-import type { JsonValue, MetaOf, PayloadOf, PlaybookStepDTO, ProcessType, StoredEvent } from '@aoc/contracts';
+import {
+  PLAYBOOK_RATIONALE_MAX,
+  PLAYBOOK_STEP_DETAIL_MAX,
+  PLAYBOOK_STEP_TITLE_MAX,
+  PLAYBOOK_TITLE_MAX,
+  type JsonValue,
+  type MetaOf,
+  type PayloadOf,
+  type PlaybookStepDTO,
+  type ProcessType,
+  type StoredEvent,
+} from '@aoc/contracts';
 import type { ApproverGate, DistillFailure, DistillRequest } from '@aoc/distill';
 
 export const DISTILL_EVENT_TYPES = [
@@ -242,7 +253,11 @@ export function candidateSteps(d: RunDigest): PlaybookStepDTO[] {
       ...t.decisions.slice(0, 3).map((x) => `Decision: ${cut(x, 300)}`),
       ...t.drift.slice(0, 3).map((x) => `Drift: ${cut(x, 300)}`),
     ].filter((x): x is string => x !== null);
-    return { id: `s${i + 1}`, title: cut(t.title, 200), detail: cut(detail.join(' · '), 2000) };
+    return {
+      id: `s${i + 1}`,
+      title: cut(t.title, PLAYBOOK_STEP_TITLE_MAX),
+      detail: cut(detail.join(' · '), PLAYBOOK_STEP_DETAIL_MAX),
+    };
   });
 }
 
@@ -310,18 +325,18 @@ function slug(s: string): string {
 /** The model's answer, with step ids normalised into unique slugs. */
 const PlaybookOutput = z
   .object({
-    title: z.string().trim().min(3).max(200),
+    title: z.string().trim().min(3).max(PLAYBOOK_TITLE_MAX),
     steps: z
       .array(
         z.object({
           id: z.string().optional(),
-          title: z.string().trim().min(1).max(200),
-          detail: z.string().trim().max(2000).optional(),
+          title: z.string().trim().min(1).max(PLAYBOOK_STEP_TITLE_MAX),
+          detail: z.string().trim().max(PLAYBOOK_STEP_DETAIL_MAX).optional(),
         }),
       )
       .min(1)
       .max(30),
-    rationale: z.string().trim().max(4000).optional(),
+    rationale: z.string().trim().max(PLAYBOOK_RATIONALE_MAX).optional(),
   })
   .transform((o): PlaybookDraft => {
     const used = new Set<string>();

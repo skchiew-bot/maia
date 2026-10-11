@@ -5,9 +5,11 @@ import { Badge } from '../../components/Badge';
 import { DescriptionList } from '../../components/Layout';
 import { Icon } from '../../components/Icon';
 import { RelativeTime } from '../../components/RelativeTime';
+import { HiddenTextWarning, RevealedText } from '../../components/RevealedText';
 import { useNow } from '../../lib/clock';
 import { cx } from '../../lib/dom';
 import { formatAge, formatClock, formatDateTime } from '../../lib/format';
+import { inspectAll } from '../../lib/hiddenText';
 import type { DecisionActions, PasskeyState } from './actions';
 import type { Directory } from './directory';
 import {
@@ -270,7 +272,7 @@ export function DecisionDetail({
           )}
         </KindLine>
         <Heading id={titleId} className={cx('dec-detail__title', hideTitle && 'aoc-sr-only')}>
-          {card.title}
+          <RevealedText text={card.title} />
         </Heading>
         {card.test && <p className="dec-detail__test">Decision test: {TEST_LABEL[card.test]}</p>}
         {card.erased && (
@@ -279,11 +281,18 @@ export function DecisionDetail({
       </header>
 
       <section className="dec-detail__section" aria-label="Question">
-        <p className="dec-detail__question">{card.question}</p>
+        <HiddenTextWarning
+          texts={[card.title, card.question, card.context, ...card.options.flatMap((o) => [o.label, o.description])]}
+        />
+        <p className="dec-detail__question">
+          <RevealedText text={card.question} />
+        </p>
         {card.context && (
-          <details className="dec-detail__context" open={card.context.length < 600}>
+          <details className="dec-detail__context" open={card.context.length < 600 || inspectAll([card.context]).hidden > 0}>
             <summary>Context</summary>
-            <div className="dec-text">{card.context}</div>
+            <div className="dec-text">
+              <RevealedText text={card.context} />
+            </div>
           </details>
         )}
       </section>
@@ -297,14 +306,20 @@ export function DecisionDetail({
               const chosen = card.resolution?.optionId === o.id;
               return (
                 <li key={o.id} className={cx('dec-option', isRec && 'is-recommended', chosen && 'is-chosen')}>
-                  <span className="dec-option__label">{o.label}</span>
+                  <span className="dec-option__label">
+                    <RevealedText text={o.label} />
+                  </span>
                   {isRec && <Badge tone="accent">Recommended</Badge>}
                   {chosen && (
                     <Badge tone="ok" icon="ok">
                       Chosen
                     </Badge>
                   )}
-                  {o.description && <p className="dec-option__desc">{o.description}</p>}
+                  {o.description && (
+                    <p className="dec-option__desc">
+                      <RevealedText text={o.description} />
+                    </p>
+                  )}
                 </li>
               );
             })}

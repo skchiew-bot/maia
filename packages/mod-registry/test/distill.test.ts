@@ -157,6 +157,49 @@ describe('distillation engine: proposal → Approver gate → active playbook', 
     await t2.close();
   });
 
+  it('names every session of the run and its ticket on the card, and warns when one read untrusted input (O-17, G-47)', async () => {
+    const t = await start();
+    await seedRun(t, { sessionId: 'ses_run1' });
+    const res = await distill(t, t.user('builder').headers, 'ses_run1');
+    const out = (await res.json()) as DistillResponse;
+    expect(t.decisions!.get(out.decisionId)!.context).toContain('Sessions of the run: ses_run1.');
+    expect(t.decisions!.get(out.decisionId)!.context).not.toContain('Warning');
+    expect(t.rt.store.list({ types: ['playbook.proposed'] })[0]!.meta).toMatchObject({
+      sourceSessionIds: ['ses_run1'],
+      ticketId: null,
+      untrustedSessionIds: [],
+    });
+
+    const t2 = await start();
+    await seedRun(t2, { sessionId: 'ses_tkt' });
+    t2.sessions!.add({ sessionId: 'ses_tkt', processType: 'feature-build', readOnly: true, ticketId: 'tkt_9' });
+    const out2 = (await (await distill(t2, t2.user('builder').headers, 'ses_tkt')).json()) as DistillResponse;
+    const context = t2.decisions!.get(out2.decisionId)!.context!;
+    expect(context).toContain('Sessions of the run: ses_tkt. Ticket: tkt_9.');
+    expect(context).toContain('Warning: ses_tkt read untrusted input.');
+    expect(t2.rt.store.list({ types: ['playbook.proposed'] })[0]!.meta).toMatchObject({
+      ticketId: 'tkt_9',
+      untrustedSessionIds: ['ses_tkt'],
+    });
+    await t.close();
+    await t2.close();
+  });
+
+  it('refuses a run with more completed tasks than a playbook may hold (O-17, G-47)', async () => {
+    const t = await start();
+    launch(t, { sessionId: 'ses_big', processType: 'feature-build' });
+    const tasks = Array.from({ length: 101 }, (_, i) => ({ id: `t${i}`, title: `Task ${i}` }));
+    declarePlan(t, 'ses_big', [{ id: 'p1', name: 'All', tasks }]);
+    for (const x of tasks) taskDone(t, 'ses_big', x.id, 'p1');
+    ended(t, 'ses_big', 'completed');
+    await t.drain();
+    const res = await distill(t, t.user('builder').headers, 'ses_big');
+    expect(res.status).toBe(422);
+    expect((await errorOf(res)).code).toBe('run_too_large');
+    expect(t.rt.store.list({ types: ['playbook.proposed'] })).toEqual([]);
+    await t.close();
+  });
+
   it('normalises LLM step ids into unique slugs', async () => {
     const t = await start();
     t.llm.on('registry.distill', {
